@@ -59,6 +59,18 @@ clear, actionable message if they are missing. Never download, embed or ship the
   generated code and lockfiles.
 - Update `NEXT_STEPS.md` in the same PR: mark the task done, add follow-ups you found.
 - Don't refactor unrelated code in a feature PR.
+- When a task is finished (checks pass, `NEXT_STEPS.md` updated), give the user a
+  pull request description they can copy and paste, even if you don't open the PR.
+  Put it in one fenced `markdown` block (use a four-backtick fence if it contains code
+  fences) with:
+  - **Title:** imperative, ending with the task id, e.g. `... (T-004)`.
+  - **Summary:** what changed and why, in a few sentences.
+  - **Changes:** the files or areas touched, one bullet each.
+  - **Testing:** the commands you ran and their results, including whether the
+    `real_assets` tests were run against a local copy.
+  - **Notes for review:** guesses still to confirm, deviations from the task or from
+    these rules (such as a diff over ~400 lines), and follow-up tasks you added.
+  - **Checklist:** no game data or derived data included; `NEXT_STEPS.md` updated.
 
 ## Tech stack (pinned by policy, update deliberately)
 
@@ -123,7 +135,7 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 | `*.vcl` | 14 | Cutscenes / animations (`ealogo`, `presents`, `arrival`, `emerge`, `win`, `nlose`, ...). 5 KB to 133 KB | guess |
 | `*.usg` | 17 | Scenarios: `scen00a`..`scen12a` plus `ctrain`, `htrain`, `ntrain`, `strain` (training missions). ~8 to 14 KB each | guess |
 | `scendef.bin` | 1 | Scenario definition table (name appears in exe strings) | likely |
-| `*.m00` `*.m08` `*.m16` `*.m32` | 11 each | Per-unit model data at four sizes/LODs: `basedome`, `cloak`, `explode`, `humanoid`, `laser`, `missile`, `netrelay`, `obst`, `plasma`, `scorpion`, `scout`. Most `.m00` are 18 bytes (header only?) | guess |
+| `*.m00` `*.m08` `*.m16` `*.m32` | 11 / 11 / 11 / 7 | Per-unit model data at four sizes/LODs: `basedome`, `cloak`, `explode`, `humanoid`, `laser`, `missile`, `netrelay`, `obst`, `plasma`, `scorpion`, `scout`. `humanoid`, `missile`, `scorpion` and `scout` have no `.m32` (confirmed in the reference copy). Most `.m00` are 18 bytes (header only?) | guess |
 | `*.m@l` | 8 | Full-screen layouts: `login`, `sitroom`, `maproom`, `review`, `trainmen`, `humancon`, `scorpcon`, `scoutcon` | guess |
 | `*.b@n` | 14 | `msprite0`..`msprite5`, `sky_a`..`sky_h`: sprite banks / sky strips | guess |
 | `*.ms3` | 6 | Music: `mainthem`, `win1`, `win2`, `bigwin3`, `lose`, `robot3`. Likely AdLib/OPL2 sequences | guess |
@@ -183,6 +195,8 @@ cargo fmt --all -- --check
 - Tests that need real game files must be `#[ignore]` by default and read
   `XENOBOTS_GAME_DIR`; they should `return` (not fail) when it is unset. Name them
   `real_assets_*` so they can be run with `cargo test real_assets -- --ignored`.
+  `cargo test` runs in the crate directory, so resolve a relative `XENOBOTS_GAME_DIR`
+  against the workspace root (see `xeno-app`'s `real_assets_game_dir_is_complete`).
 - CI runs fmt, clippy and tests on ubuntu, macos and windows without game files.
 
 ## Style
