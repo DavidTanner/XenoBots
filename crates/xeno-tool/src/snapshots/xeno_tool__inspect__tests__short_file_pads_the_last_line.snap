@@ -1,0 +1,10 @@
+---
+source: crates/xeno-tool/src/inspect.rs
+expression: "report(Path::new(\"orders\"), b\"Hello, world!\\r\\n\\x01\\x02ab\")"
+---
+file:      orders
+size:      19 bytes (0x13)
+extension: (none)
+first 19 bytes:
+00000000  48 65 6c 6c 6f 2c 20 77  6f 72 6c 64 21 0d 0a 01  |Hello, world!...|
+00000010  02 61 62                                          |.ab|

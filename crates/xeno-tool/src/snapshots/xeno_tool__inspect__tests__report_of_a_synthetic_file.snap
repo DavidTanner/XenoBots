@@ -1,0 +1,12 @@
+---
+source: crates/xeno-tool/src/inspect.rs
+expression: "report(Path::new(\"dir/SCEN00A.USG\"), &bytes)"
+---
+file:      dir/SCEN00A.USG
+size:      100 bytes (0x64)
+extension: usg
+first 64 bytes:
+00000000  58 45 4e 4f 20 74 65 73  74 20 00 ff d7 3c 4c 04  |XENO test ...<L.|
+00000010  02 2a b1 ba 80 40 98 e6  cb 29 3e 67 70 eb 3a 95  |.*...@...)>gp.:.|
+00000020  da 21 1e 6a 66 3b d3 73  11 aa be cb 86 be da 3f  |.!.jf;.s.......?|
+00000030  f6 d0 c2 33 a1 c4 cb 77  fe be 02 3d 51 d6 fc 53  |...3...w...=Q..S|
