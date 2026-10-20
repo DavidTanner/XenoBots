@@ -6,7 +6,8 @@ squads of robots and watch them fight. The aim is a native, cross-platform build
 plays the original game from your own copy of its files, and that scales cleanly to 4K
 displays instead of being a blurry stretch of 320x200.
 
-> **Status: planning.** The repository currently holds documentation only. The task
+> **Status: scaffolding.** The Cargo workspace builds, but the game is not playable
+> yet. The task
 > backlog in [NEXT_STEPS.md](NEXT_STEPS.md) describes how the code will come together.
 > The commands below are the intended interface and will start working as those tasks
 > land.

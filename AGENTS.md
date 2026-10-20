@@ -17,8 +17,9 @@ in priority order:
    higher-detail assets, so the game fills a 3840x2160 display cleanly instead of being a
    blurry stretch.
 
-The project is at the **documentation stage**: there is no Rust code yet. Read
-`NEXT_STEPS.md` for the task backlog and pick tasks from there.
+The project is at the **scaffold stage**: the Cargo workspace exists with a
+placeholder `xeno-app` binary. Read `NEXT_STEPS.md` for the task backlog and pick
+tasks from there.
 
 ## Hard rules
 

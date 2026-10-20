@@ -11,7 +11,8 @@ dependencies are `done`, unless something else is more urgent.
   tasks at the end of the relevant milestone (next free id in that block).
 - **Split** rather than grow: if a task is turning into more than ~400 lines of diff,
   land what works, mark the task `done`, and file the rest.
-- Status values: `todo`, `doing`, `done`, `blocked` (say why in the notes column).
+- Status values: `todo`, `doing`, `done`, `blocked` (say why in the notes column),
+  and `ongoing` for standing work that is never finished (see "Ongoing" below).
 - Ids are stable; never renumber. Gaps are fine.
 - Nothing here may involve committing game files or data derived from them. See
   `AGENTS.md`.
@@ -33,7 +34,7 @@ dependencies are `done`, unless something else is more urgent.
 
 | Id | Status | Task | Depends on | Done when | Notes |
 |---|---|---|---|---|---|
-| T-001 | todo | Create the Cargo workspace: root `Cargo.toml` (`resolver = "3"`, edition 2024), `rust-toolchain.toml` (`channel = "stable"`), `rustfmt.toml`, and an empty `crates/xeno-app` binary that prints its version | | `cargo run -p xeno-app` prints a version string | Commit `Cargo.lock` (this is an application). |
+| T-001 | done | Create the Cargo workspace: root `Cargo.toml` (`resolver = "3"`, edition 2024), `rust-toolchain.toml` (`channel = "stable"`), `rustfmt.toml`, and an empty `crates/xeno-app` binary that prints its version | | `cargo run -p xeno-app` prints a version string | Commit `Cargo.lock` (this is an application). |
 | T-002 | todo | Repo hygiene: add `target/`, `.idea/`, `*.iml`, `.vscode/`, `out/`, `extracted/`, `dump/`, `*.png` outside `docs/` and a `# game data` section to `.gitignore`; add a `docs/formats/README.md` stub | | `git status` is clean after a build and an asset dump into `out/` | Keep the existing `gameFiles/` line. |
 | T-003 | todo | GitHub Actions CI: fmt check, clippy `-D warnings`, `cargo test --workspace` on ubuntu-latest, macos-latest, windows-latest; cache cargo | T-001 | Green run on a PR | Install the Linux apt packages listed in README. |
 | T-004 | todo | `xeno-app --game-dir` / `XENOBOTS_GAME_DIR` / `./gameFiles` resolution, plus a startup check that lists missing expected files by name | T-001 | Running without files prints a clear, actionable error and exits non-zero | Expected-file list lives in `xeno-formats` later; start with a const array. |
@@ -127,6 +128,49 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 | T-081 | todo | First-run experience: if no game dir is found, open a dialog or print instructions pointing at the README section | T-004 | Tested on a clean machine | |
 | T-082 | todo | User docs: keybindings, options, troubleshooting | T-081 | README section complete | |
 
+## Ongoing
+
+Standing work that runs alongside the milestones. These tasks are never marked
+`done`; each pass is its own small branch/PR. They are not picked by the "lowest
+`todo`" rule: take one when the user names it, or when the current task needs
+evidence from the executable (for example a format whose layout is only clear from
+the code that reads it).
+
+| Id | Status | Task | Depends on | Each pass is done when | Notes |
+|---|---|---|---|---|---|
+| T-090 | ongoing | Analyse `xeno.exe` and the `*.dvr` modules in Ghidra: identify and rename functions, globals and data structures, and record what was learned in `docs/re/<binary>.md` (e.g. `docs/re/xeno-exe.md`) | T-010 | The Ghidra project is saved, the doc's symbol table has the new entries, and any format facts found are in `docs/formats/` and the `AGENTS.md` table | See "How to do a T-090 pass" below. |
+
+### How to do a T-090 pass
+
+1. **Pick a focus** tied to real work: the subsystem the current or next backlog task
+   needs (file loader for a format, video mode setup, palette upload, order
+   interpreter, sound driver calls). Start from string xrefs (file names like
+   `scendef.bin`, order names like `SENTRY`) and DOS interrupt calls (`int 21h`
+   file I/O, `int 10h` video, `int 33h` mouse).
+2. **Label in Ghidra** (via the Ghidra MCP): rename functions and globals, set
+   prototypes and struct types where clear, and tag each function `confirmed` or
+   `guess`. Naming convention: lowercase `subsystem_verb_noun`, with prefixes
+   `dos_`, `mem_`, `file_`, `gfx_`, `pal_`, `snd_`, `ui_`, `scen_`, `sim_`, `order_`,
+   `drv_` (driver/overlay interface), `rt_` (compiler runtime library). Leave a
+   function as `FUN_*` rather than guess a name with no evidence.
+3. **Save the program** in the Ghidra project, which lives *outside* the repo
+   (`docs/re-setup.md` from T-010 says where).
+4. **Record in the repo**, in `docs/re/<binary>.md`:
+   - a header naming the unpacked binary it applies to (size and SHA-256 of the
+     `unlzexe` output, so addresses are unambiguous);
+   - a symbol table: `segment:offset`, name, one-line purpose, confidence, and the
+     task id that motivated it;
+   - prose notes on structures, globals and algorithms in our own words.
+   Never paste decompiled or disassembled listings (see `AGENTS.md`).
+5. **Feed the backlog**: confirmed format facts go into `docs/formats/*.md` and the
+   `AGENTS.md` table; new work discovered becomes a task in its milestone.
+6. Add a row to the pass log below.
+
+#### T-090 pass log
+
+| Date | Binary | Focus | Outcome |
+|---|---|---|---|
+
 ## Parking lot
 
 Ideas that are not yet tasks. Promote to a task with an id when ready.
@@ -141,3 +185,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | Date | Change |
 |---|---|
 | 2026-10-20 | Created with milestones M0 to M7 and initial tasks. |
+| 2026-10-20 | Added the `ongoing` status and T-090 (continuous Ghidra analysis and labelling). |
