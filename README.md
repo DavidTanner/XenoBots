@@ -27,7 +27,9 @@ Place those files in a directory and point the program at it, in one of three wa
 | Environment variable | `export XENOBOTS_GAME_DIR=/path/to/xenobot` |
 | Command-line flag | `cargo run -p xeno-app -- --game-dir /path/to/xenobot` |
 
-The program checks for the files at startup and tells you which ones are missing.
+The flag wins over the environment variable, which wins over the default. The program
+checks for the files at startup, ignoring the case of file names, and tells you which
+ones are missing.
 
 ## Prerequisites
 
