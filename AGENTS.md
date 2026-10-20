@@ -59,6 +59,18 @@ clear, actionable message if they are missing. Never download, embed or ship the
   generated code and lockfiles.
 - Update `NEXT_STEPS.md` in the same PR: mark the task done, add follow-ups you found.
 - Don't refactor unrelated code in a feature PR.
+- When a task is finished (checks pass, `NEXT_STEPS.md` updated), give the user a
+  pull request description they can copy and paste, even if you don't open the PR.
+  Put it in one fenced `markdown` block (use a four-backtick fence if it contains code
+  fences) with:
+  - **Title:** imperative, ending with the task id, e.g. `... (T-004)`.
+  - **Summary:** what changed and why, in a few sentences.
+  - **Changes:** the files or areas touched, one bullet each.
+  - **Testing:** the commands you ran and their results, including whether the
+    `real_assets` tests were run against a local copy.
+  - **Notes for review:** guesses still to confirm, deviations from the task or from
+    these rules (such as a diff over ~400 lines), and follow-up tasks you added.
+  - **Checklist:** no game data or derived data included; `NEXT_STEPS.md` updated.
 
 ## Tech stack (pinned by policy, update deliberately)
 
