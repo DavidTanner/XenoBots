@@ -124,7 +124,7 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 
 | Id | Status | Task | Depends on | Done when | Notes |
 |---|---|---|---|---|---|
-| T-080 | todo | Release workflow: tag => build `xeno-app` for macOS (universal), Linux x86_64, Windows x86_64 and attach to a GitHub release | T-003 | Artifacts downloadable | |
+| T-080 | doing | Release workflow, manual `workflow_dispatch` only: run the CI workflow first (via `workflow_call`), build `xeno-app` for macOS (universal), Linux x86_64, Windows x86_64 and attach them to a GitHub release tagged `v<Cargo.toml version>` | T-003 | Artifacts downloadable from a release made by a real run | Releases only from `main`; drafts by default. Linux binary links the runner's glibc (ubuntu-latest); revisit if older distros matter. |
 | T-081 | todo | First-run experience: if no game dir is found, open a dialog or print instructions pointing at the README section | T-004 | Tested on a clean machine | |
 | T-082 | todo | User docs: keybindings, options, troubleshooting | T-081 | README section complete | |
 
@@ -186,3 +186,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 |---|---|
 | 2026-10-20 | Created with milestones M0 to M7 and initial tasks. |
 | 2026-10-20 | Added the `ongoing` status and T-090 (continuous Ghidra analysis and labelling). |
+| 2026-10-20 | T-080 changed from tag-triggered to manual-only, gated on the CI workflow. |
