@@ -1,57 +1,70 @@
-# Prerequisites
-*.d
+# Rust build output. Cargo.lock is committed (this is an application).
+target/
+**/*.rs.bk
 
-# Object files
+# insta snapshot review leftovers; accepted .snap files are committed.
+*.snap.new
+*.pending-snap
+
+# Editors and OS clutter
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Asset dumps and experiments from xeno-tool. Never commit their contents.
+out/
+extracted/
+dump/
+# Images are dump output unless they are documentation figures.
+*.png
+!docs/**/*.png
+
+# Reverse-engineering workspaces belong outside the repo; catch strays anyway.
+*.gpr
+*.rep/
+
+# Native build artefacts
 *.o
-*.ko
 *.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
 *.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
+*.lib
 *.so
 *.so.*
 *.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
+*.dll
 *.pdb
+*.dSYM/
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
-*.dwo
-
+# game data
+# The original game is copyrighted. Nothing from it may be committed, whether the
+# installed files themselves or copies with their extensions anywhere in the tree.
+# Tests build synthetic fixtures in code, so no tracked file needs these names.
 gameFiles/
+*.exe
+*.dvr
+*.mod
+*.bat
+*.pcx
+*.vcl
+*.usg
+*.bin
+*.m00
+*.m08
+*.m16
+*.m32
+*.m@l
+*.b@n
+*.ms3
+*.fgd
+*.kyl
+*.map
+*.rst
+xenobot.1
+xenobot.2
+orders.txt
+# Decoded audio from dsounds.bin / *.ms3
+*.wav
+*.mid
+*.ogg

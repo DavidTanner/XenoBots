@@ -35,7 +35,7 @@ dependencies are `done`, unless something else is more urgent.
 | Id | Status | Task | Depends on | Done when | Notes |
 |---|---|---|---|---|---|
 | T-001 | done | Create the Cargo workspace: root `Cargo.toml` (`resolver = "3"`, edition 2024), `rust-toolchain.toml` (`channel = "stable"`), `rustfmt.toml`, and an empty `crates/xeno-app` binary that prints its version | | `cargo run -p xeno-app` prints a version string | Commit `Cargo.lock` (this is an application). |
-| T-002 | todo | Repo hygiene: add `target/`, `.idea/`, `*.iml`, `.vscode/`, `out/`, `extracted/`, `dump/`, `*.png` outside `docs/` and a `# game data` section to `.gitignore`; add a `docs/formats/README.md` stub | | `git status` is clean after a build and an asset dump into `out/` | Keep the existing `gameFiles/` line. |
+| T-002 | done | Repo hygiene: add `target/`, `.idea/`, `*.iml`, `.vscode/`, `out/`, `extracted/`, `dump/`, `*.png` outside `docs/` and a `# game data` section to `.gitignore`; add a `docs/formats/README.md` stub | | `git status` is clean after a build and an asset dump into `out/` | Keep the existing `gameFiles/` line. Replaced the C template; the game-data section also ignores every original extension anywhere in the tree. |
 | T-003 | doing | GitHub Actions CI: fmt check, clippy `-D warnings`, `cargo test --workspace` on ubuntu-latest, macos-latest, windows-latest; cache cargo | T-001 | Green run on a PR | Install the Linux apt packages listed in README. |
 | T-004 | todo | `xeno-app --game-dir` / `XENOBOTS_GAME_DIR` / `./gameFiles` resolution, plus a startup check that lists missing expected files by name | T-001 | Running without files prints a clear, actionable error and exits non-zero | Expected-file list lives in `xeno-formats` later; start with a const array. |
 | T-005 | todo | Add `crates/xeno-formats` library with a `FormatError` type, a `Palette` type (256 x RGB), and the test-fixture helper `synthetic_bytes()` | T-001 | Crate compiles with one passing test | No parsers yet. |
@@ -187,3 +187,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | 2026-10-20 | Created with milestones M0 to M7 and initial tasks. |
 | 2026-10-20 | Added the `ongoing` status and T-090 (continuous Ghidra analysis and labelling). |
 | 2026-10-20 | T-080 changed from tag-triggered to manual-only, gated on the CI workflow. |
+| 2026-10-20 | T-002 done. |
