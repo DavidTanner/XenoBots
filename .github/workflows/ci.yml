@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # release.yml runs these checks before building anything.
+  workflow_call:
 
 # A newer push to the same branch or PR supersedes the running checks.
 concurrency:

@@ -1,0 +1,159 @@
+name: Release
+
+# Manual only: Actions tab -> Release -> Run workflow (on main).
+# The version and tag come from xeno-app's version in Cargo.toml; bump it
+# before running. Nothing is built unless the full CI suite passes first.
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Create the release as a draft (publish it by hand after checking)
+        type: boolean
+        default: true
+
+# One release at a time; never cancel one that is half published.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Check version and tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Only release from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are cut from main; this run is on $GITHUB_REF."
+          exit 1
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - id: version
+        name: Read version from Cargo.toml
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "xeno-app") | .version')
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists. Bump the version in Cargo.toml first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag"
+
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [prepare, ci]
+    strategy:
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            targets: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            targets: x86_64-pc-windows-msvc
+          # Both architectures are built and merged with lipo into one binary.
+          - name: macos-universal
+            os: macos-latest
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      NAME: ${{ matrix.name }}
+      TARGETS: ${{ matrix.targets }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux windowing and audio headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
+      - run: rustup toolchain install
+      - run: rustup target add $TARGETS
+      - name: Build
+        run: |
+          for target in $TARGETS; do
+            cargo build --release --locked -p xeno-app --target "$target"
+          done
+      - name: Package
+        id: package
+        run: |
+          dir="xeno-app-v$VERSION-$NAME"
+          mkdir "$dir"
+          cp README.md LICENSE "$dir/"
+          case "$RUNNER_OS" in
+            macOS)
+              lipo -create -output "$dir/xeno-app" \
+                target/aarch64-apple-darwin/release/xeno-app \
+                target/x86_64-apple-darwin/release/xeno-app
+              ;;
+            Windows) cp "target/$TARGETS/release/xeno-app.exe" "$dir/" ;;
+            *) cp "target/$TARGETS/release/xeno-app" "$dir/" ;;
+          esac
+          # Smoke test: the packaged binary runs and reports the release version.
+          "$dir/xeno-app" | grep -Fx "xeno-app $VERSION"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip "$dir.zip" "$dir"
+            echo "asset=$dir.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "$dir.tar.gz" "$dir"
+            echo "asset=$dir.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      DRAFT: ${{ inputs.draft }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # The tag check in `prepare` misses drafts, which have no tag until published.
+      - name: Refuse to duplicate an existing release or draft
+        run: |
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 \
+              --json tagName --jq '.[].tagName' | grep -Fxq "$TAG"; then
+            echo "::error::A release or draft for $TAG already exists."
+            exit 1
+          fi
+      - name: Create release
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Xenobots $TAG" \
+            --generate-notes \
+            --draft="$DRAFT"
