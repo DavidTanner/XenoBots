@@ -50,7 +50,7 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 
 | Id | Status | Task | Depends on | Done when | Notes |
 |---|---|---|---|---|---|
-| T-010 | todo | Set up reverse-engineering workspace *outside the repo*: unpack `xeno.exe` and `config.dvr` with `unlzexe`, import into Ghidra; write `docs/re-setup.md` describing the steps (no binaries, no listings) | | Doc exists; a teammate can reproduce the setup | Ghidra MCP is available to Claude in this project. |
+| T-010 | done | Set up reverse-engineering workspace *outside the repo*: unpack `xeno.exe` and `config.dvr` with `unlzexe`, import into Ghidra; write `docs/re-setup.md` describing the steps (no binaries, no listings) | | Doc exists; a teammate can reproduce the setup | `unlzexe` from the `lzexe` crate 0.1.1 (pure Rust, cross-platform). Doc lists SHA-256 of packed and unpacked binaries. All six `.dvr` imported too; the four unpacked ones analyse to 1-2 functions (see T-025). |
 | T-011 | todo | PCX decoder (v3.0, 8-bit RLE, 256-colour palette trailer) | T-005 | Synthetic PCX round-trips; `xeno-tool dump` writes a PNG to an out dir | `image` crate has no PCX; ~80 lines. |
 | T-012 | todo | Identify the video mode(s): is the logical framebuffer 320x200, 320x240 Mode-X (`vga240.mod`), or both? Record in `docs/formats/video-modes.md` | T-010 | Doc states the mode(s) with evidence | Drives T-030. |
 | T-013 | todo | Palette extraction: find where the 256-colour palette(s) come from (PCX trailer, embedded in exe, or a separate file) | T-011, T-012 | `xeno-tool palette <source>` prints 256 RGB triples | |
@@ -65,7 +65,7 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 | T-022 | todo | `.ms3` music format: identify (AdLib register stream? custom sequencer?) | T-010 | Doc; parser if feasible | Audio playback is M5. |
 | T-023 | todo | `dsounds.bin` digitised SFX: directory structure, sample rate, encoding | T-010 | `xeno-tool dump` writes WAVs to an out dir | |
 | T-024 | todo | `.map` key/joystick mapping, `state.rst` save state, `xenobot.1/.2` markers | T-010 | Doc for each; parsers for `.map` and `.rst` | Small. |
-| T-025 | todo | `.dvr` modules: document the loader protocol between `xeno.exe` and the driver modules | T-010 | Doc explaining what each driver provides | Needed to know which behaviour lives where. |
+| T-025 | todo | `.dvr` modules: document the loader protocol between `xeno.exe` and the driver modules | T-010 | Doc explaining what each driver provides | Needed to know which behaviour lives where. Ghidra's auto-analysis finds only 1-2 functions per `.dvr` from the MZ entry; locate the real entry points from `xeno.exe`'s loader. |
 | T-026 | todo | `xeno-tool inspect` runs over a whole directory (`inspect --all <dir>`) and summarises parse success per extension | T-006 | Table output; exit code 0 only if every file parsed | M1 exit criterion. |
 
 ## M2 Window and framebuffer
@@ -190,3 +190,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | 2026-10-20 | T-080 changed from tag-triggered to manual-only, gated on the CI workflow. |
 | 2026-10-20 | T-002 done. T-003 done (CI green). T-080 still `doing`: merged, awaiting its first real release run. |
 | 2026-10-20 | T-004 done; added T-007 (shared file list and case-insensitive file lookup). |
+| 2026-10-20 | T-010 done: `docs/re-setup.md`; noted `.dvr` entry-point finding on T-025. |

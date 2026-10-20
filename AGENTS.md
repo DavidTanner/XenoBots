@@ -128,8 +128,8 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 
 | Pattern | Count | What it is | Status |
 |---|---|---|---|
-| `xeno.exe` | 1 | Main executable, 84 KB, **LZEXE 0.91 compressed** | confirmed (`file`) |
-| `*.dvr` | 6 | DOS executables: `config`, `mapdvr`, `mgavideo`, `sounddvr`, `vgaiff`, `vgaintro`. Loadable driver/overlay modules; `config.dvr` is also LZEXE-packed | confirmed executables |
+| `xeno.exe` | 1 | Main executable, 84 KB, **LZEXE 0.91 compressed**; 181,836 bytes and 655 relocations once unpacked (see `docs/re-setup.md`) | confirmed |
+| `*.dvr` | 6 | DOS executables: `config`, `mapdvr`, `mgavideo`, `sounddvr`, `vgaiff`, `vgaintro`. Loadable driver/overlay modules; `config.dvr` is also LZEXE-packed (16,160 bytes unpacked), the other five are plain MZ | confirmed executables |
 | `vga240.mod` | 1 | Probably the 320x240 Mode-X video module | guess |
 | `*.pcx` | 2 | `cavedrop`, `xenodrop`: PCX 3.0, 8-bit, 768x128 / 768x130. Drop-sequence sprite strips or scrolling backgrounds | format confirmed |
 | `*.vcl` | 14 | Cutscenes / animations (`ealogo`, `presents`, `arrival`, `emerge`, `win`, `nlose`, ...). 5 KB to 133 KB | guess |
