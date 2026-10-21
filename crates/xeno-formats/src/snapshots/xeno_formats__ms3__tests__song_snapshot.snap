@@ -1,0 +1,89 @@
+---
+source: crates/xeno-formats/src/ms3.rs
+expression: parse(&tune()).unwrap()
+---
+Song {
+    header: Header {
+        signature: "MS3-TEST \\r\\n\\x1a\\x1a\\x1a",
+        unknown_0e: 255,
+        unknown_0f: 0,
+        doubled_on: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        programs: [5, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    },
+    steps: [
+        Step {
+            event: NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+            delay: 0,
+        },
+        Step {
+            event: NoteOn {
+                channel: 1,
+                note: 64,
+                velocity: 90,
+            },
+            delay: 24,
+        },
+        Step {
+            event: NoteOff {
+                channel: 0,
+            },
+            delay: 0,
+        },
+        Step {
+            event: Program {
+                channel: 0,
+                program: 41,
+            },
+            delay: 0,
+        },
+        Step {
+            event: PitchOffset {
+                channel: 1,
+                offset: -2,
+            },
+            delay: 0,
+        },
+        Step {
+            event: Controller {
+                channel: 0,
+                unknown_1: 7,
+                unknown_2: 127,
+            },
+            delay: 0,
+        },
+        Step {
+            event: Skipped {
+                status: 209,
+                unknown_1: 9,
+            },
+            delay: 0,
+        },
+        Step {
+            event: NoteOn {
+                channel: 0,
+                note: 62,
+                velocity: 100,
+            },
+            delay: 196,
+        },
+        Step {
+            event: NoteOff {
+                channel: 1,
+            },
+            delay: 0,
+        },
+        Step {
+            event: NoteOff {
+                channel: 0,
+            },
+            delay: 0,
+        },
+    ],
+    unknown_trailer: [
+        0,
+    ],
+}

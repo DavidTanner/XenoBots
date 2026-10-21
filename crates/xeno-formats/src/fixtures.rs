@@ -368,6 +368,17 @@ pub fn synthetic_usg() -> Vec<u8> {
     synthetic_usg_from(&synthetic_usg_chunks())
 }
 
+/// A `.ms3` song: a `MS3-TEST` signature, no doubled channels, `programs` for the
+/// first channels (the rest 0), then `events` as given (they should end with `FF 2F`).
+pub fn synthetic_ms3(programs: &[u8], events: &[u8]) -> Vec<u8> {
+    let mut song = b"MS3-TEST \r\n\x1a\x1a\x1a\xff\x00".to_vec();
+    song.resize(0x20, 0);
+    song.extend(programs);
+    song.resize(0x30, 0);
+    song.extend(events);
+    song
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

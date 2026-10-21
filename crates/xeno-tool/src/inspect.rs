@@ -1,6 +1,6 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
 //! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
-//! `scendef.bin`, the `.usg` scenarios and the `.fgd` layers).
+//! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers and the `.ms3` music).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -34,6 +34,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
         "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
         "usg" => out.push_str(&usg_details(bytes)),
         "fgd" | "kyl" => out.push_str(&fgd_details(file, bytes)),
+        "ms3" => out.push_str(&ms3_details(bytes)),
         _ => {}
     }
     if shown == 0 {
@@ -223,6 +224,51 @@ fn fgd_details(file: &Path, bytes: &[u8]) -> String {
     )
 }
 
+/// What the music parser makes of `bytes`: the signature, the events by kind and the
+/// length in ticks, then each channel the events use with its starting program.
+fn ms3_details(bytes: &[u8]) -> String {
+    use xeno_formats::ms3::{self, Event};
+
+    let song = match ms3::parse(bytes) {
+        Ok(song) => song,
+        Err(e) => return format!("ms3:       cannot parse: {e}\n"),
+    };
+    let (mut notes, mut programs, mut channels) = (0, 0, [false; 16]);
+    for step in &song.steps {
+        let channel = match step.event {
+            Event::NoteOn { channel, .. } => {
+                notes += 1;
+                channel
+            }
+            Event::Program { channel, .. } => {
+                programs += 1;
+                channel
+            }
+            Event::NoteOff { channel }
+            | Event::PitchOffset { channel, .. }
+            | Event::Controller { channel, .. } => channel,
+            Event::Skipped { .. } => continue,
+        };
+        channels[usize::from(channel)] = true;
+    }
+    let h = &song.header;
+    let used: Vec<String> = (0..16)
+        .filter(|&c| channels[c])
+        .map(|c| match h.doubled_on[c] {
+            0 => format!("{c}:{}", h.programs[c]),
+            d => format!("{c}:{} (also on {})", h.programs[c], d - 1),
+        })
+        .collect();
+    format!(
+        "ms3:       {:?}, {} event(s): {notes} note(s), {programs} program change(s); {} ticks\n\
+         ms3:       channel:starting program {}\n",
+        h.signature_text(),
+        song.steps.len(),
+        song.ticks(),
+        used.join(" "),
+    )
+}
+
 /// What the scenario table parser makes of `bytes`: one line per scenario with its
 /// index, map box, unlock level, state and name (lines joined with ` / `).
 fn scendef_details(bytes: &[u8]) -> String {
@@ -396,15 +442,15 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_scendef, synthetic_screen,
-        synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
+        synthetic_bytes, synthetic_model, synthetic_ms3, synthetic_pcx, synthetic_scendef,
+        synthetic_screen, synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
     };
 
     #[test]
     fn report_of_a_synthetic_file() {
         let mut bytes = synthetic_bytes(100, 7);
         bytes[..12].copy_from_slice(b"XENO test \x00\xff");
-        insta::assert_snapshot!(report(Path::new("dir/MAINTHEM.MS3"), &bytes));
+        insta::assert_snapshot!(report(Path::new("dir/ORDERS.TXT"), &bytes));
     }
 
     #[test]
@@ -414,10 +460,10 @@ mod tests {
 
     #[test]
     fn empty_file_has_no_preview() {
-        let out = report(Path::new("empty.ms3"), &[]);
+        let out = report(Path::new("empty.txt"), &[]);
         assert_eq!(
             out,
-            "file:      empty.ms3\nsize:      0 bytes (0x0)\nextension: ms3\n"
+            "file:      empty.txt\nsize:      0 bytes (0x0)\nextension: txt\n"
         );
     }
 
@@ -547,6 +593,23 @@ mod tests {
         insta::assert_snapshot!(details);
         let out = report(Path::new("scen00a.usg"), &file[..file.len() - 6]);
         assert!(out.contains("usg:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn songs_count_their_events() {
+        let mut song = synthetic_ms3(&[7, 0, 9], &[0x90, 60, 99, 0x10, 0x80, 0, 0xc2, 4]);
+        song.extend([0x81, 0x00, 0xff, 0x2f, 0x00]);
+        song[0x12] = 1;
+        let out = report(Path::new("WIN1.MS3"), &song);
+        assert!(
+            out.contains(
+                "ms3:       \"MS3-TEST\", 3 event(s): 1 note(s), 1 program change(s); 144 ticks\n\
+                 ms3:       channel:starting program 0:7 2:9 (also on 0)\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("win1.ms3"), &song[..song.len() - 3]);
+        assert!(out.contains("ms3:       cannot parse: "), "{out}");
     }
 
     #[test]
