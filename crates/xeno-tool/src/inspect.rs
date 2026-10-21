@@ -1,5 +1,5 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx, b@n).
+//! formats that have one (so far: pcx, b@n, the `.mXX` unit models).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -24,6 +24,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     match extension.as_str() {
         "pcx" => out.push_str(&pcx_details(bytes)),
         "b@n" => out.push_str(&ban_details(file, bytes)),
+        "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
         _ => {}
     }
     if shown == 0 {
@@ -94,6 +95,32 @@ fn ban_details(file: &Path, bytes: &[u8]) -> String {
     format!("{packed}{details}\n")
 }
 
+/// What the model parser makes of `bytes`: the views, each as `facing/mirror`
+/// (one number when the facing is its own mirror, `-` when there is none).
+fn mxx_details(bytes: &[u8]) -> String {
+    use xeno_formats::mxx::{self, ViewHeader};
+
+    match mxx::parse(bytes) {
+        Ok(model) => {
+            let facings: Vec<_> = model
+                .views
+                .iter()
+                .map(|v| match (v.header.facing, v.header.mirror_facing) {
+                    (ViewHeader::NO_FACING, _) => "-".to_string(),
+                    (f, m) if f == m => f.to_string(),
+                    (f, m) => format!("{f}/{m}"),
+                })
+                .collect();
+            format!(
+                "mxx:       {} view(s), facings in 64ths of a turn: {}\n",
+                model.views.len(),
+                facings.join(", ")
+            )
+        }
+        Err(e) => format!("mxx:       cannot parse: {e}\n"),
+    }
+}
+
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
 /// ASCII characters. The last line is padded so its ASCII column lines up.
 pub fn hex_preview(bytes: &[u8]) -> String {
@@ -141,10 +168,10 @@ mod tests {
 
     #[test]
     fn empty_file_has_no_preview() {
-        let out = report(Path::new("empty.m00"), &[]);
+        let out = report(Path::new("empty.usg"), &[]);
         assert_eq!(
             out,
-            "file:      empty.m00\nsize:      0 bytes (0x0)\nextension: m00\n"
+            "file:      empty.usg\nsize:      0 bytes (0x0)\nextension: usg\n"
         );
     }
 
@@ -185,6 +212,25 @@ mod tests {
         );
         let out = report(Path::new("sky_a.b@n"), b"\x01");
         assert!(out.contains("packed:    cannot decompress: "), "{out}");
+    }
+
+    #[test]
+    fn models_list_their_facings() {
+        let mut model = Vec::new();
+        for (facing, mirror) in [(0i16, 0i16), (8, 56)] {
+            model.extend(16u16.to_le_bytes());
+            model.extend(facing.to_le_bytes());
+            model.extend(mirror.to_le_bytes());
+            model.extend([16, 0, 16, 0, 16, 0, 16, 0, 16, 0]);
+        }
+        model.extend([0, 0]);
+        let out = report(Path::new("LASER.M08"), &model);
+        assert!(
+            out.contains("mxx:       2 view(s), facings in 64ths of a turn: 0, 8/56\n"),
+            "{out}"
+        );
+        let out = report(Path::new("laser.m00"), &[]);
+        assert!(out.contains("mxx:       cannot parse: "), "{out}");
     }
 
     #[test]
