@@ -146,6 +146,39 @@ pub fn synthetic_sprite_bank(sprites: &[(u8, u8, &[u8])]) -> Vec<u8> {
     synthetic_packed(&bank)
 }
 
+/// A packed `.m@l` screen: `palette` (768 bytes of VGA 6-bit triples), then `pixels`
+/// (one 320x200 picture) in PackBits, each row encoded on its own as the game's files
+/// are. Runs of three or more equal bytes become repeats; the rest are literals.
+pub fn synthetic_screen(palette: &[u8], pixels: &[u8]) -> Vec<u8> {
+    use crate::mal::Screen;
+
+    assert_eq!(palette.len(), crate::Palette::BYTES, "palette size");
+    assert_eq!(pixels.len(), Screen::WIDTH * Screen::HEIGHT, "pixel count");
+    let mut data = palette.to_vec();
+    for row in pixels.as_chunks::<{ Screen::WIDTH }>().0 {
+        let mut literals: Vec<u8> = Vec::new();
+        let flush = |data: &mut Vec<u8>, literals: &mut Vec<u8>| {
+            for part in literals.chunks(128) {
+                data.push(part.len() as u8 - 1);
+                data.extend_from_slice(part);
+            }
+            literals.clear();
+        };
+        for run in row.chunk_by(|a, b| a == b) {
+            if run.len() < 3 {
+                literals.extend_from_slice(run);
+                continue;
+            }
+            flush(&mut data, &mut literals);
+            for part in run.chunks(128) {
+                data.extend([(257 - part.len()) as u8, part[0]]);
+            }
+        }
+        flush(&mut data, &mut literals);
+    }
+    synthetic_packed(&data)
+}
+
 /// `(width, height, pixels)`: an image for [`synthetic_model`].
 pub type SyntheticImage<'a> = (u8, u8, &'a [u8]);
 

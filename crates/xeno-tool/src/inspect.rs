@@ -1,5 +1,5 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx, b@n, the `.mXX` unit models).
+//! formats that have one (so far: pcx, b@n, m@l, the `.mXX` unit models).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -24,6 +24,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     match extension.as_str() {
         "pcx" => out.push_str(&pcx_details(bytes)),
         "b@n" => out.push_str(&ban_details(file, bytes)),
+        "m@l" => out.push_str(&mal_details(bytes)),
         "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
         _ => {}
     }
@@ -91,6 +92,37 @@ fn ban_details(file: &Path, bytes: &[u8]) -> String {
             }
             Err(e) => format!("b@n:       cannot parse as a sprite bank: {e}"),
         }
+    };
+    format!("{packed}{details}\n")
+}
+
+/// What the screen parser makes of `bytes`: the picture's size and its PackBits runs.
+fn mal_details(bytes: &[u8]) -> String {
+    use xeno_formats::mal::{self, Run, Screen};
+    use xeno_formats::packed;
+
+    let data = match packed::decompress(bytes) {
+        Ok(data) => data,
+        Err(e) => return format!("packed:    cannot decompress: {e}\n"),
+    };
+    let packed = format!("packed:    {} bytes decoded\n", data.len());
+    let details = match mal::parse_unpacked(&data) {
+        Ok(_) => {
+            let src = &data[Screen::PICTURE_OFFSET..];
+            let runs = mal::runs(src, Screen::WIDTH * Screen::HEIGHT).unwrap_or_default();
+            let repeats = runs
+                .iter()
+                .filter(|r| matches!(r, Run::Repeat { .. }))
+                .count();
+            format!(
+                "m@l:       {}x{} screen with a VGA 6-bit palette, {} PackBits runs ({} literal, {repeats} repeat)",
+                Screen::WIDTH,
+                Screen::HEIGHT,
+                runs.len(),
+                runs.len() - repeats,
+            )
+        }
+        Err(e) => format!("m@l:       cannot parse: {e}"),
     };
     format!("{packed}{details}\n")
 }
@@ -167,7 +199,7 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_sprite_bank,
+        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_screen, synthetic_sprite_bank,
     };
 
     #[test]
@@ -228,6 +260,30 @@ mod tests {
         );
         let out = report(Path::new("sky_a.b@n"), b"\x01");
         assert!(out.contains("packed:    cannot decompress: "), "{out}");
+    }
+
+    #[test]
+    fn screens_count_their_runs() {
+        // Each row: 256 equal bytes (two repeats of 128), then 64 literals.
+        let row: Vec<u8> = [vec![1; 256], (0..64).collect()].concat();
+        let bytes = synthetic_screen(&[0; 768], &row.repeat(200));
+        let out = report(Path::new("LOGIN.M@L"), &bytes);
+        assert!(
+            out.contains(
+                "m@l:       320x200 screen with a VGA 6-bit palette, 600 PackBits runs (200 literal, 400 repeat)\n"
+            ),
+            "{out}"
+        );
+        let out = report(
+            Path::new("login.m@l"),
+            &synthetic_screen(&[0; 768], &[0; 64_000])[..20],
+        );
+        assert!(out.contains("packed:    cannot decompress: "), "{out}");
+        let out = report(
+            Path::new("login.m@l"),
+            &xeno_formats::fixtures::synthetic_packed(&[0; 800]),
+        );
+        assert!(out.contains("m@l:       cannot parse: "), "{out}");
     }
 
     #[test]

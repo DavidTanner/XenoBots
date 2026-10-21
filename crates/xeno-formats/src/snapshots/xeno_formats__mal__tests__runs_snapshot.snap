@@ -1,0 +1,25 @@
+---
+source: crates/xeno-formats/src/mal.rs
+expression: runs
+---
+[
+    Literal(
+        [
+            1,
+            2,
+            3,
+        ],
+    ),
+    Repeat {
+        value: 9,
+        len: 128,
+    },
+    Repeat {
+        value: 4,
+        len: 2,
+    },
+    Repeat {
+        value: 5,
+        len: 129,
+    },
+]

@@ -16,7 +16,7 @@ letter:
 | On disk | Count | Decoded content |
 |---|---|---|
 | `.b@n` | 14 | Sprite banks and sky strips (`b@n.md`) |
-| `.m@l` | 8 | Full-screen pictures: 768-byte 6-bit palette, then a PackBits 320x200 screen (`palette.md`, T-017) |
+| `.m@l` | 8 | Full-screen pictures: 768-byte 6-bit palette, then a PackBits 320x200 screen (`m@l.md`) |
 
 No unpacked `.bin` or `.mrl` copy of these is in the install. The other `.bin` files
 (`scendef.bin`, `dsounds.bin`) have no `@` and are not in this format.

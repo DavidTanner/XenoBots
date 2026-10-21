@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use clap::ValueEnum;
-use xeno_formats::{Palette, pcx, vcl};
+use xeno_formats::{Palette, mal, pcx, vcl};
 
 /// How a raw palette read with `--offset` is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -64,6 +64,14 @@ pub fn find(file: &Path, bytes: &[u8], raw: Option<Raw>) -> anyhow::Result<(Pale
                 format!("vcl header at offset {:#x}, VGA 6-bit", vcl::PALETTE_OFFSET),
             ))
         }
+        "m@l" => {
+            let screen = mal::parse(bytes)
+                .with_context(|| format!("{} is not a valid screen", file.display()))?;
+            Ok((
+                screen.palette,
+                "m@l screen, first 768 bytes once unpacked, VGA 6-bit".into(),
+            ))
+        }
         "" => bail!(
             "{} has no extension; pass --offset to read a raw palette",
             file.display()
@@ -98,7 +106,7 @@ pub fn parse_offset(s: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx};
+    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx, synthetic_screen};
 
     fn vga6_bytes(len: usize, seed: u64) -> Vec<u8> {
         synthetic_bytes(len, seed)
@@ -122,6 +130,19 @@ mod tests {
         let (palette, source) = find(Path::new("drop.pcx"), &bytes, None).unwrap();
         assert_eq!(palette, Palette::from_rgb8(&trailer).unwrap());
         assert_eq!(source, "pcx trailer, 8-bit");
+    }
+
+    #[test]
+    fn screen_palette_comes_from_the_unpacked_start() {
+        let raw = vga6_bytes(Palette::BYTES, 3);
+        let bytes = synthetic_screen(&raw, &[0; 64_000]);
+        let (palette, source) = find(Path::new("LOGIN.M@L"), &bytes, None).unwrap();
+        assert_eq!(palette, Palette::from_vga6(&raw).unwrap());
+        assert_eq!(
+            source,
+            "m@l screen, first 768 bytes once unpacked, VGA 6-bit"
+        );
+        assert!(find(Path::new("login.m@l"), &bytes[..10], None).is_err());
     }
 
     #[test]

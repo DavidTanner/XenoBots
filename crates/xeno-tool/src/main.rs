@@ -26,8 +26,8 @@ enum Command {
         /// The file to inspect.
         file: PathBuf,
     },
-    /// Decode a file and write its images as PNGs. Supports: pcx, b@n, and the m00,
-    /// m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
+    /// Decode a file and write its images as PNGs. Supports: pcx, b@n, m@l, and the
+    /// m00, m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
     /// it when its parts need one).
     Dump {
         /// The file to decode.
@@ -36,13 +36,13 @@ enum Command {
         /// outside the gitignored `out/`.
         #[arg(long, default_value = "out")]
         out: PathBuf,
-        /// Take colours from this file's palette (pcx, vcl) for files that have none
+        /// Take colours from this file's palette (pcx, vcl, m@l) for files that have none
         /// of their own, such as b@n and models. Without it they come out in grey.
         #[arg(long)]
         palette: Option<PathBuf>,
     },
     /// Print a file's 256-colour palette, one colour per line. Finds it by extension
-    /// (pcx, vcl), or reads it raw from `--offset`.
+    /// (pcx, vcl, m@l), or reads it raw from `--offset`.
     Palette {
         /// The file to read.
         file: PathBuf,
