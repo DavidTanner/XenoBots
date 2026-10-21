@@ -392,6 +392,7 @@ name = "xeno-app"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "xeno-formats",
 ]
 
 [[package]]

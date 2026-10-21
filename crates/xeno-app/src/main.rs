@@ -30,14 +30,17 @@ fn main() -> ExitCode {
     println!("{}", version_string());
 
     let game_dir = GameDir::resolve(cli.game_dir, std::env::var_os(game_dir::ENV_VAR));
-    if let Err(e) = game_dir.check() {
-        eprintln!("error: {e}");
-        return ExitCode::FAILURE;
-    }
+    let files = match game_dir.check() {
+        Ok(files) => files,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     println!(
         "Game files found in {} ({}).",
-        game_dir.path.display(),
-        game_dir.source
+        files.dir().path.display(),
+        files.dir().source
     );
     ExitCode::SUCCESS
 }

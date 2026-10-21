@@ -1,10 +1,12 @@
 //! Finding the user's copy of the original game and checking that it is complete.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use xeno_formats::files::EXPECTED_FILES;
 
 /// Environment variable that names the game directory when `--game-dir` is not given.
 pub const ENV_VAR: &str = "XENOBOTS_GAME_DIR";
@@ -12,143 +14,6 @@ pub const ENV_VAR: &str = "XENOBOTS_GAME_DIR";
 /// Directory used when neither `--game-dir` nor [`ENV_VAR`] is set, relative to the
 /// current directory.
 pub const DEFAULT_DIR: &str = "gameFiles";
-
-/// Files the game needs, as named in a stock install (lowercase).
-///
-/// This is every file the installer copies except its own (`*.bat`, the `xenobot.1` /
-/// `xenobot.2` disk markers), the placeholder `orders.txt`, and `state.rst` /
-/// `backup.map`, which look like user state the game writes rather than reads. Which
-/// files the game really opens is still to be confirmed from the executable; the list
-/// moves into `xeno-formats` once that crate exists (T-007).
-pub const EXPECTED_FILES: &[&str] = &[
-    // Executable, driver modules and video mode module.
-    "xeno.exe",
-    "config.dvr",
-    "mapdvr.dvr",
-    "mgavideo.dvr",
-    "sounddvr.dvr",
-    "vgaiff.dvr",
-    "vgaintro.dvr",
-    "vga240.mod",
-    // Tables, sound effects, key mapping and the 1920-byte layer files.
-    "scendef.bin",
-    "dsounds.bin",
-    "default.map",
-    "fgarray.kyl",
-    "layer1.fgd",
-    "layer2.fgd",
-    "layer3.fgd",
-    "layer4.fgd",
-    "layer5.fgd",
-    // Drop-sequence images.
-    "cavedrop.pcx",
-    "xenodrop.pcx",
-    // Cutscenes.
-    "aftermth.vcl",
-    "annihil.vcl",
-    "arrival.vcl",
-    "detect.vcl",
-    "ealogo.vcl",
-    "emerge.vcl",
-    "grndfall.vcl",
-    "nlose.vcl",
-    "presents.vcl",
-    "return.vcl",
-    "slose.vcl",
-    "triumph.vcl",
-    "war.vcl",
-    "win.vcl",
-    // Scenarios and training missions.
-    "scen00a.usg",
-    "scen01a.usg",
-    "scen02a.usg",
-    "scen03a.usg",
-    "scen04a.usg",
-    "scen05a.usg",
-    "scen06a.usg",
-    "scen07a.usg",
-    "scen08a.usg",
-    "scen09a.usg",
-    "scen10a.usg",
-    "scen11a.usg",
-    "scen12a.usg",
-    "ctrain.usg",
-    "htrain.usg",
-    "ntrain.usg",
-    "strain.usg",
-    // Screen layouts.
-    "humancon.m@l",
-    "login.m@l",
-    "maproom.m@l",
-    "review.m@l",
-    "scorpcon.m@l",
-    "scoutcon.m@l",
-    "sitroom.m@l",
-    "trainmen.m@l",
-    // Sprite banks and sky strips.
-    "msprite0.b@n",
-    "msprite1.b@n",
-    "msprite2.b@n",
-    "msprite3.b@n",
-    "msprite4.b@n",
-    "msprite5.b@n",
-    "sky_a.b@n",
-    "sky_b.b@n",
-    "sky_c.b@n",
-    "sky_d.b@n",
-    "sky_e.b@n",
-    "sky_f.b@n",
-    "sky_g.b@n",
-    "sky_h.b@n",
-    // Music.
-    "bigwin3.ms3",
-    "lose.ms3",
-    "mainthem.ms3",
-    "robot3.ms3",
-    "win1.ms3",
-    "win2.ms3",
-    // Unit models. humanoid, missile, scorpion and scout have no `.m32`.
-    "basedome.m00",
-    "basedome.m08",
-    "basedome.m16",
-    "basedome.m32",
-    "cloak.m00",
-    "cloak.m08",
-    "cloak.m16",
-    "cloak.m32",
-    "explode.m00",
-    "explode.m08",
-    "explode.m16",
-    "explode.m32",
-    "humanoid.m00",
-    "humanoid.m08",
-    "humanoid.m16",
-    "laser.m00",
-    "laser.m08",
-    "laser.m16",
-    "laser.m32",
-    "missile.m00",
-    "missile.m08",
-    "missile.m16",
-    "netrelay.m00",
-    "netrelay.m08",
-    "netrelay.m16",
-    "netrelay.m32",
-    "obst.m00",
-    "obst.m08",
-    "obst.m16",
-    "obst.m32",
-    "plasma.m00",
-    "plasma.m08",
-    "plasma.m16",
-    "plasma.m32",
-    "scorpion.m00",
-    "scorpion.m08",
-    "scorpion.m16",
-    "scout.m00",
-    "scout.m08",
-    "scout.m16",
-];
 
 /// Where the game directory setting came from, so errors can say what to change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,15 +62,16 @@ impl GameDir {
         }
     }
 
-    /// Checks that the directory exists and holds every file in [`EXPECTED_FILES`].
-    pub fn check(&self) -> Result<(), CheckError> {
+    /// Checks that the directory exists and holds every file in [`EXPECTED_FILES`],
+    /// and returns the lookup that loaders open files through.
+    pub fn check(&self) -> Result<GameFiles, CheckError> {
         self.check_files(EXPECTED_FILES)
     }
 
     /// Checks for `expected` (lowercase names). Names match case-insensitively, since
     /// files copied from DOS media are often upper case and Linux file systems are not
     /// case-insensitive.
-    fn check_files(&self, expected: &[&'static str]) -> Result<(), CheckError> {
+    fn check_files(&self, expected: &[&'static str]) -> Result<GameFiles, CheckError> {
         let error = |kind| CheckError {
             dir: self.clone(),
             kind,
@@ -216,15 +82,18 @@ impl GameDir {
         if !self.path.is_dir() {
             return Err(error(CheckErrorKind::NotADirectory));
         }
-        let present = lowercase_file_names(&self.path)
+        let by_name = index_files(&self.path)
             .map_err(|e| error(CheckErrorKind::Unreadable(e.to_string())))?;
         let missing: Vec<_> = expected
             .iter()
             .copied()
-            .filter(|name| !present.contains(*name))
+            .filter(|name| !by_name.contains_key(*name))
             .collect();
         match missing.len() {
-            0 => Ok(()),
+            0 => Ok(GameFiles {
+                dir: self.clone(),
+                by_name,
+            }),
             n if n == expected.len() => Err(error(CheckErrorKind::Empty {
                 expected: expected.len(),
             })),
@@ -233,16 +102,66 @@ impl GameDir {
     }
 }
 
-/// The lowercased names of the regular files directly inside `dir`.
-fn lowercase_file_names(dir: &Path) -> io::Result<HashSet<String>> {
-    let mut names = HashSet::new();
+/// The regular files directly inside `dir`, keyed by lowercased name. If two names
+/// differ only in case (possible on Linux), the one that sorts first wins, so the
+/// choice does not depend on directory order.
+fn index_files(dir: &Path) -> io::Result<HashMap<String, PathBuf>> {
+    let mut by_name = HashMap::new();
     for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.path().is_file() {
-            names.insert(entry.file_name().to_string_lossy().to_lowercase());
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        by_name
+            .entry(name.to_string_lossy().to_lowercase())
+            .and_modify(|kept: &mut PathBuf| {
+                if path < *kept {
+                    kept.clone_from(&path);
+                }
+            })
+            .or_insert(path);
+    }
+    Ok(by_name)
+}
+
+/// A checked game directory: finds files by their lowercase stock-install name, whatever
+/// case they have on disk. Loaders open game files through this, never by joining a
+/// name onto the directory themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameFiles {
+    dir: GameDir,
+    by_name: HashMap<String, PathBuf>,
+}
+
+// The asset loaders that call `path` and `read` arrive with the format tasks.
+#[cfg_attr(not(test), expect(dead_code))]
+impl GameFiles {
+    /// The directory the files are in, and how it was chosen.
+    pub fn dir(&self) -> &GameDir {
+        &self.dir
+    }
+
+    /// The real path of `name` (matched case-insensitively), if the directory has it.
+    pub fn path(&self, name: &str) -> Option<&Path> {
+        self.by_name.get(&name.to_lowercase()).map(PathBuf::as_path)
+    }
+
+    /// Reads all of `name` (matched case-insensitively).
+    pub fn read(&self, name: &str) -> io::Result<Vec<u8>> {
+        match self.path(name) {
+            Some(path) => std::fs::read(path),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{name} is not in game directory {}",
+                    self.dir.path.display()
+                ),
+            )),
         }
     }
-    Ok(names)
 }
 
 /// Why the game directory cannot be used. Its `Display` is the message shown to the
@@ -367,30 +286,46 @@ mod tests {
     }
 
     #[test]
-    fn expected_files_are_lowercase_and_unique() {
-        let unique: HashSet<_> = EXPECTED_FILES.iter().collect();
-        assert_eq!(unique.len(), EXPECTED_FILES.len());
-        for name in EXPECTED_FILES {
-            assert_eq!(*name, name.to_lowercase());
-        }
-    }
-
-    #[test]
     fn complete_directory_passes() {
         let tmp = TempDir::new("complete");
         for name in FEW {
             tmp.touch(name);
         }
-        assert_eq!(tmp.game_dir().check_files(FEW), Ok(()));
+        let files = tmp.game_dir().check_files(FEW).unwrap();
+        assert_eq!(files.dir(), &tmp.game_dir());
+        assert_eq!(
+            files.path("xeno.exe"),
+            Some(tmp.0.join("xeno.exe").as_path())
+        );
     }
 
     #[test]
-    fn names_match_case_insensitively() {
+    fn upper_case_install_is_found_and_read_by_lowercase_name() {
         let tmp = TempDir::new("upper");
         for name in FEW {
             tmp.touch(&name.to_uppercase());
         }
-        assert_eq!(tmp.game_dir().check_files(FEW), Ok(()));
+        std::fs::write(tmp.0.join("SCENDEF.BIN"), b"table").unwrap();
+        let files = tmp.game_dir().check_files(FEW).unwrap();
+        // Compare the file name as stored, not the whole path: on a case-insensitive
+        // file system a lowercase join would point at the same file anyway.
+        let real = files.path("scendef.bin").unwrap();
+        assert_eq!(real.file_name().unwrap(), "SCENDEF.BIN");
+        assert_eq!(files.read("scendef.bin").unwrap(), b"table");
+        assert_eq!(files.read("ScenDef.Bin").unwrap(), b"table");
+    }
+
+    #[test]
+    fn reading_an_absent_file_names_it() {
+        let tmp = TempDir::new("absent");
+        for name in FEW {
+            tmp.touch(name);
+        }
+        let files = tmp.game_dir().check_files(FEW).unwrap();
+        assert_eq!(files.path("dsounds.bin"), None);
+        let err = files.read("dsounds.bin").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("dsounds.bin"), "{err}");
     }
 
     #[test]

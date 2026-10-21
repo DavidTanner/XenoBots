@@ -40,7 +40,7 @@ dependencies are `done`, unless something else is more urgent.
 | T-004 | done | `xeno-app --game-dir` / `XENOBOTS_GAME_DIR` / `./gameFiles` resolution, plus a startup check that lists missing expected files by name | T-001 | Running without files prints a clear, actionable error and exits non-zero | Const list of 118 files in `xeno-app/src/game_dir.rs`; names match case-insensitively. Excludes installer files, `orders.txt`, and `state.rst` / `backup.map` (assumed user state). |
 | T-005 | done | Add `crates/xeno-formats` library with a `FormatError` type, a `Palette` type (256 x RGB), and the test-fixture helper `synthetic_bytes()` | T-001 | Crate compiles with one passing test | No parsers yet. `Palette::from_rgb8` (PCX trailer form) and `from_vga6` (DAC form, widened to 8 bits). `fixtures::synthetic_bytes(len, seed)` is SplitMix64; other crates get it via the `test-fixtures` feature in `[dev-dependencies]`. |
 | T-006 | done | Add `crates/xeno-tool` CLI skeleton with `inspect <file>` that prints size, extension, and a 64-byte hex preview | T-005 | Works on any file | Generic; per-format output comes with each parser. Report built in `xeno-tool/src/inspect.rs` (`insta` snapshots of synthetic files); ran without error over all 126 files of a local install. |
-| T-007 | todo | Move the expected-file list from `xeno-app` into `xeno-formats`, and give `xeno-app` a `GameDir` lookup (lowercase name -> real path) that loaders use to open files | T-004, T-005 | Upper-case installs load on Linux; `xeno-app` has no file list of its own | Confirm against the exe (T-090) whether `state.rst` and `backup.map` are read or only written. |
+| T-007 | done | Move the expected-file list from `xeno-app` into `xeno-formats`, and give `xeno-app` a `GameDir` lookup (lowercase name -> real path) that loaders use to open files | T-004, T-005 | Upper-case installs load on Linux; `xeno-app` has no file list of its own | List is `xeno_formats::files::EXPECTED_FILES`; `GameDir::check()` returns `GameFiles` (`path`/`read` by case-insensitive name). A string search of every binary finds no `state.rst`; `backup.map` is named only by `mapdvr.dvr`, with `default.map` and a `working.map` not in the install. Names are often built at run time, so read-vs-write moved to T-024. |
 
 ## M1 Formats
 
@@ -58,13 +58,13 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 | T-015 | todo | `.m00/.m08/.m16/.m32` unit models: establish what the four suffixes mean (LOD? zoom level? facing count?) and parse the header | T-013 | Doc + header struct; pixel data may remain `unknown` | Most `.m00` are exactly 18 bytes. |
 | T-016 | todo | `.m00/.m08/.m16/.m32` pixel data | T-015 | Unit sprites render to PNG | |
 | T-017 | todo | `.m@l` screen layouts (`login`, `sitroom`, `maproom`, ...) | T-013 | At least one screen renders to PNG | |
-| T-018 | todo | `.vcl` cutscenes/animations: container structure and frame decoding | T-013 | `ealogo.vcl` (smallest) renders its frames | Likely delta-coded; expect 2 PRs. |
+| T-018 | todo | `.vcl` cutscenes/animations: container structure and frame decoding | T-013 | `ealogo.vcl` (smallest) renders its frames | Likely delta-coded; expect 2 PRs. `mgavideo.dvr` names an `hlose.vcl` that a stock install does not have; find out whether it is ever played. |
 | T-019 | todo | `scendef.bin` scenario definition table | T-010 | Struct with names/indices of the 13+4 scenarios | 410 bytes; small. |
 | T-020 | todo | `.usg` scenario files: header, map grid, unit placements, objectives | T-019 | `scen00a.usg` inspect prints map size and unit list | |
 | T-021 | todo | `.fgd` layers and `fgarray.kyl` (all 1920 bytes): determine grid shape (80x24 vs 48x40) and meaning | T-010 | Doc + parser | |
 | T-022 | todo | `.ms3` music format: identify (AdLib register stream? custom sequencer?) | T-010 | Doc; parser if feasible | Audio playback is M5. |
 | T-023 | todo | `dsounds.bin` digitised SFX: directory structure, sample rate, encoding | T-010 | `xeno-tool dump` writes WAVs to an out dir | |
-| T-024 | todo | `.map` key/joystick mapping, `state.rst` save state, `xenobot.1/.2` markers | T-010 | Doc for each; parsers for `.map` and `.rst` | Small. |
+| T-024 | todo | `.map` key/joystick mapping, `state.rst` save state, `xenobot.1/.2` markers | T-010 | Doc for each; parsers for `.map` and `.rst` | Small. Settle from the code (a T-090 pass) whether `state.rst` and `backup.map` are read or only written, and update `xeno_formats::files::EXPECTED_FILES` to match. `mapdvr.dvr` names `default.map`, `working.map` and `backup.map`; no binary names `state.rst`. |
 | T-025 | todo | `.dvr` modules: document the loader protocol between `xeno.exe` and the driver modules | T-010 | Doc explaining what each driver provides | Needed to know which behaviour lives where. Ghidra's auto-analysis finds only 1-2 functions per `.dvr` from the MZ entry; locate the real entry points from `xeno.exe`'s loader. |
 | T-026 | todo | `xeno-tool inspect` runs over a whole directory (`inspect --all <dir>`) and summarises parse success per extension | T-006 | Table output; exit code 0 only if every file parsed | M1 exit criterion. |
 
@@ -193,3 +193,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | 2026-10-20 | T-010 done: `docs/re-setup.md`; noted `.dvr` entry-point finding on T-025. |
 | 2026-10-20 | T-005 done: `xeno-formats` crate with `FormatError`, `Palette` and `fixtures`. |
 | 2026-10-20 | T-006 done: `xeno-tool inspect`. |
+| 2026-10-20 | T-007 done: file list in `xeno-formats`, `GameFiles` lookup; moved the `state.rst` / `backup.map` question to T-024. |
