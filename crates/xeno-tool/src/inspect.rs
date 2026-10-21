@@ -1,6 +1,6 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models and
-//! `scendef.bin`).
+//! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
+//! `scendef.bin` and the `.usg` scenarios).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -32,6 +32,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
         "m@l" => out.push_str(&mal_details(bytes)),
         "vcl" => out.push_str(&vcl_details(bytes)),
         "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
+        "usg" => out.push_str(&usg_details(bytes)),
         _ => {}
     }
     if shown == 0 {
@@ -227,6 +228,117 @@ fn scendef_details(bytes: &[u8]) -> String {
     out
 }
 
+/// What the scenario parser makes of `bytes`: the start clock, the sky, the extent of
+/// the object positions (the file has no map grid), the terrain features, one line per
+/// object, each side's paths and the briefing's first line.
+fn usg_details(bytes: &[u8]) -> String {
+    use xeno_formats::usg::{self, Side, fixed_to_f64 as f};
+    let s = match usg::parse(bytes) {
+        Ok(s) => s,
+        Err(e) => return format!("usg:       cannot parse: {e}\n"),
+    };
+    let c = s.header.start;
+    let mut out = format!(
+        "usg:       starts {:02}:{:02}:{:02} tick {}, day {} month {} (date not applied)\n",
+        c.hour, c.minute, c.second, c.tick, c.day, c.month
+    );
+    if let Some(name) = s.background_name() {
+        writeln!(out, "usg:       sky {name}").unwrap();
+    }
+    let objects = s.objects.as_deref().unwrap_or_default();
+    let span = |coord: fn(&usg::Object) -> i32| {
+        let values = objects.iter().map(|o| f(coord(o)));
+        let min = values.clone().fold(f64::INFINITY, f64::min);
+        let max = values.fold(f64::NEG_INFINITY, f64::max);
+        format!("{min:.2}..{max:.2}")
+    };
+    if !objects.is_empty() {
+        writeln!(
+            out,
+            "usg:       no map grid; objects span x {}, y {}",
+            span(|o| o.x),
+            span(|o| o.y)
+        )
+        .unwrap();
+    }
+    if let Some(terrain) = &s.terrain {
+        writeln!(
+            out,
+            "usg:       {} terrain feature(s)",
+            terrain.features.len()
+        )
+        .unwrap();
+        for t in &terrain.features {
+            match (t.centre(), t.radius()) {
+                (Some(p), Some(r)) => writeln!(
+                    out,
+                    "usg:         circle at {:.2}, {:.2}  radius {:.2}",
+                    f(p.x),
+                    f(p.y),
+                    f64::from(r) / 256.0
+                ),
+                _ => writeln!(out, "usg:         kind {:#04x}, {} bytes", t.kind, t.size),
+            }
+            .unwrap();
+        }
+    }
+    writeln!(
+        out,
+        "usg:       {} object(s): slot, kind, side, x, y, references",
+        objects.len()
+    )
+    .unwrap();
+    for o in objects {
+        let side = match o.side() {
+            Some(Side::Human) => "human",
+            Some(Side::Alien) => "alien",
+            None => "?",
+        };
+        writeln!(
+            out,
+            "usg:       {:3}  {:<10} {side}  {:.2}, {:.2}  refs {}",
+            o.slot,
+            format!("{:?}", o.kind).to_lowercase(),
+            f(o.x),
+            f(o.y),
+            o.ref_count
+        )
+        .unwrap();
+    }
+    for (label, table) in [("alien", &s.alien_paths), ("human", &s.human_paths)] {
+        let Some(table) = table else { continue };
+        writeln!(out, "usg:       {} {label} path(s)", table.count).unwrap();
+        for p in table.used() {
+            let mission = p.mission_name().unwrap_or("?");
+            let points: Vec<String> = p
+                .waypoints()
+                .iter()
+                .map(|w| format!("{:.0},{:.0}", f(w.x), f(w.y)))
+                .collect();
+            writeln!(out, "usg:         {mission:<10} {}", points.join(" ")).unwrap();
+        }
+    }
+    let briefing = s.briefing_lines();
+    if let Some(first) = briefing.first() {
+        writeln!(
+            out,
+            "usg:       briefing, {} line(s): {first}",
+            briefing.len()
+        )
+        .unwrap();
+    }
+    for chunk in &s.other_chunks {
+        let tag = String::from_utf8_lossy(&chunk.tag);
+        writeln!(
+            out,
+            "usg:       other chunk {tag:?}, {} bytes",
+            chunk.data.len()
+        )
+        .unwrap();
+    }
+    out
+}
+
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
 /// ASCII characters. The last line is padded so its ASCII column lines up.
 pub fn hex_preview(bytes: &[u8]) -> String {
@@ -260,14 +372,14 @@ mod tests {
     use super::*;
     use xeno_formats::fixtures::{
         synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_scendef, synthetic_screen,
-        synthetic_sprite_bank, synthetic_vcl,
+        synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
     };
 
     #[test]
     fn report_of_a_synthetic_file() {
         let mut bytes = synthetic_bytes(100, 7);
         bytes[..12].copy_from_slice(b"XENO test \x00\xff");
-        insta::assert_snapshot!(report(Path::new("dir/SCEN00A.USG"), &bytes));
+        insta::assert_snapshot!(report(Path::new("dir/MAINTHEM.MS3"), &bytes));
     }
 
     #[test]
@@ -277,10 +389,10 @@ mod tests {
 
     #[test]
     fn empty_file_has_no_preview() {
-        let out = report(Path::new("empty.usg"), &[]);
+        let out = report(Path::new("empty.ms3"), &[]);
         assert_eq!(
             out,
-            "file:      empty.usg\nsize:      0 bytes (0x0)\nextension: usg\n"
+            "file:      empty.ms3\nsize:      0 bytes (0x0)\nextension: ms3\n"
         );
     }
 
@@ -396,6 +508,20 @@ mod tests {
         let out = report(Path::new("scendef.bin"), &table[..5]);
         assert!(out.contains("scendef:   cannot parse: "), "{out}");
         assert!(!report(Path::new("dsounds.bin"), &table).contains("scendef:"));
+    }
+
+    #[test]
+    fn scenarios_list_their_objects_and_paths() {
+        let file = synthetic_usg();
+        let out = report(Path::new("SCEN00A.USG"), &file);
+        let details: String = out
+            .lines()
+            .filter(|l| l.starts_with("usg:"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        insta::assert_snapshot!(details);
+        let out = report(Path::new("scen00a.usg"), &file[..file.len() - 6]);
+        assert!(out.contains("usg:       cannot parse: "), "{out}");
     }
 
     #[test]
