@@ -1,0 +1,32 @@
+---
+source: crates/xeno-formats/src/scendef.rs
+expression: parse(&two_scenarios()).unwrap()
+---
+ScenarioTable {
+    scenarios: [
+        Scenario {
+            id: 0,
+            map_box: MapBox {
+                top: 10,
+                left: 20,
+                bottom: 19,
+                right: 29,
+            },
+            unlock_level: 1,
+            state: 0,
+            name: NullString("FIRST PLACE\u{c}"),
+        },
+        Scenario {
+            id: 2,
+            map_box: MapBox {
+                top: 100,
+                left: 200,
+                bottom: 109,
+                right: 209,
+            },
+            unlock_level: 3,
+            state: 0,
+            name: NullString("SECOND\u{c}PLACE\u{c}"),
+        },
+    ],
+}

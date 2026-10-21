@@ -260,6 +260,26 @@ pub fn synthetic_model(views: &[(i16, &[SyntheticImage])]) -> Vec<u8> {
     model
 }
 
+/// `((top, left, bottom, right), unlock_level, name)`: a record for
+/// [`synthetic_scendef`].
+pub type SyntheticScenario<'a> = ((u16, u16, u16, u16), u16, &'a [u8]);
+
+/// A `scendef.bin` table with one record per entry, numbered as the game expects (id
+/// twice the position), state 0, each name NUL-terminated, then the end marker.
+pub fn synthetic_scendef(scenarios: &[SyntheticScenario]) -> Vec<u8> {
+    let mut table = Vec::new();
+    for (i, &((top, left, bottom, right), unlock_level, name)) in scenarios.iter().enumerate() {
+        let id = u16::try_from(2 * i).unwrap();
+        for word in [id, top, left, bottom, right, unlock_level, 0] {
+            table.extend(word.to_le_bytes());
+        }
+        table.extend_from_slice(name);
+        table.push(0);
+    }
+    table.extend([0xff, 0xff]);
+    table
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
