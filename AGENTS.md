@@ -132,11 +132,11 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 | `*.dvr` | 6 | DOS executables: `config`, `mapdvr`, `mgavideo`, `sounddvr`, `vgaiff`, `vgaintro`. Loadable driver/overlay modules; `config.dvr` is also LZEXE-packed (16,160 bytes unpacked), the other five are plain MZ | confirmed executables |
 | `vga240.mod` | 1 | Headerless real-mode code module that `mgavideo.dvr` loads on demand: 320x240 256-colour unchained mode at 60 Hz (from BIOS mode 12h, double-scanned), virtual-width row tables and hardware scroll. The default mode is 320x200 mode 13h (see `docs/formats/video-modes.md`) | confirmed |
 | `*.pcx` | 2 | `cavedrop`, `xenodrop`: PCX 3.0, 8-bit RLE with 256-colour trailer, 768x128 / 768x130. Decoded by `xeno_formats::pcx`; `xenodrop` is one continuous wide scene, so likely a scrolling drop-sequence backdrop (see `docs/formats/pcx.md`) | format confirmed |
-| `*.vcl` | 14 | Cutscenes / animations (`ealogo`, `presents`, `arrival`, `emerge`, `win`, `nlose`, ...). 5 KB to 133 KB | guess |
+| `*.vcl` | 14 | Cutscenes / animations (`ealogo`, `presents`, `arrival`, `emerge`, `win`, `nlose`, ...). 5 KB to 133 KB. Every one starts with a 768-byte VGA 6-bit palette (`xeno_formats::vcl::palette`, see `docs/formats/palette.md`); the frame data after it is undecoded | palette confirmed, rest guess |
 | `*.usg` | 17 | Scenarios: `scen00a`..`scen12a` plus `ctrain`, `htrain`, `ntrain`, `strain` (training missions). ~8 to 14 KB each | guess |
 | `scendef.bin` | 1 | Scenario definition table (name appears in exe strings) | likely |
 | `*.m00` `*.m08` `*.m16` `*.m32` | 11 / 11 / 11 / 7 | Per-unit model data at four sizes/LODs: `basedome`, `cloak`, `explode`, `humanoid`, `laser`, `missile`, `netrelay`, `obst`, `plasma`, `scorpion`, `scout`. `humanoid`, `missile`, `scorpion` and `scout` have no `.m32` (confirmed in the reference copy). Most `.m00` are 18 bytes (header only?) | guess |
-| `*.m@l` | 8 | Full-screen layouts: `login`, `sitroom`, `maproom`, `review`, `trainmen`, `humancon`, `scorpcon`, `scoutcon` | guess |
+| `*.m@l` | 8 | Full-screen 320x200 screens: `login`, `sitroom`, `maproom`, `review`, `trainmen`, `humancon`, `scorpcon`, `scoutcon` (`mgavideo.dvr` names them `.MRL`). Decoded, probably a 768-byte 6-bit palette, then a PackBits 64,000-byte picture; the file's outer encoding is still open (see `docs/formats/palette.md`) | likely |
 | `*.b@n` | 14 | `msprite0`..`msprite5`, `sky_a`..`sky_h`: sprite banks / sky strips | guess |
 | `*.ms3` | 6 | Music: `mainthem`, `win1`, `win2`, `bigwin3`, `lose`, `robot3`. Likely AdLib/OPL2 sequences | guess |
 | `dsounds.bin` | 1 | Digitised sound effects, 97 KB | likely |
