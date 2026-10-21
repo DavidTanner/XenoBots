@@ -1,0 +1,61 @@
+---
+source: crates/xeno-formats/src/mxx.rs
+expression: parse(&three_views()).unwrap()
+---
+Model {
+    views: [
+        View {
+            header: ViewHeader {
+                size: 18,
+                facing: -2,
+                mirror_facing: -2,
+                index_offset: 0,
+                mirror_index_offset: 0,
+                lists_offset: 4660,
+                mirror_lists_offset: 22136,
+                data_offset: 16,
+            },
+            body: [
+                9,
+                9,
+            ],
+        },
+        View {
+            header: ViewHeader {
+                size: 22,
+                facing: 8,
+                mirror_facing: 56,
+                index_offset: 16,
+                mirror_index_offset: 18,
+                lists_offset: 17,
+                mirror_lists_offset: 19,
+                data_offset: 20,
+            },
+            body: [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+            ],
+        },
+        View {
+            header: ViewHeader {
+                size: 19,
+                facing: 32,
+                mirror_facing: 32,
+                index_offset: 16,
+                mirror_index_offset: 16,
+                lists_offset: 17,
+                mirror_lists_offset: 17,
+                data_offset: 18,
+            },
+            body: [
+                7,
+                8,
+                9,
+            ],
+        },
+    ],
+}
