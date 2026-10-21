@@ -51,7 +51,7 @@ unit test, `insta` snapshot of the synthetic parse, an `inspect` branch in
 | Id | Status | Task | Depends on | Done when | Notes |
 |---|---|---|---|---|---|
 | T-010 | done | Set up reverse-engineering workspace *outside the repo*: unpack `xeno.exe` and `config.dvr` with `unlzexe`, import into Ghidra; write `docs/re-setup.md` describing the steps (no binaries, no listings) | | Doc exists; a teammate can reproduce the setup | `unlzexe` from the `lzexe` crate 0.1.1 (pure Rust, cross-platform). Doc lists SHA-256 of packed and unpacked binaries. All six `.dvr` imported too; the four unpacked ones analyse to 1-2 functions (see T-025). |
-| T-011 | todo | PCX decoder (v3.0, 8-bit RLE, 256-colour palette trailer) | T-005 | Synthetic PCX round-trips; `xeno-tool dump` writes a PNG to an out dir | `image` crate has no PCX; ~80 lines. |
+| T-011 | done | PCX decoder (v3.0, 8-bit RLE, 256-colour palette trailer) | T-005 | Synthetic PCX round-trips; `xeno-tool dump` writes a PNG to an out dir | `xeno_formats::pcx`; `fixtures::synthetic_pcx` encodes test images. `xeno-tool dump <file> --out <dir>` (default `out/`) and a pcx line in `inspect`. Both game files decode; `docs/formats/pcx.md`. |
 | T-012 | todo | Identify the video mode(s): is the logical framebuffer 320x200, 320x240 Mode-X (`vga240.mod`), or both? Record in `docs/formats/video-modes.md` | T-010 | Doc states the mode(s) with evidence | Drives T-030. |
 | T-013 | todo | Palette extraction: find where the 256-colour palette(s) come from (PCX trailer, embedded in exe, or a separate file) | T-011, T-012 | `xeno-tool palette <source>` prints 256 RGB triples | |
 | T-014 | todo | `.b@n` sprite banks (`msprite*`, `sky_*`): header, frame count, per-frame dimensions, pixel encoding | T-013 | Frames render to PNG in an out dir | Start with `msprite0.b@n` (618 bytes, likely few frames). |
@@ -194,3 +194,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | 2026-10-20 | T-005 done: `xeno-formats` crate with `FormatError`, `Palette` and `fixtures`. |
 | 2026-10-20 | T-006 done: `xeno-tool inspect`. |
 | 2026-10-20 | T-007 done: file list in `xeno-formats`, `GameFiles` lookup; moved the `state.rst` / `backup.map` question to T-024. |
+| 2026-10-20 | T-011 done: PCX decoder and `xeno-tool dump`. |

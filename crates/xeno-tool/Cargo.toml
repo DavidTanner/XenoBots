@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+xeno-formats = { path = "../xeno-formats" }
 
 [dev-dependencies]
 insta = "1.49"

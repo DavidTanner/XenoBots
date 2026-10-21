@@ -2,6 +2,7 @@
 //! reverse engineered. It only reads; anything it writes goes to a directory the user
 //! names, never into the repo.
 
+mod dump;
 mod inspect;
 
 use std::path::PathBuf;
@@ -24,6 +25,15 @@ enum Command {
         /// The file to inspect.
         file: PathBuf,
     },
+    /// Decode a file and write its images as PNGs. Supports: pcx.
+    Dump {
+        /// The file to decode.
+        file: PathBuf,
+        /// Directory to write into; created if missing. Never point it into the repo
+        /// outside the gitignored `out/`.
+        #[arg(long, default_value = "out")]
+        out: PathBuf,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,6 +42,13 @@ fn main() -> anyhow::Result<()> {
             let bytes =
                 std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
             print!("{}", inspect::report(&file, &bytes));
+        }
+        Command::Dump { file, out } => {
+            let bytes =
+                std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+            for path in dump::dump(&file, &bytes, &out)? {
+                println!("wrote {}", path.display());
+            }
         }
     }
     Ok(())

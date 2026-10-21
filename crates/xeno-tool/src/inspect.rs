@@ -1,5 +1,5 @@
-//! `inspect`: a generic summary of any file. Formats with a parser will add their own
-//! details here as their tasks land.
+//! `inspect`: a generic summary of any file, plus what the parser makes of it for
+//! formats that have one (so far: pcx).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -21,12 +21,34 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     writeln!(out, "file:      {}", file.display()).unwrap();
     writeln!(out, "size:      {0} bytes ({0:#x})", bytes.len()).unwrap();
     writeln!(out, "extension: {extension}").unwrap();
+    if extension == "pcx" {
+        out.push_str(&pcx_details(bytes));
+    }
     if shown == 0 {
         return out;
     }
     writeln!(out, "first {shown} bytes:").unwrap();
     out.push_str(&hex_preview(&bytes[..shown]));
     out
+}
+
+/// What the PCX parser makes of `bytes`, or why it could not parse them.
+fn pcx_details(bytes: &[u8]) -> String {
+    match xeno_formats::pcx::parse(bytes) {
+        Ok(pcx) => {
+            let h = &pcx.header;
+            format!(
+                "pcx:       version {}, {}x{}, {} bpp, {} plane(s), {} bytes/line, 256-colour palette\n",
+                h.version,
+                pcx.width(),
+                pcx.height(),
+                h.bits_per_pixel,
+                h.planes,
+                h.bytes_per_line,
+            )
+        }
+        Err(e) => format!("pcx:       cannot parse: {e}\n"),
+    }
 }
 
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
@@ -60,7 +82,7 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xeno_formats::fixtures::synthetic_bytes;
+    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx};
 
     #[test]
     fn report_of_a_synthetic_file() {
@@ -88,6 +110,20 @@ mod tests {
         let out = report(Path::new("big.bin"), &synthetic_bytes(1000, 1));
         assert!(out.contains("first 64 bytes:\n"));
         assert_eq!(out.lines().filter(|l| l.starts_with("000000")).count(), 4);
+    }
+
+    #[test]
+    fn pcx_files_show_their_header() {
+        let bytes = synthetic_pcx(5, 3, &synthetic_bytes(15, 1), &synthetic_bytes(768, 2));
+        let out = report(Path::new("drop.pcx"), &bytes);
+        assert!(
+            out.contains(
+                "pcx:       version 5, 5x3, 8 bpp, 1 plane(s), 6 bytes/line, 256-colour palette\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("bad.PCX"), &bytes[..10]);
+        assert!(out.contains("pcx:       cannot parse: "), "{out}");
     }
 
     #[test]

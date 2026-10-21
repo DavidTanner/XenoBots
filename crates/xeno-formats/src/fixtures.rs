@@ -31,6 +31,55 @@ pub fn synthetic_bytes(len: usize, seed: u64) -> Vec<u8> {
     bytes
 }
 
+/// A PCX 3.0 file, 8 bits per pixel, holding `pixels` (`width * height` indices, row
+/// by row) and `palette` (768 bytes of 8-bit `r, g, b`). Scanlines are padded to an
+/// even length, as the format asks, and each is run-length encoded on its own.
+pub fn synthetic_pcx(width: usize, height: usize, pixels: &[u8], palette: &[u8]) -> Vec<u8> {
+    use binrw::BinWrite;
+
+    assert_eq!(pixels.len(), width * height, "pixel count");
+    assert_eq!(palette.len(), crate::Palette::BYTES, "palette size");
+    let stride = width.next_multiple_of(2);
+    let header = crate::pcx::PcxHeader {
+        version: 5,
+        encoding: 1,
+        bits_per_pixel: 8,
+        x_min: 0,
+        y_min: 0,
+        x_max: (width - 1) as u16,
+        y_max: (height - 1) as u16,
+        h_dpi: 72,
+        v_dpi: 72,
+        ega_palette: [0; 48],
+        reserved_40: 0,
+        planes: 1,
+        bytes_per_line: stride as u16,
+        palette_info: 1,
+        h_screen_size: 0,
+        v_screen_size: 0,
+        reserved_4a: [0; 54],
+    };
+    let mut out = std::io::Cursor::new(Vec::new());
+    header.write(&mut out).unwrap();
+    let mut out = out.into_inner();
+
+    for row in pixels.chunks_exact(width) {
+        let mut row = row.to_vec();
+        row.resize(stride, 0);
+        for run in row.chunk_by(|a, b| a == b) {
+            for part in run.chunks(0x3f) {
+                if part.len() > 1 || part[0] >= 0xc0 {
+                    out.push(0xc0 | part.len() as u8);
+                }
+                out.push(part[0]);
+            }
+        }
+    }
+    out.push(crate::pcx::Pcx::PALETTE_MARKER);
+    out.extend_from_slice(palette);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
