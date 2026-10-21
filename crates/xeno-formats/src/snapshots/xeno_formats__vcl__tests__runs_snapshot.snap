@@ -1,0 +1,32 @@
+---
+source: crates/xeno-formats/src/vcl.rs
+expression: runs(&bytes).unwrap()
+---
+[
+    Literal(
+        [
+            1,
+            2,
+        ],
+    ),
+    Repeat {
+        value: 5,
+        len: 128,
+    },
+    Repeat {
+        value: 5,
+        len: 128,
+    },
+    Repeat {
+        value: 5,
+        len: 128,
+    },
+    Repeat {
+        value: 5,
+        len: 128,
+    },
+    Repeat {
+        value: 5,
+        len: 126,
+    },
+]

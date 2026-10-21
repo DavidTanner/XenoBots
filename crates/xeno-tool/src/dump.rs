@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use xeno_formats::{Palette, Rgb, ban, mal, mxx, pcx};
+use xeno_formats::{Palette, Rgb, ban, mal, mxx, pcx, vcl};
 
 /// Decodes `file` (contents `bytes`) and writes its images into `out_dir`, which is
 /// created if needed. Returns the paths written. Files that carry no palette of their
@@ -37,6 +37,13 @@ pub fn dump(
                 .with_context(|| format!("{} is not a valid screen", file.display()))?;
             let (w, h) = (mal::Screen::WIDTH, mal::Screen::HEIGHT);
             let image = indexed_to_rgb(w, h, &screen.pixels, &screen.palette);
+            vec![(stem, image.into())]
+        }
+        "vcl" => {
+            let picture = vcl::parse(bytes)
+                .with_context(|| format!("{} is not a valid cutscene picture", file.display()))?;
+            let (w, h) = (vcl::Picture::WIDTH, picture.height);
+            let image = indexed_to_rgb(w, h, &picture.pixels, &picture.palette);
             vec![(stem, image.into())]
         }
         "b@n" if stem.starts_with("sky") => {
@@ -219,7 +226,7 @@ mod tests {
     use super::*;
     use xeno_formats::fixtures::{
         synthetic_bytes, synthetic_model, synthetic_packed, synthetic_pcx, synthetic_screen,
-        synthetic_sprite_bank,
+        synthetic_sprite_bank, synthetic_vcl,
     };
 
     #[test]
@@ -269,6 +276,26 @@ mod tests {
         assert_eq!(image.dimensions(), (320, 200));
         let c = Palette::from_vga6(&palette).unwrap()[pixels[320 + 5]];
         assert_eq!(image.get_pixel(5, 1).0, [c.r, c.g, c.b]);
+    }
+
+    #[test]
+    fn vcl_pictures_dump_whole_in_their_own_palette() {
+        let out = std::env::temp_dir().join(format!("xeno-tool-vcl-{}", std::process::id()));
+        let palette: Vec<u8> = synthetic_bytes(Palette::BYTES, 9)
+            .into_iter()
+            .map(|b| b & 0x3f)
+            .collect();
+        let pixels = synthetic_bytes(640 * 400, 10);
+        let bytes = synthetic_vcl(&palette, &pixels);
+
+        let written = dump(Path::new("Arrival.VCL"), &bytes, &out, None).unwrap();
+        let image = image::open(&written[0]).unwrap().into_rgb8();
+        let _ = std::fs::remove_dir_all(&out);
+
+        assert_eq!(written, [out.join("arrival.png")]);
+        assert_eq!(image.dimensions(), (640, 400));
+        let c = Palette::from_vga6(&palette).unwrap()[pixels[640 * 399 + 639]];
+        assert_eq!(image.get_pixel(639, 399).0, [c.r, c.g, c.b]);
     }
 
     #[test]

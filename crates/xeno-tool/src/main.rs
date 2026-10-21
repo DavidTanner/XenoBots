@@ -26,7 +26,7 @@ enum Command {
         /// The file to inspect.
         file: PathBuf,
     },
-    /// Decode a file and write its images as PNGs. Supports: pcx, b@n, m@l, and the
+    /// Decode a file and write its images as PNGs. Supports: pcx, b@n, m@l, vcl, and the
     /// m00, m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
     /// it when its parts need one).
     Dump {

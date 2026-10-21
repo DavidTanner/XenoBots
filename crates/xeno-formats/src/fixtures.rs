@@ -155,7 +155,26 @@ pub fn synthetic_screen(palette: &[u8], pixels: &[u8]) -> Vec<u8> {
     assert_eq!(palette.len(), crate::Palette::BYTES, "palette size");
     assert_eq!(pixels.len(), Screen::WIDTH * Screen::HEIGHT, "pixel count");
     let mut data = palette.to_vec();
-    for row in pixels.as_chunks::<{ Screen::WIDTH }>().0 {
+    pack_rows(&mut data, pixels, Screen::WIDTH);
+    synthetic_packed(&data)
+}
+
+/// A `.vcl` picture: `palette` (768 bytes of VGA 6-bit triples), then `pixels` (rows
+/// 640 wide) in PackBits, row by row as [`synthetic_screen`] does. Not packed.
+pub fn synthetic_vcl(palette: &[u8], pixels: &[u8]) -> Vec<u8> {
+    use crate::vcl::Picture;
+
+    assert_eq!(palette.len(), crate::Palette::BYTES, "palette size");
+    assert_eq!(pixels.len() % Picture::WIDTH, 0, "whole rows");
+    let mut data = palette.to_vec();
+    pack_rows(&mut data, pixels, Picture::WIDTH);
+    data
+}
+
+/// Appends `pixels` to `data` in PackBits, each `width`-pixel row on its own. Runs of
+/// three or more equal bytes become repeats; the rest are literals.
+fn pack_rows(data: &mut Vec<u8>, pixels: &[u8], width: usize) {
+    for row in pixels.chunks(width) {
         let mut literals: Vec<u8> = Vec::new();
         let flush = |data: &mut Vec<u8>, literals: &mut Vec<u8>| {
             for part in literals.chunks(128) {
@@ -169,14 +188,13 @@ pub fn synthetic_screen(palette: &[u8], pixels: &[u8]) -> Vec<u8> {
                 literals.extend_from_slice(run);
                 continue;
             }
-            flush(&mut data, &mut literals);
+            flush(data, &mut literals);
             for part in run.chunks(128) {
                 data.extend([(257 - part.len()) as u8, part[0]]);
             }
         }
-        flush(&mut data, &mut literals);
+        flush(data, &mut literals);
     }
-    synthetic_packed(&data)
 }
 
 /// `(width, height, pixels)`: an image for [`synthetic_model`].
