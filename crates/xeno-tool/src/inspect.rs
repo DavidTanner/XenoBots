@@ -1,5 +1,5 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx).
+//! formats that have one (so far: pcx, b@n).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -21,8 +21,10 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     writeln!(out, "file:      {}", file.display()).unwrap();
     writeln!(out, "size:      {0} bytes ({0:#x})", bytes.len()).unwrap();
     writeln!(out, "extension: {extension}").unwrap();
-    if extension == "pcx" {
-        out.push_str(&pcx_details(bytes));
+    match extension.as_str() {
+        "pcx" => out.push_str(&pcx_details(bytes)),
+        "b@n" => out.push_str(&ban_details(file, bytes)),
+        _ => {}
     }
     if shown == 0 {
         return out;
@@ -49,6 +51,47 @@ fn pcx_details(bytes: &[u8]) -> String {
         }
         Err(e) => format!("pcx:       cannot parse: {e}\n"),
     }
+}
+
+/// What the `.b@n` parsers make of `bytes`: a sky strip if the name starts with
+/// `sky`, otherwise a sprite bank.
+fn ban_details(file: &Path, bytes: &[u8]) -> String {
+    use xeno_formats::{ban, packed};
+
+    let decoded = match packed::decompress(bytes) {
+        Ok(data) => data.len(),
+        Err(e) => return format!("packed:    cannot decompress: {e}\n"),
+    };
+    let packed = format!("packed:    {decoded} bytes decoded\n");
+    let is_sky = file
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().to_lowercase().starts_with("sky"));
+    let details = if is_sky {
+        match ban::parse_sky(bytes) {
+            Ok(_) => format!(
+                "b@n:       sky strip, {}x{}",
+                ban::Sky::WIDTH,
+                ban::Sky::HEIGHT
+            ),
+            Err(e) => format!("b@n:       cannot parse as a sky strip: {e}"),
+        }
+    } else {
+        match ban::parse_sprites(bytes) {
+            Ok(bank) => {
+                let spans = bank
+                    .sprites
+                    .iter()
+                    .filter(|s| s.header.has_row_spans())
+                    .count();
+                format!(
+                    "b@n:       sprite bank, {} sprites ({spans} in row spans)",
+                    bank.sprites.len()
+                )
+            }
+            Err(e) => format!("b@n:       cannot parse as a sprite bank: {e}"),
+        }
+    };
+    format!("{packed}{details}\n")
 }
 
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
@@ -82,7 +125,7 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx};
+    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx, synthetic_sprite_bank};
 
     #[test]
     fn report_of_a_synthetic_file() {
@@ -124,6 +167,24 @@ mod tests {
         );
         let out = report(Path::new("bad.PCX"), &bytes[..10]);
         assert!(out.contains("pcx:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn sprite_banks_and_sky_strips_are_summarised() {
+        let bank = synthetic_sprite_bank(&[(1, 1, &[1]), (2, 2, &[1, 2, 3, 4])]);
+        let out = report(Path::new("MSPRITE0.B@N"), &bank);
+        assert!(out.contains("packed:    23 bytes decoded\n"), "{out}");
+        assert!(
+            out.contains("b@n:       sprite bank, 2 sprites (0 in row spans)\n"),
+            "{out}"
+        );
+        let out = report(Path::new("sky_a.b@n"), &bank);
+        assert!(
+            out.contains("b@n:       cannot parse as a sky strip: "),
+            "{out}"
+        );
+        let out = report(Path::new("sky_a.b@n"), b"\x01");
+        assert!(out.contains("packed:    cannot decompress: "), "{out}");
     }
 
     #[test]

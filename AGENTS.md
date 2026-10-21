@@ -136,8 +136,8 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 | `*.usg` | 17 | Scenarios: `scen00a`..`scen12a` plus `ctrain`, `htrain`, `ntrain`, `strain` (training missions). ~8 to 14 KB each | guess |
 | `scendef.bin` | 1 | Scenario definition table (name appears in exe strings) | likely |
 | `*.m00` `*.m08` `*.m16` `*.m32` | 11 / 11 / 11 / 7 | Per-unit model data at four sizes/LODs: `basedome`, `cloak`, `explode`, `humanoid`, `laser`, `missile`, `netrelay`, `obst`, `plasma`, `scorpion`, `scout`. `humanoid`, `missile`, `scorpion` and `scout` have no `.m32` (confirmed in the reference copy). Most `.m00` are 18 bytes (header only?) | guess |
-| `*.m@l` | 8 | Full-screen 320x200 screens: `login`, `sitroom`, `maproom`, `review`, `trainmen`, `humancon`, `scorpcon`, `scoutcon` (`mgavideo.dvr` names them `.MRL`). Decoded, probably a 768-byte 6-bit palette, then a PackBits 64,000-byte picture; the file's outer encoding is still open (see `docs/formats/palette.md`) | likely |
-| `*.b@n` | 14 | `msprite0`..`msprite5`, `sky_a`..`sky_h`: sprite banks / sky strips | guess |
+| `*.m@l` | 8 | Full-screen 320x200 screens: `login`, `sitroom`, `maproom`, `review`, `trainmen`, `humancon`, `scorpcon`, `scoutcon` (`mgavideo.dvr` names them `.MRL`). Packed (`xeno_formats::packed`, see `docs/formats/packed.md`); unpacked, every one is a 768-byte 6-bit palette, then PackBits that expands to exactly 64,000 bytes (see `docs/formats/palette.md`) | layers confirmed; loader not traced |
+| `*.b@n` | 14 | Packed `.BIN` files (`docs/formats/packed.md`). `msprite0`..`msprite5` are sprite banks: records of width, height, flags and 8-bit pixels, raw or in row spans. `sky_a`..`sky_h` are bare 342x54 horizon images. No palette. Decoded by `xeno_formats::ban` (see `docs/formats/b@n.md`) | layout confirmed |
 | `*.ms3` | 6 | Music: `mainthem`, `win1`, `win2`, `bigwin3`, `lose`, `robot3`. Likely AdLib/OPL2 sequences | guess |
 | `dsounds.bin` | 1 | Digitised sound effects, 97 KB | likely |
 | `*.fgd`, `fgarray.kyl` | 6 | All exactly 1920 bytes = 80x24. Text-mode screen layouts or 48x40 grids | guess |

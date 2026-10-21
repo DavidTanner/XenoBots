@@ -1,0 +1,51 @@
+---
+source: crates/xeno-formats/src/ban.rs
+expression: parse_sprites(&synthetic_packed(&mixed_bank())).unwrap()
+---
+SpriteBank {
+    unknown_00: 0,
+    sprites: [
+        Sprite {
+            header: SpriteHeader {
+                size: 12,
+                width: 3,
+                height: 2,
+                flags: 0,
+                unknown_05: 8,
+            },
+            pixels: [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+            ],
+            trailing_empty_span: false,
+        },
+        Sprite {
+            header: SpriteHeader {
+                size: 15,
+                width: 4,
+                height: 3,
+                flags: 2,
+                unknown_05: 8,
+            },
+            pixels: [
+                0,
+                7,
+                8,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                9,
+            ],
+            trailing_empty_span: false,
+        },
+    ],
+}

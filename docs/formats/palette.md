@@ -10,7 +10,7 @@ brings its own palette:
 |---|---|---|---|---|
 | `.pcx` (`xenodrop`, `cavedrop`) | 8 bits per channel | 768-byte trailer after the `0x0c` marker (see `pcx.md`) | confirmed | `xeno_formats::pcx` |
 | `.vcl` (all 14) | VGA DAC, 6 bits per channel | First 768 bytes of the file | confirmed from the data; the loader is not traced yet | `xeno_formats::vcl::palette` |
-| `.m@l` screens (all 8) | VGA DAC, 6 bits per channel | First 768 bytes of the *decoded* screen; the file's outer encoding is not decoded yet | likely | not yet (T-017) |
+| `.m@l` screens (all 8) | VGA DAC, 6 bits per channel | First 768 bytes of the screen after unpacking (`packed.md`) | likely | not yet (T-017) |
 | IFF ILBM/PBM `CMAP` | 8 bits per channel (IFF standard) | `CMAP` chunk | `vgaiff.dvr` only; no IFF file is in the install (see below) | no |
 | Colour-animation records | VGA DAC, 6 bits per channel | Embedded in `mgavideo.dvr` and `vgaintro.dvr` data | partial | no |
 
@@ -18,8 +18,9 @@ Not palette sources, as far as the evidence goes:
 
 - `xeno.exe` never writes the DAC, never calls `int 10h`, and holds no 768-byte run of
   values in the DAC range that varies like a palette. It leaves palettes to the drivers.
-- The `.b@n` sprite banks and the `.m00`..`.m32` models are drawn with whatever
-  palette is current. Their headers are far too short to hold one (guess, T-014/T-015).
+- The `.b@n` sprite banks and sky strips hold no palette (confirmed, T-014; see
+  `b@n.md`). The `.m00`..`.m32` model headers are far too short to hold one (guess,
+  T-015). Both are drawn with whatever palette is current.
 
 `xeno-tool palette <file>` prints the palette of a `.pcx` or `.vcl` file, one colour
 per line (index, `#rrggbb`, decimal channels), widened to 8 bits. For any other file,
@@ -61,8 +62,10 @@ reading code, which may never run in normal play.
   to unpack 64,000 bytes (one 320x200 screen) from buffer offset 0x300 straight to video
   memory at `A000:0000`. A sibling routine (~0x5ab) unpacks the picture only and keeps
   the current palette. The full-screen 320x200 assets `mgavideo.dvr` names are the
-  `.MRL` screens (`SITROOM`, `LOGIN`, ...), stored on disk as `.m@l`, hence the "likely"
-  in the table above.
+  `.MRL` screens (`SITROOM`, `LOGIN`, ...), stored on disk packed as `.m@l`. Unpacked
+  (`packed.md`), every one is 768 bytes of palette followed by a PackBits stream that
+  expands to exactly 64,000 bytes. The "likely" in the table above remains only because
+  the `.MRL` loader that feeds this routine has not been traced (T-017).
 - **Host slot `0x292`** is a PackBits decoder in `xeno.exe` (unpacked file offset
   ~0x14fcf, Ghidra `1fe6:456f`). A control byte `n` of 0..=127 copies the next `n + 1`
   bytes. Otherwise the next byte is repeated `257 - n` times. Decoding stops once the
@@ -100,11 +103,6 @@ the list (mgavideo ~0xc66).
 
 ## Open questions
 
-- The outer encoding of the `.m@l` files (T-017). Each starts with a u16 (1,464 to
-  2,633 across the eight files), then control bytes in which `n < 0x80` introduces `n + 1`
-  literal bytes, as in PackBits. The first literal run is already palette triples
-  (6-bit, colour 0 black). Plain PackBits does not reproduce 768 + 64,000 bytes for
-  most files, so the packets with the high bit set mean something else.
 - Which code loads `.vcl` palettes and when they reach the DAC (T-018). `vga240.mod`
   contains a loader that reads a 768-byte palette and then RLE data into the four planes,
   which fits the `.vcl` layout (T-027).

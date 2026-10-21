@@ -80,6 +80,72 @@ pub fn synthetic_pcx(width: usize, height: usize, pixels: &[u8], palette: &[u8])
     out
 }
 
+/// `data` compressed the way `.b@n` and `.m@l` files are (see `crate::packed`), header
+/// included. A greedy matcher: not the game's compressor, but the same stream format.
+pub fn synthetic_packed(data: &[u8]) -> Vec<u8> {
+    use crate::packed::{END, PackedHeader};
+
+    const WINDOW: usize = 1024;
+    const MAX_MATCH: usize = 32;
+    // Length 1 can collide with the end marker; 3 is where a match starts to pay.
+    const MIN_MATCH: usize = 3;
+
+    let paragraphs = data.len().div_ceil(PackedHeader::PARAGRAPH);
+    let mut out = u16::try_from(paragraphs)
+        .expect("data fits in a u16 paragraph count")
+        .to_le_bytes()
+        .to_vec();
+    let mut literals: Vec<u8> = Vec::new();
+    let flush = |out: &mut Vec<u8>, literals: &mut Vec<u8>| {
+        for run in literals.chunks(0x80) {
+            out.push(run.len() as u8 - 1);
+            out.extend_from_slice(run);
+        }
+        literals.clear();
+    };
+
+    let mut pos = 0;
+    while pos < data.len() {
+        let (mut best_len, mut best_distance) = (0, 0);
+        for distance in 1..=pos.min(WINDOW) {
+            let len = (0..MAX_MATCH.min(data.len() - pos))
+                .take_while(|&k| data[pos - distance + k] == data[pos + k])
+                .count();
+            if len > best_len {
+                (best_len, best_distance) = (len, distance);
+            }
+        }
+        if best_len < MIN_MATCH {
+            literals.push(data[pos]);
+            pos += 1;
+            continue;
+        }
+        flush(&mut out, &mut literals);
+        let d = best_distance - 1;
+        out.push(0x80 | ((best_len - 1) as u8) << 2 | ((d >> 1) & 1) as u8 | ((d & 1) as u8) << 1);
+        out.push((d >> 2) as u8);
+        pos += best_len;
+    }
+    flush(&mut out, &mut literals);
+    out.push(END);
+    out
+}
+
+/// A packed `.b@n` sprite bank holding `sprites`, each `(width, height, pixels)` with
+/// `width * height` pixels stored raw (no row spans).
+pub fn synthetic_sprite_bank(sprites: &[(u8, u8, &[u8])]) -> Vec<u8> {
+    let mut bank = vec![0; 4];
+    for &(width, height, pixels) in sprites {
+        assert_eq!(pixels.len(), usize::from(width) * usize::from(height));
+        let size = u16::try_from(crate::ban::SpriteHeader::SIZE + pixels.len()).unwrap();
+        bank.extend(size.to_le_bytes());
+        bank.extend([width, height, 0, 8]);
+        bank.extend_from_slice(pixels);
+    }
+    bank.extend([0, 0]);
+    synthetic_packed(&bank)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

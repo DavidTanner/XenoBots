@@ -26,7 +26,7 @@ enum Command {
         /// The file to inspect.
         file: PathBuf,
     },
-    /// Decode a file and write its images as PNGs. Supports: pcx.
+    /// Decode a file and write its images as PNGs. Supports: pcx, b@n.
     Dump {
         /// The file to decode.
         file: PathBuf,
@@ -34,6 +34,10 @@ enum Command {
         /// outside the gitignored `out/`.
         #[arg(long, default_value = "out")]
         out: PathBuf,
+        /// Take colours from this file's palette (pcx, vcl) for files that have none
+        /// of their own, such as b@n. Without it they come out in grey.
+        #[arg(long)]
+        palette: Option<PathBuf>,
     },
     /// Print a file's 256-colour palette, one colour per line. Finds it by extension
     /// (pcx, vcl), or reads it raw from `--offset`.
@@ -56,10 +60,17 @@ fn main() -> anyhow::Result<()> {
                 std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
             print!("{}", inspect::report(&file, &bytes));
         }
-        Command::Dump { file, out } => {
+        Command::Dump { file, out, palette } => {
             let bytes =
                 std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
-            for path in dump::dump(&file, &bytes, &out)? {
+            let palette = palette
+                .map(|path| {
+                    let bytes = std::fs::read(&path)
+                        .with_context(|| format!("cannot read {}", path.display()))?;
+                    palette::find(&path, &bytes, None).map(|(palette, _)| palette)
+                })
+                .transpose()?;
+            for path in dump::dump(&file, &bytes, &out, palette.as_ref())? {
                 println!("wrote {}", path.display());
             }
         }
