@@ -1,6 +1,7 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
 //! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
-//! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers and the `.ms3` music).
+//! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers, the `.ms3` music and the
+//! `dsounds.bin` sound effects).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -25,8 +26,12 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     let is_scendef = file
         .file_name()
         .is_some_and(|n| n.eq_ignore_ascii_case("scendef.bin"));
+    let is_dsounds = file
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("dsounds.bin"));
     match extension.as_str() {
         _ if is_scendef => out.push_str(&scendef_details(bytes)),
+        _ if is_dsounds => out.push_str(&dsounds_details(bytes)),
         "pcx" => out.push_str(&pcx_details(bytes)),
         "b@n" => out.push_str(&ban_details(file, bytes)),
         "m@l" => out.push_str(&mal_details(bytes)),
@@ -222,6 +227,29 @@ fn fgd_details(file: &Path, bytes: &[u8]) -> String {
         Layer::LEN,
         Layer::WINDOW,
     )
+}
+
+/// What the sound parser makes of `bytes`: one line per sound with its length, the
+/// rate the driver plays it at and its duration.
+fn dsounds_details(bytes: &[u8]) -> String {
+    let bank = match xeno_formats::dsounds::parse(bytes) {
+        Ok(bank) => bank,
+        Err(e) => return format!("dsounds:   cannot parse: {e}\n"),
+    };
+    let mut out = format!(
+        "dsounds:   {} sound(s), unsigned 8-bit mono: index, samples, rate, seconds\n",
+        bank.sounds.len()
+    );
+    for (i, sound) in bank.sounds.iter().enumerate() {
+        let (len, rate) = (sound.samples.len(), sound.sample_rate());
+        let seconds = len as f64 / f64::from(rate.max(1));
+        writeln!(
+            out,
+            "dsounds:   {i:2}  {len:5}  {rate:4} Hz  {seconds:.2} s"
+        )
+        .unwrap();
+    }
+    out
 }
 
 /// What the music parser makes of `bytes`: the signature, the events by kind and the
@@ -442,8 +470,8 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_ms3, synthetic_pcx, synthetic_scendef,
-        synthetic_screen, synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
+        synthetic_bytes, synthetic_dsounds, synthetic_model, synthetic_ms3, synthetic_pcx,
+        synthetic_scendef, synthetic_screen, synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
     };
 
     #[test]
@@ -610,6 +638,22 @@ mod tests {
         );
         let out = report(Path::new("win1.ms3"), &song[..song.len() - 3]);
         assert!(out.contains("ms3:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn sounds_show_their_length_and_rate() {
+        let bytes = synthetic_dsounds(&[(0xffff, &[0x80; 7231]), (0x4000, &[0x80; 904])]);
+        let out = report(Path::new("DSOUNDS.BIN"), &bytes);
+        assert!(
+            out.contains(
+                "dsounds:   2 sound(s), unsigned 8-bit mono: index, samples, rate, seconds\n\
+                 dsounds:    0   7231  7231 Hz  1.00 s\n\
+                 dsounds:    1    904  1808 Hz  0.50 s\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("dsounds.bin"), &bytes[..10]);
+        assert!(out.contains("dsounds:   cannot parse: "), "{out}");
     }
 
     #[test]

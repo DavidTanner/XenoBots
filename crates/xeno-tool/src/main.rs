@@ -5,6 +5,7 @@
 mod dump;
 mod inspect;
 mod palette;
+mod wav;
 
 use std::path::PathBuf;
 
@@ -28,7 +29,7 @@ enum Command {
     },
     /// Decode a file and write its images as PNGs. Supports: pcx, b@n, m@l, vcl, and the
     /// m00, m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
-    /// it when its parts need one).
+    /// it when its parts need one). dsounds.bin gives one WAV per sound.
     Dump {
         /// The file to decode.
         file: PathBuf,

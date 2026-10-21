@@ -379,6 +379,23 @@ pub fn synthetic_ms3(programs: &[u8], events: &[u8]) -> Vec<u8> {
     song
 }
 
+/// A `dsounds.bin`: for each `(step, samples)`, a block of whole paragraphs with the
+/// header and samples, padded with 0xaa; then the terminating zero word.
+pub fn synthetic_dsounds(sounds: &[(u16, &[u8])]) -> Vec<u8> {
+    let mut file = Vec::new();
+    for &(step, samples) in sounds {
+        let end = 4 + samples.len();
+        let paragraphs = end.div_ceil(16);
+        file.extend(u16::try_from(paragraphs).unwrap().to_le_bytes());
+        file.extend(u16::try_from(end).unwrap().to_le_bytes());
+        file.extend(step.to_le_bytes());
+        file.extend(samples);
+        file.resize(file.len() + paragraphs * 16 - end, 0xaa);
+    }
+    file.extend([0, 0]);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

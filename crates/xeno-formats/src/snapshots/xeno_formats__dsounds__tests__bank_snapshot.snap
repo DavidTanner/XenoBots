@@ -1,0 +1,25 @@
+---
+source: crates/xeno-formats/src/dsounds.rs
+expression: parse(&bytes).unwrap()
+---
+Bank {
+    sounds: [
+        Sound {
+            header: Header {
+                end: 7,
+                step: 65535,
+            },
+            samples: 809070,
+            unknown_tail: aaaaaaaaaaaaaaaaaa,
+        },
+        Sound {
+            header: Header {
+                end: 17,
+                step: 16384,
+            },
+            samples: 81818181818181818181818181,
+            unknown_tail: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+        },
+    ],
+    trailing: [],
+}
