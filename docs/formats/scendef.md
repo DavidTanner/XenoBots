@@ -72,11 +72,14 @@ All addresses are in the unpacked `xeno.exe` (`docs/re-setup.md`), Ghidra's segm
   `left <= x <= right` and `top <= y <= bottom`. The click is refused when
   `unlock_level` is above the player's progress or `state` is 0xa.
 
+## Scenario files
+
+Record `n` loads `scenNNa.usg`. The game writes `id / 2` as two digits into the
+template `SCEN00A.USG`, and the selection's high byte picks the letter (T-020, see
+`usg.md`).
+
 ## Open questions
 
-- How a record maps to its `.USG` file. The obvious guess is record `n` to
-  `scenNNa.usg` (13 records, 13 files), but the code that builds the file name from the
-  selection has not been read. Settle this in T-020 or T-042.
 - What each `state` value means, and what sets the player's progress value
   `DS:0x5f9b` (T-042).
 - What the draw values chosen by `state` look like (T-042).

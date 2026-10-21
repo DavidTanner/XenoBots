@@ -1,10 +1,10 @@
 ---
 source: crates/xeno-tool/src/inspect.rs
-expression: "report(Path::new(\"dir/SCEN00A.USG\"), &bytes)"
+expression: "report(Path::new(\"dir/MAINTHEM.MS3\"), &bytes)"
 ---
-file:      dir/SCEN00A.USG
+file:      dir/MAINTHEM.MS3
 size:      100 bytes (0x64)
-extension: usg
+extension: ms3
 first 64 bytes:
 00000000  58 45 4e 4f 20 74 65 73  74 20 00 ff d7 3c 4c 04  |XENO test ...<L.|
 00000010  02 2a b1 ba 80 40 98 e6  cb 29 3e 67 70 eb 3a 95  |.*...@...)>gp.:.|

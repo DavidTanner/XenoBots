@@ -280,6 +280,94 @@ pub fn synthetic_scendef(scenarios: &[SyntheticScenario]) -> Vec<u8> {
     table
 }
 
+/// The chunks of a small made-up `.usg` scenario, in the stock order, for
+/// [`synthetic_usg_from`]: a start clock of 07:29:37 tick 20, day 0, month 3; a round
+/// terrain feature and a kind-0x12 record; a human humanoid at (95.5, 136.25) and an
+/// alien relay (both 0x18 bytes, not the stock 0x172 and 0x34, to keep snapshots
+/// short); one alien RECON path of two points and no human paths; a three-line
+/// briefing; and the sky `SKY_A   .BIN`.
+pub fn synthetic_usg_chunks() -> Vec<([u8; 4], Vec<u8>)> {
+    let words = |ws: &[u16]| ws.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
+    let fixed =
+        |whole: i16, fraction: u16| (i32::from(whole) << 16 | i32::from(fraction)).to_le_bytes();
+
+    let mut header = words(&[0x80]);
+    header.extend([7, 29, 37, 20, 0, 3]);
+    header.extend(words(&[0xa0]));
+    header.resize(16, 0);
+
+    let mut terrain = words(&[24, 0x1014]);
+    terrain.extend(fixed(120, 0));
+    terrain.extend(fixed(-2, 0));
+    terrain.extend(words(&[0x2100, 3, 0x0965, 0x0643, 0x0321, 0x14]));
+    terrain.extend(words(&[24, 0x0812]));
+    terrain.extend(synthetic_bytes(20, 7));
+    terrain.extend(words(&[0]));
+    terrain.extend([0xa0; 6]);
+
+    let object = |slot: u16, refs: u16, kind: u16, x: [u8; 4], y: [u8; 4], flags: u8| {
+        let mut o = words(&[0x18, slot, refs, kind, slot]);
+        o.extend(x);
+        o.extend(y);
+        let mut data = synthetic_bytes(12, u64::from(slot));
+        data[0x16 - 12] = flags;
+        o.extend(data);
+        o
+    };
+    let mut objects = words(&[2]);
+    objects.extend(object(0, 0, 0, fixed(95, 0x8000), fixed(136, 0x4000), 0x66));
+    objects.extend(object(1, 1, 4, fixed(138, 0), fixed(138, 0), 0x5a));
+
+    let path_table = |paths: &[(u8, &[(i16, i16)])]| {
+        let mut table = words(&[u16::try_from(paths.len()).unwrap()]);
+        for (mission, points) in paths {
+            table.extend([u8::try_from(points.len()).unwrap(), *mission]);
+            table.extend([0, 0, 1, 0, 3, 7, 7, 3, 1, 3]);
+            for &(x, y) in *points {
+                table.extend(fixed(x, 0x8888));
+                table.extend(fixed(y, 0x7171));
+            }
+            table.resize(2 + (table.len() - 2).next_multiple_of(140), 0);
+        }
+        table.resize(1122, 0);
+        table
+    };
+
+    vec![
+        (*b"SHDR", header),
+        (*b"MAPP", terrain),
+        (*b"DCBS", objects),
+        (*b"APTH", path_table(&[(3, &[(122, 138), (95, 136)])])),
+        (*b"HPTH", path_table(&[])),
+        (
+            *b"ORDR",
+            b"ATTACK THE BASE.\r\n\r\nGOOD LUCK.\r\n\x1a\x1a\x00".to_vec(),
+        ),
+        (*b"BGND", {
+            let mut name = b"SKY_A   .BIN".to_vec();
+            name.resize(64, 0);
+            name
+        }),
+        (*b"TERM", Vec::new()),
+    ]
+}
+
+/// A `.usg` file made of `chunks`, each written as tag, u16 size, data.
+pub fn synthetic_usg_from(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+    let mut file = Vec::new();
+    for (tag, data) in chunks {
+        file.extend(tag);
+        file.extend(u16::try_from(data.len()).unwrap().to_le_bytes());
+        file.extend(data);
+    }
+    file
+}
+
+/// The scenario of [`synthetic_usg_chunks`] as a file.
+pub fn synthetic_usg() -> Vec<u8> {
+    synthetic_usg_from(&synthetic_usg_chunks())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

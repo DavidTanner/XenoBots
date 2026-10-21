@@ -11,7 +11,8 @@ every file with `@` in its extension), [`b@n.md`](b@n.md) (sprite banks and sky
 strips), [`m@l.md`](m@l.md) (full-screen pictures), [`vcl.md`](vcl.md) (cutscene
 pictures), [`mxx.md`](mxx.md) (the
 `.m00`/`.m08`/`.m16`/`.m32` unit models),
-[`scendef.md`](scendef.md) (the campaign scenario table),
+[`scendef.md`](scendef.md) (the campaign scenario table), [`usg.md`](usg.md) (the
+scenarios),
 [`palette.md`](palette.md) (where every
 palette comes from and how it reaches the DAC), and [`video-modes.md`](video-modes.md)
 (the display modes, which is not a file type but drives the renderer). Parser tasks in `NEXT_STEPS.md` (milestone
