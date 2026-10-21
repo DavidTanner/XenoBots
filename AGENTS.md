@@ -140,7 +140,7 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 | `*.b@n` | 14 | Packed `.BIN` files (`docs/formats/packed.md`). `msprite0`..`msprite5` are sprite banks: records of width, height, flags and 8-bit pixels, raw or in row spans. `sky_a`..`sky_h` are bare 342x54 horizon images. No palette. Decoded by `xeno_formats::ban` (see `docs/formats/b@n.md`) | layout confirmed |
 | `*.ms3` | 6 | Music: `mainthem`, `win1`, `win2`, `bigwin3`, `lose`, `robot3`. Likely AdLib/OPL2 sequences | guess |
 | `dsounds.bin` | 1 | Digitised sound effects, 97 KB | likely |
-| `*.fgd`, `fgarray.kyl` | 6 | All exactly 1920 bytes = 80x24. Text-mode screen layouts or 48x40 grids | guess |
+| `*.fgd`, `fgarray.kyl` | 6 | All exactly 1920 bytes, but not grids: one byte per column of a 1920-column profile, the row where a black silhouette's edge is. `vgaintro.dvr` scrolls a 768-column window of each over the intro drop backdrops with parallax: `layer3`/`layer4` are the near and far floors over `xenodrop.pcx`, `layer1`/`layer2` the floors and `layer5` the ceiling over `cavedrop.pcx`. `fgarray.kyl` has the same layout but nothing loads it (an earlier draft of `layer3`?). Decoded by `xeno_formats::fgd` (see `docs/formats/fgd.md`) | confirmed; `fgarray.kyl` unused |
 | `*.map` | 2 | `default.map`, `backup.map`: tiny (26 / 122 bytes). Key or joystick mapping | guess |
 | `state.rst` | 1 | Saved game / resume state. No binary contains the name as a string (names may be built at run time) | guess |
 | `xenobot.1`, `xenobot.2` | 2 | 4-byte floppy-disk markers used by the installer | confirmed from `install.bat` |

@@ -6,6 +6,7 @@
 
 pub mod ban;
 mod error;
+pub mod fgd;
 pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;

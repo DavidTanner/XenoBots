@@ -50,7 +50,9 @@ of a scanline, but the parser accepts runs that do, since other encoders produce
 - Both images are 768 pixels wide, more than the 320-pixel screen. The decoded
   `xenodrop` is one continuous scene rather than a strip of frames, which suggests a
   horizontally scrolling backdrop for the drop sequence. Confirm from the code that
-  draws it.
+  draws it. `vgaintro.dvr` draws the `.fgd` silhouettes over all 768 columns of it
+  and keeps a clean copy below it in video memory (`fgd.md`); the scroll timing is
+  T-038.
 - The DPI fields hold 640 and 400, which look like a screen size written by the
   paint program rather than real DPI. Not used by the parser.
 - Whether the trailer palette is the one the game uploads to the DAC while showing
