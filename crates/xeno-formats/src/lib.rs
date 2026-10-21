@@ -5,6 +5,7 @@
 //! `docs/formats/` for what is known about each one.
 
 mod error;
+pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 mod palette;

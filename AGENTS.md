@@ -142,7 +142,7 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 | `dsounds.bin` | 1 | Digitised sound effects, 97 KB | likely |
 | `*.fgd`, `fgarray.kyl` | 6 | All exactly 1920 bytes = 80x24. Text-mode screen layouts or 48x40 grids | guess |
 | `*.map` | 2 | `default.map`, `backup.map`: tiny (26 / 122 bytes). Key or joystick mapping | guess |
-| `state.rst` | 1 | Saved game / resume state | guess |
+| `state.rst` | 1 | Saved game / resume state. No binary contains the name as a string (names may be built at run time) | guess |
 | `xenobot.1`, `xenobot.2` | 2 | 4-byte floppy-disk markers used by the installer | confirmed from `install.bat` |
 | `orders.txt` | 1 | Placeholder text (an EBS test message) | confirmed |
 

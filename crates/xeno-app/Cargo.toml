@@ -10,3 +10,4 @@ publish.workspace = true
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
+xeno-formats = { path = "../xeno-formats" }
