@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use xeno_formats::{Palette, Rgb, ban, pcx};
+use xeno_formats::{Palette, Rgb, ban, mxx, pcx};
 
 /// Decodes `file` (contents `bytes`) and writes its images into `out_dir`, which is
 /// created if needed. Returns the paths written. Files that carry no palette of their
@@ -30,13 +30,13 @@ pub fn dump(
             let pcx = pcx::parse(bytes)
                 .with_context(|| format!("{} is not a valid PCX", file.display()))?;
             let image = indexed_to_rgb(pcx.width(), pcx.height(), &pcx.pixels, &pcx.palette);
-            vec![(stem, image)]
+            vec![(stem, image.into())]
         }
         "b@n" if stem.starts_with("sky") => {
             let sky = ban::parse_sky(bytes)
                 .with_context(|| format!("{} is not a valid sky strip", file.display()))?;
             let image = indexed_to_rgb(ban::Sky::WIDTH, ban::Sky::HEIGHT, &sky.pixels, palette);
-            vec![(stem, image)]
+            vec![(stem, image.into())]
         }
         "b@n" => {
             let bank = ban::parse_sprites(bytes)
@@ -48,9 +48,22 @@ pub fn dump(
                 .filter(|(_, s)| !s.pixels.is_empty())
                 .map(|(i, s)| {
                     let image = indexed_to_rgb(s.width(), s.height(), &s.pixels, palette);
-                    (format!("{stem}_{i:03}"), image)
+                    (format!("{stem}_{i:03}"), image.into())
                 })
                 .collect()
+        }
+        "m00" | "m08" | "m16" | "m32" => {
+            let model = mxx::parse(bytes)
+                .with_context(|| format!("{} is not a valid model", file.display()))?;
+            // Parts can draw images from the model's `.m00`, which sits next to it.
+            let direction_free = ["m00", "M00"]
+                .iter()
+                .find_map(|e| std::fs::read(file.with_extension(e)).ok())
+                .and_then(|bytes| mxx::parse(&bytes).ok())
+                .and_then(|m00| m00.views.into_iter().next())
+                .map(|view| view.images)
+                .unwrap_or_default();
+            model_images(&stem, &model, &direction_free, palette)
         }
         "" => bail!(
             "{} has no extension; cannot tell its format",
@@ -71,6 +84,99 @@ pub fn dump(
             Ok(path)
         })
         .collect()
+}
+
+/// A view with no facing gives one PNG per image. A view with a facing gives one per
+/// frame of each animation, for the facing and for its mirror, named by facing,
+/// animation and frame; frames with no parts are left out.
+fn model_images(
+    stem: &str,
+    model: &mxx::Model,
+    direction_free: &[mxx::Image],
+    palette: &Palette,
+) -> Vec<(String, image::DynamicImage)> {
+    let mut out = Vec::new();
+    for view in &model.views {
+        let h = &view.header;
+        if !h.has_facing() {
+            for (i, image) in view.images.iter().enumerate() {
+                let (w, h) = (usize::from(image.width), usize::from(image.height));
+                // A PNG can't be empty.
+                if w * h > 0 {
+                    let rgb = indexed_to_rgb(w, h, &image.to_indexed(), palette);
+                    out.push((format!("{stem}_{i:03}"), rgb.into()));
+                }
+            }
+            continue;
+        }
+        let facings = [(h.facing, &view.animations)]
+            .into_iter()
+            .chain(view.mirror_animations.iter().map(|a| (h.mirror_facing, a)));
+        for (facing, animations) in facings {
+            for (a, frames) in animations.iter().enumerate() {
+                for (f, frame) in frames.iter().enumerate() {
+                    let resolve = |p: &mxx::Part| {
+                        let images = if p.is_direction_free() {
+                            direction_free
+                        } else {
+                            &view.images
+                        };
+                        images.get(p.image_index())
+                    };
+                    if let Some(image) = compose(frame, resolve, palette) {
+                        out.push((format!("{stem}_f{facing:02}_a{a}_{f:02}"), image.into()));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Draws a frame's parts, in order, on a transparent canvas just big enough to hold
+/// them. Only pixels inside the row spans are drawn. Parts whose image `resolve`
+/// can't find (a missing `.m00`) are skipped. `None` when nothing is left to draw.
+fn compose<'a>(
+    frame: &mxx::Frame,
+    resolve: impl Fn(&mxx::Part) -> Option<&'a mxx::Image>,
+    palette: &Palette,
+) -> Option<image::RgbaImage> {
+    let parts: Vec<_> = frame
+        .parts
+        .iter()
+        .filter_map(|p| Some((p, resolve(p)?)))
+        .filter(|(_, image)| image.width > 0 && image.height > 0)
+        .collect();
+    let left = parts.iter().map(|(p, _)| i32::from(p.x)).min()?;
+    let top = parts.iter().map(|(p, _)| i32::from(p.y)).min()?;
+    let right = parts
+        .iter()
+        .map(|(p, i)| i32::from(p.x) + i32::from(i.width))
+        .max()?;
+    let bottom = parts
+        .iter()
+        .map(|(p, i)| i32::from(p.y) + i32::from(i.height))
+        .max()?;
+    let mut canvas = image::RgbaImage::new((right - left) as u32, (bottom - top) as u32);
+    for (part, image) in parts {
+        for (y, span) in image.rows.iter().enumerate() {
+            for (i, &index) in span.pixels.iter().enumerate() {
+                let column = i32::from(span.skip) + i as i32;
+                let column = if part.is_flipped() {
+                    i32::from(image.width) - 1 - column
+                } else {
+                    column
+                };
+                let c = palette[index];
+                canvas.put_pixel(
+                    (i32::from(part.x) + column - left) as u32,
+                    (i32::from(part.y) + y as i32 - top) as u32,
+                    image::Rgba([c.r, c.g, c.b, 255]),
+                );
+            }
+        }
+    }
+    Some(canvas)
 }
 
 /// Index `i` as grey `i, i, i`: a stand-in for files with no palette of their own.
@@ -105,7 +211,7 @@ fn indexed_to_rgb(
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_packed, synthetic_pcx, synthetic_sprite_bank,
+        synthetic_bytes, synthetic_model, synthetic_packed, synthetic_pcx, synthetic_sprite_bank,
     };
 
     #[test]
@@ -171,6 +277,48 @@ mod tests {
         assert_eq!(image.dimensions(), (342, 54));
         let v = pixels[ban::Sky::WIDTH + 1];
         assert_eq!(image.get_pixel(1, 1).0, [v, v, v]);
+    }
+
+    #[test]
+    fn models_dump_one_png_per_frame_and_facing() {
+        let out = std::env::temp_dir().join(format!("xeno-tool-mxx-{}", std::process::id()));
+        // Each frame draws both images at (0, 0); the mirror facing's frame flips them.
+        let bytes = synthetic_model(&[(8, &[(3, 1, &[10, 20, 30]), (2, 1, &[40, 50])])]);
+
+        let written = dump(Path::new("Scout.M08"), &bytes, &out, None).unwrap();
+        let facing = image::open(&written[0]).unwrap().into_rgba8();
+        let mirror = image::open(&written[1]).unwrap().into_rgba8();
+        let _ = std::fs::remove_dir_all(&out);
+
+        assert_eq!(
+            written,
+            [
+                out.join("scout_f08_a0_00.png"),
+                out.join("scout_f56_a0_00.png")
+            ]
+        );
+        assert_eq!(facing.dimensions(), (3, 1));
+        let row = |image: &image::RgbaImage| {
+            (0..3)
+                .map(|x| image.get_pixel(x, 0).0[0])
+                .collect::<Vec<_>>()
+        };
+        // The second part covers the first.
+        assert_eq!(row(&facing), [40, 50, 30]);
+        assert_eq!(row(&mirror), [50, 40, 10]);
+    }
+
+    #[test]
+    fn direction_free_models_dump_their_images() {
+        let out = std::env::temp_dir().join(format!("xeno-tool-m00-{}", std::process::id()));
+        let bytes = synthetic_model(&[(-2, &[(1, 2, &[1, 2])])]);
+
+        let written = dump(Path::new("netrelay.m00"), &bytes, &out, None).unwrap();
+        let image = image::open(&written[0]).unwrap().into_rgb8();
+        let _ = std::fs::remove_dir_all(&out);
+
+        assert_eq!(written, [out.join("netrelay_000.png")]);
+        assert_eq!(image.get_pixel(0, 1).0, [2, 2, 2]);
     }
 
     #[test]
