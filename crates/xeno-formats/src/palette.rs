@@ -14,9 +14,9 @@ pub struct Rgb {
 
 /// 256 colours, indexed by the pixel values of the game's 8-bit images.
 ///
-/// Where the game's palettes live is still open (T-013). Two encodings are expected:
-/// 8-bit triples, as in a PCX file's trailer, and the VGA DAC's 6-bit triples, as a
-/// program writes them to ports `0x3c8`/`0x3c9`.
+/// The game stores palettes in two encodings: 8-bit triples in a PCX file's trailer,
+/// and the VGA DAC's 6-bit triples everywhere else (`.vcl` files, the screens). See
+/// `docs/formats/palette.md` for every source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Palette {
     pub colors: [Rgb; 256],

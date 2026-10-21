@@ -4,6 +4,7 @@
 
 mod dump;
 mod inspect;
+mod palette;
 
 use std::path::PathBuf;
 
@@ -34,6 +35,18 @@ enum Command {
         #[arg(long, default_value = "out")]
         out: PathBuf,
     },
+    /// Print a file's 256-colour palette, one colour per line. Finds it by extension
+    /// (pcx, vcl), or reads it raw from `--offset`.
+    Palette {
+        /// The file to read.
+        file: PathBuf,
+        /// Read a raw palette starting at this byte offset (decimal, or hex with `0x`).
+        #[arg(long, value_parser = palette::parse_offset)]
+        offset: Option<usize>,
+        /// Encoding of the raw palette at `--offset`.
+        #[arg(long, value_enum, default_value_t = palette::Encoding::Vga6, requires = "offset")]
+        encoding: palette::Encoding,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -49,6 +62,18 @@ fn main() -> anyhow::Result<()> {
             for path in dump::dump(&file, &bytes, &out)? {
                 println!("wrote {}", path.display());
             }
+        }
+        Command::Palette {
+            file,
+            offset,
+            encoding,
+        } => {
+            let bytes =
+                std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+            let raw = offset.map(|offset| palette::Raw { offset, encoding });
+            let (palette, source) = palette::find(&file, &bytes, raw)?;
+            eprintln!("{}: {source}", file.display());
+            print!("{}", palette::listing(&palette));
         }
     }
     Ok(())

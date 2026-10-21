@@ -10,6 +10,7 @@ pub mod files;
 pub mod fixtures;
 mod palette;
 pub mod pcx;
+pub mod vcl;
 
 pub use error::FormatError;
 pub use palette::{Palette, Rgb};

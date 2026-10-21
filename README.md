@@ -85,6 +85,10 @@ cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- dump ./gameFiles/xenodrop.pcx --out /tmp/xeno-out
 ```
 
+```bash
+cargo run -p xeno-tool -- palette ./gameFiles/ealogo.vcl
+```
+
 ## Tests and checks
 
 ```bash
