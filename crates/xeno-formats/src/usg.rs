@@ -484,7 +484,7 @@ fn parse_paths(data: &[u8], data_at: usize) -> Result<PathTable, FormatError> {
     Ok(table)
 }
 
-fn parse_terrain(data: &[u8]) -> Result<Terrain, FormatError> {
+pub(crate) fn parse_terrain(data: &[u8]) -> Result<Terrain, FormatError> {
     let mut cursor = std::io::Cursor::new(data);
     let mut features = Vec::new();
     if !data.is_empty() {

@@ -49,8 +49,9 @@ been traced.
 
 The save routine (`xeno.exe` `1000:7666`) writes 36 bytes of game state from
 `DS:0x5f91` and then the whole loaded table, and the load routine (`1000:76ab`) reads
-it back. So a save file carries every scenario's `state` (relevant to T-024 and
-T-057).
+it back. So a save file carries every scenario's `state`. The save file is the
+player's `<NAME>.LOG`, and this data is its `SDEF` chunk (T-024, `usg.md`, "Save
+files").
 
 ## How the game uses it
 

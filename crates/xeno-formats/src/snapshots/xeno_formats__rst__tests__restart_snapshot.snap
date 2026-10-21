@@ -1,0 +1,13 @@
+---
+source: crates/xeno-formats/src/rst.rs
+expression: parse(SAMPLE).unwrap()
+---
+Restart {
+    lines: [
+        "2 0 1",
+        "",
+        "[ONE]",
+        "A:\\X.BAT",
+    ],
+    has_eof: true,
+}

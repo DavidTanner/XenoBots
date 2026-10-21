@@ -163,6 +163,20 @@ Its status line (`1000:6940`) shows the kind, the side (`HUMAN`/`ALIEN`) and the
 current path's fields. That is where the names above come from. `DS:0xe6a7` holds its
 object labels (`SIZE`, `LOC-X`, `LOC-Y`, `LOC-Z`, `#DCBS`, ...).
 
+## Save files
+
+Found in T-024. Progress is saved to `<NAME>.LOG`, where `NAME` is the login name, up
+to eight characters, space-padded into the template at `DS:0x613b` (`1000:7912`). At
+login `1000:70ec` loads it through the chunk reader, or `scendef.bin` if there is
+none. `1000:f01b` saves the same chunks as the scenario writer (`1000:efde`) with
+`SDEF` after `SHDR`. `state.rst` is not a save file (`rst.md`).
+
+`SDEF` (written by `1000:7666`, read by `1000:76ab` only while loading a save, a flag
+at `DS:0x7ea1`) holds 30 bytes of state from `DS:0x5f97` (+0x00 the selected
+scenario, +0x04 the player's progress `DS:0x5f9b`, +0x12 the table's size in bytes,
+the rest not traced), then the loaded `scendef.bin` buffer rounded up to whole
+paragraphs, with each scenario's `state` (`scendef.md`).
+
 ## Open questions
 
 - The object bytes after +0x0c: orders, heading, damage, and what the 0x172-byte robot

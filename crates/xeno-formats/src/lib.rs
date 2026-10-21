@@ -12,11 +12,13 @@ pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 pub mod mal;
+pub mod map;
 pub mod ms3;
 pub mod mxx;
 pub mod packed;
 mod palette;
 pub mod pcx;
+pub mod rst;
 pub mod scendef;
 pub mod usg;
 pub mod vcl;
