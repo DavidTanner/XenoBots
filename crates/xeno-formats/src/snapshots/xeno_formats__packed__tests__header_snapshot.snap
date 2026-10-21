@@ -1,0 +1,7 @@
+---
+source: crates/xeno-formats/src/packed.rs
+expression: header
+---
+PackedHeader {
+    paragraphs: 3,
+}

@@ -6,7 +6,9 @@ so the next person starts from facts rather than guesses. The summary table of a
 types and their status lives in `AGENTS.md` ("The original game's files"); keep the
 two in step.
 
-Documented so far: [`pcx.md`](pcx.md), [`palette.md`](palette.md) (where every
+Documented so far: [`pcx.md`](pcx.md), [`packed.md`](packed.md) (the compression of
+every file with `@` in its extension), [`b@n.md`](b@n.md) (sprite banks and sky
+strips), [`palette.md`](palette.md) (where every
 palette comes from and how it reaches the DAC), and [`video-modes.md`](video-modes.md)
 (the display modes, which is not a file type but drives the renderer). Parser tasks in `NEXT_STEPS.md` (milestone
 M1) add the rest here.

@@ -4,10 +4,12 @@
 //! tested headless. Each format gets its own module as it is decoded; see
 //! `docs/formats/` for what is known about each one.
 
+pub mod ban;
 mod error;
 pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
+pub mod packed;
 mod palette;
 pub mod pcx;
 pub mod vcl;
