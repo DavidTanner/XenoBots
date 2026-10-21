@@ -39,7 +39,7 @@ dependencies are `done`, unless something else is more urgent.
 | T-003 | done | GitHub Actions CI: fmt check, clippy `-D warnings`, `cargo test --workspace` on ubuntu-latest, macos-latest, windows-latest; cache cargo | T-001 | Green run on a PR | Install the Linux apt packages listed in README. Green on PR #2 and on `main`. |
 | T-004 | done | `xeno-app --game-dir` / `XENOBOTS_GAME_DIR` / `./gameFiles` resolution, plus a startup check that lists missing expected files by name | T-001 | Running without files prints a clear, actionable error and exits non-zero | Const list of 118 files in `xeno-app/src/game_dir.rs`; names match case-insensitively. Excludes installer files, `orders.txt`, and `state.rst` / `backup.map` (assumed user state). |
 | T-005 | done | Add `crates/xeno-formats` library with a `FormatError` type, a `Palette` type (256 x RGB), and the test-fixture helper `synthetic_bytes()` | T-001 | Crate compiles with one passing test | No parsers yet. `Palette::from_rgb8` (PCX trailer form) and `from_vga6` (DAC form, widened to 8 bits). `fixtures::synthetic_bytes(len, seed)` is SplitMix64; other crates get it via the `test-fixtures` feature in `[dev-dependencies]`. |
-| T-006 | todo | Add `crates/xeno-tool` CLI skeleton with `inspect <file>` that prints size, extension, and a 64-byte hex preview | T-005 | Works on any file | Generic; per-format output comes with each parser. |
+| T-006 | done | Add `crates/xeno-tool` CLI skeleton with `inspect <file>` that prints size, extension, and a 64-byte hex preview | T-005 | Works on any file | Generic; per-format output comes with each parser. Report built in `xeno-tool/src/inspect.rs` (`insta` snapshots of synthetic files); ran without error over all 126 files of a local install. |
 | T-007 | todo | Move the expected-file list from `xeno-app` into `xeno-formats`, and give `xeno-app` a `GameDir` lookup (lowercase name -> real path) that loaders use to open files | T-004, T-005 | Upper-case installs load on Linux; `xeno-app` has no file list of its own | Confirm against the exe (T-090) whether `state.rst` and `backup.map` are read or only written. |
 
 ## M1 Formats
@@ -192,3 +192,4 @@ Ideas that are not yet tasks. Promote to a task with an id when ready.
 | 2026-10-20 | T-004 done; added T-007 (shared file list and case-insensitive file lookup). |
 | 2026-10-20 | T-010 done: `docs/re-setup.md`; noted `.dvr` entry-point finding on T-025. |
 | 2026-10-20 | T-005 done: `xeno-formats` crate with `FormatError`, `Palette` and `fixtures`. |
+| 2026-10-20 | T-006 done: `xeno-tool inspect`. |
