@@ -107,7 +107,8 @@ the list (mgavideo ~0xc66).
   buffer, and the sequence player then hands that buffer to host slot `0x4d8`, which
   looks like a fade-in (`vcl.md`; T-027, T-037). A `.vcl` holds nothing but the palette
   and one picture, so any colour animation in a cutscene comes from elsewhere.
-- What triggers `vgaiff.dvr`'s screenshot, and whether its IFF reader is ever used.
+- What sets the hidden switch (`DS:0x618 = 0xe263`) that `vgaiff.dvr`'s screenshot
+  needs (T-039). Its IFF reader is never called (`docs/re/dvr-protocol.md`).
 - The countdown reload, and who advances the animation pointer.
 
 ## Parser

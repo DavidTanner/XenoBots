@@ -42,10 +42,11 @@ On import the editor treats kinds 0x14 and 0x16 as circles and skips the rest.
 
 Only the editor touches `.map` files:
 
-- **Load** (key handler `0x066f`) gets a name from host slot `0x2fe` (probably a
-  prompt). Host slot `0x1506` (`xeno.exe` `1fe6:6a97`) then reads the file into the
+- **Load** (key handler `0x066f`) gets a name from host slot `0x2fe`, the host's
+  file-open dialog (`docs/re/dvr-protocol.md`). Host slot `0x1506` (`xeno.exe` `1fe6:6a97`) then reads the file into the
   `MAPP` buffer (`DS:0x150e`) and adds the origin.
-- **Save** (`0x0705`) gets a name from host slot `0x302`. A path at `0x06dc`, which
+- **Save** (`0x0705`) gets a name from host slot `0x302`, the host's
+  "SAVE GAME" file dialog. A path at `0x06dc`, which
   nothing in the driver calls directly, offers `DEFAULT.MAP`.
 - **Apply** (`0x06b5`) writes `BACKUP.MAP`, loads it as above and deletes it.
   **Leave** (`0x06cf`) writes `BACKUP.MAP` and keeps it.
@@ -56,8 +57,8 @@ The game needs neither file to start or play, so neither is in
 ## Open questions
 
 - Kinds 0x12 and 0x16, the rest of the record and the third origin value (T-059).
-- Whether a retail build can reach the editor, and what host slots `0x2fe` and `0x302`
-  do (T-025).
+- Whether a retail build can reach the scenario editor, whose key table (`DS:0x5bd8`)
+  opens this one (`1000:448c`).
 
 ## Parser
 

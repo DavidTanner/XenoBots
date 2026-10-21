@@ -56,8 +56,9 @@ table. On entering the 320x240 mode (the routine slot `0x5f4` is repointed to), 
 module hands a second table at offset 0x22 to a host installer (slot `0x26`). The
 installer points **host slot `0x490`** at the loader, and slot `0x590` at offset 0xb8d,
 next to the 1-bit glyph (caption text) renderer at ~0xc0a. `mgavideo.dvr` also exports slot
-`0x490` (load offset 0x31d), but its version only builds the file name and returns, so
-outside the 320x240 mode a `.vcl` is never drawn.
+`0x490` (load offset 0x31d), but its version only loads the file into a memory block
+(host slot `0x2b0`) and draws nothing, so outside the 320x240 mode a `.vcl` is never
+drawn.
 
 The loader:
 

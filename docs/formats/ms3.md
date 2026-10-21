@@ -82,8 +82,9 @@ MZ header), as Ghidra shows them in segment `1000`.
   queues the song to start when the current one ends; bit 1 makes it restart at its
   end. The signature and bytes 0x0e/0x0f are not looked at.
 - **Reader** (`0x0b97`): decodes one event and its delay as above.
-- **Tick** (`0x0a62`, through a hook at `0x01d6` that the driver registers with the
-  host through its slot cell `0x35c`): counts down the delay and runs every event that
+- **Tick** (`0x0a62`, through a hook node at `0x01d0` whose handler is at `0x01d6`;
+  music init, slot `0x424`, adds it to the host's per-retrace chain with host slot
+  `0x358`, and `0x35c` removes it; `docs/re/dvr-protocol.md`): counts down the delay and runs every event that
   is due. A note on a channel that is playing a driver sound effect (`0x09a0`) is
   dropped. Before a note, the channel's program is loaded if it changed.
 - **Pitch**: internally twice the note number, plus a per-program transpose, plus the
@@ -99,19 +100,19 @@ MZ header), as Ghidra shows them in segment `1000`.
 
 ## Open questions
 
-- **Tick rate.** The tick hook is registered with the host, not on the PIT. The
-  driver programs PIT channel 0 at divisor 165 (about 7.2 kHz, for digitised sound),
-  measures one video frame in those ticks and calls a host routine once per frame
-  after waiting for vertical retrace, so the music most likely ticks once per video
-  frame (70 Hz in mode 13h, 60 Hz in the 320x240 mode). At 70 Hz `mainthem.ms3` lasts
-  about 2 minutes 38 seconds. Confirm by tracing host slot `0x35c` in `xeno.exe`.
+- **Tick rate.** Settled by T-025: the music ticks once per vertical retrace (the
+  host's per-retrace hook chain, not its 60 Hz tick), so about 70.09 Hz in mode 13h
+  and 59.94 Hz while the 320x240 mode is up. At 70 Hz `mainthem.ms3` lasts about 2
+  minutes 38 seconds. Still to confirm against a DOSBox recording (T-064).
 - **Instrument bank.** The OPL2 patch layout behind the per-program words and the
   envelope scripts, which T-062 needs to play anything. It lives in `sounddvr.dvr`, so
   the port must read it from the user's copy at run time.
 - What `unknown_0f` means (the authoring tool's flags?), and why `robot3.ms3` has a
   `V2` signature. The driver ignores both.
-- Which code plays each song, with which queue/loop flags, and whether `lose.ms3` and
-  `robot3.ms3` are ever played.
+- The queue/loop flags each song is started with. From T-025: `xeno.exe` `1000:fc36`
+  loads and starts song `BX` from a name table at `DS:0xec4c` (0 `MAINTHEM` at
+  start-up, 2 `WIN1` before the win cutscene, 4 `WIN2` before a lose cutscene, 6
+  `BIGWIN3` for `TRIUMPH`). Nothing names `lose.ms3` or `robot3.ms3`.
 
 ## Parser
 
