@@ -1,5 +1,6 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models).
+//! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models and
+//! `scendef.bin`).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -21,7 +22,11 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     writeln!(out, "file:      {}", file.display()).unwrap();
     writeln!(out, "size:      {0} bytes ({0:#x})", bytes.len()).unwrap();
     writeln!(out, "extension: {extension}").unwrap();
+    let is_scendef = file
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("scendef.bin"));
     match extension.as_str() {
+        _ if is_scendef => out.push_str(&scendef_details(bytes)),
         "pcx" => out.push_str(&pcx_details(bytes)),
         "b@n" => out.push_str(&ban_details(file, bytes)),
         "m@l" => out.push_str(&mal_details(bytes)),
@@ -192,6 +197,36 @@ fn mxx_details(bytes: &[u8]) -> String {
     }
 }
 
+/// What the scenario table parser makes of `bytes`: one line per scenario with its
+/// index, map box, unlock level, state and name (lines joined with ` / `).
+fn scendef_details(bytes: &[u8]) -> String {
+    let table = match xeno_formats::scendef::parse(bytes) {
+        Ok(table) => table,
+        Err(e) => return format!("scendef:   cannot parse: {e}\n"),
+    };
+    let mut out = format!(
+        "scendef:   {} scenario(s): index, map box top,left..bottom,right, unlock level, state, name\n",
+        table.scenarios.len()
+    );
+    for s in &table.scenarios {
+        let b = s.map_box;
+        writeln!(
+            out,
+            "scendef:   {:2}  {},{}..{},{}  unlock {}  state {}  {}",
+            s.index(),
+            b.top,
+            b.left,
+            b.bottom,
+            b.right,
+            s.unlock_level,
+            s.state,
+            s.name_lines().join(" / "),
+        )
+        .unwrap();
+    }
+    out
+}
+
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
 /// ASCII characters. The last line is padded so its ASCII column lines up.
 pub fn hex_preview(bytes: &[u8]) -> String {
@@ -224,8 +259,8 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_screen, synthetic_sprite_bank,
-        synthetic_vcl,
+        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_scendef, synthetic_screen,
+        synthetic_sprite_bank, synthetic_vcl,
     };
 
     #[test]
@@ -341,6 +376,26 @@ mod tests {
         );
         let out = report(Path::new("laser.m00"), &[]);
         assert!(out.contains("mxx:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn scenario_tables_list_their_scenarios() {
+        let table = synthetic_scendef(&[
+            ((10, 20, 19, 29), 1, b"FIRST\x0c"),
+            ((100, 200, 109, 209), 3, b"SECOND\x0cPLACE\x0c"),
+        ]);
+        let out = report(Path::new("SCENDEF.BIN"), &table);
+        assert!(
+            out.contains(
+                "scendef:   2 scenario(s): index, map box top,left..bottom,right, unlock level, state, name\n\
+                 scendef:    0  10,20..19,29  unlock 1  state 0  FIRST\n\
+                 scendef:    1  100,200..109,209  unlock 3  state 0  SECOND / PLACE\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("scendef.bin"), &table[..5]);
+        assert!(out.contains("scendef:   cannot parse: "), "{out}");
+        assert!(!report(Path::new("dsounds.bin"), &table).contains("scendef:"));
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub mod mxx;
 pub mod packed;
 mod palette;
 pub mod pcx;
+pub mod scendef;
 pub mod vcl;
 
 pub use error::FormatError;
