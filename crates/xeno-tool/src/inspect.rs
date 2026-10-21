@@ -1,6 +1,6 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
 //! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
-//! `scendef.bin` and the `.usg` scenarios).
+//! `scendef.bin`, the `.usg` scenarios and the `.fgd` layers).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -33,6 +33,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
         "vcl" => out.push_str(&vcl_details(bytes)),
         "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
         "usg" => out.push_str(&usg_details(bytes)),
+        "fgd" | "kyl" => out.push_str(&fgd_details(file, bytes)),
         _ => {}
     }
     if shown == 0 {
@@ -196,6 +197,30 @@ fn mxx_details(bytes: &[u8]) -> String {
         }
         Err(e) => format!("mxx:       cannot parse: {e}\n"),
     }
+}
+
+/// What the layer parser makes of `bytes`: the range of rows, and what `vgaintro.dvr`
+/// uses the file for (known from its name).
+fn fgd_details(file: &Path, bytes: &[u8]) -> String {
+    use xeno_formats::fgd::{self, Layer, Role};
+
+    let layer = match fgd::parse(bytes) {
+        Ok(layer) => layer,
+        Err(e) => return format!("fgd:       cannot parse: {e}\n"),
+    };
+    let min = layer.rows.iter().min().unwrap_or(&0);
+    let max = layer.rows.iter().max().unwrap_or(&0);
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+    let role = match Role::of(&name) {
+        Some((Role::Unused, _)) => "not used by the game".to_string(),
+        Some((role, backdrop)) => format!("{role:?} over {backdrop}"),
+        None => "unknown role".to_string(),
+    };
+    format!(
+        "fgd:       {}-column silhouette edge, rows {min}..={max}, {}-column window; {role}\n",
+        Layer::LEN,
+        Layer::WINDOW,
+    )
 }
 
 /// What the scenario table parser makes of `bytes`: one line per scenario with its
@@ -522,6 +547,23 @@ mod tests {
         insta::assert_snapshot!(details);
         let out = report(Path::new("scen00a.usg"), &file[..file.len() - 6]);
         assert!(out.contains("usg:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn layers_show_their_rows_and_role() {
+        let mut rows = vec![40; 1920];
+        rows[7] = 3;
+        let out = report(Path::new("LAYER5.FGD"), &rows);
+        assert!(
+            out.contains(
+                "fgd:       1920-column silhouette edge, rows 3..=40, 768-column window; Ceiling over cavedrop.pcx\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("fgarray.kyl"), &rows);
+        assert!(out.contains("; not used by the game\n"), "{out}");
+        let out = report(Path::new("layer1.fgd"), &rows[..10]);
+        assert!(out.contains("fgd:       cannot parse: "), "{out}");
     }
 
     #[test]
