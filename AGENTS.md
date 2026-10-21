@@ -11,8 +11,8 @@ in priority order:
 
 1. **Runs anywhere.** One `cargo run` on macOS, Linux and Windows. No DOSBox, no
    emulator, no platform-specific build steps.
-2. **Faithful first.** The original 320x200 (or 320x240 Mode-X) 256-colour
-   presentation and game rules must be reproduced before anything is "improved".
+2. **Faithful first.** The original 256-colour presentation (320x200 mode 13h, plus a
+   320x240 unchained mode for some sequences; see `docs/formats/video-modes.md`) and game rules must be reproduced before anything is "improved".
 3. **4K without losing detail.** A resolution-independent renderer, and later optional
    higher-detail assets, so the game fills a 3840x2160 display cleanly instead of being a
    blurry stretch.
@@ -130,7 +130,7 @@ marked; everything else is a hypothesis to verify and record under `docs/formats
 |---|---|---|---|
 | `xeno.exe` | 1 | Main executable, 84 KB, **LZEXE 0.91 compressed**; 181,836 bytes and 655 relocations once unpacked (see `docs/re-setup.md`) | confirmed |
 | `*.dvr` | 6 | DOS executables: `config`, `mapdvr`, `mgavideo`, `sounddvr`, `vgaiff`, `vgaintro`. Loadable driver/overlay modules; `config.dvr` is also LZEXE-packed (16,160 bytes unpacked), the other five are plain MZ | confirmed executables |
-| `vga240.mod` | 1 | Probably the 320x240 Mode-X video module | guess |
+| `vga240.mod` | 1 | Headerless real-mode code module that `mgavideo.dvr` loads on demand: 320x240 256-colour unchained mode at 60 Hz (from BIOS mode 12h, double-scanned), virtual-width row tables and hardware scroll. The default mode is 320x200 mode 13h (see `docs/formats/video-modes.md`) | confirmed |
 | `*.pcx` | 2 | `cavedrop`, `xenodrop`: PCX 3.0, 8-bit RLE with 256-colour trailer, 768x128 / 768x130. Decoded by `xeno_formats::pcx`; `xenodrop` is one continuous wide scene, so likely a scrolling drop-sequence backdrop (see `docs/formats/pcx.md`) | format confirmed |
 | `*.vcl` | 14 | Cutscenes / animations (`ealogo`, `presents`, `arrival`, `emerge`, `win`, `nlose`, ...). 5 KB to 133 KB | guess |
 | `*.usg` | 17 | Scenarios: `scen00a`..`scen12a` plus `ctrain`, `htrain`, `ntrain`, `strain` (training missions). ~8 to 14 KB each | guess |
@@ -168,8 +168,9 @@ Two layers, always kept separate:
 1. **Logical framebuffer** at the original resolution with the original 256-colour
    palette. All game drawing targets this. Pixel-exact fidelity is checkable here.
 2. **Presentation**: scale the logical framebuffer to the window. Default is integer
-   nearest-neighbour scaling with letterboxing and VGA aspect correction (320x200 was
-   shown at 4:3, so pixels are not square). 4K gets a 6x integer scale with correct
+   nearest-neighbour scaling with letterboxing and VGA aspect correction (both 320x200 and
+   320x240 were shown at 4:3, so 320x200 pixels are not square while 320x240 pixels
+   are). 4K gets a 6x integer scale with correct
    aspect. Later options: xBRZ-style scalers, CRT shader, and an *HD asset pack*
    loaded from a user directory that replaces individual sprites at higher resolution.
 
