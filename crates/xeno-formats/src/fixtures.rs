@@ -146,6 +146,69 @@ pub fn synthetic_sprite_bank(sprites: &[(u8, u8, &[u8])]) -> Vec<u8> {
     synthetic_packed(&bank)
 }
 
+/// `(width, height, pixels)`: an image for [`synthetic_model`].
+pub type SyntheticImage<'a> = (u8, u8, &'a [u8]);
+
+/// A `.mXX` model with one view per `(facing, images)`, each image `(width, height,
+/// pixels)` stored as one full-width span per row (width at least 1). A view with a
+/// facing has one animation of one frame per index that draws every image at (0, 0),
+/// flipped for the mirror facing. A facing of -2 makes a view with only images.
+pub fn synthetic_model(views: &[(i16, &[SyntheticImage])]) -> Vec<u8> {
+    let mut model = Vec::new();
+    for &(facing, images) in views {
+        let word = |n: usize| u16::try_from(n).unwrap().to_le_bytes();
+        let mut body = Vec::new();
+        // An index at view offset `at` and its frame list; returns (index, list).
+        let index = |body: &mut Vec<u8>, flip: u16| {
+            let at = 16 + body.len();
+            body.extend(word(at + 2));
+            body.extend(word(at + 4));
+            body.extend([u8::try_from(images.len()).unwrap(), 0]);
+            for i in 0..images.len() {
+                body.extend((u16::try_from(i).unwrap() | flip).to_le_bytes());
+                body.extend([0, 0]);
+            }
+            (at, at + 4)
+        };
+        let (mirror, offsets) = if facing == -2 {
+            (-2, [0; 4])
+        } else {
+            let mirror = (64 - facing) % 64;
+            let (i, l) = index(&mut body, 0);
+            let (mi, ml) = if mirror == facing {
+                (i, l)
+            } else {
+                index(&mut body, 0x8000)
+            };
+            (mirror, [i, mi, l, ml])
+        };
+        let data = 16 + body.len();
+        let mut next = data + 2 * images.len();
+        let mut pixels = Vec::new();
+        for &(width, height, image) in images {
+            assert_eq!(image.len(), usize::from(width) * usize::from(height));
+            body.extend(word(next));
+            let start = pixels.len();
+            pixels.extend([width, height]);
+            for row in image.chunks(width.into()) {
+                pixels.extend([0, width]);
+                pixels.extend_from_slice(row);
+            }
+            next += pixels.len() - start;
+        }
+        body.extend(pixels);
+        model.extend(word(16 + body.len()));
+        model.extend(facing.to_le_bytes());
+        model.extend(mirror.to_le_bytes());
+        for o in offsets.into_iter().chain([data]) {
+            model.extend(word(o));
+        }
+        model.extend(body);
+    }
+    model.extend([0, 0]);
+    model
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

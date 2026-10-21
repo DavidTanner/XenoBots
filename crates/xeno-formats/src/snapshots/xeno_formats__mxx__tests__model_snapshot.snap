@@ -6,7 +6,7 @@ Model {
     views: [
         View {
             header: ViewHeader {
-                size: 18,
+                size: 23,
                 facing: -2,
                 mirror_facing: -2,
                 index_offset: 0,
@@ -15,47 +15,121 @@ Model {
                 mirror_lists_offset: 22136,
                 data_offset: 16,
             },
-            body: [
-                9,
-                9,
+            animations: [],
+            mirror_animations: None,
+            images: [
+                Image {
+                    width: 1,
+                    height: 1,
+                    rows: [
+                        Span {
+                            skip: 0,
+                            pixels: [
+                                4,
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+        View {
+            header: ViewHeader {
+                size: 57,
+                facing: 8,
+                mirror_facing: 56,
+                index_offset: 16,
+                mirror_index_offset: 30,
+                lists_offset: 22,
+                mirror_lists_offset: 34,
+                data_offset: 40,
+            },
+            animations: [
+                [
+                    Frame {
+                        unknown_01: 5,
+                        parts: [
+                            Part {
+                                image: 0,
+                                x: -2,
+                                y: -3,
+                            },
+                        ],
+                    },
+                    Frame {
+                        unknown_01: 10,
+                        parts: [],
+                    },
+                ],
+            ],
+            mirror_animations: Some(
+                [
+                    [
+                        Frame {
+                            unknown_01: 0,
+                            parts: [
+                                Part {
+                                    image: 32768,
+                                    x: 0,
+                                    y: -3,
+                                },
+                            ],
+                        },
+                    ],
+                ],
+            ),
+            images: [
+                Image {
+                    width: 3,
+                    height: 2,
+                    rows: [
+                        Span {
+                            skip: 1,
+                            pixels: [
+                                7,
+                                8,
+                            ],
+                        },
+                        Span {
+                            skip: 0,
+                            pixels: [
+                                9,
+                            ],
+                        },
+                    ],
+                },
+                Image {
+                    width: 2,
+                    height: 2,
+                    rows: [
+                        Span {
+                            skip: 254,
+                            pixels: [],
+                        },
+                    ],
+                },
             ],
         },
         View {
             header: ViewHeader {
                 size: 22,
-                facing: 8,
-                mirror_facing: 56,
-                index_offset: 16,
-                mirror_index_offset: 18,
-                lists_offset: 17,
-                mirror_lists_offset: 19,
-                data_offset: 20,
-            },
-            body: [
-                1,
-                2,
-                3,
-                4,
-                5,
-                6,
-            ],
-        },
-        View {
-            header: ViewHeader {
-                size: 19,
                 facing: 32,
                 mirror_facing: 32,
                 index_offset: 16,
                 mirror_index_offset: 16,
-                lists_offset: 17,
-                mirror_lists_offset: 17,
-                data_offset: 18,
+                lists_offset: 20,
+                mirror_lists_offset: 20,
+                data_offset: 22,
             },
-            body: [
-                7,
-                8,
-                9,
+            animations: [
+                [
+                    Frame {
+                        unknown_01: 0,
+                        parts: [],
+                    },
+                ],
             ],
+            mirror_animations: None,
+            images: [],
         },
     ],
 }

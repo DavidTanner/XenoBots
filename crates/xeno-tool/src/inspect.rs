@@ -96,7 +96,8 @@ fn ban_details(file: &Path, bytes: &[u8]) -> String {
 }
 
 /// What the model parser makes of `bytes`: the views, each as `facing/mirror`
-/// (one number when the facing is its own mirror, `-` when there is none).
+/// (one number when the facing is its own mirror, `-` when there is none), then how
+/// many images, animations and frames they hold in all.
 fn mxx_details(bytes: &[u8]) -> String {
     use xeno_formats::mxx::{self, ViewHeader};
 
@@ -111,10 +112,23 @@ fn mxx_details(bytes: &[u8]) -> String {
                     (f, m) => format!("{f}/{m}"),
                 })
                 .collect();
+            let images: usize = model.views.iter().map(|v| v.images.len()).sum();
+            let animations: Vec<_> = model
+                .views
+                .iter()
+                .flat_map(|v| {
+                    v.animations
+                        .iter()
+                        .chain(v.mirror_animations.iter().flatten())
+                })
+                .collect();
+            let frames: usize = animations.iter().map(|a| a.len()).sum();
             format!(
-                "mxx:       {} view(s), facings in 64ths of a turn: {}\n",
+                "mxx:       {} view(s), facings in 64ths of a turn: {}\n\
+                 mxx:       {images} image(s), {} animation(s), {frames} frame(s)\n",
                 model.views.len(),
-                facings.join(", ")
+                facings.join(", "),
+                animations.len(),
             )
         }
         Err(e) => format!("mxx:       cannot parse: {e}\n"),
@@ -152,7 +166,9 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xeno_formats::fixtures::{synthetic_bytes, synthetic_pcx, synthetic_sprite_bank};
+    use xeno_formats::fixtures::{
+        synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_sprite_bank,
+    };
 
     #[test]
     fn report_of_a_synthetic_file() {
@@ -216,17 +232,13 @@ mod tests {
 
     #[test]
     fn models_list_their_facings() {
-        let mut model = Vec::new();
-        for (facing, mirror) in [(0i16, 0i16), (8, 56)] {
-            model.extend(16u16.to_le_bytes());
-            model.extend(facing.to_le_bytes());
-            model.extend(mirror.to_le_bytes());
-            model.extend([16, 0, 16, 0, 16, 0, 16, 0, 16, 0]);
-        }
-        model.extend([0, 0]);
+        let model = synthetic_model(&[(0, &[(1, 1, &[3])]), (8, &[])]);
         let out = report(Path::new("LASER.M08"), &model);
         assert!(
-            out.contains("mxx:       2 view(s), facings in 64ths of a turn: 0, 8/56\n"),
+            out.contains(
+                "mxx:       2 view(s), facings in 64ths of a turn: 0, 8/56\n\
+                 mxx:       1 image(s), 3 animation(s), 3 frame(s)\n"
+            ),
             "{out}"
         );
         let out = report(Path::new("laser.m00"), &[]);
