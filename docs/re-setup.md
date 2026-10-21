@@ -68,6 +68,7 @@ different release; addresses in `docs/re/` may not apply.
 | `gameFiles/sounddvr.dvr` | 17,260 | `c29cb1118ea2c427c056fa88a311e72ef6789b1270b28262d3998f0ee33d4734` |
 | `gameFiles/vgaiff.dvr` | 7,452 | `462b1d3137bca92d46dfa31f497255a6429a0c319994b26f5f01f1ee9ee59183` |
 | `gameFiles/vgaintro.dvr` | 86,129 | `0581ed3b1f43861d7d2925d1032aa537a0f9390a578c52e7b284aa95839a6482` |
+| `gameFiles/vga240.mod` | 4,654 | `275247c45b9bfd94e285af599723c691aeb90cdb02113ede54327677909d0144` |
 
 Sanity checks on the unpacked MZ headers:
 
@@ -88,6 +89,13 @@ Sanity checks on the unpacked MZ headers:
    |---|---|
    | `/unpacked` | `~/xenobots-re/unpacked/xeno.exe`, `~/xenobots-re/unpacked/config.dvr` |
    | `/dvr` | `gameFiles/mapdvr.dvr`, `mgavideo.dvr`, `sounddvr.dvr`, `vgaiff.dvr`, `vgaintro.dvr` |
+   | `/mod` | `gameFiles/vga240.mod` (see below) |
+
+   `vga240.mod` has no header, so Ghidra imports it as a *Raw Binary*. Set the language
+   to `x86:LE:16:Real Mode` yourself and keep base address `0000:0000`; the module is
+   loaded at offset 0 of its own segment. Skip auto-analysis: it finds nothing from
+   offset 0. Disassemble from the jump targets in the stub table at offset 0 instead
+   (see `docs/formats/video-modes.md`).
 
 3. Open each program and run auto-analysis with the default analysers. Then
    **File > Save All**.
@@ -103,6 +111,7 @@ files went in:
 | `/unpacked/xeno.exe` | 256 |
 | `/unpacked/config.dvr` | 60 |
 | each `/dvr/*.dvr` | 1 or 2 |
+| `/mod/vga240.mod` | 0 (not auto-analysed) |
 
 The driver modules analyse to almost nothing because the code that matters is not
 reached from the MZ entry point. Presumably `xeno.exe` loads them and calls in through

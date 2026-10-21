@@ -44,7 +44,9 @@ Claude-specific additions to the shared agent guidance above.
 
 - 320x200 VGA pixels are not square. Presentation scaling must apply the 4:3 aspect
   correction (vertical factor 1.2) or the game looks squashed on modern displays.
-- The game may switch to a 320x240 Mode-X mode (`vga240.mod`). Confirm the actual
-  mode(s) before hardcoding the logical framebuffer size.
+- The game uses two modes: 320x200 (mode 13h, 70 Hz) and 320x240 (`vga240.mod`,
+  60 Hz, square pixels, so no 1.2 correction). Some screens also scroll over a wider
+  virtual surface (640 or 768 pixels). Never hardcode one logical framebuffer size;
+  see `docs/formats/video-modes.md`.
 - `.m00` files are mostly 18 bytes. Treat them as headers, not empty models.
 - Do not reach for a game engine; see "Tech stack" in AGENTS.md.
