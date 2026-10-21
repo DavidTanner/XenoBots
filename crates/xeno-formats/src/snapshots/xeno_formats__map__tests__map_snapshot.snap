@@ -1,0 +1,15 @@
+---
+source: crates/xeno-formats/src/map.rs
+expression: "parse(&[4, 0, 0x12, 0x08, 0, 0]).unwrap()"
+---
+Terrain {
+    features: [
+        TerrainFeature {
+            size: 4,
+            kind: 18,
+            unknown_03: 8,
+            data: [],
+        },
+    ],
+    padding: [],
+}

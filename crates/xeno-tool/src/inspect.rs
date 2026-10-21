@@ -1,7 +1,7 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
 //! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
-//! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers, the `.ms3` music and the
-//! `dsounds.bin` sound effects).
+//! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers, the `.ms3` music, the
+//! `dsounds.bin` sound effects, the `.map` editor terrain and `state.rst`).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -40,6 +40,8 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
         "usg" => out.push_str(&usg_details(bytes)),
         "fgd" | "kyl" => out.push_str(&fgd_details(file, bytes)),
         "ms3" => out.push_str(&ms3_details(bytes)),
+        "map" => out.push_str(&map_details(bytes)),
+        "rst" => out.push_str(&rst_details(bytes)),
         _ => {}
     }
     if shown == 0 {
@@ -325,6 +327,37 @@ fn scendef_details(bytes: &[u8]) -> String {
         .unwrap();
     }
     out
+}
+
+/// What the `.map` parser makes of `bytes`: the kind of each terrain record (their
+/// positions are relative to the map editor's origin).
+fn map_details(bytes: &[u8]) -> String {
+    match xeno_formats::map::parse(bytes) {
+        Ok(t) => {
+            let kinds: Vec<_> = t
+                .features
+                .iter()
+                .map(|f| format!("{:#04x}", f.kind))
+                .collect();
+            format!(
+                "map:       editor terrain, record kinds [{}]\n",
+                kinds.join(", ")
+            )
+        }
+        Err(e) => format!("map:       cannot parse: {e}\n"),
+    }
+}
+
+/// What the `.rst` parser makes of `bytes`: its line count and section names.
+fn rst_details(bytes: &[u8]) -> String {
+    match xeno_formats::rst::parse(bytes) {
+        Ok(r) => format!(
+            "rst:       text, not read by the game; {} line(s), sections {:?}\n",
+            r.lines.len(),
+            r.sections()
+        ),
+        Err(e) => format!("rst:       cannot parse: {e}\n"),
+    }
 }
 
 /// What the scenario parser makes of `bytes`: the start clock, the sky, the extent of
@@ -621,6 +654,22 @@ mod tests {
         insta::assert_snapshot!(details);
         let out = report(Path::new("scen00a.usg"), &file[..file.len() - 6]);
         assert!(out.contains("usg:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn maps_and_rst_files_are_summarised() {
+        let map = [4, 0, 0x14, 0x10, 4, 0, 0x12, 0x08, 0, 0];
+        let out = report(Path::new("DEFAULT.MAP"), &map);
+        assert!(
+            out.contains("map:       editor terrain, record kinds [0x14, 0x12]\n"),
+            "{out}"
+        );
+        let out = report(Path::new("backup.map"), &map[..8]);
+        assert!(out.contains("map:       cannot parse: "), "{out}");
+
+        let out = report(Path::new("STATE.RST"), b"1 2\r\n[A]\r\nx\r\n\x1a");
+        let summary = "rst:       text, not read by the game; 3 line(s), sections [\"A\"]\n";
+        assert!(out.contains(summary), "{out}");
     }
 
     #[test]

@@ -2,16 +2,11 @@
 
 /// Files the game needs, as named in a stock install (lowercase).
 ///
-/// This is every file the installer copies except its own (`*.bat`, the `xenobot.1` /
-/// `xenobot.2` disk markers), the placeholder `orders.txt`, and `state.rst` /
-/// `backup.map`, which look like user state the game writes rather than reads.
-///
-/// What the binaries say so far (a string search, not yet code analysis): no binary
-/// names `state.rst`, so whether the game uses it at all is open. `backup.map` is
-/// named by the map editor driver (`mapdvr.dvr`) next to `default.map` and a
-/// `working.map` that a stock install does not ship, which fits user state. Many
-/// names are built at run time from templates (the unit models and screen layouts,
-/// for example), so the absence of a name proves nothing; T-090 settles it.
+/// This is every file the installer copies except its own (`*.bat` and the
+/// `xenobot.1` / `xenobot.2` disk markers), the placeholder `orders.txt`, and three
+/// files the game never needs (T-024): `default.map` and `backup.map`, which only the
+/// map editor in `mapdvr.dvr` reads when asked to (`docs/formats/map.md`), and
+/// `state.rst`, which no binary names (`docs/formats/rst.md`).
 pub const EXPECTED_FILES: &[&str] = &[
     // Executable, driver modules and video mode module.
     "xeno.exe",
@@ -22,10 +17,9 @@ pub const EXPECTED_FILES: &[&str] = &[
     "vgaiff.dvr",
     "vgaintro.dvr",
     "vga240.mod",
-    // Tables, sound effects, key mapping and the 1920-byte layer files.
+    // Tables, sound effects and the 1920-byte layer files.
     "scendef.bin",
     "dsounds.bin",
-    "default.map",
     "fgarray.kyl",
     "layer1.fgd",
     "layer2.fgd",
