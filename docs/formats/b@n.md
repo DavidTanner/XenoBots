@@ -78,6 +78,6 @@ suggests the strip scrolls sideways or wraps as the view turns (guess).
 ## Parser
 
 `xeno_formats::ban::parse_sprites` and `xeno_formats::ban::parse_sky`, added by T-014.
-`xeno-tool dump <file> [--palette <pcx|vcl>]` writes one PNG per sprite
+`xeno-tool dump <file> [--palette <pcx|vcl|m@l>]` writes one PNG per sprite
 (`msprite0_000.png`, ...) or one per sky strip. Without `--palette` the colours are
 grey levels of the index.

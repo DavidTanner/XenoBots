@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use xeno_formats::{Palette, Rgb, ban, mxx, pcx};
+use xeno_formats::{Palette, Rgb, ban, mal, mxx, pcx};
 
 /// Decodes `file` (contents `bytes`) and writes its images into `out_dir`, which is
 /// created if needed. Returns the paths written. Files that carry no palette of their
@@ -30,6 +30,13 @@ pub fn dump(
             let pcx = pcx::parse(bytes)
                 .with_context(|| format!("{} is not a valid PCX", file.display()))?;
             let image = indexed_to_rgb(pcx.width(), pcx.height(), &pcx.pixels, &pcx.palette);
+            vec![(stem, image.into())]
+        }
+        "m@l" => {
+            let screen = mal::parse(bytes)
+                .with_context(|| format!("{} is not a valid screen", file.display()))?;
+            let (w, h) = (mal::Screen::WIDTH, mal::Screen::HEIGHT);
+            let image = indexed_to_rgb(w, h, &screen.pixels, &screen.palette);
             vec![(stem, image.into())]
         }
         "b@n" if stem.starts_with("sky") => {
@@ -211,7 +218,8 @@ fn indexed_to_rgb(
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_packed, synthetic_pcx, synthetic_sprite_bank,
+        synthetic_bytes, synthetic_model, synthetic_packed, synthetic_pcx, synthetic_screen,
+        synthetic_sprite_bank,
     };
 
     #[test]
@@ -240,6 +248,27 @@ mod tests {
         let palette = Palette::from_rgb8(&palette).unwrap();
         let c = palette[pixels[5]];
         assert_eq!(image.get_pixel(1, 1).0, [c.r, c.g, c.b]);
+    }
+
+    #[test]
+    fn screens_dump_in_their_own_palette() {
+        let out = std::env::temp_dir().join(format!("xeno-tool-mal-{}", std::process::id()));
+        let palette: Vec<u8> = synthetic_bytes(Palette::BYTES, 7)
+            .into_iter()
+            .map(|b| b & 0x3f)
+            .collect();
+        let pixels = synthetic_bytes(64_000, 8);
+        let bytes = synthetic_screen(&palette, &pixels);
+        let grey = Palette::from_rgb8(&[0; Palette::BYTES]).unwrap();
+
+        let written = dump(Path::new("SitRoom.M@L"), &bytes, &out, Some(&grey)).unwrap();
+        let image = image::open(&written[0]).unwrap().into_rgb8();
+        let _ = std::fs::remove_dir_all(&out);
+
+        assert_eq!(written, [out.join("sitroom.png")]);
+        assert_eq!(image.dimensions(), (320, 200));
+        let c = Palette::from_vga6(&palette).unwrap()[pixels[320 + 5]];
+        assert_eq!(image.get_pixel(5, 1).0, [c.r, c.g, c.b]);
     }
 
     #[test]
