@@ -1,10 +1,12 @@
-//! `dump`: decode a file and write what it contains as PNGs into an output directory.
-//! Formats are added here as their parsers land.
+//! `dump`: decode a file and write what it contains as PNGs (or, for `dsounds.bin`,
+//! WAVs) into an output directory. Formats are added here as their parsers land.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use xeno_formats::{Palette, Rgb, ban, mal, mxx, pcx, vcl};
+use xeno_formats::{Palette, Rgb, ban, dsounds, mal, mxx, pcx, vcl};
+
+use crate::wav;
 
 /// Decodes `file` (contents `bytes`) and writes its images into `out_dir`, which is
 /// created if needed. Returns the paths written. Files that carry no palette of their
@@ -23,6 +25,9 @@ pub fn dump(
         .file_stem()
         .map(|s| s.to_string_lossy().to_lowercase())
         .unwrap_or_default();
+    if extension == "bin" && stem == "dsounds" {
+        return dump_sounds(&stem, file, bytes, out_dir);
+    }
     let grey = grey_palette();
     let palette = palette.unwrap_or(&grey);
     let images = match extension.as_str() {
@@ -94,6 +99,30 @@ pub fn dump(
             let path = out_dir.join(format!("{name}.png"));
             image
                 .save(&path)
+                .with_context(|| format!("cannot write {}", path.display()))?;
+            Ok(path)
+        })
+        .collect()
+}
+
+/// Writes each sound in `dsounds.bin` as `<stem>_NN.wav`, at the rate the driver
+/// plays it.
+fn dump_sounds(
+    stem: &str,
+    file: &Path,
+    bytes: &[u8],
+    out_dir: &Path,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let bank = dsounds::parse(bytes)
+        .with_context(|| format!("{} is not a valid sound bank", file.display()))?;
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("cannot create {}", out_dir.display()))?;
+    bank.sounds
+        .iter()
+        .enumerate()
+        .map(|(i, sound)| {
+            let path = out_dir.join(format!("{stem}_{i:02}.wav"));
+            std::fs::write(&path, wav::mono_u8(sound.sample_rate(), &sound.samples))
                 .with_context(|| format!("cannot write {}", path.display()))?;
             Ok(path)
         })
@@ -225,8 +254,8 @@ fn indexed_to_rgb(
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_model, synthetic_packed, synthetic_pcx, synthetic_screen,
-        synthetic_sprite_bank, synthetic_vcl,
+        synthetic_bytes, synthetic_dsounds, synthetic_model, synthetic_packed, synthetic_pcx,
+        synthetic_screen, synthetic_sprite_bank, synthetic_vcl,
     };
 
     #[test]
@@ -375,6 +404,22 @@ mod tests {
 
         assert_eq!(written, [out.join("netrelay_000.png")]);
         assert_eq!(image.get_pixel(0, 1).0, [2, 2, 2]);
+    }
+
+    #[test]
+    fn sounds_dump_one_wav_each_at_their_rate() {
+        let out = std::env::temp_dir().join(format!("xeno-tool-wav-{}", std::process::id()));
+        let bytes = synthetic_dsounds(&[(0xffff, &[0x80, 0x90]), (0x4000, &[0x70])]);
+
+        let written = dump(Path::new("DSOUNDS.BIN"), &bytes, &out, None).unwrap();
+        let second = std::fs::read(&written[1]).unwrap();
+        let _ = std::fs::remove_dir_all(&out);
+
+        assert_eq!(
+            written,
+            [out.join("dsounds_00.wav"), out.join("dsounds_01.wav")]
+        );
+        assert_eq!(second, wav::mono_u8(1808, &[0x70]));
     }
 
     #[test]
