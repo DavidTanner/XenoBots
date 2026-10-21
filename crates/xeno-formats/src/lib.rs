@@ -9,6 +9,7 @@ pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 mod palette;
+pub mod pcx;
 
 pub use error::FormatError;
 pub use palette::{Palette, Rgb};

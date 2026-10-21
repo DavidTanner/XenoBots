@@ -6,8 +6,8 @@ so the next person starts from facts rather than guesses. The summary table of a
 types and their status lives in `AGENTS.md` ("The original game's files"); keep the
 two in step.
 
-No format has been documented yet. Parser tasks in `NEXT_STEPS.md` (milestone M1)
-add the files here.
+Documented so far: [`pcx.md`](pcx.md). Parser tasks in `NEXT_STEPS.md` (milestone
+M1) add the rest here.
 
 ## What goes in a format doc
 
