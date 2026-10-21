@@ -1,5 +1,5 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
-//! formats that have one (so far: pcx, b@n, m@l, the `.mXX` unit models).
+//! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -25,6 +25,7 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
         "pcx" => out.push_str(&pcx_details(bytes)),
         "b@n" => out.push_str(&ban_details(file, bytes)),
         "m@l" => out.push_str(&mal_details(bytes)),
+        "vcl" => out.push_str(&vcl_details(bytes)),
         "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
         _ => {}
     }
@@ -127,6 +128,30 @@ fn mal_details(bytes: &[u8]) -> String {
     format!("{packed}{details}\n")
 }
 
+/// What the `.vcl` parser makes of `bytes`: the picture's size and its PackBits runs.
+fn vcl_details(bytes: &[u8]) -> String {
+    use xeno_formats::mal::Run;
+    use xeno_formats::vcl::{self, Picture};
+
+    match vcl::parse(bytes) {
+        Ok(picture) => {
+            let runs = vcl::runs(bytes).unwrap_or_default();
+            let repeats = runs
+                .iter()
+                .filter(|r| matches!(r, Run::Repeat { .. }))
+                .count();
+            format!(
+                "vcl:       {}x{} picture with a VGA 6-bit palette, {} PackBits runs ({} literal, {repeats} repeat)\n",
+                Picture::WIDTH,
+                picture.height,
+                runs.len(),
+                runs.len() - repeats,
+            )
+        }
+        Err(e) => format!("vcl:       cannot parse: {e}\n"),
+    }
+}
+
 /// What the model parser makes of `bytes`: the views, each as `facing/mirror`
 /// (one number when the facing is its own mirror, `-` when there is none), then how
 /// many images, animations and frames they hold in all.
@@ -200,6 +225,7 @@ mod tests {
     use super::*;
     use xeno_formats::fixtures::{
         synthetic_bytes, synthetic_model, synthetic_pcx, synthetic_screen, synthetic_sprite_bank,
+        synthetic_vcl,
     };
 
     #[test]
@@ -284,6 +310,22 @@ mod tests {
             &xeno_formats::fixtures::synthetic_packed(&[0; 800]),
         );
         assert!(out.contains("m@l:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn vcl_pictures_count_their_rows_and_runs() {
+        // Each row: 512 equal bytes (four repeats of 128), then 128 literals.
+        let row: Vec<u8> = [vec![1; 512], (0..128).collect()].concat();
+        let bytes = synthetic_vcl(&[0; 768], &row.repeat(240));
+        let out = report(Path::new("EALOGO.VCL"), &bytes);
+        assert!(
+            out.contains(
+                "vcl:       640x240 picture with a VGA 6-bit palette, 1200 PackBits runs (240 literal, 960 repeat)\n"
+            ),
+            "{out}"
+        );
+        let out = report(Path::new("ealogo.vcl"), &bytes[..800]);
+        assert!(out.contains("vcl:       cannot parse: "), "{out}");
     }
 
     #[test]

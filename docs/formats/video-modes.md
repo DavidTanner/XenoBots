@@ -10,7 +10,7 @@ hardware:
 |---|---|---|---|---|---|---|
 | A | 320x200 | 5:6 (taller than wide; vertical factor 1.2) | 70 Hz | BIOS mode 13h, linear (chain-4) | `mgavideo.dvr` | The default mode: front end and most of the game |
 | A' | 320x200 | 5:6 | 70 Hz | Mode 13h timing, unchained (planar), 768-pixel virtual width | `vgaintro.dvr`, with row tables from `vga240.mod` | The intro "drop" sequence over the 768-wide `xenodrop.pcx` / `cavedrop.pcx` backdrops |
-| B | 320x240 | 1:1 (square) | 60 Hz | Unchained (planar, "Mode X" style), 640-pixel virtual width | `vga240.mod` | Three sequences in `xeno.exe` that switch into it and back (probably the `.vcl` cutscenes; see open questions) |
+| B | 320x240 | 1:1 (square) | 60 Hz | Unchained (planar, "Mode X" style), 640-pixel virtual width | `vga240.mod` | The `.vcl` cutscenes: three sequences in `xeno.exe` switch into it, play `.vcl` pictures and switch back (`vcl.md`) |
 
 Neither a 320x400 mode nor any SVGA/VESA mode appears in any binary. `config.dvr`
 offers a single graphics choice, "VGA/MCGA graphics".
@@ -85,9 +85,10 @@ It also writes sequencer index `0x5c` with `0x02`. That is not a standard VGA re
 and is presumably a chipset-specific write or a leftover; it has no effect on standard
 VGA.
 
-The module also contains a loader that reads a file into planar video memory: a
-768-byte palette, then RLE pixel data split across the four planes through the map-mask
-register. It has not been matched to a file type yet.
+The module also contains the `.vcl` loader (offset 0x274), which it installs at host
+slot `0x490` on entering mode B. It reads a 768-byte palette, then PackBits pixels in
+plain linear order, spread across the four planes by cycling the map mask. See
+`vcl.md`.
 
 ### `vgaintro.dvr`: 320x200 unchained, 768-pixel virtual width
 
@@ -131,11 +132,11 @@ register. It has not been matched to a file type yet.
 
 ## Open questions
 
-- Exactly which screens the three mode-B sequences in `xeno.exe` show. The VCL names
-  live in `mgavideo.dvr`, and the 26-byte entry tables have not been decoded yet
-  (T-018, T-027). Confirm with a DOSBox capture.
+- The three mode-B sequences show `.vcl` pictures, and only those (T-018; the entries
+  are listed in `vcl.md`). Most fields of the 26-byte entries are still undecoded, and
+  whether any other screen runs in mode B is open (T-027). Confirm with a DOSBox
+  capture.
 - `LIGHT.MOD` is named by `mgavideo.dvr` (data offset 0x2e7) but is not in the install.
   Find out whether anything reaches its loader and what happens when it is missing.
 - The purpose of the `xeno.exe` misc-output routine (~0x10d7b).
-- The file type read by `vga240.mod`'s planar loader.
 - What `vgaiff.dvr` does; `mgavideo.dvr` loads it by name (T-025).

@@ -9,7 +9,7 @@ brings its own palette:
 | Source | Encoding | Where in the file | Status | Read by |
 |---|---|---|---|---|
 | `.pcx` (`xenodrop`, `cavedrop`) | 8 bits per channel | 768-byte trailer after the `0x0c` marker (see `pcx.md`) | confirmed | `xeno_formats::pcx` |
-| `.vcl` (all 14) | VGA DAC, 6 bits per channel | First 768 bytes of the file | confirmed from the data; the loader is not traced yet | `xeno_formats::vcl::palette` |
+| `.vcl` (all 14) | VGA DAC, 6 bits per channel | First 768 bytes of the file (`vcl.md`) | confirmed; `vga240.mod`'s loader reads it into a buffer of the caller's | `xeno_formats::vcl` |
 | `.m@l` screens (all 8) | VGA DAC, 6 bits per channel | First 768 bytes of the screen after unpacking (`m@l.md`) | confirmed | `xeno_formats::mal` |
 | IFF ILBM/PBM `CMAP` | 8 bits per channel (IFF standard) | `CMAP` chunk | `vgaiff.dvr` only; no IFF file is in the install (see below) | no |
 | Colour-animation records | VGA DAC, 6 bits per channel | Embedded in `mgavideo.dvr` and `vgaintro.dvr` data | partial | no |
@@ -103,16 +103,15 @@ the list (mgavideo ~0xc66).
 
 ## Open questions
 
-- Which code loads `.vcl` palettes and when they reach the DAC (T-018). `vga240.mod`
-  contains a loader that reads a 768-byte palette and then RLE data into the four planes,
-  which fits the `.vcl` layout (T-027).
-- Whether `.vcl` files also carry colour-animation records or palette changes between
-  frames (T-018).
+- When a `.vcl` palette reaches the DAC. `vga240.mod`'s loader only reads it into a
+  buffer, and the sequence player then hands that buffer to host slot `0x4d8`, which
+  looks like a fade-in (`vcl.md`; T-027, T-037). A `.vcl` holds nothing but the palette
+  and one picture, so any colour animation in a cutscene comes from elsewhere.
 - What triggers `vgaiff.dvr`'s screenshot, and whether its IFF reader is ever used.
 - The countdown reload, and who advances the animation pointer.
 
 ## Parser
 
-`xeno_formats::vcl::palette` (the `.vcl` palette only), the PCX trailer in
+`xeno_formats::vcl` (the `.vcl` palette and picture, T-018), the PCX trailer in
 `xeno_formats::pcx`, the screen palette in `xeno_formats::mal` (T-017), and `Palette::from_vga6` / `Palette::from_rgb8` for raw palettes.
 Added by T-013.

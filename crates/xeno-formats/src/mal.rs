@@ -52,34 +52,46 @@ impl Run {
     }
 }
 
+fn invalid(offset: usize, reason: String) -> FormatError {
+    FormatError::Invalid {
+        offset: offset as u64,
+        reason,
+    }
+}
+
+/// Reads the packet whose control byte is at `src[i]`, which must exist.
+fn run_at(src: &[u8], i: usize) -> Result<Run, FormatError> {
+    let control = src[i];
+    if control < 0x80 {
+        let n = usize::from(control) + 1;
+        let bytes = src
+            .get(i + 1..i + 1 + n)
+            .ok_or_else(|| invalid(i, format!("literal run of {n} ends early")))?;
+        Ok(Run::Literal(bytes.to_vec()))
+    } else {
+        let &value = src
+            .get(i + 1)
+            .ok_or_else(|| invalid(i, "repeat run ends early".into()))?;
+        Ok(Run::Repeat {
+            value,
+            len: 257 - usize::from(control),
+        })
+    }
+}
+
 /// Splits a PackBits stream into the runs that decode to exactly `len` bytes. A run
 /// may not reach past `len`. Error offsets are into `src`.
 pub fn runs(src: &[u8], len: usize) -> Result<Vec<Run>, FormatError> {
-    let invalid = |offset: usize, reason: String| FormatError::Invalid {
-        offset: offset as u64,
-        reason,
-    };
     let mut runs = Vec::new();
     let (mut i, mut out) = (0, 0);
     while out < len {
-        let &control = src
-            .get(i)
-            .ok_or_else(|| invalid(i, format!("stream ends after {out} of {len} bytes")))?;
-        let run = if control < 0x80 {
-            let n = usize::from(control) + 1;
-            let bytes = src
-                .get(i + 1..i + 1 + n)
-                .ok_or_else(|| invalid(i, format!("literal run of {n} ends early")))?;
-            Run::Literal(bytes.to_vec())
-        } else {
-            let &value = src
-                .get(i + 1)
-                .ok_or_else(|| invalid(i, "repeat run ends early".into()))?;
-            Run::Repeat {
-                value,
-                len: 257 - usize::from(control),
-            }
-        };
+        if i >= src.len() {
+            return Err(invalid(
+                i,
+                format!("stream ends after {out} of {len} bytes"),
+            ));
+        }
+        let run = run_at(src, i)?;
         if out + run.len() > len {
             return Err(invalid(
                 i,
@@ -87,6 +99,19 @@ pub fn runs(src: &[u8], len: usize) -> Result<Vec<Run>, FormatError> {
             ));
         }
         out += run.len();
+        i += run.encoded_len();
+        runs.push(run);
+    }
+    Ok(runs)
+}
+
+/// Splits all of `src` into PackBits runs, however much they decode to: the last
+/// packet must end exactly at the end of `src`. Error offsets are into `src`.
+pub fn runs_to_end(src: &[u8]) -> Result<Vec<Run>, FormatError> {
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < src.len() {
+        let run = run_at(src, i)?;
         i += run.encoded_len();
         runs.push(run);
     }
@@ -192,6 +217,25 @@ mod tests {
                     assert!(r.contains(reason), "{r}");
                 }
                 other => panic!("expected Invalid for {src:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn runs_to_end_take_the_whole_stream() {
+        let runs = runs_to_end(&[0x01, 1, 2, 0xfe, 3]).unwrap();
+        assert_eq!(expand(&runs), [1, 2, 3, 3, 3]);
+        assert_eq!(runs_to_end(&[]).unwrap(), []);
+        for (src, reason) in [
+            (&[0x00, 1, 0x02, 1][..], "literal run of 3 ends early"),
+            (&[0x00, 1, 0xfe][..], "repeat run ends early"),
+        ] {
+            match runs_to_end(src) {
+                Err(FormatError::Invalid {
+                    offset: 2,
+                    reason: r,
+                }) => assert_eq!(r, reason),
+                other => panic!("expected Invalid at 2 for {src:?}, got {other:?}"),
             }
         }
     }
