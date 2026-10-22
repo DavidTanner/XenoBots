@@ -136,8 +136,6 @@ pub struct GameFiles {
     by_name: HashMap<String, PathBuf>,
 }
 
-// The asset loaders that call `path` and `read` arrive with the format tasks.
-#[cfg_attr(not(test), expect(dead_code))]
 impl GameFiles {
     /// The directory the files are in, and how it was chosen.
     pub fn dir(&self) -> &GameDir {

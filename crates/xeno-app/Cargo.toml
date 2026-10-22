@@ -16,3 +16,6 @@ softbuffer = "0.4"
 winit = "0.30"
 xeno-formats = { path = "../xeno-formats" }
 xeno-render = { path = "../xeno-render" }
+
+[dev-dependencies]
+xeno-formats = { path = "../xeno-formats", features = ["test-fixtures"] }

@@ -1,6 +1,6 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
 //! framebuffer on screen. For now it shows the test card, with markers driven by the
-//! game clock, until ESC or close.
+//! game clock, until ESC or close; or, with `--view`, one asset (`viewer`).
 //!
 //! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
 //! input events that arrived since the last; if any ran, a frame is requested; then the
@@ -28,16 +28,33 @@ use crate::clock::{Clock, Rate, Step};
 use crate::input::{InputLog, Keys};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
+use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
-/// Opens the window and runs until the user presses ESC or closes it.
-pub fn run(scale: Scale, aspect: Aspect, fullscreen: bool) -> Result<(), Box<dyn Error>> {
-    let mut fb = Framebuffer::new(Size::MODE_13H);
-    test_pattern::draw(&mut fb);
+/// Opens the window on `viewer`, or the test card without one, and runs until the
+/// user presses ESC or closes it.
+pub fn run(
+    scale: Scale,
+    aspect: Aspect,
+    fullscreen: bool,
+    viewer: Option<Viewer>,
+) -> Result<(), Box<dyn Error>> {
+    let (fb, palette, title) = match &viewer {
+        Some(v) => (v.framebuffer(), v.palette.clone(), v.title()),
+        None => {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            test_pattern::draw(&mut fb);
+            (fb, test_pattern::palette(), "Xenobots".to_string())
+        }
+    };
+    // The 320x240 mode has its own retrace rate (`docs/game-loop.md`, "Mode changes").
     let rate = Rate::for_height(fb.view().height);
     log::info!(
-        "scale {scale:?}, aspect {aspect:?}, fullscreen {fullscreen}, {:.3} retraces a second",
+        "scale {scale:?}, aspect {aspect:?}, fullscreen {fullscreen}, view {:?} of a {:?} \
+         surface, {:.3} retraces a second",
+        fb.view(),
+        fb.surface(),
         rate.hz()
     );
     let mut app = App {
@@ -48,7 +65,10 @@ pub fn run(scale: Scale, aspect: Aspect, fullscreen: bool) -> Result<(), Box<dyn
         keys: Keys::default(),
         meter: Meter::default(),
         fb,
-        palette: test_pattern::palette(),
+        palette,
+        viewer,
+        title,
+        layout: None,
         scale,
         aspect,
         start_fullscreen: fullscreen,
@@ -76,6 +96,11 @@ struct App {
     /// The picture to show.
     fb: Framebuffer,
     palette: Palette,
+    /// `--view`: what to show instead of the test card.
+    viewer: Option<Viewer>,
+    title: String,
+    /// The last layout drawn, to log changes.
+    layout: Option<Layout>,
     scale: Scale,
     aspect: Aspect,
     /// `--fullscreen`.
@@ -140,7 +165,7 @@ impl App {
     fn create_surface(&self, event_loop: &ActiveEventLoop) -> Result<Surface, Box<dyn Error>> {
         let view = self.fb.view();
         let attributes = Window::default_attributes()
-            .with_title("Xenobots")
+            .with_title(&self.title)
             .with_inner_size(initial_size(view, self.scale, self.aspect))
             .with_min_inner_size(physical(view))
             .with_fullscreen(
@@ -169,6 +194,14 @@ impl App {
         let mut buffer = surface.buffer_mut()?;
         let window_size = Size::new(inner.width as usize, inner.height as usize);
         let layout = Layout::new(self.fb.view(), window_size, self.scale, self.aspect);
+        if self.layout != Some(layout) {
+            self.layout = Some(layout);
+            log::debug!(
+                "{:?} view in a {window_size:?} window: {layout:?}, picture {:?}",
+                self.fb.view(),
+                layout.picture(self.fb.view())
+            );
+        }
         log::trace!(
             "redraw at {window_size:?} (scale factor {}, fullscreen {}): {layout:?}, picture {:?}",
             scale_factor,
@@ -181,15 +214,27 @@ impl App {
         Ok(())
     }
 
-    /// One retrace: the game reads this retrace's input from the log, then the test
-    /// card's markers move.
+    /// One retrace: the game reads this retrace's input from the log, then the viewer
+    /// acts on it, or the test card's markers move.
     fn tick(&mut self, step: Step) {
         self.log.record(step.retrace, self.input.take());
         for event in self.log.events_at(step.retrace) {
             log::debug!("retrace {}: {event:?}", step.retrace);
             self.keys.apply(event);
         }
-        test_pattern::draw_live(&mut self.fb, step.retrace, step.sixty_hz, &self.keys);
+        match &mut self.viewer {
+            Some(viewer) => {
+                if viewer.step(self.log.events_at(step.retrace), &self.keys) {
+                    viewer.draw(&mut self.fb);
+                    self.title = viewer.title();
+                    log::debug!("{}", self.title);
+                    if let Some(surface) = &self.surface {
+                        surface.window().set_title(&self.title);
+                    }
+                }
+            }
+            None => test_pattern::draw_live(&mut self.fb, step.retrace, step.sixty_hz, &self.keys),
+        }
         self.meter.sixty_hz_now = step.sixty_hz;
     }
 

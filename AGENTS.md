@@ -190,6 +190,7 @@ cargo build
 cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC leaves fullscreen, then quits, F11 fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files only, no window
+cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README)
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect --all ./gameFiles
 cargo test --workspace
