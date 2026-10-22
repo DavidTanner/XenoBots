@@ -1,4 +1,5 @@
-//! Runs the built binary to check what a user sees when the game files are missing.
+//! Runs the built binary to check what a user sees when the game files are missing,
+//! and that `--check` stops before opening a window.
 
 use std::process::Command;
 
@@ -17,4 +18,24 @@ fn missing_game_dir_fails_with_an_actionable_message() {
     assert!(stderr.contains(&missing.display().to_string()), "{stderr}");
     assert!(stderr.contains("does not exist"), "{stderr}");
     assert!(stderr.contains("XENOBOTS_GAME_DIR"), "{stderr}");
+}
+
+#[test]
+fn check_flag_verifies_the_game_dir_without_opening_a_window() {
+    let dir = std::env::temp_dir().join(format!("xeno-app-cli-check-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in xeno_formats::files::EXPECTED_FILES {
+        std::fs::write(dir.join(name), b"").unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_xeno-app"))
+        .arg("--game-dir")
+        .arg(&dir)
+        .arg("--check")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("Game files found in"), "{stdout}");
 }

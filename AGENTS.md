@@ -17,8 +17,8 @@ in priority order:
    higher-detail assets, so the game fills a 3840x2160 display cleanly instead of being a
    blurry stretch.
 
-The project is at the **scaffold stage**: the Cargo workspace exists with a
-placeholder `xeno-app` binary. Read `NEXT_STEPS.md` for the task backlog and pick
+The project is at the **scaffold stage**: the Cargo workspace exists and `xeno-app`
+checks the game files, then opens a window on a synthetic test card. Read `NEXT_STEPS.md` for the task backlog and pick
 tasks from there.
 
 ## Hard rules
@@ -183,7 +183,8 @@ Once the workspace exists, these are the expected commands (keep them true):
 
 ```bash
 cargo build
-cargo run -p xeno-app -- --game-dir ./gameFiles
+cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC quits
+cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files only, no window
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect --all ./gameFiles
 cargo test --workspace
