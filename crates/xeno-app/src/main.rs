@@ -1,7 +1,10 @@
-//! The Xenobots game binary. For now it finds the user's game files and checks that
-//! they are all there.
+//! The Xenobots game binary. For now it finds the user's game files, checks that they
+//! are all there, then opens a window showing a test card.
 
 mod game_dir;
+mod present;
+mod test_pattern;
+mod window;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,6 +21,10 @@ struct Cli {
     /// ./gameFiles.
     #[arg(long, value_name = "PATH")]
     game_dir: Option<PathBuf>,
+
+    /// Only check the game directory, then exit without opening a window.
+    #[arg(long)]
+    check: bool,
 }
 
 /// The name and version shown to the user, e.g. `xeno-app 0.1.0`.
@@ -27,6 +34,10 @@ fn version_string() -> String {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,xeno_app=info"),
+    )
+    .init();
     println!("{}", version_string());
 
     let game_dir = GameDir::resolve(cli.game_dir, std::env::var_os(game_dir::ENV_VAR));
@@ -42,7 +53,16 @@ fn main() -> ExitCode {
         files.dir().path.display(),
         files.dir().source
     );
-    ExitCode::SUCCESS
+    if cli.check {
+        return ExitCode::SUCCESS;
+    }
+    match window::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]

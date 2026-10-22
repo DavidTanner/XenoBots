@@ -60,11 +60,18 @@ cargo build --release
 cargo run --release -p xeno-app -- --game-dir ./gameFiles
 ```
 
-Planned options (see `cargo run -p xeno-app -- --help` once implemented):
+For now this checks the game files, then opens a window showing a test card (a
+synthetic pattern, no game art yet). Press ESC or close the window to quit.
 
 | Flag | Meaning |
 |---|---|
 | `--game-dir <path>` | Where the original game files are. |
+| `--check` | Only check the game directory, then exit without opening a window. |
+
+Planned options (see `cargo run -p xeno-app -- --help`):
+
+| Flag | Meaning |
+|---|---|
 | `--fullscreen` | Start in borderless fullscreen on the current monitor. |
 | `--scale <n>` | Integer scale factor for windowed mode. Default picks the largest that fits. |
 | `--aspect <auto\|square\|4:3>` | Pixel aspect correction. `auto` reproduces the 4:3 CRT look. |
