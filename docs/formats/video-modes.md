@@ -205,6 +205,16 @@ picture is not rescaled but cropped equally on both sides, since a fixed scale i
 for to see exact pixels. Under `auto` a window smaller than the view also shows the
 middle of a 1x picture.
 
+Window sizes and fullscreen (T-033). Every factor above is in physical pixels: the
+picture buffer follows the window's real pixel size, so a high-DPI (Retina) display
+gets a larger factor, never a blurred one. The default window is 800x600 points (2x2
+on a 1x display, 5x6 on a 2x one) and keeps that size in points when it moves to a
+monitor with another scale factor; a `--scale N` window keeps its size in pixels
+instead, so the picture still fits it exactly. Fullscreen (`--fullscreen`, F11 or
+Alt+Enter) is borderless on the current monitor and never changes the display mode:
+the same layout rules apply to the monitor's size (a 3440x1440 monitor gives 6x7), and
+`--scale N` keeps its factor there, centred, cropped if the screen is smaller.
+
 ## Open questions
 
 - Confirm with a DOSBox capture (T-027 was done statically; no DOSBox was available).

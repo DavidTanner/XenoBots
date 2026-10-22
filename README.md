@@ -61,7 +61,8 @@ cargo run --release -p xeno-app -- --game-dir ./gameFiles
 ```
 
 For now this checks the game files, then opens a window showing a test card (a
-synthetic pattern, no game art yet). Press ESC or close the window to quit.
+synthetic pattern, no game art yet). Press ESC or close the window to quit, and F11
+or Alt+Enter to switch between a window and fullscreen.
 
 | Flag | Meaning |
 |---|---|
@@ -69,12 +70,20 @@ synthetic pattern, no game art yet). Press ESC or close the window to quit.
 | `--check` | Only check the game directory, then exit without opening a window. |
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
+| `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
+
+| Key | Action |
+|---|---|
+| ESC | Quit (also in fullscreen). |
+| F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
+
+On a high-DPI (Retina) display the picture is drawn in the display's real pixels, so
+the default window gets a larger scale there, not a blurred one.
 
 Planned options (see `cargo run -p xeno-app -- --help`):
 
 | Flag | Meaning |
 |---|---|
-| `--fullscreen` | Start in borderless fullscreen on the current monitor. |
 | `--filter <nearest\|xbrz>` | Upscaling filter. `nearest` is pixel-exact; `xbrz` smooths edges without blurring. |
 | `--hd-pack <path>` | Optional directory of higher-resolution replacement assets (not provided here). |
 

@@ -44,6 +44,11 @@ struct Cli {
             .map(|s| s.parse::<Aspect>().expect("listed values parse")),
     )]
     aspect: Aspect,
+
+    /// Start in borderless fullscreen on the current monitor (the display mode is not
+    /// changed). F11 or Alt+Enter toggles it; ESC quits.
+    #[arg(long)]
+    fullscreen: bool,
 }
 
 /// Parses a flag value with its `FromStr`.
@@ -80,7 +85,7 @@ fn main() -> ExitCode {
     if cli.check {
         return ExitCode::SUCCESS;
     }
-    match window::run(cli.scale, cli.aspect) {
+    match window::run(cli.scale, cli.aspect, cli.fullscreen) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
@@ -107,11 +112,17 @@ mod tests {
     }
 
     #[test]
-    fn scale_and_aspect_flags_parse() {
+    fn scale_aspect_and_fullscreen_flags_parse() {
         let cli = Cli::try_parse_from(["xeno-app"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Auto, Aspect::Correct));
+        assert!(!cli.fullscreen);
         let cli = Cli::try_parse_from(["xeno-app", "--scale", "3", "--aspect", "off"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Fixed(3), Aspect::Off));
+        assert!(
+            Cli::try_parse_from(["xeno-app", "--fullscreen"])
+                .unwrap()
+                .fullscreen
+        );
         for bad in [["--scale", "0"], ["--scale", "big"], ["--aspect", "4:3"]] {
             assert!(Cli::try_parse_from(["xeno-app", bad[0], bad[1]]).is_err());
         }

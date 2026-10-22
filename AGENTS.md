@@ -186,7 +186,8 @@ Once the workspace exists, these are the expected commands (keep them true):
 
 ```bash
 cargo build
-cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC quits
+cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC quits, F11 fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files only, no window
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect --all ./gameFiles
