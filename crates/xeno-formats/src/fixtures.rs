@@ -396,9 +396,77 @@ pub fn synthetic_dsounds(sounds: &[(u16, &[u8])]) -> Vec<u8> {
     file
 }
 
+/// An LZEXE 0.91 executable whose load image is `image`, stored as literals only, with
+/// entry point `cs:ip` and relocations at the image offsets `relocations` (ascending,
+/// each 1 to 0xffff bytes after the last). Only the parts [`crate::lzexe`] reads are
+/// filled in; it would not run.
+pub fn synthetic_lzexe(image: &[u8], (cs, ip): (u16, u16), relocations: &[usize]) -> Vec<u8> {
+    // Every flag is 1 (a literal); a 0, 1 pair and a `00 00 00` copy end the stream.
+    // A flag word goes before the bytes after its first bit, and the next one is read
+    // as soon as its sixteenth bit is taken.
+    let mut stream = vec![0, 0];
+    let mut flags_at = 0;
+    let mut used = 0;
+    let mut flag = |stream: &mut Vec<u8>, bit: u16| {
+        let word = u16::from_le_bytes([stream[flags_at], stream[flags_at + 1]]) | bit << used;
+        stream[flags_at..flags_at + 2].copy_from_slice(&word.to_le_bytes());
+        used += 1;
+        if used == 16 {
+            flags_at = stream.len();
+            stream.extend([0, 0]);
+            used = 0;
+        }
+    };
+    for &b in image {
+        flag(&mut stream, 1);
+        stream.push(b);
+    }
+    flag(&mut stream, 0);
+    flag(&mut stream, 1);
+    stream.extend([0, 0, 0]);
+    let paragraphs = stream.len().div_ceil(16);
+    stream.resize(paragraphs * 16, 0);
+
+    let mut file = vec![0u8; 32];
+    file[0..2].copy_from_slice(b"MZ");
+    file[0x08..0x0a].copy_from_slice(&2u16.to_le_bytes());
+    file[0x16..0x18].copy_from_slice(&u16::try_from(paragraphs).unwrap().to_le_bytes());
+    file[0x1c..0x20].copy_from_slice(b"LZ91");
+    file.extend(stream);
+    let loader = file.len();
+    for word in [ip, cs, 0, 0, u16::try_from(paragraphs).unwrap(), 0, 0] {
+        file.extend(word.to_le_bytes());
+    }
+    file.resize(loader + 0x158, 0);
+    let mut last = 0;
+    for &at in relocations {
+        match at - last {
+            span @ 1..=0xff => file.push(span as u8),
+            span => {
+                file.push(0);
+                file.extend(u16::try_from(span).unwrap().to_le_bytes());
+            }
+        }
+        last = at;
+    }
+    file.extend([0, 1, 0]);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_synthetic_lzexe_file_unpacks_to_its_image() {
+        let image = synthetic_bytes(1000, 3);
+        let file = synthetic_lzexe(&image, (0x10, 2), &[3, 0x103, 0x400]);
+        let unpacked = crate::lzexe::unpack(&file).unwrap();
+        assert_eq!(unpacked.image, image);
+        assert_eq!((unpacked.cs, unpacked.ip), (0x10, 2));
+        let at: Vec<_> = unpacked.relocations.iter().map(|r| r.linear()).collect();
+        assert_eq!(at, [3, 0x103, 0x400]);
+    }
 
     #[test]
     fn has_the_requested_length() {

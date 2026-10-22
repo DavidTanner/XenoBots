@@ -85,6 +85,36 @@ reading code, which may never run in normal play.
   whole palette to black and waits for the upload, `0x4e4` returns carry set while a
   fade runs, and `0x4e8` stops it and puts the saved palette back (a fade-in's target).
 
+### Fade arithmetic (T-036)
+
+Read in `mgavideo.dvr` (load offsets: `pal_start_fade_in` 0x664 and its step 0x736;
+the fade out at 0x505 and its step 0x5ba; the retrace handler 0x90f).
+
+- **Order each retrace.** The host's retrace interrupt counts `DS:0x370`, then calls
+  slot `0x4f4`: upload the shadow if dirty, then call the fade routine, which writes the
+  next shadow and marks it dirty. So a step shows one retrace after it is computed.
+- **Start.** Every fade first stops the running one and clears the dirty flag (a
+  pending upload is dropped). The step is `0x10000 / length` (a length of 0 counts as
+  1; a length of 1 overflows the division, a fault in the original).
+- **Fade in** (`0x4d8`/`0x4dc`): copies the target into the shadow and a saved buffer,
+  sets those shadow colours to black, waits for that upload, then starts. Each step the
+  16-bit level rises by the step, saturating at 0xffff, and every byte becomes
+  `ramp[saved]`, where `ramp[i] = i * level >> 16` for `i` in 0..64. At 0xffff the ramp
+  is `i - 1`, and the fade ends there: **a fade in leaves every non-zero level one below
+  its target**, until something puts the target back (`0x4e8`, only while it runs).
+- **Fade out** (`0x4c8`/`0x4c0`): waits for the counter to move (one retrace), reads the
+  DAC back through port `0x3c7`, then starts. The level rises the same way but wraps to
+  0 on overflow, and the ramp uses `0x10000 - level`, so the last step is black. It
+  also stops after `DX` steps (`0x4c0` passes 0xffff).
+- **Colour range.** The routines take a first and last colour, but they read the DAC
+  into the start of their buffer and then index it from `first * 3`, and loop to
+  `count * 3`; only a first colour of 0 works as intended, which is all the `.vcl`
+  player uses (colours 0..=251, then 0..=255).
+- **Back to back** (the player's two fades out): the second stops the first in the same
+  retrace its black step was computed, dropping that upload, so the second starts from
+  the first's next-to-last levels. The DAC shows those for three retraces before the
+  second's first step.
+
 ### Colour-animation records
 
 The retrace handlers also walk a list of colour-animation records and write the colours

@@ -1,7 +1,8 @@
 //! `inspect`: a generic summary of any file, plus what the parser makes of it for
 //! formats that have one (so far: pcx, b@n, m@l, vcl, the `.mXX` unit models,
 //! `scendef.bin`, the `.usg` scenarios, the `.fgd` layers, the `.ms3` music, the
-//! `dsounds.bin` sound effects, the `.map` editor terrain and `state.rst`).
+//! `dsounds.bin` sound effects, the `.map` editor terrain, `state.rst`, and the LZEXE
+//! packed `xeno.exe` and `config.dvr`, with `xeno.exe`'s intro sequence).
 
 use std::fmt::Write;
 use std::path::Path;
@@ -110,8 +111,57 @@ fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
         "ms3" => ms3_details(bytes),
         "map" => map_details(bytes),
         "rst" => rst_details(bytes),
+        "exe" | "dvr" if xeno_formats::lzexe::is_packed(bytes) => exe_details(file, bytes),
         _ => return None,
     })
+}
+
+/// What the LZEXE unpacker makes of `bytes`; for `xeno.exe`, also its intro chain
+/// (`sequence`): each entry's picture, effect, origin, end time and fades.
+fn exe_details(file: &Path, bytes: &[u8]) -> Details {
+    use xeno_formats::{lzexe, sequence};
+
+    let exe = lzexe::unpack(bytes).map_err(|e| format!("lzexe:     cannot unpack: {e}\n"))?;
+    let mut out = format!(
+        "lzexe:     unpacks to {} bytes ({}-byte image), {} relocations, entry {:04x}:{:04x}, stack {:04x}:{:04x}\n",
+        exe.exe_size(),
+        exe.image.len(),
+        exe.relocations.len(),
+        exe.cs,
+        exe.ip,
+        exe.ss,
+        exe.sp
+    );
+    let name = file.file_name().unwrap_or_default();
+    if !name.eq_ignore_ascii_case("xeno.exe") {
+        return Ok(out);
+    }
+    let fail = |e| format!("{out}intro:     cannot read: {e}\n");
+    let ds = sequence::data_segment(&exe).map_err(fail)?;
+    let chain = sequence::intro_chain(&exe).map_err(fail)?;
+    writeln!(
+        out,
+        "intro:     {} entries at DS:{:#06x} (DS at image offset {ds:#x}):",
+        chain.len(),
+        sequence::INTRO_CHAIN
+    )
+    .unwrap();
+    for e in &chain {
+        writeln!(
+            out,
+            "intro:       {:<12} {:?} {} from ({}, {}), until {}, fade in {} out {}",
+            e.file_name().unwrap_or("?"),
+            e.effect().unwrap_or(sequence::Effect::Hold),
+            e.length,
+            e.x,
+            e.y,
+            e.end_time,
+            e.fade_in,
+            e.fade_out
+        )
+        .unwrap();
+    }
+    Ok(out)
 }
 
 /// What the PCX parser makes of `bytes`, or why it could not parse them.
@@ -572,8 +622,9 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_dsounds, synthetic_model, synthetic_ms3, synthetic_pcx,
-        synthetic_scendef, synthetic_screen, synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
+        synthetic_bytes, synthetic_dsounds, synthetic_lzexe, synthetic_model, synthetic_ms3,
+        synthetic_pcx, synthetic_scendef, synthetic_screen, synthetic_sprite_bank, synthetic_usg,
+        synthetic_vcl,
     };
 
     #[test]
@@ -789,6 +840,42 @@ mod tests {
         assert!(out.contains("; not used by the game\n"), "{out}");
         let out = report(Path::new("layer1.fgd"), &rows[..10]);
         assert!(out.contains("fgd:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn packed_executables_show_their_header_and_xeno_exe_its_intro() {
+        // Entry 0001:0000 loads DS = 0x20; ten made-up entries at DS:0xecac, each
+        // `ealogo.vcl` held 60 ticks until 100, fades 32 and 64.
+        let chain = 0x200 + 0xecac;
+        let mut image = vec![0u8; chain + 260];
+        image[0x10..0x15].copy_from_slice(&[0xb8, 0x20, 0, 0x8e, 0xd8]);
+        let entry: Vec<u8> = [0x20u16, 0, 0, 0, 60, 0, 0, 0, 100, 32, 64, 2, 0]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        for i in 0..10 {
+            image[chain + i * 26..][..26].copy_from_slice(&entry);
+        }
+        let file = synthetic_lzexe(&image, (1, 0), &[0x11]);
+        let out = report(Path::new("XENO.EXE"), &file);
+        let size = image.len() + 512;
+        assert!(
+            out.contains(&format!(
+                "lzexe:     unpacks to {size} bytes ({}-byte image), 1 relocations, entry 0001:0000, stack 0000:0000\n\
+                 intro:     10 entries at DS:0xecac (DS at image offset 0x200):\n\
+                 intro:       ealogo.vcl   Hold 60 from (0, 0), until 100, fade in 32 out 64\n",
+                image.len()
+            )),
+            "{out}"
+        );
+        let out = report(Path::new("config.dvr"), &file);
+        assert!(
+            out.contains("1 relocations") && !out.contains("intro:"),
+            "{out}"
+        );
+        let out = report(Path::new("xeno.exe"), &synthetic_lzexe(&image, (1, 0), &[]));
+        assert!(out.contains("intro:     cannot read: "), "{out}");
+        assert_eq!(outcome(Path::new("xeno.exe"), b"MZ"), Outcome::NoParser);
     }
 
     #[test]

@@ -1,0 +1,19 @@
+---
+source: crates/xeno-formats/src/sequence.rs
+expression: entry
+---
+Entry {
+    file_id: 34,
+    x: 0,
+    y: 160,
+    effect: 6,
+    length: 160,
+    caption: 256,
+    caption_x: 10,
+    caption_y: 20,
+    end_time: 1000,
+    fade_in: 32,
+    fade_out: 64,
+    caption_speed: 2,
+    pan_speed: 0,
+}
