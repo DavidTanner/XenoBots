@@ -15,6 +15,25 @@ hardware:
 Neither a 320x400 mode nor any SVGA/VESA mode appears in any binary. `config.dvr`
 offers a single graphics choice, "VGA/MCGA graphics".
 
+## Screens and their modes
+
+From the code (T-027): only three `xeno.exe` routines enter mode B, only `vgaintro.dvr`
+uses mode A', and nothing else in any binary sets a mode or a virtual width (every far
+call through slots `0x5f4`–`0x612`, and every `int 10h`, was checked). Not yet confirmed
+against a DOSBox capture (see the checklist at the end).
+
+| Screen | Mode | Where |
+|---|---|---|
+| `config.dvr` setup | Text (BIOS mode 3, or 7 on a monochrome adapter) | Runs before `mgavideo.dvr` is loaded |
+| Intro cutscene: `EALOGO`, `DETECT`, `ARRIVAL`, `GRNDFALL`, `EMERGE`, `WAR`, `ANNIHIL`, `AFTERMTH`, `RETURN`, `PRESENTS` | B | `xeno.exe` `1000:fd0a` (`vcl.md`) |
+| Intro drop over `xenodrop.pcx`, then `cavedrop.pcx` | A' | `vgaintro.dvr` (`fgd.md`) |
+| Front end and game: `LOGIN`, `SITROOM`, `MAPROOM`, `REVIEW`, `TRAINMEN`, the three robot consoles, the battle view, the scenario and terrain editors, the file dialogs | A | `mgavideo.dvr`'s mode 13h, set once at start-up (slot `0x470`) and restored after each B or A' sequence |
+| Mission won: `WIN` | B | `1000:fde8` from `1000:7059` |
+| Mission lost: `NLOSE` or `SLOSE` (`HLOSE` is never shown) | B | `1000:fde8` from `1000:702d` |
+| Campaign won: `TRIUMPH`, instead of `WIN` | B | `1000:fd9f` from `1000:70d0` |
+
+Mode B is therefore used for exactly the `.vcl` cutscenes, and every `.vcl` is shown in it.
+
 So the port's logical framebuffer cannot be fixed at 320x200. It must support 320x200
 and 320x240, each with its own aspect correction. Scrolling screens need a wider
 virtual surface with a 320-wide viewport.
@@ -107,10 +126,12 @@ plain linear order, spread across the four planes by cycling the map mask. See
 ### `xeno.exe`
 
 - It never calls `int 10h` itself. Mode changes go through the driver slots.
-- Three routines (unpacked file offsets ~0x1091d, ~0x109b2, ~0x109f0) call slot
-  `0x5f4` (enter mode B), run a chain of calls to one sequence-player routine
-  (~0x19a24) that takes a table of 26-byte entries, and finish with slot `0x602` (back
-  to mode 13h). The player calls slot `0x60e` to position the display for each entry.
+- Three routines (`1000:fd0a`, `fd9f`, `fde8`; their slot calls are at unpacked file
+  offsets ~0x1091d, ~0x109b2, ~0x109f0) call slot `0x5f4` (enter mode B), run one or
+  more calls of the sequence player (`1fe6:8fc4`, ~0x19a24) on 26-byte entries, and
+  finish with slot `0x602` (back to mode 13h). The player positions the window with
+  slot `0x60e` and pans it one pixel per step; it is paced by the retrace counter
+  `DS:0x370`, so in mode B by 59.94 Hz retraces (entry layout and timing in `vcl.md`).
 - Its vertical-retrace handler (~0x13d2a) applies the pending pixel-panning value set by
   slot `0x60e`. It also runs a countdown that alternates the CRTC start address between
   two values for a number of frames, which by its shape is a screen-shake effect.
@@ -134,8 +155,14 @@ plain linear order, spread across the four planes by cycling the map mask. See
 
 ## Open questions
 
-- The three mode-B sequences show `.vcl` pictures, and only those (T-018; the entries
-  are listed in `vcl.md`). Most fields of the 26-byte entries are still undecoded, and
-  whether any other screen runs in mode B is open (T-027). Confirm with a DOSBox
-  capture.
+- Confirm with a DOSBox capture (T-027 was done statically; no DOSBox was available).
+  A capture should check:
+  - the `.vcl` cutscenes are 320x240 at ~59.94 Hz and the front end and drop sequence
+    320x200 at ~70 Hz (DOSBox's raw screenshots and its reported refresh rate);
+  - a pan moves one pixel per retrace (`TRIUMPH`: one per two), captions type at two
+    retraces per character, and fades take the lengths in the entries (`vcl.md`);
+  - each intro picture ends at its music-relative time, and the intro lasts a little
+    over two minutes;
+  - which lose picture follows a defeat commanding each robot type (`DS:0x6012`);
+  - P pauses a cutscene and any other key ends it, skipping the drop sequence.
 - The purpose of the `xeno.exe` misc-output routine (~0x10d7b).

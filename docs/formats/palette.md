@@ -75,7 +75,15 @@ reading code, which may never run in normal play.
 - **Fades.** A routine near ~0x747 reads the current DAC back through port `0x3c7` into
   a second 768-byte buffer (data word `0x696`). A per-retrace routine (~0x7ba) then
   scales those colours through a 64-entry ramp into the shadow palette. By its shape it
-  fades between black and the saved palette.
+  fades between black and the saved palette. From the `.vcl` player (T-027; load-image
+  offsets, see `docs/re/dvr-protocol.md`): the fade is a routine pointer (data word
+  `0x4f8`) that the retrace handler calls once per retrace, and `AX` is the length in
+  retraces (a 16-bit level moves by `0x10000 / AX` each time). Slot `0x4d8` fades from
+  black to the palette in segment `DX` and returns at once; `0x4dc` fades colours
+  `BX..=CX` in from the palette at `ES` and waits. `0x4c8` fades colours `BX..=CX` to
+  black (at most `DX` retraces) and `0x4c0` all 256, both waiting. `0x4b4` sets the
+  whole palette to black and waits for the upload, `0x4e4` returns carry set while a
+  fade runs, and `0x4e8` stops it and puts the saved palette back (a fade-in's target).
 
 ### Colour-animation records
 
@@ -103,10 +111,9 @@ the list (mgavideo ~0xc66).
 
 ## Open questions
 
-- When a `.vcl` palette reaches the DAC. `vga240.mod`'s loader only reads it into a
-  buffer, and the sequence player then hands that buffer to host slot `0x4d8`, which
-  looks like a fade-in (`vcl.md`; T-027, T-037). A `.vcl` holds nothing but the palette
-  and one picture, so any colour animation in a cutscene comes from elsewhere.
+- Settled (T-027): a `.vcl` palette reaches the DAC through the fade-in of slot
+  `0x4d8`, over the number of retraces in the sequence entry (`vcl.md`). The cutscenes
+  use no colour animation records.
 - What sets the hidden switch (`DS:0x618 = 0xe263`) that `vgaiff.dvr`'s screenshot
   needs (T-039). Its IFF reader is never called (`docs/re/dvr-protocol.md`).
 - The countdown reload, and who advances the animation pointer.
