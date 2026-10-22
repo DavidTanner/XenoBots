@@ -46,7 +46,7 @@ Model {
             animations: [
                 [
                     Frame {
-                        unknown_01: 5,
+                        depth: 5,
                         parts: [
                             Part {
                                 image: 0,
@@ -56,7 +56,7 @@ Model {
                         ],
                     },
                     Frame {
-                        unknown_01: 10,
+                        depth: 10,
                         parts: [],
                     },
                 ],
@@ -65,7 +65,7 @@ Model {
                 [
                     [
                         Frame {
-                            unknown_01: 0,
+                            depth: 0,
                             parts: [
                                 Part {
                                     image: 32768,
@@ -123,7 +123,7 @@ Model {
             animations: [
                 [
                     Frame {
-                        unknown_01: 0,
+                        depth: 0,
                         parts: [],
                     },
                 ],

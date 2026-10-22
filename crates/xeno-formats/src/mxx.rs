@@ -6,7 +6,9 @@
 //!
 //! Each facing has animations, each a list of frames, and a frame is a list of parts:
 //! images from the view (or from the model's `.m00`) drawn at an offset, perhaps
-//! mirrored. The images are 8-bit row spans. See `docs/formats/mxx.md`.
+//! mirrored. The animations are the moving pieces of a unit (body, legs, arms...): the
+//! game draws one frame of each at once. The images are 8-bit row spans in which
+//! colour 0 is transparent. See `docs/formats/mxx.md`.
 
 use binrw::{BinRead, binrw};
 
@@ -31,7 +33,8 @@ pub struct ViewHeader {
     /// facing is its own mirror (0 and 32). 0 when there is no facing.
     pub mirror_index_offset: u16,
     /// Where the lists that `index_offset` points to start. Not an offset when there
-    /// is no facing: these two words then hold unknown values.
+    /// is no facing: these two words then hold unknown values. The game never reads
+    /// this field or the next; it reaches the lists through the index.
     pub lists_offset: u16,
     /// As `lists_offset`, for `mirror_facing`.
     pub mirror_lists_offset: u16,
@@ -88,8 +91,9 @@ impl Part {
     }
 }
 
-/// One frame of an animation: a count byte, an unknown byte, then the parts, drawn in
-/// order (later parts over earlier ones, a guess). A frame can have no parts.
+/// One frame of an animation: a count byte, a depth byte, then the parts, drawn in
+/// order (later parts over earlier ones). A frame can have no parts, and then that
+/// animation shows nothing.
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,9 +101,11 @@ pub struct Frame {
     #[br(temp)]
     #[bw(try_calc = u8::try_from(parts.len()))]
     count: u8,
-    /// A multiple of 5 from 0 to 250 in a stock install; 0 in every frame of the
-    /// models with one animation. Perhaps a duration or a height.
-    pub unknown_01: u8,
+    /// Draw-order key. The game draws one frame of every animation of a model
+    /// together, sorted by this key: lower first, so higher keys end up on top, and
+    /// equal keys in animation order. A multiple of 5 from 0 to 250 in a stock
+    /// install.
+    pub depth: u8,
     #[br(count = count)]
     pub parts: Vec<Part>,
 }
@@ -508,7 +514,7 @@ mod tests {
         let part = &frames[0].parts[0];
         assert_eq!((part.image_index(), part.x, part.y), (0, -2, -3));
         assert!(!part.is_flipped() && !part.is_direction_free());
-        assert_eq!((frames[0].unknown_01, frames[1].unknown_01), (5, 10));
+        assert_eq!((frames[0].depth, frames[1].depth), (5, 10));
         assert!(frames[1].parts.is_empty());
         let mirror = &eight.mirror_animations.as_ref().unwrap()[0][0].parts[0];
         assert!(mirror.is_flipped());
@@ -521,7 +527,7 @@ mod tests {
         assert_eq!(
             thirty_two.animations,
             [vec![Frame {
-                unknown_01: 0,
+                depth: 0,
                 parts: vec![]
             }]]
         );
