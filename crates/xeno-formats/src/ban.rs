@@ -1,7 +1,8 @@
 //! `.b@n` banks: packed `.BIN` files (see `crate::packed`). Two kinds ship with the
-//! game: sprite banks (`msprite0`..`msprite5`), a list of 8-bit images, and sky strips
-//! (`sky_a`..`sky_h`), one bare 342x54 image each. Neither carries a palette. See
-//! `docs/formats/b@n.md`.
+//! game: sprite banks (`msprite0`..`msprite5`, the game's `MSPRITES.BIN` with the last
+//! letter of the name replaced by the bank's digit), a list of 8-bit images, and sky
+//! strips (`sky_a`..`sky_h`, named by a scenario's `BGND` chunk), one bare 342x54 image
+//! each. Neither carries a palette. See `docs/formats/b@n.md`.
 
 use binrw::{BinRead, binrw};
 
@@ -16,10 +17,11 @@ pub struct SpriteHeader {
     pub size: u16,
     pub width: u8,
     pub height: u8,
-    /// Bit 1 ([`SpriteHeader::ROW_SPANS`]): pixels are stored as row spans. No other
-    /// bit is set in a stock install.
+    /// [`SpriteHeader::ROW_SPANS`] (2): pixels are stored as row spans; 0: raw. The
+    /// game's blitters test for exactly 2 and treat any other value as raw.
     pub flags: u8,
-    /// 8 in every record of a stock install; perhaps bits per pixel.
+    /// 8 in every record of a stock install (perhaps bits per pixel). Nothing in the
+    /// game reads it: the blitters use only the size, width, height and flags.
     pub unknown_05: u8,
 }
 
@@ -41,8 +43,12 @@ pub struct Sprite {
     pub header: SpriteHeader,
     /// `width * height` palette indices, row by row. Pixels outside a row span are 0.
     pub pixels: Vec<u8>,
-    /// Row spans only: the rows are followed by one more, empty span (`0, 0`). Some
-    /// banks have it and some don't; its purpose is unknown.
+    /// Row spans only: `(skip, count)` for each row. Pixels outside a row's span are
+    /// never drawn, while a 0 inside a span is drawn by the opaque blitters, so the
+    /// renderer needs the spans as well as the pixels. Empty for raw sprites.
+    pub spans: Vec<(u8, u8)>,
+    /// Row spans only: the rows are followed by one more, empty span (`0, 0`), as if
+    /// the encoder wrote `height + 1` rows. The game never reads it (`size` skips it).
     pub trailing_empty_span: bool,
 }
 
@@ -54,13 +60,27 @@ impl Sprite {
     pub fn height(&self) -> usize {
         self.header.height.into()
     }
+
+    /// Whether the game's blitters write pixel (`x`, `y`): every pixel of a raw
+    /// sprite, and only the pixels inside the row's span of a row-span sprite.
+    pub fn covers(&self, x: usize, y: usize) -> bool {
+        if !self.header.has_row_spans() {
+            return x < self.width() && y < self.height();
+        }
+        self.spans.get(y).is_some_and(|&(skip, count)| {
+            (usize::from(skip)..usize::from(skip) + usize::from(count)).contains(&x)
+        })
+    }
 }
 
 /// A decoded sprite bank.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteBank {
-    /// The first four bytes; 0 in every bank of a stock install.
-    pub unknown_00: u32,
+    /// 0 on disk. The game's loader writes here the sprite directory offset of the
+    /// bank's first sprite (8 bytes per sprite), which it was asked to load the bank at.
+    pub runtime_first_handle: u16,
+    /// 0 on disk. The game's loader writes the number of sprites here.
+    pub runtime_count: u16,
     pub sprites: Vec<Sprite>,
 }
 
@@ -85,7 +105,8 @@ pub fn parse_sprites(bytes: &[u8]) -> Result<SpriteBank, FormatError> {
     };
 
     let mut cursor = std::io::Cursor::new(&data);
-    let unknown_00 = u32::read_le(&mut cursor)?;
+    let runtime_first_handle = u16::read_le(&mut cursor)?;
+    let runtime_count = u16::read_le(&mut cursor)?;
     let mut sprites = Vec::new();
     loop {
         let at = cursor.position() as usize;
@@ -105,10 +126,10 @@ pub fn parse_sprites(bytes: &[u8]) -> Result<SpriteBank, FormatError> {
             ));
         }
         let (width, height) = (usize::from(header.width), usize::from(header.height));
-        let (pixels, trailing_empty_span) = if header.has_row_spans() {
+        let (pixels, spans, trailing_empty_span) = if header.has_row_spans() {
             row_spans(body, width, height).map_err(|reason| invalid(at, reason))?
         } else if body.len() == width * height {
-            (body.to_vec(), false)
+            (body.to_vec(), Vec::new(), false)
         } else {
             return Err(invalid(
                 at,
@@ -122,6 +143,7 @@ pub fn parse_sprites(bytes: &[u8]) -> Result<SpriteBank, FormatError> {
         sprites.push(Sprite {
             header,
             pixels,
+            spans,
             trailing_empty_span,
         });
         cursor.set_position((at + usize::from(size)) as u64);
@@ -135,21 +157,27 @@ pub fn parse_sprites(bytes: &[u8]) -> Result<SpriteBank, FormatError> {
         ));
     }
     Ok(SpriteBank {
-        unknown_00,
+        runtime_first_handle,
+        runtime_count,
         sprites,
     })
 }
 
+/// Pixels, `(skip, count)` per row, and whether an empty span follows the last row.
+type RowSpans = (Vec<u8>, Vec<(u8, u8)>, bool);
+
 /// Expands row spans: per row, a left skip, a count, then `count` pixels. The spans
 /// must use the whole body, apart from an optional empty span after the last row,
 /// which is reported in the returned flag.
-fn row_spans(body: &[u8], width: usize, height: usize) -> Result<(Vec<u8>, bool), String> {
+fn row_spans(body: &[u8], width: usize, height: usize) -> Result<RowSpans, String> {
     let mut pixels = vec![0; width * height];
+    let mut spans = Vec::with_capacity(height);
     let mut i = 0;
     for y in 0..height {
         let (Some(&skip), Some(&count)) = (body.get(i), body.get(i + 1)) else {
             return Err("row spans end early".into());
         };
+        spans.push((skip, count));
         let (skip, count) = (usize::from(skip), usize::from(count));
         if skip + count > width {
             return Err(format!(
@@ -164,8 +192,8 @@ fn row_spans(body: &[u8], width: usize, height: usize) -> Result<(Vec<u8>, bool)
         i += 2 + count;
     }
     match &body[i..] {
-        [] => Ok((pixels, false)),
-        [0, 0] => Ok((pixels, true)),
+        [] => Ok((pixels, spans, false)),
+        [0, 0] => Ok((pixels, spans, true)),
         rest => Err(format!("{} bytes after the last row span", rest.len())),
     }
 }
@@ -206,6 +234,13 @@ mod tests {
         assert!(spans.header.has_row_spans());
         assert_eq!((spans.width(), spans.height()), (4, 3));
         assert_eq!(spans.pixels, [0, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 9]);
+        assert_eq!(spans.spans, [(1, 2), (0, 0), (3, 1)]);
+        // Inside a span is drawn, even where the pixel is 0; outside is not.
+        assert!(spans.covers(1, 0) && spans.covers(3, 2));
+        assert!(!spans.covers(0, 0) && !spans.covers(0, 1) && !spans.covers(2, 2));
+        assert!(!spans.covers(0, 3));
+        let raw = &bank.sprites[0];
+        assert!(raw.spans.is_empty() && raw.covers(2, 1) && !raw.covers(3, 0));
     }
 
     #[test]
@@ -241,7 +276,7 @@ mod tests {
         let big = synthetic_bytes(40 * 30, 1);
         let sprites: [(u8, u8, &[u8]); 3] = [(1, 1, &[5]), (40, 30, &big), (0, 0, &[])];
         let bank = parse_sprites(&synthetic_sprite_bank(&sprites)).unwrap();
-        assert_eq!(bank.unknown_00, 0);
+        assert_eq!((bank.runtime_first_handle, bank.runtime_count), (0, 0));
         for (sprite, (width, height, pixels)) in bank.sprites.iter().zip(sprites) {
             assert_eq!((sprite.header.width, sprite.header.height), (width, height));
             assert_eq!(sprite.pixels, pixels);
@@ -317,6 +352,7 @@ mod tests {
             .collect();
         banks.sort();
         assert_eq!(banks.len(), 14, "a stock install has 14 .b@n files");
+        let mut sprites = 0;
         for path in banks {
             let name = path.file_name().unwrap().to_string_lossy().to_lowercase();
             let bytes = std::fs::read(&path).unwrap();
@@ -325,7 +361,11 @@ mod tests {
             } else {
                 let bank = parse_sprites(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
                 assert!(!bank.sprites.is_empty(), "{name}");
+                assert_eq!((bank.runtime_first_handle, bank.runtime_count), (0, 0));
+                sprites += bank.sprites.len();
             }
         }
+        // The game's sprite directory holds 390 entries, all six banks at once.
+        assert_eq!(sprites, 390);
     }
 }

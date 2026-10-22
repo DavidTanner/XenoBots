@@ -3,7 +3,8 @@ source: crates/xeno-formats/src/ban.rs
 expression: parse_sprites(&synthetic_packed(&mixed_bank())).unwrap()
 ---
 SpriteBank {
-    unknown_00: 0,
+    runtime_first_handle: 0,
+    runtime_count: 0,
     sprites: [
         Sprite {
             header: SpriteHeader {
@@ -21,6 +22,7 @@ SpriteBank {
                 5,
                 6,
             ],
+            spans: [],
             trailing_empty_span: false,
         },
         Sprite {
@@ -44,6 +46,20 @@ SpriteBank {
                 0,
                 0,
                 9,
+            ],
+            spans: [
+                (
+                    1,
+                    2,
+                ),
+                (
+                    0,
+                    0,
+                ),
+                (
+                    3,
+                    1,
+                ),
             ],
             trailing_empty_span: false,
         },
