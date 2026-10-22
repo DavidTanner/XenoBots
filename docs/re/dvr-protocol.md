@@ -25,8 +25,9 @@ header; Ghidra shows them in segment `1000`). `vga240.mod` has no header.
 | `vga240.mod` | `mgavideo.dvr`'s stubs at slots `0x5f4`/`0x606` (raw file load, not EXEC) | First use of the 320x240 mode or of the row-table services | Mode B and virtual-width services (`video-modes.md`), the `.vcl` loader and a caption glyph renderer (`vcl.md`) |
 
 `LIGHT.MOD` (not in the install) would be loaded by `mgavideo.dvr`'s stub at slot
-`0x546`. Nothing calls that slot, and the stub begins with a breakpoint instruction, so
-it is dead code.
+`0x546`. Nothing calls that slot, so it is dead code. (The stub begins with a
+breakpoint instruction, but that alone proves nothing: the host's file loader at slot
+`0x2b0`, used for every file, starts with one too.)
 
 ## Slots
 
@@ -80,7 +81,7 @@ managed memory block with slot `0x36`.
 | `0x276`–`0x27e` | `1fe6:4435`–`443d` | Copy a NUL-terminated name from `DS:SI`, `ES:SI` or the host's string segment into the name buffer `DS:0x64e` |
 | `0x282`–`0x28a` | `1fe6:445c`–`44a4` | Hook chains (below): append, insert, remove |
 | `0x28e` / `0x292` | `1fe6:44f7` / `456f` | PackBits encode / decode (`palette.md`) |
-| `0x298`–`0x2bc` | `1fe6:253a`–`28e8` | File I/O: `0x2b0` loads a whole file (name at `DS:DX`) into a block, `0x2b4` open, `0x2b8` close, `0x2bc` read |
+| `0x298`–`0x2bc` | `1fe6:253a`–`28e8` | File I/O: `0x2b0` loads a whole file (padded 8.3 name at `DS:DX`) into the block at `CX:BX`, `0x2b4` open, `0x2b8` close, `0x2bc` read. `0x2b0` and `0x2b4` also try the name with `!` (LZW) and `@` (packed) as the extension's middle letter (`packed.md`) |
 | `0x2e4`–`0x2f8` | `1fe6:45d6`–`47f5` | Module loader (below) |
 | `0x2fe` / `0x302` | `1fe6:83aa` / `83cd` | The host's file dialogs: open (its name field starts as `*.USG`) and "SAVE GAME" (FILENAME, DIRECTORY, OK, CANCEL); the name chosen comes back in `SI` |
 | `0x324`–`0x340` | `1fe6:357c`–`39b5` | Input event queue (`0x324` posts an event with the time; `0x330` takes the next one matching a mask) |
@@ -231,7 +232,9 @@ install one more (0x2a and 0x3a).
 | `0x4f4` | Per-retrace handler (palette upload); repointed to a second version on some configurations |
 | `0x4fa`–`0x590` | Drawing: pixels, rectangles and frames, probably lines, and fonts (`0x590` selects the glyph renderer) |
 | `0x546` | Stub for `LIGHT.MOD` (dead) |
-| `0x59c`–`0x5f0` | Screen-region and picture helpers, not traced |
+| `0x59c`–`0x5bc` | Screen-region helpers: build a run-length region of one colour from a loaded picture and compile it into copy code, then copy through it; not traced further |
+| `0x5c0`–`0x5ec` | Sprite blitters by directory handle (`AX`) into a rectangle (`DS:BX`): `0x5c0` anchor mode, `0x5c4`–`0x5d4` opaque, `0x5d8`–`0x5e8` colour 0 transparent, `0x5ec` a window of a raw sprite (`b@n.md`) |
+| `0x5f0` | Remap a buffer through a 256-byte table, not traced further |
 | `0x5f4`, `0x5fe`, `0x606` | Stubs for `vga240.mod` |
 | `0x1550`, `0x1558` | Stubs for `vgaiff.dvr` |
 | `0x1496`–`0x14b2` | Mouse pointer: show/hide, shape, save/restore under it, per-frame update |
@@ -252,8 +255,8 @@ sequence player). `TITLE` (0x00), `OPTIONS` (0x02) and
 
 ## Open questions
 
-- Names for most of `mgavideo.dvr`'s drawing slots and the host's `0x38a`–`0x40e` text
-  services (T-031 and later T-090 passes).
+- Names for most of `mgavideo.dvr`'s drawing slots below `0x5c0` and the host's
+  `0x38a`–`0x40e` text services (T-031 and later T-090 passes).
 - The configuration record's full layout and the flag words (T-039).
 
 ## Symbols
@@ -288,3 +291,11 @@ Named in the Ghidra project in this pass (T-025); all `confirmed` unless marked.
 In the modules: `drv_init` / `drv_shutdown` at their stub targets (`mapdvr.dvr`
 `0x1e`/`0x54`, `sounddvr.dvr` `0x7c`/`0xc5`, `vgaiff.dvr` `0x35e`, `vgaintro.dvr`
 `0x2a3a`, `mgavideo.dvr` `0x0a`), and `gfx_enter_mode13h` (`mgavideo.dvr` `0xf5`).
+
+Named in T-028 (sprite banks and the sky; details in `b@n.md` and `packed.md`): in
+`xeno.exe` `file_load_block_any_form` (`1fe6:2827`, slot `0x2b0`), `file_open_any_form`
+(`1fe6:285f`, slot `0x2b4`), `file_load_lzw_block` (`1fe6:29aa`),
+`file_load_packed_block` (`1fe6:2dd9`), `mem_unpack_packed_variant_unused`
+(`1fe6:2e1a`), `file_unpack_packed_stream` (`1fe6:2efb`), and the `gfx_*` sprite and sky
+routines listed in `b@n.md`; in `mgavideo.dvr` the sprite blitters at slots
+`0x5c0`–`0x5ec`.

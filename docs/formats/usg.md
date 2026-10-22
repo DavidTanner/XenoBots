@@ -145,10 +145,12 @@ objectives; win and lose conditions are in the code (T-055).
 
 ### `BGND` (64 bytes): sky picture
 
-`1000:f3d7` reads a file name into `DS:0x7eda` and loads it. The name is in padded 8.3
-form (`SKY_B   .BIN`), then NULs. Every campaign and training file names a
-`SKY_x.BIN` (the packed `sky_x.b@n` files) except `scen06a`, which names `BACKLAND.BIN`.
-A stock install has no such file; how the game copes with that is part of T-028.
+`1000:f3d7` reads a file name into `DS:0x7eda` and hands it to `scen_set_sky_name`
+(`1000:2822`). The name is in padded 8.3 form (`SKY_B   .BIN`), then NULs; only the
+base name (up to 8 characters) is used, with the extension `.BIN`. Every campaign and
+training file names a `SKY_x.BIN` (the packed `sky_x.b@n` files) except `scen06a`, which
+names `BACKLAND.BIN`. A stock install has no such file in any form, so that mission has
+no sky picture: the 3D view's upper half is a flat colour instead (`b@n.md`, T-028).
 
 ### `TERM` (0 bytes)
 
