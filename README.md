@@ -67,14 +67,14 @@ synthetic pattern, no game art yet). Press ESC or close the window to quit.
 |---|---|
 | `--game-dir <path>` | Where the original game files are. |
 | `--check` | Only check the game directory, then exit without opening a window. |
+| `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
+| `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
 
 Planned options (see `cargo run -p xeno-app -- --help`):
 
 | Flag | Meaning |
 |---|---|
 | `--fullscreen` | Start in borderless fullscreen on the current monitor. |
-| `--scale <n>` | Integer scale factor for windowed mode. Default picks the largest that fits. |
-| `--aspect <auto\|square\|4:3>` | Pixel aspect correction. `auto` reproduces the 4:3 CRT look. |
 | `--filter <nearest\|xbrz>` | Upscaling filter. `nearest` is pixel-exact; `xbrz` smooths edges without blurring. |
 | `--hd-pack <path>` | Optional directory of higher-resolution replacement assets (not provided here). |
 
@@ -133,10 +133,11 @@ cargo fmt --all -- --check
 The game draws into a logical framebuffer at the original resolution with the original
 256-colour palette, exactly as the DOS version did. A separate presentation step scales
 that framebuffer to your window: integer nearest-neighbour scaling with letterboxing
-and 4:3 aspect correction by default, so a 3840x2160 display shows a crisp 6x image
-rather than a smeared one. Later milestones add edge-aware scalers and an optional
-user-supplied HD asset pack, with the sprite pipeline designed so higher-resolution
-art can replace the originals one asset at a time.
+and 4:3 aspect correction by default, so a 3840x2160 display shows a crisp 8x10 image
+(each 320x200 pixel 8 wide and 10 tall) rather than a smeared one. Later milestones
+add edge-aware scalers and an optional user-supplied HD asset pack, with the sprite
+pipeline designed so higher-resolution art can replace the originals one asset at a
+time.
 
 ## Project layout
 

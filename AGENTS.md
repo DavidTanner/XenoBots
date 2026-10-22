@@ -170,8 +170,11 @@ Two layers, always kept separate:
 2. **Presentation**: scale the logical framebuffer to the window. Default is integer
    nearest-neighbour scaling with letterboxing and VGA aspect correction (both 320x200 and
    320x240 were shown at 4:3, so 320x200 pixels are not square while 320x240 pixels
-   are). 4K gets a 6x integer scale with correct
-   aspect. Later options: xBRZ-style scalers, CRT shader, and an *HD asset pack*
+   are). Factors are whole numbers per axis, so 1.2 is exact only at 5x6 and 10x12;
+   by default the largest pair within 5% of 4:3 is used: at 3840x2160, 320x200 is
+   shown 8x10 (2560x2000, +4.2%) and 320x240 9x9 (2880x2160); at 1920x1080, 4x5 and
+   4x4. `--aspect exact` and `--scale N` pick otherwise (see
+   `docs/formats/video-modes.md`, "Presentation"). Later options: xBRZ-style scalers, CRT shader, and an *HD asset pack*
    loaded from a user directory that replaces individual sprites at higher resolution.
 
 "Not lose details" means: never bilinear-blur the original art, keep aspect correct,

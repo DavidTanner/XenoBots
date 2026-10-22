@@ -6,24 +6,27 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalSize, Size as WindowSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
-use xeno_render::{Framebuffer, Size};
+use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
-use crate::{present, test_pattern};
+use crate::test_pattern;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 /// Opens the window and runs until the user presses ESC or closes it.
-pub fn run() -> Result<(), Box<dyn Error>> {
+pub fn run(scale: Scale, aspect: Aspect) -> Result<(), Box<dyn Error>> {
     let mut fb = Framebuffer::new(Size::MODE_13H);
     test_pattern::draw(&mut fb);
+    log::info!("scale {scale:?}, aspect {aspect:?}");
     let mut app = App {
-        size: fb.view(),
-        rgba: fb.to_rgba(&test_pattern::palette()),
+        fb,
+        palette: test_pattern::palette(),
+        scale,
+        aspect,
         surface: None,
         error: None,
     };
@@ -34,9 +37,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 }
 
 struct App {
-    /// The picture to show, as `Framebuffer::to_rgba` made it.
-    rgba: Vec<u8>,
-    size: Size,
+    /// The picture to show.
+    fb: Framebuffer,
+    palette: Palette,
+    scale: Scale,
+    aspect: Aspect,
     /// Created on the first `resumed`, as winit 0.30 requires.
     surface: Option<Surface>,
     /// The error that stopped the event loop, if any.
@@ -45,11 +50,21 @@ struct App {
 
 impl App {
     fn create_surface(&self, event_loop: &ActiveEventLoop) -> Result<Surface, Box<dyn Error>> {
-        let (w, h) = (self.size.width as u32, self.size.height as u32);
+        let view = self.fb.view();
+        let physical = |s: Size| PhysicalSize::new(s.width as u32, s.height as u32);
+        // A fixed scale asks for a window that fits the picture. Otherwise 800x600
+        // points: the 4:3 frame at 5x6 on a 2x display, and 2x2 on a 1x one.
+        let size: WindowSize = match self.scale {
+            Scale::Auto => LogicalSize::new(800, 600).into(),
+            Scale::Fixed(_) => {
+                let layout = Layout::new(view, Size::new(0, 0), self.scale, self.aspect);
+                physical(layout.picture(view)).into()
+            }
+        };
         let attributes = Window::default_attributes()
             .with_title("Xenobots")
-            .with_inner_size(LogicalSize::new(w * 2, h * 2))
-            .with_min_inner_size(LogicalSize::new(w, h));
+            .with_inner_size(size)
+            .with_min_inner_size(physical(view));
         let window = Rc::new(event_loop.create_window(attributes)?);
         let context = softbuffer::Context::new(window.clone())?;
         Ok(softbuffer::Surface::new(&context, window)?)
@@ -67,11 +82,12 @@ impl App {
         surface.resize(w, h)?;
         let mut buffer = surface.buffer_mut()?;
         let window_size = Size::new(inner.width as usize, inner.height as usize);
+        let layout = Layout::new(self.fb.view(), window_size, self.scale, self.aspect);
         log::debug!(
-            "redraw at {window_size:?}, {:?}",
-            present::Layout::fit(self.size, window_size)
+            "redraw at {window_size:?}: {layout:?}, picture {:?}",
+            layout.picture(self.fb.view())
         );
-        present::present(&self.rgba, self.size, &mut buffer, window_size);
+        xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         buffer.present()?;
         Ok(())
     }
