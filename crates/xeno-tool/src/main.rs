@@ -5,9 +5,11 @@
 mod dump;
 mod inspect;
 mod palette;
+mod summary;
 mod wav;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -22,10 +24,21 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Print a file's size, extension and first bytes.
+    /// Print a file's size, extension and first bytes, and what its parser makes of it.
+    ///
+    /// With `--all`, run every file in a directory through its parser instead, and print
+    /// a table with a row per extension (files, parsed, failed, no parser), then each
+    /// failure. Files that no parser handles (the executable and driver modules, text,
+    /// disk markers, unknown types) are counted under "no parser" and do not fail the
+    /// run: the exit status is non-zero only if a file that has a parser fails to parse
+    /// or cannot be read.
     Inspect {
-        /// The file to inspect.
-        file: PathBuf,
+        /// The file to inspect, or with `--all` the directory.
+        path: PathBuf,
+        /// Summarise every file directly in the directory; subdirectories are not
+        /// entered.
+        #[arg(long)]
+        all: bool,
     },
     /// Decode a file and write its images as PNGs. Supports: pcx, b@n, m@l, vcl, and the
     /// m00, m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
@@ -56,12 +69,20 @@ enum Command {
     },
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<ExitCode> {
     match Cli::parse().command {
-        Command::Inspect { file } => {
+        Command::Inspect { path, all: true } => {
+            let summary = summary::Summary::of_dir(&path)?;
+            print!("{}", summary.table());
+            if summary.failed() > 0 {
+                eprintln!("{} file(s) failed to parse", summary.failed());
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+        Command::Inspect { path, all: false } => {
             let bytes =
-                std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
-            print!("{}", inspect::report(&file, &bytes));
+                std::fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+            print!("{}", inspect::report(&path, &bytes));
         }
         Command::Dump { file, out, palette } => {
             let bytes =
@@ -90,7 +111,7 @@ fn main() -> anyhow::Result<()> {
             print!("{}", palette::listing(&palette));
         }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

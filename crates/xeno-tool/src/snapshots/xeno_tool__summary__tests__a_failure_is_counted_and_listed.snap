@@ -1,0 +1,16 @@
+---
+source: crates/xeno-tool/src/summary.rs
+expression: summary.table()
+---
+extension  files  parsed  failed  no parser
+(none)         1       0       0          1
+1              1       0       0          1
+exe            1       0       0          1
+fgd            2       1       1          0
+pcx            2       1       1          0
+usg            1       1       0          0
+total          8       3       2          3
+
+failed:
+  bad.pcx: pcx: cannot parse: bad magic at 0x0: 237
+  Layer2.Fgd: fgd: cannot parse: expected 1920 bytes, found 5
