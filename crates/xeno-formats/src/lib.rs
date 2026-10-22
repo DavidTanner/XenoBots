@@ -11,6 +11,7 @@ pub mod fgd;
 pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
+pub mod lzexe;
 pub mod mal;
 pub mod map;
 pub mod ms3;
@@ -20,6 +21,7 @@ mod palette;
 pub mod pcx;
 pub mod rst;
 pub mod scendef;
+pub mod sequence;
 pub mod usg;
 pub mod vcl;
 

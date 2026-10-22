@@ -77,6 +77,42 @@ Sanity checks on the unpacked MZ headers:
   names, which the packed file hides.
 - `config.dvr`: 13 relocations, 32-paragraph header, entry `0000:0000`.
 
+### LZEXE 0.91, as `xeno_formats::lzexe` reads it
+
+The port unpacks the user's `xeno.exe` itself at run time (T-036), to read the cutscene
+sequence entries (`docs/formats/vcl.md`) without storing any of them. It does not use
+the `lzexe` crate (not in the tech-stack table); `xeno_formats::lzexe` was written from
+the format's published description, and its output matches `unlzexe` byte for byte
+(image, relocation table, entry point and stack) for both `xeno.exe` and `config.dvr`.
+
+- **Header.** An MZ file with `LZ91` at offset 0x1c (`LZ09` is version 0.90, whose
+  relocation table differs; not supported). The loader's segment, at file offset
+  `(header paragraphs + CS) * 16`, starts with seven words: the original IP, CS, SP and
+  SS, the compressed image's size in paragraphs, a word unlzexe takes off the minimum
+  allocation, and the loader's size.
+- **Compressed image.** The paragraphs just before the loader. A stream of 16-bit flag
+  words, used lowest bit first, interleaved with the bytes they describe; the next flag
+  word is read as soon as the sixteenth bit of the last is taken. Flag `1`: a literal
+  byte. Flags `0 0 a b`: copy `2 + 2a + b` bytes from 1 to 256 back (a byte holds
+  `256 - distance`). Flags `0 1`: two bytes `lo, hi` give the distance
+  `0x2000 - ((hi & 0xf8) << 5 | lo)` (1 to 8192) and the length `(hi & 7) + 2`; if that
+  is 2, a byte follows: 0 ends the stream, 1 does nothing (the loader moves to a new
+  segment) and `n` is a length of `n + 1`. Copies may overlap their output.
+- **Relocations.** At loader offset 0x158: a byte per relocation, the distance from the
+  previous one; a 0 byte is followed by a word, where 0 moves on 0xfff0 bytes, 1 ends
+  the table and anything else is the distance. Kept as segment:offset with the offset
+  below 16, which is how unlzexe writes them.
+- **File size.** unlzexe writes a 0x1c-byte header plus the table, padded to 512 bytes,
+  then the image: for `xeno.exe` 0xc00 + 178,764 = 181,836 bytes.
+
+**How `DS` maps into the file.** `xeno.exe`'s entry point (`0000:0002`) starts with
+`mov ax, 1901h` / `mov ds, ax`, and the immediate carries a relocation, so `DS` is
+load-image paragraph 0x1901: `DS:x` is image offset `0x19010 + x`, file offset
+`0x19c10 + x` in the unpacked file, and Ghidra address `2901:x`.
+`xeno_formats::sequence::data_segment` reads it from those instructions instead of
+assuming it. The string segment whose word is at `DS:0x60` (Ghidra `38fa`) is zero in
+the image and set at run time; nothing in the port reads it yet.
+
 ## 3. Create the Ghidra project
 
 1. Start Ghidra (`ghidraRun`). **File > New Project > Non-Shared Project**, directory

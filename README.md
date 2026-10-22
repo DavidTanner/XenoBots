@@ -131,8 +131,9 @@ cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 
 `inspect --all` runs every file in a directory through its parser and prints a table of
 results per extension. It exits non-zero only if a file that has a parser fails to
-parse; files with no parser (the executable, the driver modules, text) are counted, not
-failed.
+parse; files with no parser (the unpacked driver modules, text) are counted, not
+failed. The LZEXE-packed `xeno.exe` and `config.dvr` are unpacked in memory, and for
+`xeno.exe` the opening cutscene's sequence entries are listed.
 
 ```bash
 cargo run -p xeno-tool -- inspect --all ./gameFiles

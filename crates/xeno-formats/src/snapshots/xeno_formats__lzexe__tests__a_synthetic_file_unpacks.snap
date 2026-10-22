@@ -1,0 +1,29 @@
+---
+source: crates/xeno-formats/src/lzexe.rs
+expression: unpacked
+---
+Unpacked {
+    image: [
+        184,
+        52,
+        18,
+        184,
+        52,
+        18,
+        184,
+    ],
+    relocations: [
+        Relocation {
+            segment: 0,
+            offset: 1,
+        },
+        Relocation {
+            segment: 0,
+            offset: 4,
+        },
+    ],
+    cs: 16,
+    ip: 2,
+    ss: 32,
+    sp: 1024,
+}
