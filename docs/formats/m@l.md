@@ -67,9 +67,10 @@ mode 13h, 320x200, shown at 4:3 with non-square pixels (`video-modes.md`).
 
 ## Open questions
 
-- Which code requests each screen id, and when (T-025, T-040).
-- Whether `TITLE`, `OPTIONS` and `WALL2` are ever requested. If they are, the game
-  must skip them or fail when the file is missing.
+- When each screen is shown (T-040). T-025 found the callers: `xeno.exe` loads ids
+  0x04, 0x06, 0x08, 0x0c, 0x0e, 0x10, 0x12 and 0x14 through slot `0x490`
+  (`docs/re/dvr-protocol.md`, "Screens requested"). `TITLE`, `OPTIONS` and `WALL2` are
+  never requested, so the port doesn't need them.
 - In `sitroom`, `scorpcon` and `scoutcon` index 255 is pure green and fills the large
   panels (in `sitroom`, the main view). It is presumably a placeholder that the game
   draws over, or a key colour. Find out from the code that draws into those panels

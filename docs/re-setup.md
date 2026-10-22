@@ -73,7 +73,7 @@ different release; addresses in `docs/re/` may not apply.
 Sanity checks on the unpacked MZ headers:
 
 - `xeno.exe`: 655 relocations, 192-paragraph header, entry `CS:IP = 0000:0002`,
-  `SS:SP = 0400:27DE`. Its strings now include the scenario file names and order
+  `SS:SP = 27DE:0400`. Its strings now include the scenario file names and order
   names, which the packed file hides.
 - `config.dvr`: 13 relocations, 32-paragraph header, entry `0000:0000`.
 
@@ -114,8 +114,8 @@ files went in:
 | `/mod/vga240.mod` | 0 (not auto-analysed) |
 
 The driver modules analyse to almost nothing because the code that matters is not
-reached from the MZ entry point. Presumably `xeno.exe` loads them and calls in through
-a table. Finding those entry points is T-025's job, so leave them as they are.
+reached from the MZ entry point: `xeno.exe` loads them and calls in through slots.
+`docs/re/dvr-protocol.md` (T-025) lists the real entry points.
 
 ## 4. Optional: Ghidra MCP for Claude Code
 

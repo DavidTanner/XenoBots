@@ -37,6 +37,8 @@ offset.
 - It contains the 8.3 names `VGAIFF.DVR`, `LIGHT   .MOD` and `VGA240  .MOD`, and the
   names of every `.vcl` file. Its data segment starts 0x430 paragraphs into the load
   image; the three module names are at data offsets 0x2dc, 0x2e7 and 0x2f4.
+  `VGAIFF.DVR` is the screenshot writer; `LIGHT.MOD`'s loader (slot `0x546`) is never
+  called (`docs/re/dvr-protocol.md`).
 
 ### `vga240.mod`: 320x240 and the virtual-width services
 
@@ -53,7 +55,7 @@ segment:
 `0x606` to two small stubs. The first call through any of them loads `VGA240.MOD` into a
 new segment, runs its init, and then retries the call. Init repoints slot `0x5f4` at the
 module's own "enter 320x240" routine and passes the rest of its table to the host,
-presumably so the host patches those slots too. If the load
+which the host installs (`docs/re/dvr-protocol.md`). If the load
 fails, the stub returns with carry set and the display stays in mode 13h.
 
 Routines exported, by host slot:
@@ -136,7 +138,4 @@ plain linear order, spread across the four planes by cycling the map mask. See
   are listed in `vcl.md`). Most fields of the 26-byte entries are still undecoded, and
   whether any other screen runs in mode B is open (T-027). Confirm with a DOSBox
   capture.
-- `LIGHT.MOD` is named by `mgavideo.dvr` (data offset 0x2e7) but is not in the install.
-  Find out whether anything reaches its loader and what happens when it is missing.
 - The purpose of the `xeno.exe` misc-output routine (~0x10d7b).
-- What `vgaiff.dvr` does; `mgavideo.dvr` loads it by name (T-025).

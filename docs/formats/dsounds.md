@@ -60,7 +60,9 @@ MZ header), as Ghidra shows them in segment `1000`.
   reads the block into the new segment at offset 0 and records the segment in the
   host's 17-slot table (pointer at host `DS:0x41a`, entries of segment and flags).
   It fails if a read comes up short or a 18th block appears.
-- **Play** (`0x03b4`, host slot `0x44c` in the same export table): `AL` is the slot, `AH` the voice (0..2;
+- **Play** (`0x03b4`, host slot `0x44c` in the same export table, which the
+  digitised-sound init installs; before that the slot points at an FM routine,
+  `docs/re/dvr-protocol.md`): `AL` is the slot, `AH` the voice (0..2;
   bit 7 queues the sound to start when the voice's current sound ends), `CX` a step
   that overrides the file's when non-zero, `DL` a volume (each sample is shifted
   right by `DL` and re-centred). `AL = 0xff` stops the voice.
