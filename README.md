@@ -61,8 +61,10 @@ cargo run --release -p xeno-app -- --game-dir ./gameFiles
 ```
 
 For now this checks the game files, then opens a window showing a test card (a
-synthetic pattern, no game art yet). Press ESC or close the window to quit, and F11
-or Alt+Enter to switch between a window and fullscreen.
+synthetic pattern, no game art yet). Its white marker moves one pixel per frame of the
+original 70 Hz display and its yellow one at 60 Hz, whatever your monitor's refresh
+rate; the blue grid lights a cell for each key held. Press ESC or close the window to
+quit, and F11 or Alt+Enter to switch between a window and fullscreen.
 
 | Flag | Meaning |
 |---|---|
@@ -74,8 +76,10 @@ or Alt+Enter to switch between a window and fullscreen.
 
 | Key | Action |
 |---|---|
-| ESC | Quit (also in fullscreen). |
+| ESC | Leave fullscreen; in a window, quit. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
+
+Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
 
 On a high-DPI (Retina) display the picture is drawn in the display's real pixels, so
 the default window gets a larger scale there, not a blurred one.

@@ -18,7 +18,8 @@ in priority order:
    blurry stretch.
 
 The project is at the **scaffold stage**: the Cargo workspace exists and `xeno-app`
-checks the game files, then opens a window on a synthetic test card. Read `NEXT_STEPS.md` for the task backlog and pick
+checks the game files, then opens a window on a synthetic test card, run by a
+fixed-timestep loop at the original's retrace rate (`docs/game-loop.md`). Read `NEXT_STEPS.md` for the task backlog and pick
 tasks from there.
 
 ## Hard rules
@@ -186,7 +187,7 @@ Once the workspace exists, these are the expected commands (keep them true):
 
 ```bash
 cargo build
-cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC quits, F11 fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles           # window with a test card; ESC leaves fullscreen, then quits, F11 fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files only, no window
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg

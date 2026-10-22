@@ -1,8 +1,11 @@
 //! The Xenobots game binary. For now it finds the user's game files, checks that they
 //! are all there, then opens a window showing a test card.
 
+mod clock;
 mod game_dir;
+mod input;
 mod test_pattern;
+mod translate;
 mod window;
 
 use std::path::PathBuf;
@@ -46,7 +49,7 @@ struct Cli {
     aspect: Aspect,
 
     /// Start in borderless fullscreen on the current monitor (the display mode is not
-    /// changed). F11 or Alt+Enter toggles it; ESC quits.
+    /// changed). F11 or Alt+Enter toggles it; ESC leaves it.
     #[arg(long)]
     fullscreen: bool,
 }

@@ -1,5 +1,10 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
-//! framebuffer on screen. For now it shows the test card until ESC or close.
+//! framebuffer on screen. For now it shows the test card, with markers driven by the
+//! game clock, until ESC or close.
+//!
+//! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
+//! input events that arrived since the last; if any ran, a frame is requested; then the
+//! loop sleeps until the next retrace is due (`ControlFlow::WaitUntil`).
 //!
 //! Sizes: the softbuffer surface and `xeno_render::Layout` work in physical pixels.
 //! The default window asks for a logical size (so it looks the same on a 1x and a 2x
@@ -10,16 +15,19 @@
 use std::error::Error;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize, Size as WindowSize};
-use winit::event::{KeyEvent, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
+use crate::clock::{Clock, Rate, Step};
+use crate::input::{InputLog, Keys};
 use crate::test_pattern;
+use crate::translate::{Translator, WindowAction};
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
@@ -27,8 +35,18 @@ type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 pub fn run(scale: Scale, aspect: Aspect, fullscreen: bool) -> Result<(), Box<dyn Error>> {
     let mut fb = Framebuffer::new(Size::MODE_13H);
     test_pattern::draw(&mut fb);
-    log::info!("scale {scale:?}, aspect {aspect:?}, fullscreen {fullscreen}");
+    let rate = Rate::for_height(fb.view().height);
+    log::info!(
+        "scale {scale:?}, aspect {aspect:?}, fullscreen {fullscreen}, {:.3} retraces a second",
+        rate.hz()
+    );
     let mut app = App {
+        clock: Clock::new(rate, Duration::ZERO),
+        start: None,
+        input: Translator::default(),
+        log: InputLog::default(),
+        keys: Keys::default(),
+        meter: Meter::default(),
         fb,
         palette: test_pattern::palette(),
         scale,
@@ -37,7 +55,6 @@ pub fn run(scale: Scale, aspect: Aspect, fullscreen: bool) -> Result<(), Box<dyn
         surface: None,
         size: PhysicalSize::new(0, 0),
         fullscreen: false,
-        alt: false,
         error: None,
     };
     let event_loop = EventLoop::new()?;
@@ -47,6 +64,15 @@ pub fn run(scale: Scale, aspect: Aspect, fullscreen: bool) -> Result<(), Box<dyn
 }
 
 struct App {
+    clock: Clock,
+    /// When the window opened: the clock's time 0. The clock starts then.
+    start: Option<Instant>,
+    input: Translator,
+    /// Every retrace's input. The game reads input only from here, so a log replays.
+    log: InputLog,
+    /// The keys held, as the game sees them from the log.
+    keys: Keys,
+    meter: Meter,
     /// The picture to show.
     fb: Framebuffer,
     palette: Palette,
@@ -61,30 +87,22 @@ struct App {
     size: PhysicalSize<u32>,
     /// Whether the window was fullscreen at the last `Resized` (however it got there).
     fullscreen: bool,
-    /// Whether Alt (Option on macOS) is held.
-    alt: bool,
     /// The error that stopped the event loop, if any.
     error: Option<Box<dyn Error>>,
 }
 
-/// What a key press asks for.
-#[derive(Debug, PartialEq, Eq)]
-enum Action {
-    Quit,
-    ToggleFullscreen,
-}
-
-/// The action for a key event: ESC quits (in fullscreen too), F11 or Alt+Enter toggles
-/// fullscreen. Held keys don't repeat a toggle.
-fn key_action(key: &Key, pressed: bool, repeat: bool, alt: bool) -> Option<Action> {
-    match key {
-        _ if !pressed => None,
-        Key::Named(NamedKey::Escape) => Some(Action::Quit),
-        _ if repeat => None,
-        Key::Named(NamedKey::F11) => Some(Action::ToggleFullscreen),
-        Key::Named(NamedKey::Enter) if alt => Some(Action::ToggleFullscreen),
-        _ => None,
-    }
+/// Counts for the once-a-second rate log.
+#[derive(Debug, Default)]
+struct Meter {
+    /// When the last line was logged, and the counts then.
+    at: Duration,
+    retraces: u64,
+    sixty_hz: u64,
+    frames: u64,
+    dropped: u64,
+    /// Frames drawn so far, and the 60 Hz ticks.
+    frames_now: u64,
+    sixty_hz_now: u64,
 }
 
 /// The window's size when it opens (and when it leaves fullscreen). A fixed scale asks
@@ -151,7 +169,7 @@ impl App {
         let mut buffer = surface.buffer_mut()?;
         let window_size = Size::new(inner.width as usize, inner.height as usize);
         let layout = Layout::new(self.fb.view(), window_size, self.scale, self.aspect);
-        log::debug!(
+        log::trace!(
             "redraw at {window_size:?} (scale factor {}, fullscreen {}): {layout:?}, picture {:?}",
             scale_factor,
             self.fullscreen,
@@ -159,19 +177,57 @@ impl App {
         );
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         buffer.present()?;
+        self.meter.frames_now += 1;
         Ok(())
     }
 
-    fn toggle_fullscreen(&self) {
-        if let Some(surface) = &self.surface {
-            let window = surface.window();
-            let next = match window.fullscreen() {
-                Some(_) => None,
-                None => Some(Fullscreen::Borderless(None)),
-            };
-            log::info!("fullscreen {}", next.is_some());
-            window.set_fullscreen(next);
+    /// One retrace: the game reads this retrace's input from the log, then the test
+    /// card's markers move.
+    fn tick(&mut self, step: Step) {
+        self.log.record(step.retrace, self.input.take());
+        for event in self.log.events_at(step.retrace) {
+            log::debug!("retrace {}: {event:?}", step.retrace);
+            self.keys.apply(event);
         }
+        test_pattern::draw_live(&mut self.fb, step.retrace, step.sixty_hz, &self.keys);
+        self.meter.sixty_hz_now = step.sixty_hz;
+    }
+
+    /// Logs the measured rates at debug level, at most once a second.
+    fn log_rates(&mut self, now: Duration) {
+        let m = &mut self.meter;
+        let span = (now - m.at).as_secs_f64();
+        if span < 1.0 {
+            return;
+        }
+        let (retraces, dropped) = (self.clock.retraces(), self.clock.dropped());
+        log::debug!(
+            "{:.3} retraces/s ({} in {span:.4} s; {:.4}/s since the window opened), \
+             {:.3} 60 Hz ticks/s, {:.2} frames/s, {} retraces dropped",
+            (retraces - m.retraces) as f64 / span,
+            retraces - m.retraces,
+            (retraces + dropped) as f64 / now.as_secs_f64(),
+            (m.sixty_hz_now - m.sixty_hz) as f64 / span,
+            (m.frames_now - m.frames) as f64 / span,
+            dropped - m.dropped,
+        );
+        (m.at, m.retraces, m.sixty_hz) = (now, retraces, m.sixty_hz_now);
+        (m.frames, m.dropped) = (m.frames_now, dropped);
+    }
+
+    fn set_fullscreen(&self, on: bool) {
+        if let Some(surface) = &self.surface {
+            log::info!("fullscreen {on}");
+            surface
+                .window()
+                .set_fullscreen(on.then_some(Fullscreen::Borderless(None)));
+        }
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        self.surface
+            .as_ref()
+            .is_some_and(|s| s.window().fullscreen().is_some())
     }
 
     /// Notes a new inner size, hides the cursor in fullscreen (also entered by the
@@ -209,30 +265,41 @@ impl ApplicationHandler for App {
                 let scale_factor = surface.window().scale_factor();
                 log::info!("window open at {size:?}, scale factor {scale_factor}");
                 self.surface = Some(surface);
+                self.start = Some(Instant::now());
                 self.resized(size);
             }
             Err(e) => self.fail(event_loop, e),
         }
     }
 
+    /// Runs the retraces due, asks for a frame if any ran, and sleeps until the next.
+    /// This runs after every batch of events, the timer's wake-up included. Hidden or
+    /// minimised, the window keeps the game running; only the drawing is skipped.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(start) = self.start else {
+            return;
+        };
+        let now = start.elapsed();
+        let mut ran = false;
+        for step in self.clock.advance(now) {
+            self.tick(step);
+            ran = true;
+        }
+        if ran && let Some(surface) = &self.surface {
+            surface.window().request_redraw();
+        }
+        self.log_rates(now);
+        event_loop.set_control_flow(ControlFlow::WaitUntil(start + self.clock.next_due()));
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        match self.input.window_event(&event, self.fullscreen) {
+            Some(WindowAction::Quit) => event_loop.exit(),
+            Some(WindowAction::ToggleFullscreen) => self.set_fullscreen(!self.is_fullscreen()),
+            Some(WindowAction::LeaveFullscreen) => self.set_fullscreen(false),
+            None => {}
+        }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::ModifiersChanged(modifiers) => self.alt = modifiers.state().alt_key(),
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key,
-                        state,
-                        repeat,
-                        ..
-                    },
-                ..
-            } => match key_action(&logical_key, state.is_pressed(), repeat, self.alt) {
-                Some(Action::Quit) => event_loop.exit(),
-                Some(Action::ToggleFullscreen) => self.toggle_fullscreen(),
-                None => {}
-            },
             WindowEvent::ScaleFactorChanged {
                 scale_factor,
                 mut inner_size_writer,
@@ -273,27 +340,6 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn keys_quit_or_toggle_fullscreen() {
-        let named = |k| Key::Named(k);
-        let f11 = named(NamedKey::F11);
-        let enter = named(NamedKey::Enter);
-        let esc = named(NamedKey::Escape);
-        assert_eq!(key_action(&esc, true, false, false), Some(Action::Quit));
-        assert_eq!(key_action(&esc, true, true, true), Some(Action::Quit));
-        assert_eq!(key_action(&esc, false, false, false), None);
-        let toggle = Some(Action::ToggleFullscreen);
-        assert_eq!(key_action(&f11, true, false, false), toggle);
-        assert_eq!(key_action(&enter, true, false, true), toggle);
-        assert_eq!(key_action(&enter, true, false, false), None);
-        assert_eq!(key_action(&f11, true, true, false), None);
-        assert_eq!(key_action(&f11, false, false, false), None);
-        assert_eq!(
-            key_action(&Key::Character("f".into()), true, false, true),
-            None
-        );
-    }
 
     #[test]
     fn default_window_is_logical_and_a_fixed_scale_is_physical() {

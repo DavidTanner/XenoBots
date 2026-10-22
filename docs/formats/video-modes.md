@@ -149,9 +149,11 @@ plain linear order, spread across the four planes by cycling the map mask. See
 - **Aspect (T-032):** 320x200 needs the 1.2 vertical correction. 320x240 already fills
   4:3 with square pixels and must *not* be stretched. Switching between the two modes
   must not change the on-screen image size on a 4:3 frame.
-- **Timing (T-034):** mode 13h refreshes at ~70.09 Hz and mode B at ~59.94 Hz. If any
-  animation is paced by vertical retrace (the retrace handler above suggests some is),
-  its speed depends on the mode. Pace those by the original rate, not the host display's.
+- **Timing (T-034):** mode 13h refreshes at 25,175,000 / (800 x 449) = 70.0863 Hz and
+  mode B at 25,175,000 / (800 x 525) = 59.9405 Hz. The music, fades and cutscenes are
+  paced by vertical retrace, so their speed depends on the mode. The port's game loop
+  steps once per retrace at the original rate of the current mode, not the host
+  display's; see `docs/game-loop.md`.
 
 ## Presentation (T-032)
 
