@@ -1,8 +1,10 @@
 //! A synthetic test card for checking the window and, later, the presentation scaler
-//! (T-032). Nothing here comes from the game files: the palette and picture are made
-//! in code.
+//! (T-032), and its moving parts for the game loop (T-034). Nothing here comes from the
+//! game files: the palette and picture are made in code.
 
 use xeno_render::{Framebuffer, Palette, Rect, Rgb};
+
+use crate::input::{Keys, ScanCode};
 
 pub const BLACK: u8 = 0;
 pub const WHITE: u8 = 1;
@@ -23,6 +25,14 @@ pub const PIXEL_CIRCLE: (i32, i32, i32, i32) = (124, 76, 40, 40);
 /// An ellipse 1.2 times wider than tall: round when 320x200 is shown at 4:3, as on
 /// the original monitor (pixels 5:6). The scaler's aspect correction makes it round.
 pub const CRT_CIRCLE: (i32, i32, i32, i32) = (232, 76, 48, 40);
+/// The tracks of the two markers: a white one steps one pixel per retrace, a yellow
+/// one per 60 Hz tick. At 70 Hz the white one crosses in 4.5 s; at 60 Hz the yellow one
+/// takes 5.3 s.
+pub const RETRACE_TRACK: Rect = Rect::new(2, 122, 316, 6);
+pub const SIXTY_HZ_TRACK: Rect = Rect::new(2, 130, 316, 6);
+/// The held keys, one 2x2 cell per scan code: plain codes in the top four rows of 32,
+/// `E0` codes in the bottom four.
+pub const KEY_GRID: Rect = Rect::new(128, 140, 64, 16);
 
 /// The test card's palette: a few named colours, then a hue ramp.
 pub fn palette() -> Palette {
@@ -89,6 +99,30 @@ pub fn draw(fb: &mut Framebuffer) {
     for i in 0..RAMP.width as i32 {
         fb.fill_rect(Rect::new(RAMP.x + i, RAMP.y, 1, RAMP.height), i as u8);
     }
+}
+
+/// Draws the moving parts over the card: each marker's position comes from its tick
+/// count, and the key grid lights the held keys.
+pub fn draw_live(fb: &mut Framebuffer, retraces: u64, sixty_hz: u64, keys: &Keys) {
+    for (track, ticks, colour) in [
+        (RETRACE_TRACK, retraces, WHITE),
+        (SIXTY_HZ_TRACK, sixty_hz, YELLOW),
+    ] {
+        fb.fill_rect(track, BLACK);
+        let x = track.x + (ticks % u64::from(track.width)) as i32;
+        fb.fill_rect(Rect::new(x, track.y, 1, track.height), colour);
+    }
+    fb.fill_rect(KEY_GRID, BLUE);
+    for code in keys.held() {
+        let (x, y) = key_cell(code);
+        fb.fill_rect(Rect::new(x, y, 2, 2), WHITE);
+    }
+}
+
+/// The top-left pixel of a key's cell in [`KEY_GRID`].
+fn key_cell(code: ScanCode) -> (i32, i32) {
+    let i = code.index() as i32;
+    (KEY_GRID.x + i % 32 * 2, KEY_GRID.y + i / 32 * 2)
 }
 
 /// Draws the outline of the ellipse `(cx, cy, rx, ry)`: the pixels inside it with a
@@ -174,6 +208,42 @@ mod tests {
                 assert_eq!(fb.get(RAMP.x as usize + i, y), Some(i as u8));
             }
         }
+    }
+
+    #[test]
+    fn markers_step_with_their_ticks_and_held_keys_light_up() {
+        let mut fb = card();
+        let mut keys = Keys::default();
+        keys.press(ScanCode(0x01));
+        keys.press(ScanCode(0xe048));
+        draw_live(&mut fb, 316 + 5, 7, &keys);
+        let row = |track: Rect| -> Vec<usize> {
+            (0..320)
+                .filter(|&x| fb.get(x, track.y as usize) != Some(BLACK))
+                .collect()
+        };
+        assert_eq!(row(RETRACE_TRACK), [0, 7, 319]);
+        assert_eq!(row(SIXTY_HZ_TRACK), [0, 9, 319]);
+        assert_eq!(fb.get(7, 127), Some(WHITE));
+        assert_eq!(fb.get(9, 135), Some(YELLOW));
+        let lit: Vec<_> = (0..16)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|&(x, y)| fb.get(128 + x, 140 + y) == Some(WHITE))
+            .collect();
+        // 0x01 at column 1, row 0; E0 48 is cell 128 + 72: column 8, row 6.
+        assert_eq!(
+            lit,
+            [
+                (2, 0),
+                (3, 0),
+                (2, 1),
+                (3, 1),
+                (16, 12),
+                (17, 12),
+                (16, 13),
+                (17, 13)
+            ]
+        );
     }
 
     #[test]
