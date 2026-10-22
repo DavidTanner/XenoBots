@@ -37,9 +37,10 @@ Reference); 25.175 MHz is the VGA's nominal 25 MHz clock.
   59.94 Hz one. The original's 19,886 PIT ticks make its rate 60.0001 Hz; the port uses
   exactly 60. Each step reports the count, so its users (T-050's sim, perhaps) can run
   it.
-- **Mode changes.** Only mode 13h runs so far. Switching to 320x240 (T-036) must
-  restart the clock at the new rate, as the original re-measures the frame period after
-  every mode change (slot `0x348`).
+- **Mode changes.** A window runs in one mode for now: `--view` of a `.vcl` picture
+  (T-035) starts the clock at the 320x240 rate, everything else at mode 13h's.
+  Switching between them while running (T-036) must restart the clock at the new rate,
+  as the original re-measures the frame period after every mode change (slot `0x348`).
 
 ## Pacing
 

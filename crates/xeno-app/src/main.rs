@@ -1,11 +1,12 @@
 //! The Xenobots game binary. For now it finds the user's game files, checks that they
-//! are all there, then opens a window showing a test card.
+//! are all there, then opens a window showing a test card, or with `--view` one asset.
 
 mod clock;
 mod game_dir;
 mod input;
 mod test_pattern;
 mod translate;
+mod viewer;
 mod window;
 
 use std::path::PathBuf;
@@ -52,6 +53,17 @@ struct Cli {
     /// changed). F11 or Alt+Enter toggles it; ESC leaves it.
     #[arg(long)]
     fullscreen: bool,
+
+    /// Show one file instead of the test card: a sprite bank or sky strip (.b@n), a
+    /// screen (.m@l), a cutscene picture (.vcl) or a backdrop (.pcx). A bare name is
+    /// looked up in the game directory, in any case; anything else is a path.
+    #[arg(long, value_name = "FILE")]
+    view: Option<PathBuf>,
+
+    /// With --view: take the colours from this .m@l, .vcl or .pcx (found the same way)
+    /// instead of the file's own or, for files without one, a stock screen's.
+    #[arg(long, value_name = "FILE", requires = "view")]
+    palette: Option<PathBuf>,
 }
 
 /// Parses a flag value with its `FromStr`.
@@ -85,10 +97,21 @@ fn main() -> ExitCode {
         files.dir().path.display(),
         files.dir().source
     );
+    // With --check, a --view file is decoded but not shown.
+    let viewer = match cli.view {
+        Some(view) => match viewer::load(&files, &view, cli.palette.as_deref()) {
+            Ok(viewer) => Some(viewer),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     if cli.check {
         return ExitCode::SUCCESS;
     }
-    match window::run(cli.scale, cli.aspect, cli.fullscreen) {
+    match window::run(cli.scale, cli.aspect, cli.fullscreen, viewer) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
@@ -129,5 +152,23 @@ mod tests {
         for bad in [["--scale", "0"], ["--scale", "big"], ["--aspect", "4:3"]] {
             assert!(Cli::try_parse_from(["xeno-app", bad[0], bad[1]]).is_err());
         }
+    }
+
+    #[test]
+    fn view_and_palette_flags_parse() {
+        let cli = Cli::try_parse_from(["xeno-app"]).unwrap();
+        assert_eq!((cli.view, cli.palette), (None, None));
+        let cli = Cli::try_parse_from([
+            "xeno-app",
+            "--view",
+            "msprite1.b@n",
+            "--palette",
+            "./x/login.m@l",
+        ])
+        .unwrap();
+        assert_eq!(cli.view, Some(PathBuf::from("msprite1.b@n")));
+        assert_eq!(cli.palette, Some(PathBuf::from("./x/login.m@l")));
+        // A palette without a file to view is refused.
+        assert!(Cli::try_parse_from(["xeno-app", "--palette", "login.m@l"]).is_err());
     }
 }

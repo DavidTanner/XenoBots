@@ -73,6 +73,8 @@ quit, and F11 or Alt+Enter to switch between a window and fullscreen.
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
+| `--view <file>` | Show one file instead of the test card (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
+| `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
 
 | Key | Action |
 |---|---|
@@ -80,6 +82,32 @@ quit, and F11 or Alt+Enter to switch between a window and fullscreen.
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
+
+### Asset viewer
+
+`--view` shows a decoded file through the game's own framebuffer and scaler, as a visual
+check of the parsers:
+
+```bash
+cargo run --release -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n
+```
+
+| File | Shown as | Palette |
+|---|---|---|
+| `msprite0`..`msprite5.b@n` | One sprite at a time, centred on a 320x200 checkerboard of the palette's darkest and brightest colours; the window title gives its number and size | The screen the bank is loaded with: `msprite0` and `msprite1` the situation room, `msprite2`..`4` the Humanoid, Scorpion and Scout cockpits, `msprite5` the map room |
+| `sky_a`..`sky_h.b@n` | The 342x54 strip on a 342x200 surface, panned | The Humanoid cockpit |
+| `.m@l` | The 320x200 screen | Its own |
+| `.vcl` | The 640-wide picture in the 320x240 mode (59.94 Hz), panned | Its own |
+| `.pcx` | The 768-wide backdrop on a 768x200 surface, panned | Its own |
+
+| Key | Action |
+|---|---|
+| Right or Page Down, Left or Page Up | Next or previous sprite (stops at the ends) |
+| Home, End | First or last sprite; for a picture, the left or right edge |
+| Space | Draw sprites opaque, or with colour 0 transparent so the checkerboard shows through |
+| Arrows | Pan a wide picture one pixel per retrace while held |
+
+ESC, F11 and Alt+Enter work as above.
 
 On a high-DPI (Retina) display the picture is drawn in the display's real pixels, so
 the default window gets a larger scale there, not a blurred one.
