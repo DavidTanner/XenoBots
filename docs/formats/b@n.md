@@ -126,6 +126,13 @@ is not traced (T-056).
 The centred blitters (`0x5d4`, `0x5e8`) check the anchored rectangle like the others
 but position the sprite at the surface's centre plus (`x0`, `y0`) minus half its size.
 
+`xeno_render::Framebuffer::blit_sprite` and `blit_sprite_window` (T-030) follow these
+rules, with three deliberate differences: a mirrored opaque row span is placed as the
+keyed blitter places it (an exact mirror image), the centred blitters check the
+rectangle they draw rather than the un-centred one, and the window blitter draws only
+when the window lies inside the sprite and on the surface. All three keep every write
+on the surface.
+
 ## Sky strip
 
 18,468 bytes of palette indices with no header: one image, 342 pixels wide and 54

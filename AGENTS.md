@@ -107,7 +107,7 @@ rust-toolchain.toml
 crates/
   xeno-formats/            pure parsers for every original file type; bytes in, structs out; no I/O
   xeno-sim/                deterministic game rules; headless; no rendering or audio
-  xeno-render/             320x200 indexed framebuffer, palette, blit, scaling to any output size
+  xeno-render/             indexed framebuffer (320x200 or 320x240, optionally a wider virtual surface), palette, blits, scaling to any output size
   xeno-audio/              music/SFX decoding and playback
   xeno-app/                the binary: window, input, timing, wiring of the above
   xeno-tool/               developer CLI: inspect / dump / convert assets into a gitignored out dir
