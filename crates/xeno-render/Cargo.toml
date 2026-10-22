@@ -1,0 +1,17 @@
+[package]
+name = "xeno-render"
+description = "Xenobots / Ultrabots reimplementation: the indexed logical framebuffer and its drawing primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = "2"
+xeno-formats = { path = "../xeno-formats" }
+
+[dev-dependencies]
+insta = "1.49"
+proptest = "1.12"
