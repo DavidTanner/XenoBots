@@ -13,36 +13,14 @@ const BYTES_PER_LINE: usize = 16;
 
 /// The report printed for `file` with contents `bytes`.
 pub fn report(file: &Path, bytes: &[u8]) -> String {
-    let extension = file
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_else(|| "(none)".into());
     let shown = bytes.len().min(PREVIEW_LEN);
 
     let mut out = String::new();
     writeln!(out, "file:      {}", file.display()).unwrap();
     writeln!(out, "size:      {0} bytes ({0:#x})", bytes.len()).unwrap();
-    writeln!(out, "extension: {extension}").unwrap();
-    let is_scendef = file
-        .file_name()
-        .is_some_and(|n| n.eq_ignore_ascii_case("scendef.bin"));
-    let is_dsounds = file
-        .file_name()
-        .is_some_and(|n| n.eq_ignore_ascii_case("dsounds.bin"));
-    match extension.as_str() {
-        _ if is_scendef => out.push_str(&scendef_details(bytes)),
-        _ if is_dsounds => out.push_str(&dsounds_details(bytes)),
-        "pcx" => out.push_str(&pcx_details(bytes)),
-        "b@n" => out.push_str(&ban_details(file, bytes)),
-        "m@l" => out.push_str(&mal_details(bytes)),
-        "vcl" => out.push_str(&vcl_details(bytes)),
-        "m00" | "m08" | "m16" | "m32" => out.push_str(&mxx_details(bytes)),
-        "usg" => out.push_str(&usg_details(bytes)),
-        "fgd" | "kyl" => out.push_str(&fgd_details(file, bytes)),
-        "ms3" => out.push_str(&ms3_details(bytes)),
-        "map" => out.push_str(&map_details(bytes)),
-        "rst" => out.push_str(&rst_details(bytes)),
-        _ => {}
+    writeln!(out, "extension: {}", extension(file)).unwrap();
+    if let Some(Ok(text) | Err(text)) = details(file, bytes) {
+        out.push_str(&text);
     }
     if shown == 0 {
         return out;
@@ -52,12 +30,96 @@ pub fn report(file: &Path, bytes: &[u8]) -> String {
     out
 }
 
+/// What became of one file when its parser, if it has one, was run on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// A parser handles the file and accepted it.
+    Parsed,
+    /// A parser handles the file and rejected it, with this error on one line.
+    Failed(String),
+    /// No parser handles the file (code, text, or a type nobody has decoded).
+    NoParser,
+}
+
+/// Runs the parser for `file`, if there is one, on `bytes`.
+pub fn outcome(file: &Path, bytes: &[u8]) -> Outcome {
+    match details(file, bytes) {
+        None => Outcome::NoParser,
+        Some(Ok(_)) => Outcome::Parsed,
+        Some(Err(text)) => Outcome::Failed(one_line(&text)),
+    }
+}
+
+/// A failure report on one line: from its `cannot ...` line on, without colour codes,
+/// column padding, blank lines or the frame of binrw's backtrace, parts joined by `; `.
+fn one_line(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines().skip_while(|l| !l.contains("cannot ")) {
+        let line = strip_ansi(line);
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.is_empty() || line.contains("Backtrace") || !line.contains(char::is_alphanumeric) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(if out.ends_with(':') { " " } else { "; " });
+        }
+        out.push_str(&words.join(" "));
+    }
+    out
+}
+
+/// `line` without ANSI escape sequences (`ESC [ ... letter`).
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            chars.by_ref().find(char::is_ascii_alphabetic);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The lower-case extension of `file`, or `(none)`.
+pub fn extension(file: &Path) -> String {
+    file.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "(none)".into())
+}
+
+/// A parser's report lines: `Ok` if it accepted the file, `Err` if not (from the line
+/// with `cannot ...` on, they say why).
+type Details = Result<String, String>;
+
+/// Picks the parser for `file` by name, ignoring case, and runs it; `None` if there is
+/// no parser for it.
+fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
+    let name = file.file_name().unwrap_or_default();
+    Some(match extension(file).as_str() {
+        _ if name.eq_ignore_ascii_case("scendef.bin") => scendef_details(bytes),
+        _ if name.eq_ignore_ascii_case("dsounds.bin") => dsounds_details(bytes),
+        "pcx" => pcx_details(bytes),
+        "b@n" => ban_details(file, bytes),
+        "m@l" => mal_details(bytes),
+        "vcl" => vcl_details(bytes),
+        "m00" | "m08" | "m16" | "m32" => mxx_details(bytes),
+        "usg" => usg_details(bytes),
+        "fgd" | "kyl" => fgd_details(file, bytes),
+        "ms3" => ms3_details(bytes),
+        "map" => map_details(bytes),
+        "rst" => rst_details(bytes),
+        _ => return None,
+    })
+}
+
 /// What the PCX parser makes of `bytes`, or why it could not parse them.
-fn pcx_details(bytes: &[u8]) -> String {
+fn pcx_details(bytes: &[u8]) -> Details {
     match xeno_formats::pcx::parse(bytes) {
         Ok(pcx) => {
             let h = &pcx.header;
-            format!(
+            Ok(format!(
                 "pcx:       version {}, {}x{}, {} bpp, {} plane(s), {} bytes/line, 256-colour palette\n",
                 h.version,
                 pcx.width(),
@@ -65,20 +127,20 @@ fn pcx_details(bytes: &[u8]) -> String {
                 h.bits_per_pixel,
                 h.planes,
                 h.bytes_per_line,
-            )
+            ))
         }
-        Err(e) => format!("pcx:       cannot parse: {e}\n"),
+        Err(e) => Err(format!("pcx:       cannot parse: {e}\n")),
     }
 }
 
 /// What the `.b@n` parsers make of `bytes`: a sky strip if the name starts with
 /// `sky`, otherwise a sprite bank.
-fn ban_details(file: &Path, bytes: &[u8]) -> String {
+fn ban_details(file: &Path, bytes: &[u8]) -> Details {
     use xeno_formats::{ban, packed};
 
     let decoded = match packed::decompress(bytes) {
         Ok(data) => data.len(),
-        Err(e) => return format!("packed:    cannot decompress: {e}\n"),
+        Err(e) => return Err(format!("packed:    cannot decompress: {e}\n")),
     };
     let packed = format!("packed:    {decoded} bytes decoded\n");
     let is_sky = file
@@ -86,12 +148,12 @@ fn ban_details(file: &Path, bytes: &[u8]) -> String {
         .is_some_and(|n| n.to_string_lossy().to_lowercase().starts_with("sky"));
     let details = if is_sky {
         match ban::parse_sky(bytes) {
-            Ok(_) => format!(
+            Ok(_) => Ok(format!(
                 "b@n:       sky strip, {}x{}",
                 ban::Sky::WIDTH,
                 ban::Sky::HEIGHT
-            ),
-            Err(e) => format!("b@n:       cannot parse as a sky strip: {e}"),
+            )),
+            Err(e) => Err(format!("b@n:       cannot parse as a sky strip: {e}")),
         }
     } else {
         match ban::parse_sprites(bytes) {
@@ -101,25 +163,32 @@ fn ban_details(file: &Path, bytes: &[u8]) -> String {
                     .iter()
                     .filter(|s| s.header.has_row_spans())
                     .count();
-                format!(
+                Ok(format!(
                     "b@n:       sprite bank, {} sprites ({spans} in row spans)",
                     bank.sprites.len()
-                )
+                ))
             }
-            Err(e) => format!("b@n:       cannot parse as a sprite bank: {e}"),
+            Err(e) => Err(format!("b@n:       cannot parse as a sprite bank: {e}")),
         }
     };
-    format!("{packed}{details}\n")
+    with_packed(&packed, details)
+}
+
+/// `details`, as a line, after the `packed` line.
+fn with_packed(packed: &str, details: Details) -> Details {
+    details
+        .map(|d| format!("{packed}{d}\n"))
+        .map_err(|e| format!("{packed}{e}\n"))
 }
 
 /// What the screen parser makes of `bytes`: the picture's size and its PackBits runs.
-fn mal_details(bytes: &[u8]) -> String {
+fn mal_details(bytes: &[u8]) -> Details {
     use xeno_formats::mal::{self, Run, Screen};
     use xeno_formats::packed;
 
     let data = match packed::decompress(bytes) {
         Ok(data) => data,
-        Err(e) => return format!("packed:    cannot decompress: {e}\n"),
+        Err(e) => return Err(format!("packed:    cannot decompress: {e}\n")),
     };
     let packed = format!("packed:    {} bytes decoded\n", data.len());
     let details = match mal::parse_unpacked(&data) {
@@ -130,21 +199,21 @@ fn mal_details(bytes: &[u8]) -> String {
                 .iter()
                 .filter(|r| matches!(r, Run::Repeat { .. }))
                 .count();
-            format!(
+            Ok(format!(
                 "m@l:       {}x{} screen with a VGA 6-bit palette, {} PackBits runs ({} literal, {repeats} repeat)",
                 Screen::WIDTH,
                 Screen::HEIGHT,
                 runs.len(),
                 runs.len() - repeats,
-            )
+            ))
         }
-        Err(e) => format!("m@l:       cannot parse: {e}"),
+        Err(e) => Err(format!("m@l:       cannot parse: {e}")),
     };
-    format!("{packed}{details}\n")
+    with_packed(&packed, details)
 }
 
 /// What the `.vcl` parser makes of `bytes`: the picture's size and its PackBits runs.
-fn vcl_details(bytes: &[u8]) -> String {
+fn vcl_details(bytes: &[u8]) -> Details {
     use xeno_formats::mal::Run;
     use xeno_formats::vcl::{self, Picture};
 
@@ -155,22 +224,22 @@ fn vcl_details(bytes: &[u8]) -> String {
                 .iter()
                 .filter(|r| matches!(r, Run::Repeat { .. }))
                 .count();
-            format!(
+            Ok(format!(
                 "vcl:       {}x{} picture with a VGA 6-bit palette, {} PackBits runs ({} literal, {repeats} repeat)\n",
                 Picture::WIDTH,
                 picture.height,
                 runs.len(),
                 runs.len() - repeats,
-            )
+            ))
         }
-        Err(e) => format!("vcl:       cannot parse: {e}\n"),
+        Err(e) => Err(format!("vcl:       cannot parse: {e}\n")),
     }
 }
 
 /// What the model parser makes of `bytes`: the views, each as `facing/mirror`
 /// (one number when the facing is its own mirror, `-` when there is none), then how
 /// many images, animations and frames they hold in all.
-fn mxx_details(bytes: &[u8]) -> String {
+fn mxx_details(bytes: &[u8]) -> Details {
     use xeno_formats::mxx::{self, ViewHeader};
 
     match mxx::parse(bytes) {
@@ -195,26 +264,26 @@ fn mxx_details(bytes: &[u8]) -> String {
                 })
                 .collect();
             let frames: usize = animations.iter().map(|a| a.len()).sum();
-            format!(
+            Ok(format!(
                 "mxx:       {} view(s), facings in 64ths of a turn: {}\n\
                  mxx:       {images} image(s), {} animation(s), {frames} frame(s)\n",
                 model.views.len(),
                 facings.join(", "),
                 animations.len(),
-            )
+            ))
         }
-        Err(e) => format!("mxx:       cannot parse: {e}\n"),
+        Err(e) => Err(format!("mxx:       cannot parse: {e}\n")),
     }
 }
 
 /// What the layer parser makes of `bytes`: the range of rows, and what `vgaintro.dvr`
 /// uses the file for (known from its name).
-fn fgd_details(file: &Path, bytes: &[u8]) -> String {
+fn fgd_details(file: &Path, bytes: &[u8]) -> Details {
     use xeno_formats::fgd::{self, Layer, Role};
 
     let layer = match fgd::parse(bytes) {
         Ok(layer) => layer,
-        Err(e) => return format!("fgd:       cannot parse: {e}\n"),
+        Err(e) => return Err(format!("fgd:       cannot parse: {e}\n")),
     };
     let min = layer.rows.iter().min().unwrap_or(&0);
     let max = layer.rows.iter().max().unwrap_or(&0);
@@ -224,19 +293,19 @@ fn fgd_details(file: &Path, bytes: &[u8]) -> String {
         Some((role, backdrop)) => format!("{role:?} over {backdrop}"),
         None => "unknown role".to_string(),
     };
-    format!(
+    Ok(format!(
         "fgd:       {}-column silhouette edge, rows {min}..={max}, {}-column window; {role}\n",
         Layer::LEN,
         Layer::WINDOW,
-    )
+    ))
 }
 
 /// What the sound parser makes of `bytes`: one line per sound with its length, the
 /// rate the driver plays it at and its duration.
-fn dsounds_details(bytes: &[u8]) -> String {
+fn dsounds_details(bytes: &[u8]) -> Details {
     let bank = match xeno_formats::dsounds::parse(bytes) {
         Ok(bank) => bank,
-        Err(e) => return format!("dsounds:   cannot parse: {e}\n"),
+        Err(e) => return Err(format!("dsounds:   cannot parse: {e}\n")),
     };
     let mut out = format!(
         "dsounds:   {} sound(s), unsigned 8-bit mono: index, samples, rate, seconds\n",
@@ -251,17 +320,17 @@ fn dsounds_details(bytes: &[u8]) -> String {
         )
         .unwrap();
     }
-    out
+    Ok(out)
 }
 
 /// What the music parser makes of `bytes`: the signature, the events by kind and the
 /// length in ticks, then each channel the events use with its starting program.
-fn ms3_details(bytes: &[u8]) -> String {
+fn ms3_details(bytes: &[u8]) -> Details {
     use xeno_formats::ms3::{self, Event};
 
     let song = match ms3::parse(bytes) {
         Ok(song) => song,
-        Err(e) => return format!("ms3:       cannot parse: {e}\n"),
+        Err(e) => return Err(format!("ms3:       cannot parse: {e}\n")),
     };
     let (mut notes, mut programs, mut channels) = (0, 0, [false; 16]);
     for step in &song.steps {
@@ -289,22 +358,22 @@ fn ms3_details(bytes: &[u8]) -> String {
             d => format!("{c}:{} (also on {})", h.programs[c], d - 1),
         })
         .collect();
-    format!(
+    Ok(format!(
         "ms3:       {:?}, {} event(s): {notes} note(s), {programs} program change(s); {} ticks\n\
          ms3:       channel:starting program {}\n",
         h.signature_text(),
         song.steps.len(),
         song.ticks(),
         used.join(" "),
-    )
+    ))
 }
 
 /// What the scenario table parser makes of `bytes`: one line per scenario with its
 /// index, map box, unlock level, state and name (lines joined with ` / `).
-fn scendef_details(bytes: &[u8]) -> String {
+fn scendef_details(bytes: &[u8]) -> Details {
     let table = match xeno_formats::scendef::parse(bytes) {
         Ok(table) => table,
-        Err(e) => return format!("scendef:   cannot parse: {e}\n"),
+        Err(e) => return Err(format!("scendef:   cannot parse: {e}\n")),
     };
     let mut out = format!(
         "scendef:   {} scenario(s): index, map box top,left..bottom,right, unlock level, state, name\n",
@@ -326,12 +395,12 @@ fn scendef_details(bytes: &[u8]) -> String {
         )
         .unwrap();
     }
-    out
+    Ok(out)
 }
 
 /// What the `.map` parser makes of `bytes`: the kind of each terrain record (their
 /// positions are relative to the map editor's origin).
-fn map_details(bytes: &[u8]) -> String {
+fn map_details(bytes: &[u8]) -> Details {
     match xeno_formats::map::parse(bytes) {
         Ok(t) => {
             let kinds: Vec<_> = t
@@ -339,35 +408,35 @@ fn map_details(bytes: &[u8]) -> String {
                 .iter()
                 .map(|f| format!("{:#04x}", f.kind))
                 .collect();
-            format!(
+            Ok(format!(
                 "map:       editor terrain, record kinds [{}]\n",
                 kinds.join(", ")
-            )
+            ))
         }
-        Err(e) => format!("map:       cannot parse: {e}\n"),
+        Err(e) => Err(format!("map:       cannot parse: {e}\n")),
     }
 }
 
 /// What the `.rst` parser makes of `bytes`: its line count and section names.
-fn rst_details(bytes: &[u8]) -> String {
+fn rst_details(bytes: &[u8]) -> Details {
     match xeno_formats::rst::parse(bytes) {
-        Ok(r) => format!(
+        Ok(r) => Ok(format!(
             "rst:       text, not read by the game; {} line(s), sections {:?}\n",
             r.lines.len(),
             r.sections()
-        ),
-        Err(e) => format!("rst:       cannot parse: {e}\n"),
+        )),
+        Err(e) => Err(format!("rst:       cannot parse: {e}\n")),
     }
 }
 
 /// What the scenario parser makes of `bytes`: the start clock, the sky, the extent of
 /// the object positions (the file has no map grid), the terrain features, one line per
 /// object, each side's paths and the briefing's first line.
-fn usg_details(bytes: &[u8]) -> String {
+fn usg_details(bytes: &[u8]) -> Details {
     use xeno_formats::usg::{self, Side, fixed_to_f64 as f};
     let s = match usg::parse(bytes) {
         Ok(s) => s,
-        Err(e) => return format!("usg:       cannot parse: {e}\n"),
+        Err(e) => return Err(format!("usg:       cannot parse: {e}\n")),
     };
     let c = s.header.start;
     let mut out = format!(
@@ -468,7 +537,7 @@ fn usg_details(bytes: &[u8]) -> String {
         )
         .unwrap();
     }
-    out
+    Ok(out)
 }
 
 /// A classic hex dump: offset, 16 bytes in two groups of eight, then the printable
@@ -720,6 +789,28 @@ mod tests {
         assert!(out.contains("; not used by the game\n"), "{out}");
         let out = report(Path::new("layer1.fgd"), &rows[..10]);
         assert!(out.contains("fgd:       cannot parse: "), "{out}");
+    }
+
+    #[test]
+    fn outcomes_say_whether_a_parser_accepted_the_file() {
+        let rows = vec![40; 1920];
+        assert_eq!(outcome(Path::new("LAYER1.FGD"), &rows), Outcome::Parsed);
+        assert_eq!(outcome(Path::new("XENO.EXE"), &rows), Outcome::NoParser);
+        assert_eq!(outcome(Path::new("other.bin"), &rows), Outcome::NoParser);
+        let Outcome::Failed(error) = outcome(Path::new("Scendef.Bin"), &[1, 2, 3]) else {
+            panic!("a 3-byte scenario table parsed");
+        };
+        assert!(error.starts_with("scendef: cannot parse: "), "{error}");
+        assert!(!error.contains(['\n', '\x1b']), "{error}");
+    }
+
+    #[test]
+    fn failure_reports_are_put_on_one_line() {
+        let text = "packed:    9 bytes decoded\nm@l:       cannot parse: \n \u{257a}\u{2501} Backtrace \u{2501}\u{2578}\n\n 0: \x1b[1mError: short\x1b[22m\n     at here\n \u{257a}\u{2501}\u{2578}\n";
+        assert_eq!(
+            one_line(text),
+            "m@l: cannot parse: 0: Error: short; at here"
+        );
     }
 
     #[test]

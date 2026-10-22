@@ -81,6 +81,15 @@ outside the repo or under a gitignored path.
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 ```
 
+`inspect --all` runs every file in a directory through its parser and prints a table of
+results per extension. It exits non-zero only if a file that has a parser fails to
+parse; files with no parser (the executable, the driver modules, text) are counted, not
+failed.
+
+```bash
+cargo run -p xeno-tool -- inspect --all ./gameFiles
+```
+
 ```bash
 cargo run -p xeno-tool -- dump ./gameFiles/xenodrop.pcx --out /tmp/xeno-out
 ```

@@ -185,6 +185,7 @@ Once the workspace exists, these are the expected commands (keep them true):
 cargo build
 cargo run -p xeno-app -- --game-dir ./gameFiles
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
+cargo run -p xeno-tool -- inspect --all ./gameFiles
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check

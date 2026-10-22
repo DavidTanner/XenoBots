@@ -71,3 +71,35 @@ fn dump_writes_a_png_into_the_out_dir() {
     assert!(stdout.contains(&png.display().to_string()), "{stdout}");
     assert!(written.unwrap().starts_with(b"\x89PNG"));
 }
+
+#[test]
+fn inspect_all_fails_only_when_a_parser_rejects_a_file() {
+    let dir = temp_path("all");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("LAYER1.FGD"), vec![40; 1920]).unwrap();
+    std::fs::write(dir.join("xeno.exe"), synthetic_bytes(50, 1)).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_xeno-tool"))
+            .args(["inspect", "--all"])
+            .arg(&dir)
+            .output()
+            .unwrap()
+    };
+    let clean = run();
+    std::fs::write(dir.join("layer2.fgd"), [1, 2, 3]).unwrap();
+    let broken = run();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(clean.status.success(), "{clean:?}");
+    let stdout = String::from_utf8_lossy(&clean.stdout);
+    assert!(stdout.starts_with("extension  files"), "{stdout}");
+    assert!(!broken.status.success(), "{broken:?}");
+    let stdout = String::from_utf8_lossy(&broken.stdout);
+    assert!(
+        stdout.contains("\n  layer2.fgd: fgd: cannot parse: "),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&broken.stderr);
+    assert!(stderr.contains("1 file(s) failed to parse"), "{stderr}");
+}
