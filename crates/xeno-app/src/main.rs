@@ -1,9 +1,11 @@
 //! The Xenobots game binary. For now it finds the user's game files, checks that they
-//! are all there, then opens a window showing a test card, or with `--view` one asset.
+//! are all there, then opens a window that plays the start-up cutscene and shows a test
+//! card, or with `--view` one asset.
 
 mod clock;
 mod game_dir;
 mod input;
+mod intro;
 mod test_pattern;
 mod translate;
 mod viewer;
@@ -54,7 +56,11 @@ struct Cli {
     #[arg(long)]
     fullscreen: bool,
 
-    /// Show one file instead of the test card: a sprite bank or sky strip (.b@n), a
+    /// Skip the start-up cutscene (any key but P ends it early; P pauses it).
+    #[arg(long)]
+    no_intro: bool,
+
+    /// Show one file instead of the cutscene and test card: a sprite bank or sky strip (.b@n), a
     /// screen (.m@l), a cutscene picture (.vcl) or a backdrop (.pcx). A bare name is
     /// looked up in the game directory, in any case; anything else is a path.
     #[arg(long, value_name = "FILE")]
@@ -108,10 +114,22 @@ fn main() -> ExitCode {
         },
         None => None,
     };
+    // The intro is read from xeno.exe and decoded with --check too.
+    let intro = if viewer.is_none() && !cli.no_intro {
+        match intro::load(&files) {
+            Ok(intro) => Some(intro),
+            Err(e) => {
+                eprintln!("error: cannot play the intro: {e} (--no-intro skips it)");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     if cli.check {
         return ExitCode::SUCCESS;
     }
-    match window::run(cli.scale, cli.aspect, cli.fullscreen, viewer) {
+    match window::run(cli.scale, cli.aspect, cli.fullscreen, viewer, intro) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
@@ -141,7 +159,12 @@ mod tests {
     fn scale_aspect_and_fullscreen_flags_parse() {
         let cli = Cli::try_parse_from(["xeno-app"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Auto, Aspect::Correct));
-        assert!(!cli.fullscreen);
+        assert!(!cli.fullscreen && !cli.no_intro);
+        assert!(
+            Cli::try_parse_from(["xeno-app", "--no-intro"])
+                .unwrap()
+                .no_intro
+        );
         let cli = Cli::try_parse_from(["xeno-app", "--scale", "3", "--aspect", "off"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Fixed(3), Aspect::Off));
         assert!(

@@ -163,10 +163,32 @@ the 160 rows below the window, and every pan from `x` = 320 ends at 0.
   the number of `scendef.bin` records (`DS:0x5ffd`), so presumably when the campaign is
   complete (guess).
 
+### In the port (T-036)
+
+`xeno-app` plays the intro chain at start-up (`--no-intro` skips it, `--view` too),
+from the user's `xeno.exe` (unpacked by `xeno_formats::lzexe`, entries read by
+`xeno_formats::sequence`), in a 320x240 view on a 640x400 surface at 59.94 retraces a
+second, then returns to mode 13h at 70.09. `crates/xeno-app/src/intro.rs` turns each
+entry into the steps above and runs them between retraces, with every retrace doing
+what the interrupt does first (count, apply the origin, upload the palette, step the
+fade, count the tick); the palette is `xeno_render::Dac`. Holds, pans, fades, the
+abort and pause hook and the end times are reproduced; still missing:
+
+- **Captions**: they need the game's font 6 and `vga240.mod`'s glyph renderer. No
+  entry's timing depends on them as long as typing ends before the end time. The two
+  logos have none.
+- **Music**: the counter `DS:0x370` is reset when `MAINTHEM` starts, a few retraces
+  before the chain (the palette blank, the mode set and the frame re-measure come
+  between). Without audio the port starts it at 0 with the chain.
+- Time spent loading pictures from disk and setting the mode is not modelled.
+
+With the stock entries the chain lasts about 7,690 retraces (2 min 8 s) when not
+aborted: `PRESENTS` is held until counter 7,640.
+
 ## Open questions
 
-- A DOSBox capture to confirm the timing (T-036): see the checklist in
-  `video-modes.md`.
+- A DOSBox capture to confirm the timing frame by frame (T-036's note in
+  `NEXT_STEPS.md` lists what to check, with the checklist in `video-modes.md`).
 - The descriptor flags the loader sets (`0x22`), what slot `0x590` (offset 0xb8d) does
   beyond selecting the glyph routine, and what the numbers in the `WIN` caption count.
 

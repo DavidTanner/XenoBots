@@ -88,7 +88,8 @@ reading code, which may never run in normal play.
 ### Fade arithmetic (T-036)
 
 Read in `mgavideo.dvr` (load offsets: `pal_start_fade_in` 0x664 and its step 0x736;
-the fade out at 0x505 and its step 0x5ba; the retrace handler 0x90f).
+the fade out at 0x505 and its step 0x5ba; the retrace handler 0x90f). Reproduced by
+`xeno_render::Dac`.
 
 - **Order each retrace.** The host's retrace interrupt counts `DS:0x370`, then calls
   slot `0x4f4`: upload the shadow if dirty, then call the fade routine, which writes the

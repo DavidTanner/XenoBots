@@ -60,8 +60,12 @@ cargo build --release
 cargo run --release -p xeno-app -- --game-dir ./gameFiles
 ```
 
-For now this checks the game files, then opens a window showing a test card (a
-synthetic pattern, no game art yet). Its white marker moves one pixel per frame of the
+For now this checks the game files, then opens a window and plays the opening
+cutscene, as the original does at start-up: `ealogo.vcl`, eight story pictures and
+`presents.vcl`, about two minutes, timed and faded from the sequence data
+in your `xeno.exe`. There is no music or caption text yet. Any key ends it early (P
+pauses it until the next key), and `--no-intro` skips it. Then the window shows a test
+card (a synthetic pattern). Its white marker moves one pixel per frame of the
 original 70 Hz display and its yellow one at 60 Hz, whatever your monitor's refresh
 rate; the blue grid lights a cell for each key held. Press ESC or close the window to
 quit, and F11 or Alt+Enter to switch between a window and fullscreen.
@@ -69,16 +73,18 @@ quit, and F11 or Alt+Enter to switch between a window and fullscreen.
 | Flag | Meaning |
 |---|---|
 | `--game-dir <path>` | Where the original game files are. |
-| `--check` | Only check the game directory, then exit without opening a window. |
+| `--check` | Only check the game directory (and decode the opening cutscene), then exit without opening a window. |
+| `--no-intro` | Skip the opening cutscene. |
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
-| `--view <file>` | Show one file instead of the test card (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
+| `--view <file>` | Show one file instead of the cutscene and test card (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
 
 | Key | Action |
 |---|---|
 | ESC | Leave fullscreen; in a window, quit. |
+| Any other key, P | During the cutscene: end it (fading out), or pause it until the next key. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
