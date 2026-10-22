@@ -1,10 +1,13 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
-//! framebuffer on screen. For now it shows the test card, with markers driven by the
-//! game clock, until ESC or close; or, with `--view`, one asset (`viewer`).
+//! framebuffer on screen. For now it plays the start-up cutscene (`intro`) in the
+//! 320x240 mode, then shows the test card in mode 13h, with markers driven by the game
+//! clock, until ESC or close; or, with `--view`, one asset (`viewer`).
 //!
 //! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
 //! input events that arrived since the last; if any ran, a frame is requested; then the
-//! loop sleeps until the next retrace is due (`ControlFlow::WaitUntil`).
+//! loop sleeps until the next retrace is due (`ControlFlow::WaitUntil`). Leaving the
+//! cutscene's mode restarts the clock at the new mode's rate, as the original measures
+//! the frame period again after every mode change.
 //!
 //! Sizes: the softbuffer surface and `xeno_render::Layout` work in physical pixels.
 //! The default window asks for a logical size (so it looks the same on a 1x and a 2x
@@ -26,26 +29,28 @@ use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
 use crate::clock::{Clock, Rate, Step};
 use crate::input::{InputLog, Keys};
+use crate::intro::Intro;
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
 use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
-/// Opens the window on `viewer`, or the test card without one, and runs until the
-/// user presses ESC or closes it.
+/// Opens the window on `viewer`, or plays `intro` and then shows the test card, and
+/// runs until the user presses ESC or closes it.
 pub fn run(
     scale: Scale,
     aspect: Aspect,
     fullscreen: bool,
     viewer: Option<Viewer>,
+    intro: Option<Intro>,
 ) -> Result<(), Box<dyn Error>> {
-    let (fb, palette, title) = match &viewer {
-        Some(v) => (v.framebuffer(), v.palette.clone(), v.title()),
-        None => {
-            let mut fb = Framebuffer::new(Size::MODE_13H);
-            test_pattern::draw(&mut fb);
-            (fb, test_pattern::palette(), "Xenobots".to_string())
+    let (fb, palette, title) = match (&viewer, &intro) {
+        (Some(v), _) => (v.framebuffer(), v.palette.clone(), v.title()),
+        (None, Some(intro)) => (Intro::framebuffer(), intro.palette(), "Xenobots".into()),
+        (None, None) => {
+            let (fb, palette) = test_card();
+            (fb, palette, "Xenobots".to_string())
         }
     };
     // The 320x240 mode has its own retrace rate (`docs/game-loop.md`, "Mode changes").
@@ -63,10 +68,13 @@ pub fn run(
         input: Translator::default(),
         log: InputLog::default(),
         keys: Keys::default(),
+        log_base: 0,
+        sixty_hz: 0,
         meter: Meter::default(),
         fb,
         palette,
         viewer,
+        intro,
         title,
         layout: None,
         scale,
@@ -92,12 +100,19 @@ struct App {
     log: InputLog,
     /// The keys held, as the game sees them from the log.
     keys: Keys,
+    /// Retraces run at earlier rates: the clock restarts its count at a mode change,
+    /// the log does not.
+    log_base: u64,
+    /// The 60 Hz count at the last retrace, to tell the intro when it moves.
+    sixty_hz: u64,
     meter: Meter,
     /// The picture to show.
     fb: Framebuffer,
     palette: Palette,
     /// `--view`: what to show instead of the test card.
     viewer: Option<Viewer>,
+    /// The start-up cutscene, while it plays.
+    intro: Option<Intro>,
     title: String,
     /// The last layout drawn, to log changes.
     layout: Option<Layout>,
@@ -119,6 +134,8 @@ struct App {
 /// Counts for the once-a-second rate log.
 #[derive(Debug, Default)]
 struct Meter {
+    /// When the clock last started.
+    since: Duration,
     /// When the last line was logged, and the counts then.
     at: Duration,
     retraces: u64,
@@ -155,6 +172,13 @@ fn size_after_scale_change(
 ) -> Option<PhysicalSize<u32>> {
     let known = before.width > 0 && before.height > 0;
     (matches!(scale, Scale::Fixed(_)) && !fullscreen && known).then_some(before)
+}
+
+/// The test card in mode 13h.
+fn test_card() -> (Framebuffer, Palette) {
+    let mut fb = Framebuffer::new(Size::MODE_13H);
+    test_pattern::draw(&mut fb);
+    (fb, test_pattern::palette())
 }
 
 fn physical(s: Size) -> PhysicalSize<u32> {
@@ -214,17 +238,32 @@ impl App {
         Ok(())
     }
 
-    /// One retrace: the game reads this retrace's input from the log, then the viewer
-    /// acts on it, or the test card's markers move.
-    fn tick(&mut self, step: Step) {
-        self.log.record(step.retrace, self.input.take());
-        for event in self.log.events_at(step.retrace) {
-            log::debug!("retrace {}: {event:?}", step.retrace);
+    /// One retrace: the game reads this retrace's input from the log, then the intro or
+    /// the viewer acts on it, or the test card's markers move. Returns whether the mode
+    /// changed (the intro ended), so the clock must restart.
+    fn tick(&mut self, step: Step) -> bool {
+        let retrace = self.log_base + step.retrace;
+        self.log.record(retrace, self.input.take());
+        for event in self.log.events_at(retrace) {
+            log::debug!("retrace {retrace}: {event:?}");
             self.keys.apply(event);
+        }
+        let ticked = step.sixty_hz != self.sixty_hz;
+        self.sixty_hz = step.sixty_hz;
+        self.meter.sixty_hz_now = step.sixty_hz;
+        if let Some(intro) = &mut self.intro {
+            let done = intro.retrace(self.log.events_at(retrace), ticked, &mut self.fb);
+            self.palette = intro.palette();
+            if done {
+                self.intro = None;
+                (self.fb, self.palette) = test_card();
+                self.log_base = retrace;
+            }
+            return done;
         }
         match &mut self.viewer {
             Some(viewer) => {
-                if viewer.step(self.log.events_at(step.retrace), &self.keys) {
+                if viewer.step(self.log.events_at(retrace), &self.keys) {
                     viewer.draw(&mut self.fb);
                     self.title = viewer.title();
                     log::debug!("{}", self.title);
@@ -235,7 +274,34 @@ impl App {
             }
             None => test_pattern::draw_live(&mut self.fb, step.retrace, step.sixty_hz, &self.keys),
         }
-        self.meter.sixty_hz_now = step.sixty_hz;
+        false
+    }
+
+    /// Restarts the clock at `now` at the rate of the current view's mode, as after the
+    /// original's mode changes (`docs/game-loop.md`, "Mode changes").
+    fn restart_clock(&mut self, now: Duration) {
+        let rate = Rate::for_height(self.fb.view().height);
+        log::info!(
+            "mode change at retrace {}: {:?} view, clock restarted at {:.3} retraces a second",
+            self.log_base,
+            self.fb.view(),
+            rate.hz()
+        );
+        self.clock = Clock::new(rate, now);
+        self.sixty_hz = 0;
+        self.meter = Meter {
+            since: now,
+            at: now,
+            frames: self.meter.frames_now,
+            frames_now: self.meter.frames_now,
+            ..Meter::default()
+        };
+        if let Some(surface) = &self.surface {
+            surface
+                .window()
+                .set_min_inner_size(Some(physical(self.fb.view())));
+            surface.window().request_redraw();
+        }
     }
 
     /// Logs the measured rates at debug level, at most once a second.
@@ -247,11 +313,11 @@ impl App {
         }
         let (retraces, dropped) = (self.clock.retraces(), self.clock.dropped());
         log::debug!(
-            "{:.3} retraces/s ({} in {span:.4} s; {:.4}/s since the window opened), \
+            "{:.3} retraces/s ({} in {span:.4} s; {:.4}/s since the clock started), \
              {:.3} 60 Hz ticks/s, {:.2} frames/s, {} retraces dropped",
             (retraces - m.retraces) as f64 / span,
             retraces - m.retraces,
-            (retraces + dropped) as f64 / now.as_secs_f64(),
+            (retraces + dropped) as f64 / (now - m.since).as_secs_f64(),
             (m.sixty_hz_now - m.sixty_hz) as f64 / span,
             (m.frames_now - m.frames) as f64 / span,
             dropped - m.dropped,
@@ -327,8 +393,11 @@ impl ApplicationHandler for App {
         let now = start.elapsed();
         let mut ran = false;
         for step in self.clock.advance(now) {
-            self.tick(step);
             ran = true;
+            if self.tick(step) {
+                self.restart_clock(now);
+                break;
+            }
         }
         if ran && let Some(surface) = &self.surface {
             surface.window().request_redraw();

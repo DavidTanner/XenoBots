@@ -219,8 +219,9 @@ the same layout rules apply to the monitor's size (a 3440x1440 monitor gives 6x7
 
 ## Open questions
 
-- Confirm with a DOSBox capture (T-027 was done statically; no DOSBox was available).
-  A capture should check:
+- Confirm with a DOSBox capture (T-027 was done statically, and T-036 built the intro
+  player from the same reading; no DOSBox was available to either, so this is still to
+  do, as T-036's note in `NEXT_STEPS.md` says). A capture should check:
   - the `.vcl` cutscenes are 320x240 at ~59.94 Hz and the front end and drop sequence
     320x200 at ~70 Hz (DOSBox's raw screenshots and its reported refresh rate);
   - a pan moves one pixel per retrace (`TRIUMPH`: one per two), captions type at two
@@ -229,4 +230,8 @@ the same layout rules apply to the monitor's size (a 3440x1440 monitor gives 6x7
     over two minutes;
   - which lose picture follows a defeat commanding each robot type (`DS:0x6012`);
   - P pauses a cutscene and any other key ends it, skipping the drop sequence.
+  - frame by frame against `xeno-app`'s intro (T-036): when each picture's first
+    non-black frame and each pan step appear, that a fade in ends one DAC level below
+    the picture's palette, and that the next-to-last fade-out level holds for three
+    retraces between the two fades out (`palette.md`, "Fade arithmetic").
 - The purpose of the `xeno.exe` misc-output routine (~0x10d7b).
