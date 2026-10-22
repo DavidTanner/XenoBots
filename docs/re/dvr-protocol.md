@@ -222,7 +222,7 @@ install one more (0x2a and 0x3a).
 |---|---|
 | `0x470` / `0x474` | Enter mode 13h and install everything / back to text mode |
 | `0x478`, `0x47c` | Null `ret` / `retf` |
-| `0x480` | File-id name builder (`m@l.md`, `mxx.md`) |
+| `0x480` | File-id name builder (`m@l.md`, `mxx.md`): copies the name for id `AX` to the name buffer `DS:0x64e`. Its code for the `MSPRITES` digit and the `.MXX` suffix is skipped by a jump; the host writes both itself |
 | `0x484`, `0x488`, `0x48c` | Select the draw and text surfaces; set the row stride |
 | `0x490` | Load file id `AX` into the block at `CX:BX` (no drawing; `vga240.mod` replaces it in mode B with the `.vcl` loader) |
 | `0x494`, `0x49c` | Show a loaded full-screen picture with / without its palette |
@@ -230,8 +230,9 @@ install one more (0x2a and 0x3a).
 | `0x4a0`–`0x4e8` | Palette: set, blank, commit, fades to a colour or to a palette (`palette.md`; `0x4d8` is the `.vcl` fade) |
 | `0x4ec`, `0x4f0` | Colour-animation records |
 | `0x4f4` | Per-retrace handler (palette upload); repointed to a second version on some configurations |
-| `0x4fa`–`0x590` | Drawing: pixels, rectangles and frames, probably lines, and fonts (`0x590` selects the glyph renderer) |
+| `0x4fa`–`0x570`, `0x590` | Drawing: pixels, rectangles and frames, probably lines, and fonts (`0x590` selects the glyph renderer) |
 | `0x546` | Stub for `LIGHT.MOD` (dead) |
+| `0x574`–`0x58c` | Scaled model images (`mxx.md`, "Drawing"): `0x574` target, row table and clip rectangle, `0x578` anchor, `0x57c`/`0x580` get/select the scale pattern, `0x584` scale (8.8), `0x588` draw a prepared list of images (not traced), `0x58c` draw one row-span image, colour 0 transparent, mirrored if `DL` bit 0 |
 | `0x59c`–`0x5bc` | Screen-region helpers: build a run-length region of one colour from a loaded picture and compile it into copy code, then copy through it; not traced further |
 | `0x5c0`–`0x5ec` | Sprite blitters by directory handle (`AX`) into a rectangle (`DS:BX`): `0x5c0` anchor mode, `0x5c4`–`0x5d4` opaque, `0x5d8`–`0x5e8` colour 0 transparent, `0x5ec` a window of a raw sprite (`b@n.md`) |
 | `0x5f0` | Remap a buffer through a 256-byte table, not traced further |
@@ -299,3 +300,12 @@ Named in T-028 (sprite banks and the sky; details in `b@n.md` and `packed.md`): 
 (`1fe6:2e1a`), `file_unpack_packed_stream` (`1fe6:2efb`), and the `gfx_*` sprite and sky
 routines listed in `b@n.md`; in `mgavideo.dvr` the sprite blitters at slots
 `0x5c0`–`0x5ec`.
+
+Named in T-029 (`.MXX` models; details in `mxx.md`): in `xeno.exe` the loaders
+`gfx_load_all_models` (`1000:7b55`), `gfx_load_model` (`1000:17e3`),
+`gfx_load_model_single_view` (`1000:1652`), `gfx_load_model_quarter_turn` (`1000:16e7`),
+`file_load_model_views` (`1000:195f`) and their helpers, and the 3D view's model
+drawing (`gfx_draw_render_list` `1000:2e5b`, `gfx_draw_model` `1000:2fda` and its
+variants, `gfx_get_model_facing_index`, `sim_get_bearing`); in `mgavideo.dvr`
+`file_build_name_from_id` (`0x01a4`, slot `0x480`) and the model image routines at
+slots `0x574`–`0x58c` (`0x3c2c`–`0x419f`).

@@ -177,8 +177,9 @@ fn model_images(
 }
 
 /// Draws a frame's parts, in order, on a transparent canvas just big enough to hold
-/// them. Only pixels inside the row spans are drawn. Parts whose image `resolve`
-/// can't find (a missing `.m00`) are skipped. `None` when nothing is left to draw.
+/// them. Like the game, only pixels inside the row spans are drawn, and colour 0 is
+/// transparent. Parts whose image `resolve` can't find (a missing `.m00`) are
+/// skipped. `None` when nothing is left to draw.
 fn compose<'a>(
     frame: &mxx::Frame,
     resolve: impl Fn(&mxx::Part) -> Option<&'a mxx::Image>,
@@ -204,6 +205,9 @@ fn compose<'a>(
     for (part, image) in parts {
         for (y, span) in image.rows.iter().enumerate() {
             for (i, &index) in span.pixels.iter().enumerate() {
+                if index == 0 {
+                    continue;
+                }
                 let column = i32::from(span.skip) + i as i32;
                 let column = if part.is_flipped() {
                     i32::from(image.width) - 1 - column
@@ -368,7 +372,7 @@ mod tests {
     fn models_dump_one_png_per_frame_and_facing() {
         let out = std::env::temp_dir().join(format!("xeno-tool-mxx-{}", std::process::id()));
         // Each frame draws both images at (0, 0); the mirror facing's frame flips them.
-        let bytes = synthetic_model(&[(8, &[(3, 1, &[10, 20, 30]), (2, 1, &[40, 50])])]);
+        let bytes = synthetic_model(&[(8, &[(3, 1, &[10, 20, 30]), (2, 1, &[40, 0])])]);
 
         let written = dump(Path::new("Scout.M08"), &bytes, &out, None).unwrap();
         let facing = image::open(&written[0]).unwrap().into_rgba8();
@@ -388,9 +392,9 @@ mod tests {
                 .map(|x| image.get_pixel(x, 0).0[0])
                 .collect::<Vec<_>>()
         };
-        // The second part covers the first.
-        assert_eq!(row(&facing), [40, 50, 30]);
-        assert_eq!(row(&mirror), [50, 40, 10]);
+        // The second part covers the first, except where its colour is 0.
+        assert_eq!(row(&facing), [40, 20, 30]);
+        assert_eq!(row(&mirror), [30, 40, 10]);
     }
 
     #[test]

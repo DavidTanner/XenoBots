@@ -19,8 +19,8 @@ Not palette sources, as far as the evidence goes:
 - `xeno.exe` never writes the DAC, never calls `int 10h`, and holds no 768-byte run of
   values in the DAC range that varies like a palette. It leaves palettes to the drivers.
 - The `.b@n` sprite banks and sky strips hold no palette (confirmed, T-014; see
-  `b@n.md`). The `.m00`..`.m32` model headers are far too short to hold one (guess,
-  T-015). Both are drawn with whatever palette is current.
+  `b@n.md`). The `.m00`..`.m32` models hold none either (confirmed, T-029;
+  `mxx.md`). Both are drawn with whatever palette is current.
 
 `xeno-tool palette <file>` prints the palette of a `.pcx`, `.vcl` or `.m@l` file, one colour
 per line (index, `#rrggbb`, decimal channels), widened to 8 bits. For any other file,
