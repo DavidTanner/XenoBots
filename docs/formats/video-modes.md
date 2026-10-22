@@ -153,6 +153,58 @@ plain linear order, spread across the four planes by cycling the map mask. See
   animation is paced by vertical retrace (the retrace handler above suggests some is),
   its speed depends on the mode. Pace those by the original rate, not the host display's.
 
+## Presentation (T-032)
+
+The port shows the view in a window by `xeno_render::present`: each view pixel becomes
+an `sx` by `sy` block of window pixels (whole numbers, nearest neighbour, never
+blended), centred, with black bars. Both modes filled a 4:3 frame on the original
+monitor, so the target pixel shape is `3w / 4h` times taller than wide: 1.2 for
+320x200, 1 for 320x240.
+
+With whole-number factors, 1.2 is exact only at `sx` a multiple of 5 (5x6, 10x12, ...).
+5x6 needs a 1600x1200 window, 10x12 a 3200x2400 one, so at 1920x1080 nothing exact fits
+and at 3840x2160 exact means 5x6, a 1600x1200 picture on a 4K screen. Hence three
+choices (`--aspect`):
+
+- **`correct`** (default): the largest `sx` whose nearest vertical factor
+  (`sy = round(1.2 * sx)`, never a tie) fits and is within **5%** of 1.2. Every `sx`
+  from 4 up is (worst: 7x8, -4.8%), so from a 1280x1000 window up the error is at most
+  5%. Below that, nothing may qualify; it then takes the smallest error, ties to the
+  larger picture, which is never worse than 1x1's 16.7% too flat: 2x2 at 640x400,
+  3x3 at 1280x720, 3x4 (+11.1%) at 1280x900.
+- **`exact`**: always the smallest error, ties to the larger picture.
+- **`off`**: square pixels, the largest equal factors that fit.
+
+320x240 always gets equal factors, so its error is 0 in every setting.
+
+| Window | 320x200 `correct` | Error | 320x240 | 320x200 `exact` |
+|---|---|---|---|---|
+| 640x400 | 2x2, 640x400 | -16.7% | 1x1, 320x240 | same |
+| 800x600 (default window, 1x display) | 2x2, 640x400 | -16.7% | 2x2, 640x480 | same |
+| 1280x720 | 3x3, 960x600 | -16.7% | 3x3, 960x720 | same |
+| 1920x1080 | 4x5, 1280x1000 | +4.2% | 4x4, 1280x960 | same |
+| 1600x1200 (default window, 2x display) | 5x6, 1600x1200 | 0 | 5x5, 1600x1200 | same |
+| 2560x1440 | 6x7, 1920x1400 | -2.8% | 6x6, 1920x1440 | 5x6, 1600x1200 |
+| 3840x2160 | 8x10, 2560x2000 | +4.2% | 9x9, 2880x2160 | 5x6, 1600x1200 |
+
+A positive error is a picture taller than 4:3. The two modes come out the same width
+up to 2560x1440, with heights within 4% (720p is the exception: 320x200 is 120 rows
+shorter). At 3840x2160 they differ: 320x240 is 9x, while 320x200's 9x11 is 2200 rows
+and 9x10 is 7.4% off, so it stays at 8x10, 320 columns narrower. The full table, with
+`off`, is the `layout_table` snapshot in `xeno-render`.
+
+Not chosen: nearest neighbour at a fractional vertical factor (rows of uneven height,
+for example 10 and 11 at 4K for an exact 2880x2160). It stays sharp but shows as uneven
+lines in fine patterns such as the test card's checkerboard; the edge-aware scalers of
+T-071 are the place for it.
+
+`--scale N` fixes `sx = N` (1 to 32) and takes `sy = round(N * 1.2)` for 320x200
+(`N` with `--aspect off`, and for 320x240). The window is opened at the picture's size
+in physical pixels; if it ends up smaller (a small screen, or the user shrinks it), the
+picture is not rescaled but cropped equally on both sides, since a fixed scale is asked
+for to see exact pixels. Under `auto` a window smaller than the view also shows the
+middle of a 1x picture.
+
 ## Open questions
 
 - Confirm with a DOSBox capture (T-027 was done statically; no DOSBox was available).
