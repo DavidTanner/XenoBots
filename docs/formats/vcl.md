@@ -221,7 +221,7 @@ that would be negative; it also adds the counts to the campaign's totals
 developer keys and presumably the mission's end, add 1000 to the score afterwards:
 `docs/screens.md`.) A count of 100 or more shows only its last two digits.
 
-### In the port (T-036)
+### In the port (T-036, T-045)
 
 `xeno-app` plays the intro chain at start-up (`--no-intro` skips it, `--view` too),
 from the user's `xeno.exe` (unpacked by `xeno_formats::lzexe`, entries read by
@@ -232,13 +232,28 @@ what the interrupt does first (count, apply the origin, upload the palette, step
 fade, count the tick); the palette is `xeno_render::Dac`. Holds, pans, fades, the
 abort and pause hook and the end times are reproduced; still missing:
 
-- **Captions**: the strings are read (`xeno_formats::sequence::captions`, T-045);
-  typing them is T-045's second part. No entry's timing depends on them as long as
-  typing ends before the end time. The two logos have none.
+- **Captions** (T-045): read from the string segment (`xeno_formats::sequence`) and
+  typed as above, in the user's font 6 from `mgavideo.dvr`, colour 252, transparent,
+  at the entry's picture coordinates on the 640-wide surface: each code after a poll,
+  then `caption_speed` retraces; 9 and its byte move the cursor with no wait; the
+  font's control codes (0x0c, 0x0e) cost a wait. A key while typing aborts.
 - **Music**: the counter `DS:0x370` is reset when `MAINTHEM` starts, a few retraces
   before the chain (the palette blank, the mode set and the frame re-measure come
   between). Without audio the port starts it at 0 with the chain.
 - Time spent loading pictures from disk and setting the mode is not modelled.
+
+The cutscenes after a mission (T-045) use the same player (`intro::Cutscene`, kinds
+`Ending` and `Triumph`): the screens fade out over 32 retraces and hand the window the
+cutscene (`Screens::take_cutscene`), which switches to the 320x240 mode with the clock
+restarted, plays it as its routine does, then goes back to mode 13h with the clock
+restarted and the map room fading in from black. The lose picture follows the robot
+console opened last in the mission (reset to the humanoid's when a mission starts), as
+`DS:0x6012` does. The win caption's numbers are 0 (the port's missions do not count
+kills or losses yet, T-046), so its points are 0. Without music the counter starts at
+0 with the cutscene (`TRIUMPH`: one retrace later, where `BIGWIN3` would start). One
+difference: the 15 ticks the routines wait after leaving the mode are waited before
+it, still in the 320x240 mode (the screen is black either way). `--screen won`, `lost` and `triumph` play one alone, then the map room; Ctrl+W,
+Ctrl+L and Ctrl+C end a mission in one.
 
 With the stock entries the chain lasts about 7,690 retraces (2 min 8 s) when not
 aborted: `PRESENTS` is held until counter 7,640.

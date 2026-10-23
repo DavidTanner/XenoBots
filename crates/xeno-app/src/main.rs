@@ -1,6 +1,7 @@
 //! The Xenobots game binary. For now it finds the user's game files, checks that they
 //! are all there, then opens a window that plays the start-up cutscene and the intro
-//! drop and steps through placeholder screens, or with `--view` one asset.
+//! drop and steps through the front end's screens and the cutscenes after a mission
+//! (the mission itself is still a placeholder), or with `--view` one asset.
 
 mod clock;
 mod drop;
@@ -76,7 +77,8 @@ struct Cli {
     drop: bool,
 
     /// Start at this screen, skipping the cutscene and the drop (for development).
-    /// `test-card` shows the synthetic test card instead of the screens.
+    /// `won`, `lost` and `triumph` play the cutscene after a mission, then go to the
+    /// map room. `test-card` shows the synthetic test card instead of the screens.
     #[arg(long, value_enum, value_name = "NAME", conflicts_with = "view")]
     screen: Option<StartScreen>,
 
@@ -205,11 +207,14 @@ fn main() -> ExitCode {
         Some(start) => match screens::load(&files).and_then(|p| {
             let login = login::load(&files)?;
             let missions = mission::load(&files, login.campaign.scenarios.len())?;
-            Ok((p, login, maproom::load(&files)?, missions))
+            let endings = intro::load_endings(&files)?;
+            Ok((p, login, maproom::load(&files)?, missions, endings))
         }) {
-            Ok((pictures, login, map, missions)) => window::FrontEnd::Screens(Box::new(
-                screens::Screens::new(pictures, login, map, missions, start),
-            )),
+            Ok((pictures, login, map, missions, endings)) => {
+                let mut screens = screens::Screens::new(pictures, login, map, missions, start);
+                screens.set_endings(endings);
+                window::FrontEnd::Screens(Box::new(screens))
+            }
             Err(e) => {
                 eprintln!("error: cannot show the screens: {e}");
                 return ExitCode::FAILURE;
