@@ -365,7 +365,7 @@ impl Intro {
             }
             Op::PrepareFadeIn(i, length) => {
                 let dac = self.pictures[i].dac;
-                self.prepared = Some(self.dac.prepare_fade_in(&dac, 255, length));
+                self.prepared = Some(self.dac.prepare_fade_in(&dac, 0, 255, length));
             }
             Op::StartFade => {
                 if let Some(fade) = self.prepared.take() {
@@ -383,7 +383,7 @@ impl Intro {
                 ),
             },
             Op::Stop => self.dac.stop(),
-            Op::FadeOut { last, length, max } => self.dac.fade_out(last, length, max),
+            Op::FadeOut { last, length, max } => self.dac.fade_out(0, last, length, max),
             Op::WaitFade => return self.wait(!self.dac.fading()),
             Op::End => {
                 self.finished = true;

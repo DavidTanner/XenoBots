@@ -90,6 +90,7 @@ managed memory block with slot `0x36`.
 | `0x358`/`0x35c`, `0x360`/`0x364` | `1fe6:33e9`–`3424` | Add/remove a per-retrace hook; add/remove a 60 Hz tick hook |
 | `0x38a`–`0x40e` | `1fe6:489c`–`4cbc` | Text: font select and glyph drawing (fonts live in `mgavideo.dvr`'s data) |
 | `0x1506` | `1fe6:6a97` | Load a `.map` into the `MAPP` buffer (`map.md`) |
+| `0x30e`–`0x320` (word slots) | `1000:13be`–`14d8` | Colour-animation records (`palette.md`): select a list, stop all, hold, release, start, turn on, turn off, read flags, set direction, set speed. `vgaintro.dvr` calls `0x30e` and `0x316` through slot `0x40` |
 
 ## Module layout
 
@@ -228,7 +229,7 @@ install one more (0x2a and 0x3a).
 | `0x494`, `0x49c` | Show a loaded full-screen picture with / without its palette |
 | `0x498` | Show a loaded picture, fading its palette in at speed `AX` |
 | `0x4a0`–`0x4e8` | Palette: set, blank, commit, fades to a colour or to a palette (`palette.md`; `0x4d8` is the `.vcl` fade) |
-| `0x4ec`, `0x4f0` | Colour-animation records |
+| `0x4ec`, `0x4f0` | Colour-animation blends (`pal_blend_anim_from_palette`, `pal_blend_anim_frames`): build a record's frame between the palette and frame 0, or between frames 0 and 1 (`palette.md`) |
 | `0x4f4` | Per-retrace handler (palette upload); repointed to a second version on some configurations |
 | `0x4fa`–`0x570`, `0x590` | Drawing: pixels, rectangles and frames, probably lines, and fonts (`0x590` selects the glyph renderer) |
 | `0x546` | Stub for `LIGHT.MOD` (dead) |
@@ -309,3 +310,17 @@ drawing (`gfx_draw_render_list` `1000:2e5b`, `gfx_draw_model` `1000:2fda` and it
 variants, `gfx_get_model_facing_index`, `sim_get_bearing`); in `mgavideo.dvr`
 `file_build_name_from_id` (`0x01a4`, slot `0x480`) and the model image routines at
 slots `0x574`–`0x58c` (`0x3c2c`–`0x419f`).
+
+Named in T-037 (colour-animation records and fades; details in `palette.md`): in
+`xeno.exe` `pal_install_anim_slots` (`1000:13a4`), `pal_select_anim_list` (`13be`),
+`pal_stop_all_anims` (`13d8`), `pal_hold_anims` (`13f2`), `pal_release_anims` (`13fe`),
+`pal_start_anim` (`140b`), `pal_activate_anim` (`14a1`), `pal_deactivate_anim` (`14ac`),
+`pal_get_anim_flags` (`14b7`), `pal_set_anim_direction` (`14c3`), `pal_set_anim_speed`
+(`14d8`), `pal_find_anim` (`14e2`), `ui_show_screen_fading_in` (`76fe`),
+`ui_edit_name_with_blinking_cursor` (`77ce`) and `pal_tint_for_time_of_day` (`ed70`);
+in `mgavideo.dvr` `pal_start_fade_out_all` (`0x4ec`), `pal_start_fade_out` (`0x505`),
+`pal_step_fade_out` (`0x5ba`), `pal_step_fade_in` (`0x736`), `pal_restore_saved`
+(`0x7bd`), `pal_blend_anim_from_palette` (`0x854`), `pal_blend_anim_frames` (`0x8ac`),
+`pal_on_retrace` (`0x90f`), `pal_on_retrace_outsb` (`0x9c3`, with `rep outsb`; slot
+`0x4f4` uses it when the configuration's CPU class is `'1'` or more and `DS:0x616` is
+not `0x5981`) and `pal_advance_colour_anims` (`0xa66`).
