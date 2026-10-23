@@ -1,7 +1,8 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
 //! framebuffer on screen. For now it plays the start-up cutscene (`intro`) in the
-//! 320x240 mode, then shows the test card in mode 13h, with markers driven by the game
-//! clock, until ESC or close; or, with `--view`, one asset (`viewer`).
+//! 320x240 mode and, unless a key ended it, the intro drop (`drop`) in mode 13h, then
+//! shows the test card, with markers driven by the game clock, until ESC or close; or,
+//! with `--view`, one asset (`viewer`).
 //!
 //! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
 //! input events that arrived since the last; if any ran, a frame is requested; then the
@@ -28,6 +29,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
 use crate::clock::{Clock, Rate, Step};
+use crate::drop;
 use crate::input::{InputLog, Keys};
 use crate::intro::Intro;
 use crate::test_pattern;
@@ -36,19 +38,33 @@ use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
-/// Opens the window on `viewer`, or plays `intro` and then shows the test card, and
-/// runs until the user presses ESC or closes it.
+/// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
+/// there is no intro), then shows the test card, and runs until the user presses ESC
+/// or closes it.
 pub fn run(
     scale: Scale,
     aspect: Aspect,
     fullscreen: bool,
     viewer: Option<Viewer>,
     intro: Option<Intro>,
+    mut drop: Option<drop::Assets>,
 ) -> Result<(), Box<dyn Error>> {
-    let (fb, palette, title) = match (&viewer, &intro) {
-        (Some(v), _) => (v.framebuffer(), v.palette.clone(), v.title()),
-        (None, Some(intro)) => (Intro::framebuffer(), intro.palette(), "Xenobots".into()),
-        (None, None) => {
+    // Without the intro, the drop starts at once, its counter where its first wait ends.
+    let playing = match (&viewer, &intro, drop.take()) {
+        (None, None, Some(assets)) => {
+            let start = assets.drop.numbers.start;
+            Some(drop::Player::new(assets, start))
+        }
+        (_, _, assets) => {
+            drop = assets;
+            None
+        }
+    };
+    let (fb, palette, title) = match (&viewer, &intro, &playing) {
+        (Some(v), _, _) => (v.framebuffer(), v.palette.clone(), v.title()),
+        (None, Some(intro), _) => (Intro::framebuffer(), intro.palette(), "Xenobots".into()),
+        (None, None, Some(p)) => (p.framebuffer(), p.palette(), "Xenobots".into()),
+        (None, None, None) => {
             let (fb, palette) = test_card();
             (fb, palette, "Xenobots".to_string())
         }
@@ -75,6 +91,8 @@ pub fn run(
         palette,
         viewer,
         intro,
+        drop_assets: drop,
+        drop: playing,
         title,
         layout: None,
         scale,
@@ -113,6 +131,9 @@ struct App {
     viewer: Option<Viewer>,
     /// The start-up cutscene, while it plays.
     intro: Option<Intro>,
+    /// The intro drop's files, until the cutscene ends, and the drop while it plays.
+    drop_assets: Option<drop::Assets>,
+    drop: Option<drop::Player>,
     title: String,
     /// The last layout drawn, to log changes.
     layout: Option<Layout>,
@@ -238,9 +259,10 @@ impl App {
         Ok(())
     }
 
-    /// One retrace: the game reads this retrace's input from the log, then the intro or
-    /// the viewer acts on it, or the test card's markers move. Returns whether the mode
-    /// changed (the intro ended), so the clock must restart.
+    /// One retrace: the game reads this retrace's input from the log, then the intro,
+    /// the drop or the viewer acts on it, or the test card's markers move. Returns
+    /// whether the mode changed (the intro or the drop ended), so the clock must
+    /// restart.
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
         self.log.record(retrace, self.input.take());
@@ -255,7 +277,31 @@ impl App {
             let done = intro.retrace(self.log.events_at(retrace), ticked, &mut self.fb);
             self.palette = intro.palette();
             if done {
+                let (aborted, counter) = (intro.aborted(), intro.counter());
                 self.intro = None;
+                match self.drop_assets.take() {
+                    Some(assets) if !aborted => {
+                        let player = drop::Player::new(assets, counter);
+                        self.fb = player.framebuffer();
+                        self.palette = player.palette();
+                        self.drop = Some(player);
+                    }
+                    assets => {
+                        if assets.is_some() {
+                            log::debug!("intro aborted: the drop is skipped");
+                        }
+                        (self.fb, self.palette) = test_card();
+                    }
+                }
+                self.log_base = retrace;
+            }
+            return done;
+        }
+        if let Some(drop) = &mut self.drop {
+            let done = drop.retrace(self.log.events_at(retrace), &mut self.fb);
+            self.palette = drop.palette();
+            if done {
+                self.drop = None;
                 (self.fb, self.palette) = test_card();
                 self.log_base = retrace;
             }

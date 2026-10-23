@@ -21,7 +21,7 @@ fn missing_game_dir_fails_with_an_actionable_message() {
 }
 
 #[test]
-fn check_flag_verifies_the_game_dir_and_the_intro_without_opening_a_window() {
+fn check_flag_verifies_the_game_dir_the_intro_and_the_drop_without_opening_a_window() {
     let dir = std::env::temp_dir().join(format!("xeno-app-cli-check-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     for name in xeno_formats::files::EXPECTED_FILES {
@@ -51,7 +51,20 @@ fn check_flag_verifies_the_game_dir_and_the_intro_without_opening_a_window() {
     std::fs::write(dir.join("xeno.exe"), exe).unwrap();
     let picture = xeno_formats::fixtures::synthetic_vcl(&[0; 768], &[1; 640 * 240]);
     std::fs::write(dir.join("ealogo.vcl"), picture).unwrap();
-    let good = run(&["--check"]);
+    // The drop's files are still empty.
+    let no_drop = run(&["--check"]);
+    // Synthetic, not the game's: a made-up vgaintro.dvr, flat backdrops and layers.
+    use xeno_formats::fixtures::{synthetic_numbers, synthetic_pcx, synthetic_vgaintro};
+    let driver = synthetic_vgaintro(&synthetic_numbers());
+    std::fs::write(dir.join("vgaintro.dvr"), driver).unwrap();
+    for name in ["xenodrop.pcx", "cavedrop.pcx"] {
+        let backdrop = synthetic_pcx(768, 128, &[3; 768 * 128], &[0; 768]);
+        std::fs::write(dir.join(name), backdrop).unwrap();
+    }
+    for i in 1..=5 {
+        std::fs::write(dir.join(format!("layer{i}.fgd")), [100; 1920]).unwrap();
+    }
+    let (good, drop_alone) = (run(&["--check"]), run(&["--check", "--drop"]));
     std::fs::remove_dir_all(&dir).unwrap();
 
     let stderr = String::from_utf8_lossy(&empty.stderr);
@@ -60,7 +73,10 @@ fn check_flag_verifies_the_game_dir_and_the_intro_without_opening_a_window() {
         stderr.contains("cannot play the intro") && stderr.contains("--no-intro"),
         "{stderr}"
     );
-    for output in [skipped, good] {
+    let stderr = String::from_utf8_lossy(&no_drop.stderr);
+    assert!(!no_drop.status.success());
+    assert!(stderr.contains("cannot play the intro drop"), "{stderr}");
+    for output in [skipped, good, drop_alone] {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(output.status.success(), "{output:?}");
         assert!(stdout.contains("Game files found in"), "{stdout}");

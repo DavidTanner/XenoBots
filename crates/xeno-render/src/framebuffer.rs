@@ -65,6 +65,8 @@ pub struct Framebuffer {
     surface: Size,
     view: Size,
     origin: (usize, usize),
+    /// The VGA's line compare: view rows from this one on show the surface from (0, 0).
+    split: Option<usize>,
     pixels: Vec<u8>,
 }
 
@@ -75,6 +77,7 @@ impl Framebuffer {
             surface: view,
             view,
             origin: (0, 0),
+            split: None,
             pixels: vec![0; view.width * view.height],
         }
     }
@@ -88,6 +91,7 @@ impl Framebuffer {
             surface,
             view,
             origin: (0, 0),
+            split: None,
             pixels: vec![0; surface.width * surface.height],
         })
     }
@@ -118,6 +122,26 @@ impl Framebuffer {
         }
         self.origin = (x, y);
         Ok(())
+    }
+
+    /// Splits the view, as the VGA's line compare register does: view rows from `row`
+    /// on show the surface's rows from 0, from column 0, whatever the origin (the intro
+    /// drop's credits band, `docs/formats/fgd.md`). `None` shows the whole view from
+    /// the origin.
+    pub fn set_split(&mut self, row: Option<usize>) {
+        self.split = row;
+    }
+
+    pub fn split(&self) -> Option<usize> {
+        self.split
+    }
+
+    /// Where view row `row` starts in [`Framebuffer::pixels`].
+    pub fn view_row_start(&self, row: usize) -> usize {
+        match self.split {
+            Some(split) if row >= split => (row - split) * self.surface.width,
+            _ => (self.origin.1 + row) * self.surface.width + self.origin.0,
+        }
     }
 
     /// The whole surface, row by row.
@@ -162,10 +186,9 @@ impl Framebuffer {
     /// The view as RGBA bytes (alpha 255), row by row: `view.width * view.height * 4`
     /// bytes, each pixel looked up in `palette`.
     pub fn to_rgba(&self, palette: &Palette) -> Vec<u8> {
-        let (x, y) = self.origin;
         let mut out = Vec::with_capacity(self.view.width * self.view.height * 4);
-        for row in y..y + self.view.height {
-            let start = row * self.surface.width + x;
+        for row in 0..self.view.height {
+            let start = self.view_row_start(row);
             for &index in &self.pixels[start..start + self.view.width] {
                 let c = palette[index];
                 out.extend([c.r, c.g, c.b, 255]);
@@ -229,6 +252,24 @@ mod tests {
             })
             .collect();
         assert_eq!(fb.to_rgba(&palette), expected);
+    }
+
+    #[test]
+    fn a_split_view_shows_the_top_of_the_surface_below_it() {
+        let mut fb = Framebuffer::with_surface(Size::new(2, 3), Size::new(5, 4)).unwrap();
+        for (i, p) in fb.pixels_mut().iter_mut().enumerate() {
+            *p = i as u8;
+        }
+        fb.set_origin(3, 1).unwrap();
+        fb.set_split(Some(1));
+        assert_eq!(fb.split(), Some(1));
+        let rows: Vec<usize> = (0..3).map(|r| fb.view_row_start(r)).collect();
+        // Row 0 from the origin, then surface rows 0 and 1 from column 0.
+        assert_eq!(rows, [8, 0, 5]);
+        let red: Vec<u8> = fb.to_rgba(&ramp()).chunks(4).map(|c| c[0]).collect();
+        assert_eq!(red, [8, 9, 0, 1, 5, 6]);
+        fb.set_split(None);
+        assert_eq!(fb.view_row_start(1), 13);
     }
 
     #[test]

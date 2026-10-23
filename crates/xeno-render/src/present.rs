@@ -162,7 +162,7 @@ pub fn present(
         let max = max as isize;
         start.clamp(0, max) as usize..(start + len as isize).clamp(0, max) as usize
     };
-    let (view, (ox, oy), stride) = (fb.view(), fb.origin(), fb.surface().width);
+    let view = fb.view();
     let Layout { sx, sy, x, y } = *layout;
     let width = dst_size.width;
     for row in 0..view.height {
@@ -172,7 +172,7 @@ pub fn present(
         }
         let first = rows.start * width;
         let line = &mut dst[first..first + width];
-        let start = (oy + row) * stride + ox;
+        let start = fb.view_row_start(row);
         for (col, &index) in fb.pixels()[start..start + view.width].iter().enumerate() {
             line[clip(x + (col * sx) as isize, sx, width)].fill(colours[usize::from(index)]);
         }

@@ -175,6 +175,17 @@ impl Dac {
         self.dirty = true;
     }
 
+    /// Slot `0x4a8`: a new shadow palette, not marked for upload: it shows only once
+    /// something marks it ([`Dac::mark`]) or uploads it with a fade.
+    pub fn copy(&mut self, palette: &[u8; DAC_BYTES]) {
+        self.shadow = *palette;
+    }
+
+    /// Slot `0x4b0`: upload the shadow at the next retrace.
+    pub fn mark(&mut self) {
+        self.dirty = true;
+    }
+
     /// Slot `0x4b4`: the whole shadow to black, uploaded at the next retrace. A running
     /// fade is left alone.
     pub fn blank(&mut self) {
@@ -286,6 +297,17 @@ mod tests {
             }
         }
         panic!("the fade never ends");
+    }
+
+    #[test]
+    fn a_copied_palette_shows_only_once_marked() {
+        let mut dac = Dac::default();
+        dac.copy(&grey(20));
+        dac.retrace();
+        assert_eq!((dac.hardware()[0], dac.shadow()[0]), (0, 20));
+        dac.mark();
+        dac.retrace();
+        assert_eq!(dac.hardware(), &grey(20));
     }
 
     #[test]
