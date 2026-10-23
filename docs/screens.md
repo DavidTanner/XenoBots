@@ -41,7 +41,7 @@ pairs). The details are below, "The map room (T-042)"; the keys and buttons:
 |---|---|---|
 | P, Enter, Space | 2nd (0) | Play the selected scenario (`ui_map_room_play_selected`, `1000:739c`): nothing without a selection; else load its `scenNNa.usg` if it is not the one loaded, then the mission (action 0) |
 | T | 4th (4) | The training menu (`1000:740c`, action 2), only while `DS:0x5fab` is not 0 |
-| R | 1st (8) | The review screen (`ui_run_review_screen`, `1000:796e`, nested: the map room comes back after it) |
+| R | 1st (8) | The review screen (`ui_run_review_screen`, `1000:796e`, nested: the map room comes back after it; below, "The review (T-044)") |
 | N | 3rd (2) | Save `<NAME>.LOG` and log in again (`1000:7401`) |
 | Q, Alt+Q | 5th (6) | Save and quit (`1000:741a`) |
 | Right, Down, Tab | | Next selectable scenario (`ui_map_room_select_next`, `1000:7431`) |
@@ -89,8 +89,9 @@ dispatcher (`1000:2512` on) gives a press to the widget under the pointer and ca
 the pointer there until the same button comes up, adding 0x80 while the pointer is
 over the capturing widget and 0x100 when an event goes to it from elsewhere, and sends
 0x200 and 0x400 to the widgets the pointer enters and leaves. Mouse handlers are in
-the table at `DS:0x3608`, draw handlers at `DS:0x3328`. No separate briefing screen was found; the
-scenario's `ORDR` text (`usg.md`) is presumably shown inside the mission (T-044).
+the table at `DS:0x3608`, draw handlers at `DS:0x3328`. There is no separate briefing
+screen: the scenario's `ORDR` text (`usg.md`) is typed into the situation room's main
+view in its orders mode (below, "The briefing (T-044)").
 
 ### The name entry (T-041)
 
@@ -464,6 +465,127 @@ reader (`1000:eefc`) loads the file; if that fails nothing happens; otherwise th
 digitised sound is started (slot `0x438`), the mission runs and the sound is stopped.
 Action 8 returns. Either way the menu returns to the map room.
 
+### The review (T-044)
+
+From a Ghidra pass over `ui_run_review_screen`, its widgets and handlers and the page
+set-up code in segment `1fe6`. The review is **not a record of the campaign**: it is a
+reference of the three robot kinds. Each of its three pages shows one robot walking
+and turning in a 3D view, with three panels of text about it (a description and its
+specifications, in the game's words). Nothing on it comes from the campaign table,
+the player or a save file; its texts are in the host's string segment (Ghidra `38fa`)
+and its models are the `.MXX` files the mission draws (`mxx.md`).
+
+**The loop** (`ui_run_review_screen`, `1000:796e`, called straight from the map room's
+R handler `1000:7408`): resets the 3D view's state (`1000:28bd`) and the review's
+(`ui_review_reset`, `1000:7ae4`: the model's position and facing to 0, page 0), copies a
+12-byte state template (segment `0x38ec`) to `DS:0x61ed`, opens widget set `0x385c`
+(eight widgets, 0x10 to 0x70) keeping the map room's to put back, points the 3D
+renderer's object hook `DS:0x152a` at `1000:7a5f` (it adds the page's robot to the
+render list) and clears the done flag `DS:0x61e8`. Then it loops as the mission does:
+draw the widgets whose redraw bits are set; when the 3D view is due (`1fe6:39c3`, not
+traced) run `ui_review_tick` and render; wait for an input event and hand it to the
+widgets; until the done flag is set. Then it restores the hook and reopens the map
+room's widget set, whose picture loads `MAPROOM` and fades it in again.
+
+| Type | Rectangle | What |
+|---|---|---|
+| `0x0e`, `0x148` | none | As on every screen; `0x148` is the screenshot key |
+| `0x1a` | none | The key handler (`ui_review_on_key`, `1000:7a19`, from the state template) |
+| `0x40` | the screen | The picture (`ui_draw_review_picture`, `1fe6:77f7`): loads `REVIEW` (file id 0x12) with pointer shape 1 shown, builds the run-length region of its colour-255 pixels once (`DS:0x6238`, flag `DS:0x6237`), copies the picture around it and shows it **at once with its palette** (slot `0x494`, no fade). The picture's own art labels the buttons |
+| `0x42` | the screen | The text panels (`ui_draw_review_text_panels`, `1fe6:7874`) |
+| `0x44` | (14, 161, 115, 313) | The robot's view: `1fe6:78df` copies the 3D renderer's frame through the colour-255 region (slot `0x5a4`) when the renderer has one ready (`DS:0x1450`) |
+| `0x46` | (187, 9, 196, 52) | Button: the next page (`ui_review_next_button_on_mouse`, `1000:79e3`) |
+| `0x48` | (187, 56, 196, 99) | Button: back to the map room (`ui_review_exit_button_on_mouse`, `1000:79fe`) |
+
+**Buttons.** They are part of the picture. Any press or release while the pointer is
+over the capturing button (not a move) XORs its rectangle's frame with 9 (`1000:dfd5`,
+slot `0x536`), exactly as the training menu's buttons do; a **left release** then acts.
+A right press and release only XOR the frame twice; a release off the button does
+nothing, so the frame stays XORed.
+
+**Keys** (`DS:0x6244`, 4 pairs; events with bit `0x2000` are ignored and bit 7 of the
+key word's low byte is masked off, as in the name entry):
+
+| Key word | Handler | Effect |
+|---|---|---|
+| `0x0001` (ESC), `0x2010` (Alt+Q) | `ui_review_leave` (`1000:7a3b`) | Sets the done flag: back to the map room |
+| `0x000f` (Tab) | `ui_review_next_page` (`1000:7a41`) | The next page, as the next button |
+| `0x200f` (Alt+Tab) | `ui_review_previous_page` (`1000:7a4c`) | The previous page |
+
+**Pages.** The page number `DS:0x61aa` counts 0, 2, 4. `ui_review_set_up_page`
+(`1fe6:7a12`) wraps it (past the last, `cmp word [0x61aa], 4`, it subtracts 6; the
+previous key wraps below 0 to 4), resets the model's position, facing and parts, marks
+the text panels for redrawing and jumps through a table of three set-ups at
+`1fe6:7a52`. Each set-up stores: the model (`DS:0x61b9`: 0, 2, 4, whose texts are about
+the humanoid, the scorpion and the scout; `DS:0x61b8` = 2 is the render node's type),
+how many part bytes the render node carries (`DS:0x61ba`: 5, 12, 7), a height
+(`DS:0x61b3`), the facing 0, the three texts' offsets in the string segment
+(`DS:0x61cc`, `0x61ce`, `0x61d0`), the page's parts animation (a far routine in
+`DS:0x61dc`) and its motion script (`DS:0x6254`, `0x627c`, `0x629e`, started by
+`1fe6:7b0c`).
+
+**Text panels** (`ui_draw_review_text_panels`): font 4, colour 0x7d (shades 0x7d to
+0x7f) on 0; for each panel, the rectangle at `DS:0x61f9`, `0x6201` and `0x6209` =
+(27, 12, 89, 153), (113, 12, 181, 153) and (132, 168, 180, 309) is filled with colour 0
+(slot `0x51a`), the cursor put at its top-left corner and the page's text drawn
+transparent from the string segment (`1fe6:4a47`, as the map room's alert word). The
+texts carry their own layout: 0x0c starts a new line, 0x0e moves one pixel right, and
+code 0x7f is a glyph. There is no wrapping, scrolling or paging inside a panel.
+
+**The robot.** `ui_review_tick` (`1000:7aa2`) runs once per change of the host's tick
+counter `DS:0x374`: it counts down the current script step and, at 0, runs the next one
+(`ui_review_step_script`, `1fe6:7927`), then calls the step's per-tick routine and the
+page's parts routine. A script is a list of words: an opcode (0 to 16, handlers by
+opcode at `1fe6:7948`, per-tick routines at `1fe6:795c`) and its operands: 0 moves
+(for `n` ticks, adding a step to the position `DS:0x61ac` each tick), 2 waits `n`
+ticks, 4 jumps to an offset in the script (the loop), 6 and 8 turn one way or the
+other (adding or subtracting a step to the facing `DS:0x61b6`), 10 and 12 switch the
+parts routine between two per page (tables at `1fe6:79d8` and `1fe6:7a04`: presumably
+walking and standing), 14 and 16 do nothing. The render hook (`1000:7a5f`) then adds one
+render node with that type, model, position, facing and part bytes, and the 3D
+renderer draws it as it draws a mission's units (`mxx.md`, "Drawing"). Drawing it
+needs the renderer's projection and scaled model blit (T-056), so the port leaves it
+to T-047.
+
+### The briefing (T-044)
+
+A scenario's `ORDR` chunk is read into the string segment at `38fa:04ed` (`usg.md`).
+Its only reader found is **the situation room's main view in mode 0**, the orders
+view (key O). There is no briefing screen, nothing at the start of a mission, and the
+map room's selection panel shows only the scenario's name and alert level.
+
+**Modes.** O, S, M, R and C call `ui_sitroom_set_view_mode` (`1000:676e`) with 0, 2, 4, 6
+and 8: it stores the mode in the base's +0x37, sets +0x32 bit `0x4000` (a full
+redraw), sets +0x34 (the orders' typing position) to 0 and marks the main view and
+its neighbours for redrawing. The main view's draw handler (`ui_draw_sitroom_main_view`,
+`1000:5551`) calls the mode's routine from the table `DS:0x5ae0`; mode 0's is
+`ui_sitroom_type_orders_text` (`1fe6:6fc1`). The situation room's picture draw (when the
+view is opened: at a mission's start, and on coming back from a console) also sets
++0x34 to 0 (`1000:54fc`). The mode itself is kept: a mission starts in the mode saved
+in its file's base. In the stock files the human base starts in mode 0 in `scen00a`,
+`scen05a`, `scen09a` and the four training files, and in mode 4 (map) or 6 in the
+others, where the player presses O to read the orders.
+
+**Typing** (`ui_sitroom_type_orders_text`), each time the main view is drawn, on the
+main view's text surface (`DS:0x59e4`):
+- If +0x34 is 0, it clears the view (slot `0x5b4`, a screen-region helper, with colour
+  0x10 and the view's region `DS:0x5680`: presumably the view's colour-255 pixels
+  filled with 0x10) and puts the cursor at (96, 30), five columns and four rows inside
+  the main view's rectangle (26, 91, 130, 292).
+- It selects font 4, colour 0x1d (shades 0x1d to 0x1f) and colour 0x17 for codes with
+  bit 7 set, and draws **one byte** of the text, the one at +0x34, transparent (slot
+  `0x594`), then adds one to +0x34.
+- At a NUL or 0x1a (the DOS end-of-file byte every stock text ends with) it stops;
+  otherwise it marks the main view for redrawing (+0xc6 = 3), so the next pass of the
+  mission loop draws the next byte.
+
+So the orders type themselves out, one character per pass of the mission loop (the
+loop draws its widgets on every pass; about once a frame, to check in DOSBox). The
+text's CR LF line ends are the font's control codes: CR back to the left margin (96),
+LF down one line (font 4's 6 rows). There is **no wrapping and no paging**: the stock
+texts have 4 to 15 lines of at most 46 characters, which fit the view. No key acts on
+the text except the mode keys, which start it again (O) or replace it.
+
 ### Which parts need the running simulation (T-056)
 
 The 3D views, scanners and map (the colour-255, 254 and 253 regions), the message
@@ -476,9 +598,10 @@ their switching and the orders (program and manual switch) are not.
 
 The backlog guessed `Logo -> Login -> SitRoom -> MapRoom -> Briefing -> Mission ->
 Review`. In the original the map room, not the situation room, is the hub after the
-log-in; the situation room is one of the mission's views; there is no briefing screen;
-and the review is opened from the map room rather than following each mission, which
-ends in a cutscene instead.
+log-in; the situation room is one of the mission's views; there is no briefing screen
+(the orders are typed in the situation room's orders view); and the review, a reference
+of the robots rather than of the campaign, is opened from the map room rather than
+following each mission, which ends in a cutscene instead.
 
 ## In the port
 
@@ -561,6 +684,12 @@ the map room without a cutscene, as in the original.
   data block). The fonts, colours and blit modes the drawing code passes are kept as
   constants in the port: they are short, and they are code, not tables. `xeno-tool
   inspect` shows the map room's and the pointer's shape.
+- **Review tables** (T-044): `xeno_formats::review` reads the review's widget set (the
+  view and both buttons), its key table, the panels' font, colour and rectangles, and
+  each page's model and three texts (from the string segment) from the user's
+  `xeno.exe`, from the instructions that use them after checking their bytes; the
+  handlers the keys name and the widget types are constants. `xeno-tool inspect` shows
+  their shape.
 - **Training menu** (T-043): its buttons and keys are the user's (`xeno_formats::views`,
   `read_training`): a press on a button XORs its frame with 9, a release over it XORs it
   back and acts; released elsewhere the frame stays XORed, as in the original. A
@@ -618,7 +747,11 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 
 ## Open questions
 
-- The review screen's keys (T-044).
+- What slot `0x5b4` does exactly (the orders view's clear, presumably filling the
+  view's region with one colour), and how often the mission loop passes, which sets
+  the orders' typing speed (T-044; check in DOSBox).
+- The review's 3D view: the render hook's node layout, the due check `1fe6:39c3`, the
+  parts routines and the scripts' steps in ticks (T-047, with T-056).
 - How a mission ends by itself (the situation room's end button, corner and Alt+Q set
   `DS:0xe87e`; who else sets it, and `DS:0x5fab`), and whether it applies the same won
   and lost rules as the map room's developer keys (T-046, T-055).
@@ -655,6 +788,17 @@ T-043 named, in `xeno.exe`: `ui_open_view_of_object` (`1000:7ef2`),
 (`1000:6e98`), `ui_training_menu_on_key` (`1000:6ee5`) and `ui_run_training_mission`
 (`1000:6ecf`); in `mgavideo.dvr` `gfx_recolour_rect` (`0x0ef1`, slot `0x522`) and
 `gfx_xor_rect_frame` (`0x106d`, slot `0x536`). All `confirmed`, all saved.
+
+T-044 named, in `xeno.exe`: `ui_draw_review_picture` (`1fe6:77f7`, created),
+`ui_draw_review_text_panels` (`1fe6:7874`, created), `ui_review_set_up_page`
+(`1fe6:7a12`), `ui_review_step_script` (`1fe6:7927`), `ui_review_on_key` (`1000:7a19`,
+created), `ui_review_leave` (`1000:7a3b`, created), `ui_review_next_page` (`1000:7a41`,
+created), `ui_review_previous_page` (`1000:7a4c`, created),
+`ui_review_next_button_on_mouse` (`1000:79e3`, created), `ui_review_exit_button_on_mouse`
+(`1000:79fe`, created), `ui_review_tick` (`1000:7aa2`), `ui_review_reset` (`1000:7ae4`),
+`ui_draw_sitroom_main_view` (`1000:5551`, created), `ui_sitroom_set_view_mode`
+(`1000:676e`) and `ui_sitroom_type_orders_text` (`1fe6:6fc1`). All `confirmed`, all
+saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,

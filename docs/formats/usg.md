@@ -119,6 +119,7 @@ Object fields known so far (offsets in the object, as in memory):
 | 0x2e | 1 | program given (robots) | A number in `xeno.exe`'s program table (T-043) |
 | 0x30 | 1 | program running (robots) | That program, or a state the script entered by itself |
 | 0x31, 0x33, 0x34, 0x38 | | the script's state (robots) | +0x34 is the script pointer, saved as `0xa000` + its offset from the program table |
+| 0x34, 0x37 | 2, 1 | situation room (bases) | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
 | 0xbd | 0x43 | view state (bases) | The situation room's widget state (T-043) |
 | 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | view state (robots) | The humanoid, scorpion and scout console's widget state (T-043) |
 | rest | | `data` | Unknown (T-058). The editor writes one value to both +0x10 and +0x2a for robots (a heading?) |
@@ -148,6 +149,12 @@ editor. Human paths are empty in the training files and in `scen00a` and `scen04
 CR LF line ends. Every stock file ends it with two DOS end-of-file bytes (0x1a) and a
 NUL. `Scenario::briefing_lines` returns the lines. The file holds no other mission
 objectives; win and lose conditions are in the code (T-055).
+
+The game shows it in one place only: the situation room's main view in its orders
+mode (key O, mode 0 in the base's +0x37), which types it one byte per pass from (96,
+30) in font 4, CR LF taken as the font's control codes, until a NUL or 0x1a, with no
+wrapping or paging (`docs/screens.md`, "The briefing (T-044)"). The base's +0x34 is the
+typing position, and +0x37 the mode the mission starts in.
 
 ### `BGND` (64 bytes): sky picture
 
