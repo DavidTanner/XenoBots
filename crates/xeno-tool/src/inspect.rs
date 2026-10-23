@@ -244,7 +244,70 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
         Err(e) => writeln!(out, "maproom:   cannot read: {e}"),
     }
     .unwrap();
+    exe_mission_details(&exe, &mut out);
     Ok(out)
+}
+
+/// The shape of the programs (`orders`), the mission's views and the training menu
+/// (`views`), with no game text.
+fn exe_mission_details(exe: &xeno_formats::lzexe::Unpacked, out: &mut String) {
+    use xeno_formats::orders::{self, RobotKind};
+    use xeno_formats::views;
+
+    match orders::read(exe) {
+        Ok(p) => {
+            let offered = RobotKind::ALL.map(|k| p.offered_to(k).count());
+            writeln!(
+                out,
+                "orders:    {} programs; offered to humanoid {}, scorpion {}, scout {}",
+                p.programs.len(),
+                offered[0],
+                offered[1],
+                offered[2]
+            )
+        }
+        Err(e) => writeln!(out, "orders:    cannot read: {e}"),
+    }
+    .unwrap();
+    match views::read(exe) {
+        Ok(v) => {
+            for (name, view) in [
+                ("humanoid", &v.humanoid),
+                ("scorpion", &v.scorpion),
+                ("scout", &v.scout),
+                ("situation", &v.situation),
+            ] {
+                writeln!(
+                    out,
+                    "views:     {name:<9} {} widgets, {} keys, state at +{:#x}",
+                    view.widgets.len(),
+                    view.keys.len(),
+                    view.state_offset
+                )
+                .unwrap();
+            }
+            writeln!(
+                out,
+                "views:     situation room: {} sprite buttons from handle {:#x}, {} roster rows",
+                v.situation_buttons.len(),
+                v.situation_bank,
+                v.roster_rows.len()
+            )
+        }
+        Err(e) => writeln!(out, "views:     cannot read: {e}"),
+    }
+    .unwrap();
+    match views::read_training(exe) {
+        Ok(t) => writeln!(
+            out,
+            "training:  {} buttons, {} keys, {} actions",
+            t.buttons.len(),
+            t.keys.len(),
+            t.actions.len()
+        ),
+        Err(e) => writeln!(out, "training:  cannot read: {e}"),
+    }
+    .unwrap();
 }
 
 /// What the PCX parser makes of `bytes`, or why it could not parse them.

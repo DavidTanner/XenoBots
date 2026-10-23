@@ -57,14 +57,16 @@ ESC is in no map room table.
 **Training menu** (`ui_run_training_menu`, `1000:6df6`): `TRAINMEN` fading in over 32
 retraces, widget set `0x3842`, key table **`DS:0x5e9f`** (6 pairs): H, N, S and C load
 `HTRAIN`, `NTRAIN`, `STRAIN` or `CTRAIN.USG` and run the mission; ESC and Alt+Q go
-back. After a training mission it returns to the map room with no cutscene.
+back; five buttons do the same. After a training mission it returns to the map room
+with no cutscene. Details below, "The training menu".
 
 **Mission** (`sim_run_mission_loop`, `1000:7e24`): runs the sim on the 60 Hz clock (at
 most 10 ticks to catch up) until the quit flag `DS:0xe87e` is set. What it shows
 depends on the object viewed: a table at `DS:0x6411` by the object's kind opens the
 **humanoid**, **scorpion** or **scout console** (`HUMANCON`, `SCORPCON`, `SCOUTCON`)
-or, for kind 3, the **situation room** (`SITROOM`, widget set `0x3822`). So the
-situation room and the consoles are views inside a mission, not screens of their own.
+or, for kind 3 (a base), the **situation room** (`SITROOM`, widget set `0x3822`). So the
+situation room and the consoles are views inside a mission, not screens of their own;
+the mission starts in the situation room. Details below, "The mission's views".
 
 **After a mission** (`1000:6f9e`, the map room's action 0): sets `DS:0x5fab` to 0 and
 the selected scenario's `state` to 12 ("in play"), runs the mission, fades out over 32 retraces, then plays `TRIUMPH` if the
@@ -272,6 +274,204 @@ clipped to the screen: where the mask is 0 it writes the image byte AND the colo
 (so 0xff gives colour 12 and 0 black), elsewhere it leaves the screen alone. The
 sprite blitters hide it while they draw over it.
 
+### The mission's views (T-043)
+
+From a Ghidra pass over the view switch, the four widget sets, their key tables and
+the handlers that choose views and orders. Rectangles are (top, left, bottom, right),
+the bottom and right edges outside, as in the map room.
+
+**Which view.** `sim_run_mission_loop` starts on the player's base (`DS:0x568e`; the
+alien base is `DS:0x5690`) and `ui_open_view_of_object` (`1000:7ef2`) opens a view for
+any object: it remembers the object in `DS:0x62f1` and calls the opener for its kind
+from the word table `DS:0x6411`: kind 0 the humanoid console
+(`ui_open_humanoid_console`, `1000:9c94`), 1 the scorpion's (`1000:7f90`), 2 the
+scout's (`1000:b450`) and 3, a **base**, the situation room (`1000:5457`). So the
+situation room is the view of the base, and a console the view of one robot. Each
+opener opens its widget set with the **state block inside the viewed object**:
+
+| View | Widget set | Widgets | State in the object | Picture (file id) | Key table |
+|---|---|---|---|---|---|
+| Situation room | `0x3822` | 30 | +0xbd, 0x43 bytes | `SITROOM` (0x04) | `DS:0x5b20`, 32 pairs |
+| Humanoid console | `0x388b` | 27 | +0x10c, 0x35 bytes | `HUMANCON` (0x0e) | `DS:0x6b07`, 33 |
+| Scorpion console | `0x3863` | 37 | +0x127, 0x45 bytes | `SCORPCON` (0x0c) | `DS:0x676a`, 38 |
+| Scout console | `0x38aa` | 39 | +0x10d, 0x3c bytes | `SCOUTCON` (0x10) | `DS:0x6efa`, 40 |
+
+So each robot and base remembers its own view's state (pressed buttons, modes,
+scroll), and it is saved with the object in a `.usg` file (`usg.md`, `DCBS`).
+
+**Switching views** (all through `ui_open_view_of_object`):
+- From a console, ESC and Alt+Q (`1000:7ee7`), and a release on the 2 by 2 hot spot in
+  the top-left corner (type `0x158`, which shows pointer shape 2 while the pointer is
+  over it), go to the robot's side's base: the situation room.
+- Tab and Alt+Tab (`ui_view_next_unit` / `ui_view_previous_unit`, `1000:7db2` /
+  `7dd9`), and a left or right release on the unit-name button (type `0x156`, the
+  bottom-right corner, (185, 273, 200, 318)), step through the side's list of 38 unit
+  slots (`DS:0x62f5` human, `DS:0x6341` alien), wrapping and skipping empty slots and
+  units in the base (object +0xfd bit 2).
+- A right click on a robot in a console's scanner (`1000:7eac`) opens that robot's
+  console, if it is the player's (otherwise it refuses with a message).
+- In the situation room, Space, J and the third button below the roster
+  (`1000:6852`) open the console of the robot selected in the roster; a right release
+  on a roster row does the same (`ui_sitroom_roster_on_mouse`, `1000:582d`).
+
+**Widget sets.** Every view starts with the same first widgets: type `0x0e` (no area),
+its picture (the whole screen), a corner hot spot (`0x158` in the consoles, `0x15a`
+in the situation room), the developer clock keys (`0x146`: Ctrl+Alt+H, D, M add an
+hour, a day, five minutes), the screenshot key (`0x148`) and the view's key table. The
+pictures are loaded with slot `0x490` and shown through screen regions: each opener
+builds a run-length region of the pixels of colour 255 (and, in the consoles, 254 and
+253) with slot `0x59c`, and the picture is copied around them with slot `0x5b8`; the
+3D view and the scanner are drawn into those regions. That is what the pure-green
+colour 255 of `m@l.md` is.
+
+*The situation room* (sprite bank `msprite1` loaded at handle 0x2a0 by the picture's
+draw handler, which also starts colour records 0, 1, 16 and 17):
+
+| Type | Rectangle | What |
+|---|---|---|
+| `0x50` | (26, 91, 130, 292) | The main view, colour 255: one of five modes by the base's +0x37, chosen with O (0), S (2), M (4), R (6) and C (8); mode 8 is the units' message log (time and message per unit), modes 4 and 6 look through the selected unit (mode 4 with the map controls below) |
+| `0x52` | (14, 2, 70, 78) | The roster: five rows (rectangles from the table at `DS:0x5957`) of units from the base's list at +0x42, scrolled by +0x4c. A left press selects the row's unit (+0x3e), a right release opens its console |
+| `0x54`, `0x56` | (73, 13, 81, 20), (73, 21, 81, 28) | Sprite buttons: scroll the roster up and down |
+| `0x58` | (73, 29, 81, 69) | Sprite button: open the selected unit's console |
+| `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | Panels drawn from the selected unit and the clock (status, detail); not traced |
+| `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | Left arrow, value, right arrow: while an arrow is held, the base's +0x2d is 1, 3 or 5 for the row (presumably the camera; not traced) |
+| `0x04` x2 | (89, 284, 131, 318), (142, 254, 182, 306) | Groups of widgets (types `0x64`-`0x70`) shown in map mode only: zoom (+ and -, base +0x36, 0 to 6) and map overlays (bits of +0x32) |
+| `0x5a`, `0x5c`, `0x5e` | (170, 29, 178, 66), 8 rows lower each | Sprite buttons: launch the selected unit from the base (`1000:6716`, only for a unit in the base: it is put at the base's position and marked in the field), recall it (sets its +0x23 bit 3), and end the mission (the quit flag `DS:0xe87e`) |
+
+A sprite button is drawn opaque with handle `base + [+0x40]`: a press or release on
+any of them flips the shared +0x40 between 0 and 8, so, as in the map room, all of
+them show their pressed sprite (the next one) together. Their handles, in order, are
+0x2a0, 0x2b0, 0x2c0, 0x3f8 and 0x408 (the arrows), 0x2d0, 0x2e0, 0x2f0. The release
+acts. The corner hot spot (`0x15a`) ends the mission too.
+
+Situation room keys (`DS:0x5b20`): Alt+Q ends the mission (ESC is listed but its
+handler only acts on Alt+Q); Space and J view the selected unit; Tab and Alt+Tab step
+the roster selection; O, S, M, R, C the main view's mode; F3 recalls the selected
+unit; = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1, F2 act
+on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
+
+*The consoles* share most of their layout but not their positions. All three have:
+
+| Type | Humanoid | Scorpion | Scout | What |
+|---|---|---|---|---|
+| `0x154` | (91, 126, 98, 194) | (154, 4, 161, 56) | (112, 18, 119, 59) | **The program panel**: the robot's program, see "Orders" |
+| `0x156` | (185, 273, 200, 318) | the same | the same | The unit-name button: the robot's call sign in font 0, colour 0, at (279, 191); left or right release: next or previous unit (pressed look: slot `0x536`, the rectangle's frame XORed with 8) |
+| `0x152` | (7, 7, 36, 102) | (20, 112, 51, 208) | (5, 5, 34, 100) | The robot's message panel (object +0x5e), framed and filled when it changes |
+| `0x158` | (0, 0, 2, 2) | the same | the same | Back to the situation room |
+
+The rest are the robot's instruments, weapons, cargo and scanner, drawn from the
+running simulation: the 3D view (colour 255) and scanner (colour 254 or 253) regions,
+the scanner (humanoid `0x86`, (108, 110, 158, 207): a left click locks the target
+under the pointer, a right click opens that robot's console), damage, speed and
+weapon panels. Their handlers live in `1000:7f90`-`9c94` (scorpion),
+`9c94`-`b450` (humanoid) and `b450`-`cbff` (scout) and are T-056's.
+
+Console keys (the three tables share most entries): F2 the robot's program
+(automatic), F3 its pilot (manual), F4 automatic and the next program (see "Orders");
+ESC and Alt+Q the situation room; Tab and Alt+Tab the next and previous unit; F1, F5
+to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys 1 to
+5 (mines and buoys), `=` and `-`, and per robot letters drive and fight (T-056);
+Ctrl+P and Ctrl+Alt+S are developer keys.
+
+### Orders (T-043)
+
+A robot's **orders** are a program, one of 31 scripts in `xeno.exe`, and a switch
+between the program (automatic) and the pilot (manual). There is no other order
+parameter in the views: no waypoint or target is given in a console or the situation
+room (the scripts that go to a unit or a place use the robot's destination and target
+fields, set by the mission; T-053).
+
+**The program table** (`DS:0x4ff4`, 31 word offsets in the data segment, then 0xffff)
+points at the scripts. A script starts with a header: either a list of three-byte
+items (an opcode and a word) up to the name item, introduced by a byte 0x0f, or the
+name item alone. The name item is opcode 0x11, a byte, the **flags** and a length,
+then the name (NUL-terminated). `order_find_program_name` (`1000:47ca`) finds a
+program's name and flags; numbers past the table show the last program. The flags'
+bits 0 to 2 say which robot kinds may be given the program, through the kind masks at
+`DS:0x7183` (1 humanoid, 2 scorpion, 4 scout), and bit 7 marks a program the robot
+only enters by itself (states such as sentrying or retreating, the faults, and the
+"no program" entry).
+
+| Programs | Offered to |
+|---|---|
+| 1 to 10 (hold, the two sentry orders, return to base, go to a unit, the two shadow orders, patrol, engage, go to a place) | Every robot kind |
+| 12 to 14 (the three relay-net orders) | The scorpion only (it carries the relays) |
+| 0, 11, 15 to 30 (`SENTRY`ING and the other states, `FIRE ALL`, `ZIGZAG`, `DETECT`, ...) | Nobody: bit 7 |
+
+The words in brackets are ours; the names shown are game text, read from the user's
+`xeno.exe`.
+
+**Where they are stored**, in the robot's object (and so in a `.usg` file's `DCBS`
+record):
+
+| Offset | What |
+|---|---|
+| +0x23 bit 7 | Manual: the pilot drives and the program waits. Bits 4 and 5 are cleared when switching to manual; bit 3 is the situation room's recall |
+| +0x2e | **The program given** |
+| +0x30 | **The program running**: the one given, or a state the script entered by itself (in `scen12a` three human robots given program 9 are saved running 24). The console shows this one, and the next and previous programs are counted from it |
+| +0x31 | 10 when a program starts |
+| +0x33, +0x38 | 0, and a start phase from a counter (`DS:0x4db5`, stepping by 10 modulo 59) so robots given programs together do not run in step |
+| +0x34 | The script pointer; in a file, `0xa000` + its offset from the table (`1000:4826`, `4833`) |
+
+`order_set_program` (`1000:476f`) sets all of these from a program number.
+
+**Choosing a program** is done on the console's program panel (type `0x154`,
+`ui_draw_program_panel` `1000:d2d1`, `ui_program_panel_on_mouse` `1000:d34c`), for the
+robot viewed:
+- While the pointer is over the panel, a press or release (left or right) marks it
+  pressed (+0x22 bit 7, bit 0 flipped); a **left release** switches the robot to
+  automatic (`order_switch_to_automatic`, `1000:d446`) and gives it the **next**
+  program offered to its kind (`order_select_next_program`, `1000:4794`), wrapping past
+  30 to 0; a **right release** the **previous** one (`order_select_previous_program`,
+  `1000:47b1`), wrapping below 0 to 30. Programs not offered are skipped.
+- F4 does what a left release does. F2 switches to automatic and F3 to manual
+  (`order_switch_to_manual`, `1000:d42c`), each only if it changes something; both
+  post an event to the robot (+0x36 bits from `DS:0x1c56`: events 0xa and 0xb, which
+  the message panel reports).
+- **Drawn**: the panel filled with the kind's fill colour (slot `0x51a`), then the
+  program's name, transparent, in the kind's font, one row below the top and the
+  kind's x offset in from the left, in the kind's text colour if the pilot drives
+  and colour 6 if the program does (tables by kind at `DS:0x7177` font, `0x717d` x
+  offset, `0x71b8` fill and text, `0x71c0` pressed). While pressed, the panel is
+  recoloured instead (slot `0x522`: pixels of one of the two pressed colours become the
+  other; which way flips with +0x22 bit 0) and the name is left as it is.
+
+In the stock `.usg` files nearly every robot, of either side, is saved with +0x23 bit
+7 set (one human robot in `scen06a` is not); the human robots are given program 9 (or
+1 in `scen08a`), the alien ones 8 or, for scorpions, 13. Whether the object-loaded hook
+(`1000:7c84`, not traced) changes the manual bit when a mission starts is open. The
+paths of `APTH`/`HPTH` are each side's missions for the computer (`usg.md`); no view
+sets them.
+
+### The training menu (T-043)
+
+`ui_run_training_menu` (`1000:6df6`) clears its action (`DS:0x5e50` = 0xffff), opens
+widget set `0x3842` with its state at `DS:0x5e88` (a 23-byte template), and loops
+until a widget sets the action; then it jumps through the table at `DS:0x5e52`.
+
+| Type | Rectangle | What |
+|---|---|---|
+| `0x30` | the screen | `TRAINMEN` (file id 0x06), fading in over 32 retraces (slot `0x498`) |
+| `0x32` x5 | (14, 200, 25, 275), then 10 rows lower each | The buttons, drawn by the picture; their actions, from the template, are 0, 2, 4, 6 and 8 top to bottom (`ui_training_button_on_mouse`, `1000:6e98`) |
+| `0x34` | none | The key table `DS:0x5e9f` (`ui_training_menu_on_key`, `1000:6ee5`): ESC and Alt+Q action 8; H 0, N 2, S 4, C 6 |
+| `0x14c`, `0x14e`, `0x148` | none | The keys every screen has |
+
+A button shows its press by XORing its rectangle's frame with 9 (slot `0x536`, on the
+press and again on the release, so the release restores it) and acts on a release over
+it. Actions 0 to 6 load `HTRAIN`, `NTRAIN`, `STRAIN` and `CTRAIN.USG`
+(`ui_run_training_mission`, `1000:6ecf`, from the names at `DS:0x5e5c` on): the scenario
+reader (`1000:eefc`) loads the file; if that fails nothing happens; otherwise the
+digitised sound is started (slot `0x438`), the mission runs and the sound is stopped.
+Action 8 returns. Either way the menu returns to the map room.
+
+### Which parts need the running simulation (T-056)
+
+The 3D views, scanners and map (the colour-255, 254 and 253 regions), the message
+panels and log, the unit status panels (damage, speed, weapons, cargo), the
+situation room's roster contents and detail panels, the unit call signs, the map
+controls and camera arrows, and every key that drives, fights or deploys. The views,
+their switching and the orders (program and manual switch) are not.
+
 ### Where it differs from T-040's list
 
 The backlog guessed `Logo -> Login -> SitRoom -> MapRoom -> Briefing -> Mission ->
@@ -385,9 +585,13 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 ## Open questions
 
 - The review screen's keys (T-044).
-- How a mission ends (who sets `DS:0xe87e` and `DS:0x5fab`), whether it applies the
-  same won and lost rules as the map room's developer keys, and how the player
-  switches between the situation room and the consoles (T-043, T-046, T-056).
+- How a mission ends by itself (the situation room's end button, corner and Alt+Q set
+  `DS:0xe87e`; who else sets it, and `DS:0x5fab`), and whether it applies the same won
+  and lost rules as the map room's developer keys (T-046, T-055).
+- The situation room's panels, spinners and remaining keys, the consoles'
+  instruments, and the keys that drive and fight (T-056).
+- Whether the object-loaded hook changes a robot's manual bit, and what +0x2e is used
+  for once a state replaces +0x30 (T-053, T-058).
 - Whether a scenario in play (12) can have its alert raised to 14 (T-046).
 - What the keys `f3ef` and `f405` that every screen has do, and what `1000:0270`
   (presumably a beep) does.
@@ -401,6 +605,22 @@ T-042 named, in `xeno.exe`: `ui_draw_map_area` (`1000:7255`), `ui_map_area_on_mo
 (`1fe6:72f8`), `scen_index_scenario_table` (`1fe6:732d`), `ui_draw_map_room_status`
 (`1fe6:7406`) and `ui_draw_selection_info` (`1fe6:749c`); in `mgavideo.dvr` the pointer
 routines listed in `docs/re/dvr-protocol.md`. All `confirmed`, all saved.
+
+T-043 named, in `xeno.exe`: `ui_open_view_of_object` (`1000:7ef2`),
+`ui_open_situation_room` (`1000:5457`), `ui_open_humanoid_console` (`1000:9c94`),
+`ui_open_scorpion_console` (`1000:7f90`), `ui_open_scout_console` (`1000:b450`),
+`ui_view_next_unit` (`1000:7db2`), `ui_view_previous_unit` (`1000:7dd9`),
+`sim_get_side_base` (`1000:6845`), `ui_sitroom_roster_on_mouse` (`1000:582d`),
+`ui_sitroom_on_key` (`1000:61e3`), `ui_unit_name_button_on_mouse` (`1000:7d81`),
+`ui_draw_program_panel` (`1000:d2d1`), `ui_program_panel_on_mouse` (`1000:d34c`),
+`ui_humanoid_console_on_key` (`1000:ab64`), `ui_scorpion_console_on_key` (`1000:926d`),
+`ui_scout_console_on_key` (`1000:bade`), `order_set_program` (`1000:476f`),
+`order_select_next_program` (`1000:4794`), `order_select_previous_program`
+(`1000:47b1`), `order_find_program_name` (`1000:47ca`), `order_switch_to_manual`
+(`1000:d42c`), `order_switch_to_automatic` (`1000:d446`), `ui_training_button_on_mouse`
+(`1000:6e98`), `ui_training_menu_on_key` (`1000:6ee5`) and `ui_run_training_mission`
+(`1000:6ecf`); in `mgavideo.dvr` `gfx_recolour_rect` (`0x0ef1`, slot `0x522`) and
+`gfx_xor_rect_frame` (`0x106d`, slot `0x536`). All `confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,

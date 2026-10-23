@@ -81,12 +81,13 @@ Screens dispatch the key words through tables of (key word, handler) pairs: a ke
 widget masks the release bit (bit 7 of the low byte) off the event's word and calls
 the first entry that matches (T-040, `docs/screens.md`). Those found so far are the
 **map room's** at `DS:0x60bf` (20 pairs) and the **training menu's** at `DS:0x5e9f` (6
-pairs), both listed in `docs/screens.md`; `DS:0x676c`, `0x6b08` and `0x6efa` (probably
-the cockpit of each robot type, going by their keys; number keys 1 to 4 drop mines and
-buoys, F-keys, Space, Tab, arrows and letters do the rest); `DS:0x5b20` (32 pairs; not
-the map room's, so not yet placed); and the scenario editor's table at `DS:0x5bc3`
-(`ui_dispatch_editor_key`). Their handlers are
-mostly not decoded; that is work for the screens that use them (T-043, T-056). The
+pairs), both listed in `docs/screens.md`; the **robot consoles'** at `DS:0x6b07`
+(humanoid, 33 pairs), `DS:0x676a` (scorpion, 38) and `DS:0x6efa` (scout, 40); the
+**situation room's** at `DS:0x5b20` (32 pairs; T-043, `docs/screens.md`, "The mission's
+views"); and the scenario editor's table at `DS:0x5bc3`
+(`ui_dispatch_editor_key`). The mission views' keys that choose views and orders are
+decoded (T-043); the rest of their handlers (weapons, mines and buoys, the camera) are
+work for the mission (T-056). The
 port's input layer already delivers these keys as scan codes with the modifiers held
 (`docs/game-loop.md`).
 
@@ -127,5 +128,5 @@ slot's hash; nothing in the port uses them yet.
 
 ## Open questions
 
-- The handlers of the screen key tables, and which screen `DS:0x5b20` belongs to.
+- The handlers of the mission views' keys that act on the running mission (T-056).
 - What the untraced unlock words gate.

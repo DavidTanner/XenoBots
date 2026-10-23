@@ -20,6 +20,7 @@ pub mod maproom;
 pub mod mgavideo;
 pub mod ms3;
 pub mod mxx;
+pub mod orders;
 pub mod packed;
 mod palette;
 pub mod pcx;
@@ -30,6 +31,7 @@ pub mod setup;
 pub mod usg;
 pub mod vcl;
 pub mod vgaintro;
+pub mod views;
 
 pub use error::FormatError;
 pub use palette::{Palette, Rgb};

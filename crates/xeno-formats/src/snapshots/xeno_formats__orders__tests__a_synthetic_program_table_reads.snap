@@ -1,0 +1,57 @@
+---
+source: crates/xeno-formats/src/orders.rs
+expression: programs
+---
+Programs {
+    programs: [
+        Program {
+            flags: 135,
+            name: [
+                90,
+                69,
+                82,
+                79,
+            ],
+        },
+        Program {
+            flags: 7,
+            name: [
+                79,
+                78,
+                69,
+            ],
+        },
+        Program {
+            flags: 7,
+            name: [
+                84,
+                87,
+                79,
+            ],
+        },
+        Program {
+            flags: 2,
+            name: [
+                84,
+                72,
+                82,
+                69,
+                69,
+            ],
+        },
+        Program {
+            flags: 130,
+            name: [
+                70,
+                79,
+                85,
+                82,
+            ],
+        },
+    ],
+    masks: [
+        1,
+        2,
+        4,
+    ],
+}

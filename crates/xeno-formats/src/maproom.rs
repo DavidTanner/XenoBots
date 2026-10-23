@@ -134,7 +134,7 @@ impl MapRoom {
     }
 }
 
-fn invalid(offset: usize, reason: impl Into<String>) -> FormatError {
+pub(crate) fn invalid(offset: usize, reason: impl Into<String>) -> FormatError {
     FormatError::Invalid {
         offset: offset as u64,
         reason: reason.into(),
@@ -142,14 +142,14 @@ fn invalid(offset: usize, reason: impl Into<String>) -> FormatError {
 }
 
 /// Reads the image at `start` as a little-endian word.
-fn word(image: &[u8], at: usize) -> Result<u16, FormatError> {
+pub(crate) fn word(image: &[u8], at: usize) -> Result<u16, FormatError> {
     image
         .get(at..at + 2)
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .ok_or_else(|| invalid(at, "past the end of the image"))
 }
 
-fn rect(image: &[u8], at: usize) -> Result<Rect, FormatError> {
+pub(crate) fn rect(image: &[u8], at: usize) -> Result<Rect, FormatError> {
     Ok(Rect {
         top: word(image, at)?,
         left: word(image, at + 2)?,
@@ -159,7 +159,7 @@ fn rect(image: &[u8], at: usize) -> Result<Rect, FormatError> {
 }
 
 /// A NUL-terminated string at `at`, without the NUL.
-fn string(image: &[u8], at: usize) -> Result<Vec<u8>, FormatError> {
+pub(crate) fn string(image: &[u8], at: usize) -> Result<Vec<u8>, FormatError> {
     let bytes = image
         .get(at..(at + MAX_STRING).min(image.len()))
         .ok_or_else(|| invalid(at, "the string is past the end of the image"))?;
@@ -176,7 +176,7 @@ fn read_op(image: &[u8], (at, op): (usize, &[u8])) -> Result<u16, FormatError> {
 }
 
 /// A segment operand, which must be one the executable relocates: its image offset.
-fn segment(
+pub(crate) fn segment(
     image: &[u8],
     (at, op): (usize, &[u8]),
     relocated: &[usize],

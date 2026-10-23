@@ -1,0 +1,96 @@
+---
+source: crates/xeno-formats/src/views.rs
+expression: menu
+---
+TrainingMenu {
+    widgets: [
+        Widget {
+            kind: 48,
+            state: 3,
+            area: Some(
+                Rect {
+                    top: 0,
+                    left: 0,
+                    bottom: 200,
+                    right: 320,
+                },
+            ),
+        },
+        Widget {
+            kind: 50,
+            state: 4,
+            area: Some(
+                Rect {
+                    top: 14,
+                    left: 200,
+                    bottom: 25,
+                    right: 275,
+                },
+            ),
+        },
+        Widget {
+            kind: 50,
+            state: 7,
+            area: Some(
+                Rect {
+                    top: 24,
+                    left: 200,
+                    bottom: 35,
+                    right: 275,
+                },
+            ),
+        },
+        Widget {
+            kind: 52,
+            state: 9,
+            area: None,
+        },
+    ],
+    buttons: [
+        (
+            Rect {
+                top: 14,
+                left: 200,
+                bottom: 25,
+                right: 275,
+            },
+            0,
+        ),
+        (
+            Rect {
+                top: 24,
+                left: 200,
+                bottom: 35,
+                right: 275,
+            },
+            2,
+        ),
+    ],
+    keys: [
+        (
+            1,
+            2,
+        ),
+        (
+            30,
+            0,
+        ),
+    ],
+    actions: [
+        Mission(
+            [
+                65,
+                84,
+                82,
+                65,
+                73,
+                78,
+                46,
+                85,
+                83,
+                71,
+            ],
+        ),
+        Back,
+    ],
+}
