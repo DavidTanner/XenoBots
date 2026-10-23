@@ -721,6 +721,82 @@ pub fn synthetic_mgavideo() -> Vec<u8> {
     file
 }
 
+/// Where [`synthetic_map_room`] puts the widget set, its state template and the
+/// strings.
+pub const SYNTHETIC_MAP_ROOM_WIDGETS: usize = 0x18000;
+pub const SYNTHETIC_MAP_ROOM_TEMPLATE: usize = 0x18100;
+pub const SYNTHETIC_MAP_ROOM_STRINGS: usize = 0x19000;
+
+/// Writes made-up map room tables (`crate::maproom`) into `image`, whose data
+/// segment starts at `ds`, and returns the image offsets to relocate, ascending: a map
+/// area and two buttons (ids 2 and 0, in that order), two keys, handles from 0x100,
+/// made-up rectangles and words. `image` must reach `SYNTHETIC_MAP_ROOM_STRINGS + 16`
+/// and `ds + 0xa0`, and the tables use `ds + 0x10` to `ds + 0xa0`.
+pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
+    use crate::maproom::*;
+    let (widgets, template, strings) = (
+        SYNTHETIC_MAP_ROOM_WIDGETS,
+        SYNTHETIC_MAP_ROOM_TEMPLATE,
+        SYNTHETIC_MAP_ROOM_STRINGS,
+    );
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let op = |(at, op): (usize, &[u8]), value: u16| {
+        let mut bytes = op.to_vec();
+        bytes.extend(value.to_le_bytes());
+        (at, bytes)
+    };
+    let mut ops = vec![
+        op(WIDGETS_SEGMENT, (widgets / 16) as u16),
+        op(WIDGETS_FIRST, 0x10),
+        op(WIDGETS_END, 0x10 + 4 * 12),
+        op(BANK_BASE, 0x100),
+        op(BUTTON_SPRITES, 0x10),
+        op(BUTTON_HANDLERS, 0x20),
+        op(KEYS, 0x30),
+        op(KEY_COUNT, 2),
+        op(LOOKS, 0x40),
+        op(UNAVAILABLE, 0x138),
+        op(HIGHLIGHT, 0x150),
+        op(ALERT_LABEL, 0x80),
+        op(ALERT_LEVELS, 0x90),
+        op(STRINGS_SEGMENT, (strings / 16) as u16),
+    ];
+    for (at, sprite, rect) in [
+        (NAME_PANEL, 0x158, 0x60),
+        (SCORE_PANEL, 0x160, 0x68),
+        (INFO_PANEL, 0x168, 0x70),
+    ] {
+        ops.push(op((at, &[0xb8]), sprite));
+        ops.push(op((at + 3, &[0xbb]), rect));
+    }
+    for (at, bytes) in ops {
+        put(at, &bytes);
+    }
+    put(widgets, &words(&[0x40, 0, (template / 16) as u16, 0, 9]));
+    #[rustfmt::skip]
+    put(widgets + 0x10, &words(&[
+        0x36, 0, 0, 0, 200, 320,
+        MAP_AREA_TYPE, 1, 10, 5, 190, 280,
+        BUTTON_TYPE, 3, 150, 270, 160, 310,
+        BUTTON_TYPE, 6, 160, 270, 170, 310,
+    ]));
+    put(template, &[0, 0, 0, 0, 2, 0, 0, 0, 0]);
+    put(ds + 0x10, &words(&[0x100, 0x110]));
+    put(ds + 0x20, &words(&[0x7000, 0x7100]));
+    put(ds + 0x30, &words(&[0x19, 0x7000, 0x2010, 0x7100]));
+    put(
+        ds + 0x40,
+        &words(&[0x120, 0x128, 0x130, 0x130, 0x138, 0x140, 0x148]),
+    );
+    put(ds + 0x60, &words(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+    put(ds + 0x80, b"LEVEL\0");
+    put(ds + 0x90, &words(&[0, 2, 4, 6, 8, 8, 8]));
+    put(strings, b"A\0B\0C\0D\0E\0");
+    vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1, widgets + 4]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

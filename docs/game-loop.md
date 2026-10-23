@@ -113,7 +113,8 @@ else sees winit.
   is known, and `MouseUp` for a button it saw go down (so a drag released off the
   picture, or losing focus, never leaves one stuck). They are queued and logged per
   retrace like keys, and `input::Mouse` holds the pointer and buttons. While the
-  screens are up the window draws a placeholder pointer into the framebuffer for each
+  screens are up the window draws the original's pointer (T-042: `mgavideo.dvr`'s
+  shape, placed by its hot spot, `docs/screens.md`) into the framebuffer for each
   frame (saving and restoring the pixels under it, as the original's pointer slots
   do) and hides the system cursor over the picture; on the bars and outside the system
   cursor shows.

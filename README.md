@@ -75,17 +75,22 @@ the map room, from which you play a mission, open the training menu or the revie
 in again or quit. The log-in works as the original's: type a name of up to eight
 letters and digits (Backspace corrects, the cursor blinks), Enter logs in, ESC quits
 (after N, ESC goes back to the map room). Your name is remembered and a new campaign
-starts from `scendef.bin`; saves are neither read nor written yet. The other screens
-are placeholders: each shows its picture from your `.m@l` files with a fade, the window
-title names the screen and its keys, and nothing on them works beyond moving between
-them. The mouse moves a placeholder arrow
-(the system cursor is hidden over the picture), but clicks do nothing yet. See
+starts from `scendef.bin`; saves are neither read nor written yet. The map room works
+as the original's too: each scenario's box in the look of its state (scenarios beyond
+your progress shown as unavailable), your name and score, and the five buttons; pick
+a scenario by clicking its box (on the release; the right button also plays it) or
+with Tab and the arrow keys, and its name and alert level show at the bottom. Playing
+starts the mission placeholder for that scenario (the log says which `scenNNa.usg` it
+would load). The other screens are placeholders: each shows its picture from your
+`.m@l` files with a fade, the window title names the screen and its keys, and nothing
+on them works beyond moving between them. The mouse pointer is the original's, from
+your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 `docs/screens.md`.
 
 | Screen | Keys |
 |---|---|
 | Log-in | Letters and digits: the name. Backspace: delete. Enter: log in (map room). ESC: quit, or back to the map room after N |
-| Map room | P, Enter or Space: mission. T: training menu. R: review. N: log-in. Q or Alt+Q: quit |
+| Map room | Click a box, or Tab, Right or Down / Alt+Tab, Left or Up: select the next / previous scenario. P, Enter or Space (or a right click on a box): play it. T: training menu. R: review. N: log-in. Q or Alt+Q: quit. The buttons do what their keys do |
 | Training menu | H, N, S or C: training mission. ESC or Alt+Q: back |
 | Review | ESC or Enter: back |
 | Mission | F1 to F4: situation room, humanoid, scorpion or scout console. W: won, L: lost, C: campaign won (each with a placeholder for its cutscene; a training mission goes straight back) |

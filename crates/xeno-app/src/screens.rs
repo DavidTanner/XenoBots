@@ -3,7 +3,9 @@
 //! player plays a scenario, opens the training menu or the review, logs in again or
 //! quits. A mission shows the situation room or a robot console, and a won or lost
 //! one ends in a cutscene. The log-in is the original's (T-041, `login`): the name
-//! entry with its blinking cursor. The others are placeholders for now: each one's
+//! entry with its blinking cursor. So is the map room (T-042, `maproom`): the
+//! scenario boxes, selection by click and keys, the panels and the buttons. The others
+//! are placeholders for now: each one's
 //! `.m@l` picture with its palette (a synthetic card for the cutscenes), faded as the
 //! original fades, and the window title names it and its keys.
 //!
@@ -13,11 +15,13 @@
 //! retrace's input, so it is tested without a window and replays from an `InputLog`.
 
 use xeno_formats::mal;
+use xeno_formats::mgavideo::Pointer;
 use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
 
 use crate::game_dir::GameFiles;
-use crate::input::{InputEvent, Keys, ScanCode};
+use crate::input::{InputEvent, Keys, Mouse, ScanCode};
 use crate::login::{self, NameEntry, Outcome, Player};
+use crate::maproom::{self, Campaign, MapState, Request};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 
@@ -53,8 +57,12 @@ pub enum Screen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     Go(Screen),
-    /// Start a mission; `true` from the training menu (no cutscene after it).
+    /// Start a mission; `true` from the training menu (no cutscene after it). From
+    /// the map room, the selected scenario's, and nothing without a selection.
     Play(bool),
+    /// The map room's next and previous scenario.
+    Next,
+    Previous,
     End(Ending),
     Quit,
 }
@@ -84,7 +92,8 @@ use Screen::*;
 /// screen claims it.
 const LOGIN_KEYS: &[(KeyWord, Action)] = &[(ESC, Quit)];
 /// The map room's own keys (`DS:0x60bf`): P, Enter or Space play, T training, R
-/// review, N log in again, Q or Alt+Q quit. Not ESC.
+/// review, N log in again, Q or Alt+Q quit; Right, Down and Tab the next scenario,
+/// Alt+Tab, Left and Up the previous. Not ESC. The developer keys are T-046's.
 const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (key(0x13), Go(Review)),
     (ENTER, Play(false)),
@@ -94,6 +103,12 @@ const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (key(0x14), Go(Training)),
     (ALT_Q, Quit),
     (key(0x10), Quit),
+    (key(0x4d), Next),
+    (key(0x50), Next),
+    (key(0x0f), Next),
+    (KeyWord(ALT | 0x0f), Previous),
+    (key(0x4b), Previous),
+    (key(0x48), Previous),
 ];
 /// The training menu's (`DS:0x5e9f`): H, N, S, C pick a training mission; ESC or
 /// Alt+Q go back.
@@ -156,7 +171,9 @@ impl Screen {
     pub fn label(self) -> &'static str {
         match self {
             Login => "Log-in: type a name, Enter continue, ESC quit",
-            MapRoom => "Map room: P/Enter play, T training, R review, N log-in, Q quit",
+            MapRoom => {
+                "Map room: click/Tab/arrows select, P/Enter play, T training, R review, N log-in, Q quit"
+            }
             Training => "Training menu: H/N/S/C train, ESC back",
             Review => "Review: ESC/Enter back",
             Mission(View::SitRoom) => {
@@ -272,13 +289,32 @@ pub struct Screens {
     login_fading: bool,
     /// Who logged in last.
     player: Option<Player>,
+    /// The campaign shown when the map room comes before any log-in (`--screen`).
+    guest: Campaign,
+    map_assets: maproom::Assets,
+    map: MapState,
+    mouse: Mouse,
+    /// The scenario the last mission was started for, by its record (none for
+    /// training).
+    scenario: Option<usize>,
+}
+
+/// The logged-in player's campaign, or the guest's.
+fn campaign<'a>(player: &'a Option<Player>, guest: &'a Campaign) -> &'a Campaign {
+    player.as_ref().map_or(guest, |p| &p.campaign)
 }
 
 impl Screens {
     /// Starts at `start`, which is drawn and faded in at the first retrace.
-    pub fn new(pictures: Pictures, login: login::Assets, start: Screen) -> Screens {
+    pub fn new(
+        pictures: Pictures,
+        login: login::Assets,
+        map_assets: maproom::Assets,
+        start: Screen,
+    ) -> Screens {
         let mut dac = Dac::default();
         dac.set_anims(ColourAnims::new(login.anims.clone()));
+        let guest = Campaign::new(login.campaign.clone());
         Screens {
             pictures,
             screen: start,
@@ -293,7 +329,24 @@ impl Screens {
             entry: NameEntry::default(),
             login_fading: false,
             player: None,
+            guest,
+            map_assets,
+            map: MapState::default(),
+            mouse: Mouse::default(),
+            scenario: None,
         }
+    }
+
+    /// The mouse pointer the screens show.
+    pub fn pointer(&self) -> &Pointer {
+        &self.login.pointer
+    }
+
+    /// The scenario the last mission was started for (T-043, T-044 and T-051 load its
+    /// `scenNNa.usg`).
+    #[cfg(test)]
+    pub fn scenario(&self) -> Option<usize> {
+        self.scenario
     }
 
     /// What the original prints when the game exits after a log-in.
@@ -357,10 +410,31 @@ impl Screens {
                             self.act(action);
                         }
                     }
+                    (InputEvent::MouseDown { button }, MapRoom) => {
+                        self.map
+                            .mouse_down(button, self.mouse.position, &self.map_assets);
+                    }
+                    (InputEvent::MouseUp { button }, MapRoom) => {
+                        let campaign = campaign(&self.player, &self.guest);
+                        let at = self.mouse.position;
+                        match self.map.mouse_up(button, at, &self.map_assets, campaign) {
+                            Some(Request::Key(word)) => {
+                                if let Some(action) = MapRoom.lookup(KeyWord(word)) {
+                                    self.act(action);
+                                }
+                            }
+                            Some(Request::Play) => self.act(Play(false)),
+                            None => {}
+                        }
+                    }
                     _ => {}
                 }
             }
             self.keys.apply(event);
+            self.mouse.apply(event);
+        }
+        if self.screen == MapRoom && self.next.is_none() && self.map.take_dirty() {
+            self.draw_map(fb);
         }
         if self.screen == Login && self.next.is_none() {
             self.entry.draw(&self.login.font, fb);
@@ -384,6 +458,8 @@ impl Screens {
         match outcome {
             Outcome::Accepted(name) => {
                 self.player = Some(self.login.player(name));
+                // A new campaign: nothing selected (`scen_start_new_campaign`).
+                self.map = MapState::default();
                 self.act(Go(MapRoom));
             }
             Outcome::Cancelled if self.player.is_some() => self.act(Go(MapRoom)),
@@ -393,6 +469,31 @@ impl Screens {
 
     fn act(&mut self, action: Action) {
         log::debug!("screens: {:?} on {:?}", action, self.screen);
+        let campaign = campaign(&self.player, &self.guest);
+        match (self.screen, action) {
+            (MapRoom, Next | Previous) => {
+                let step = if action == Next { 1 } else { -1 };
+                self.map.step(step, campaign);
+                return;
+            }
+            (MapRoom, Play(false)) => {
+                let Some(i) = self.map.selection() else {
+                    log::debug!("map room: nothing selected to play");
+                    return;
+                };
+                log::info!(
+                    "map room: playing scenario {i}, {} (loading it is T-051)",
+                    maproom::scenario_file(i)
+                );
+                self.scenario = Some(i);
+            }
+            (MapRoom, Go(Training)) if !campaign.may_train() => {
+                log::debug!("map room: no training while a mission has no result");
+                return;
+            }
+            (_, Play(true)) => self.scenario = None,
+            _ => {}
+        }
         if let (MapRoom, Go(Login) | Quit, Some(player)) = (self.screen, action, &self.player) {
             log::info!(
                 "{}.LOG would be saved here; saving is not done yet (T-057)",
@@ -405,6 +506,7 @@ impl Screens {
                 self.training = training;
                 Mission(View::SitRoom)
             }
+            Next | Previous => return,
             End(_) if self.training => MapRoom,
             End(ending) => Cutscene(ending),
             Quit => {
@@ -449,6 +551,20 @@ impl Screens {
         self.screen = screen;
         self.next = None;
         self.changed = true;
+        if screen == MapRoom {
+            self.draw_map(fb);
+        }
+    }
+
+    /// Draws the map room: its picture, then the boxes, panels and buttons.
+    fn draw_map(&mut self, fb: &mut Framebuffer) {
+        if let Some((_, picture)) = self.pictures.iter().find(|(n, _)| *n == "maproom.m@l") {
+            fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
+        }
+        let name = self.player.as_ref().map_or("", |p| p.name.as_str());
+        let campaign = campaign(&self.player, &self.guest);
+        self.map.draw(fb, &self.map_assets, campaign, name);
+        self.map.take_dirty();
     }
 }
 
@@ -503,9 +619,14 @@ mod tests {
         }
     }
 
+    fn new(start: Screen) -> Screens {
+        let map = maproom::tests::test_assets();
+        Screens::new(pictures(), login::test_assets(), map, start)
+    }
+
     /// Runs `retraces` retraces of the log; returns the screen after each.
     fn run(log: &InputLog, start: Screen, retraces: u64) -> (Screens, Vec<Screen>) {
-        let mut screens = Screens::new(pictures(), login::test_assets(), start);
+        let mut screens = new(start);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let seen = (1..=retraces)
             .map(|r| {
@@ -541,13 +662,30 @@ mod tests {
         assert_eq!(final_screen(&[0x1c, 0x13]), Review);
         assert_eq!(final_screen(&[0x1c, 0x13, 0x01]), MapRoom);
         assert_eq!(final_screen(&[0x1c, 0x14]), Training);
-        assert_eq!(final_screen(&[0x1c, 0x19]), Mission(View::SitRoom));
-        assert_eq!(final_screen(&[0x1c, 0x19, 0x3c]), Mission(View::Humanoid));
-        assert_eq!(final_screen(&[0x1c, 0x19, 0x3e]), Mission(View::Scout));
-        assert_eq!(final_screen(&[0x1c, 0x19, 0x11]), Cutscene(Ending::Won));
-        assert_eq!(final_screen(&[0x1c, 0x19, 0x26]), Cutscene(Ending::Lost));
-        assert_eq!(final_screen(&[0x1c, 0x39, 0x2e]), Cutscene(Ending::Triumph));
-        assert_eq!(final_screen(&[0x1c, 0x19, 0x26, 0x39]), MapRoom);
+        // Play needs a selection: Tab picks the first scenario.
+        assert_eq!(final_screen(&[0x1c, 0x19]), MapRoom);
+        assert_eq!(final_screen(&[0x1c, 0x0f, 0x19]), Mission(View::SitRoom));
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x19, 0x3c]),
+            Mission(View::Humanoid)
+        );
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x19, 0x3e]),
+            Mission(View::Scout)
+        );
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x19, 0x11]),
+            Cutscene(Ending::Won)
+        );
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x19, 0x26]),
+            Cutscene(Ending::Lost)
+        );
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x39, 0x2e]),
+            Cutscene(Ending::Triumph)
+        );
+        assert_eq!(final_screen(&[0x1c, 0x0f, 0x19, 0x26, 0x39]), MapRoom);
         assert_eq!(final_screen(&[0x1c, 0x31]), Login);
         // A training mission goes back to the map room without a cutscene.
         assert_eq!(final_screen(&[0x1c, 0x14, 0x23, 0x11]), MapRoom);
@@ -625,11 +763,12 @@ mod tests {
 
     #[test]
     fn a_log_replays_the_same_screens() {
-        let mut log = presses(&[0x1c, 0x14, 0x01, 0x19, 0x3d, 0x26, 0x1c, 0x13]);
-        // The mouse doesn't move between screens yet.
+        let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x3d, 0x26, 0x1c, 0x13]);
+        // A click outside the map area and the buttons does nothing.
         let left = crate::input::MouseButton::Left;
         log.record(950, [InputEvent::MouseMove { x: 1, y: 2 }]);
         log.record(951, [InputEvent::MouseDown { button: left }]);
+        log.record(952, [InputEvent::MouseUp { button: left }]);
         let (_, first) = run(&log, Login, 1000);
         let (_, again) = run(&log.clone(), Login, 1000);
         assert_eq!(first, again);
@@ -650,7 +789,7 @@ mod tests {
         log.record(90, [InputEvent::Text('o'), InputEvent::Text('1')]);
         // Enter with no modifier.
         log.record(100, [down(0x1c), up(0x1c)]);
-        let mut screens = Screens::new(pictures(), login::test_assets(), Login);
+        let mut screens = new(Login);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         for r in 1..=200 {
             screens.retrace(log.events_at(r), &mut fb);
@@ -673,6 +812,58 @@ mod tests {
     }
 
     #[test]
+    fn the_map_room_picks_a_scenario_by_click_and_its_buttons_act() {
+        use crate::input::MouseButton::{Left, Right};
+        let click = |log: &mut InputLog, r: u64, (x, y), button| {
+            log.record(
+                r,
+                [
+                    InputEvent::MouseMove { x, y },
+                    InputEvent::MouseDown { button },
+                ],
+            );
+            log.record(r + 1, [InputEvent::MouseUp { button }]);
+        };
+        // Log in, click the fourth box (scenario 3, at 80..=89) then Enter.
+        let mut log = presses(&[0x1c]);
+        click(&mut log, 200, (85, 85), Left);
+        log.record(300, [down(0x1c), up(0x1c)]);
+        let mut screens = new(Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for r in 1..=400 {
+            screens.retrace(log.events_at(r), &mut fb);
+            if r == 250 {
+                // The map room's boxes over its picture: scenario 0 open (sprite 10),
+                // and the highlight (sprite 8) on scenario 3.
+                assert_eq!((fb.get(20, 20), fb.get(80, 80)), (Some(11), Some(9)));
+                assert_eq!(fb.get(0, 0), Some(2), "the map room's picture");
+            }
+        }
+        assert_eq!(
+            (screens.screen(), screens.scenario()),
+            (Mission(View::SitRoom), Some(3))
+        );
+        // The right button on a box plays it at once.
+        let mut log = presses(&[0x1c]);
+        click(&mut log, 200, (105, 105), Right);
+        let (screens, seen) = run(&log, Login, 300);
+        assert_eq!(
+            (seen[299], screens.scenario()),
+            (Mission(View::SitRoom), Some(4))
+        );
+        // The first button runs what R runs; the training menu's missions carry none.
+        let mut log = presses(&[0x1c]);
+        click(&mut log, 200, (285, 155), Left);
+        assert_eq!(*run(&log, Login, 300).1.last().unwrap(), Review);
+        let (screens, _) = run(
+            &presses(&[0x1c, 0x0f, 0x19, 0x11, 0x1c, 0x14, 0x23]),
+            Login,
+            800,
+        );
+        assert_eq!(screens.scenario(), None);
+    }
+
+    #[test]
     fn escape_quits_at_the_first_log_in_and_goes_back_after_n() {
         let (screens, _) = run(&presses(&[0x01]), Login, 200);
         assert!(screens.quit() && screens.player.is_none());
@@ -691,7 +882,13 @@ mod tests {
     #[test]
     fn screens_without_a_picture_get_a_placeholder() {
         let mut fb = Framebuffer::new(Size::MODE_13H);
-        let mut screens = Screens::new(Vec::new(), login::test_assets(), Cutscene(Ending::Lost));
+        let map = maproom::tests::test_assets();
+        let mut screens = Screens::new(
+            Vec::new(),
+            login::test_assets(),
+            map,
+            Cutscene(Ending::Lost),
+        );
         screens.retrace([], &mut fb);
         assert_eq!(fb.get(0, 0), Some(test_pattern::WHITE));
         assert_eq!(fb.get(160, 100), Some(test_pattern::RED));
@@ -715,12 +912,15 @@ mod tests {
         assert_eq!(pictures.len(), 8);
         let login = login::load(&files).unwrap();
         assert_eq!(login.campaign.scenarios.len(), 13);
+        // Tab (0x0f) selects the first open scenario before the first play; it is the
+        // one key that stays on its screen.
         let codes = [
-            0x1c, 0x13, 0x01, 0x14, 0x23, 0x11, 0x19, 0x3c, 0x3d, 0x3e, 0x3b, 0x11, 0x1c, 0x39,
-            0x26, 0x01, 0x19, 0x2e, 0x1c, 0x31,
+            0x1c, 0x13, 0x01, 0x14, 0x23, 0x11, 0x0f, 0x19, 0x3c, 0x3d, 0x3e, 0x3b, 0x11, 0x1c,
+            0x39, 0x26, 0x01, 0x19, 0x2e, 0x1c, 0x31,
         ];
         let log = presses(&codes);
-        let mut screens = Screens::new(pictures, login, Login);
+        let map = maproom::load(&files).unwrap();
+        let mut screens = Screens::new(pictures, login, map, Login);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut seen = vec![Login];
         let mut blink = Vec::new();
@@ -734,7 +934,8 @@ mod tests {
                 seen.push(screens.screen());
             }
         }
-        assert_eq!(seen.len(), codes.len() + 1, "{seen:?}");
+        assert_eq!(seen.len(), codes.len(), "{seen:?}");
+        assert_eq!(screens.scenario(), Some(0));
         blink.dedup();
         assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
         assert_eq!(screens.player.as_ref().unwrap().name, "A");

@@ -22,34 +22,34 @@ pub const HANDLE_STEP: u16 = 8;
 
 /// The widget types (offsets into the host's handler tables) of the map area and of a
 /// button (`docs/screens.md`, "Widgets").
-const MAP_AREA_TYPE: u16 = 0x38;
-const BUTTON_TYPE: u16 = 0x3c;
+pub(crate) const MAP_AREA_TYPE: u16 = 0x38;
+pub(crate) const BUTTON_TYPE: u16 = 0x3c;
 /// A widget: type, state offset, then its rectangle.
 const WIDGET_SIZE: usize = 12;
 /// The image offset of Ghidra's segment `1fe6`, the kernel.
 const KERNEL: usize = 0xfe60;
 
 /// Load-image offsets of the instructions read, and the bytes before each operand.
-const WIDGETS_SEGMENT: (usize, &[u8]) = (0x6f4c, &[0xb8]);
-const WIDGETS_FIRST: (usize, &[u8]) = (0x6f58, &[0xbb]);
-const WIDGETS_END: (usize, &[u8]) = (0x6f5e, &[0xba]);
-const BANK_BASE: (usize, &[u8]) = (0x71f5, &[0xba]);
-const BUTTON_SPRITES: (usize, &[u8]) = (0x7204, &[0x8b, 0x87]);
-const BUTTON_HANDLERS: (usize, &[u8]) = (0x7242, &[0xff, 0x97]);
-const UNAVAILABLE: (usize, &[u8]) = (0x72ac, &[0xb8]);
-const LOOKS: (usize, &[u8]) = (0x72b5, &[0x8b, 0x87]);
-const HIGHLIGHT: (usize, &[u8]) = (0x72f2, &[0xb8]);
-const KEYS: (usize, &[u8]) = (0x7384, &[0xbb]);
-const KEY_COUNT: (usize, &[u8]) = (0x7387, &[0xb9]);
-const STRINGS_SEGMENT: (usize, &[u8]) = (KERNEL + 0x4bed, &[0xb8]);
-const NAME_PANEL: usize = KERNEL + 0x7416;
-const SCORE_PANEL: usize = KERNEL + 0x7434;
-const INFO_PANEL: usize = KERNEL + 0x749c;
-const ALERT_LABEL: (usize, &[u8]) = (KERNEL + 0x74c7, &[0xbe]);
-const ALERT_LEVELS: (usize, &[u8]) = (KERNEL + 0x74db, &[0x8b, 0xb7]);
+pub(crate) const WIDGETS_SEGMENT: (usize, &[u8]) = (0x6f4c, &[0xb8]);
+pub(crate) const WIDGETS_FIRST: (usize, &[u8]) = (0x6f58, &[0xbb]);
+pub(crate) const WIDGETS_END: (usize, &[u8]) = (0x6f5e, &[0xba]);
+pub(crate) const BANK_BASE: (usize, &[u8]) = (0x71f5, &[0xba]);
+pub(crate) const BUTTON_SPRITES: (usize, &[u8]) = (0x7204, &[0x8b, 0x87]);
+pub(crate) const BUTTON_HANDLERS: (usize, &[u8]) = (0x7242, &[0xff, 0x97]);
+pub(crate) const UNAVAILABLE: (usize, &[u8]) = (0x72ac, &[0xb8]);
+pub(crate) const LOOKS: (usize, &[u8]) = (0x72b5, &[0x8b, 0x87]);
+pub(crate) const HIGHLIGHT: (usize, &[u8]) = (0x72f2, &[0xb8]);
+pub(crate) const KEYS: (usize, &[u8]) = (0x7384, &[0xbb]);
+pub(crate) const KEY_COUNT: (usize, &[u8]) = (0x7387, &[0xb9]);
+pub(crate) const STRINGS_SEGMENT: (usize, &[u8]) = (KERNEL + 0x4bed, &[0xb8]);
+pub(crate) const NAME_PANEL: usize = KERNEL + 0x7416;
+pub(crate) const SCORE_PANEL: usize = KERNEL + 0x7434;
+pub(crate) const INFO_PANEL: usize = KERNEL + 0x749c;
+pub(crate) const ALERT_LABEL: (usize, &[u8]) = (KERNEL + 0x74c7, &[0xbe]);
+pub(crate) const ALERT_LEVELS: (usize, &[u8]) = (KERNEL + 0x74db, &[0x8b, 0xb7]);
 
 /// No string the map room draws is longer than this.
-const MAX_STRING: usize = 64;
+pub(crate) const MAX_STRING: usize = 64;
 /// No widget set or key table is longer than this.
 const MAX_ENTRIES: usize = 64;
 
@@ -305,81 +305,16 @@ pub fn read(exe: &Unpacked) -> Result<MapRoom, FormatError> {
 mod tests {
     use super::*;
 
+    use crate::fixtures::{
+        SYNTHETIC_MAP_ROOM_STRINGS as STRINGS, SYNTHETIC_MAP_ROOM_TEMPLATE as TEMPLATE,
+        SYNTHETIC_MAP_ROOM_WIDGETS as WIDGETS, synthetic_map_room,
+    };
+
     const DS: usize = 0x20000;
-    const WIDGETS: usize = 0x1e000;
-    const TEMPLATE: usize = 0x1e100;
-    const STRINGS: usize = 0x1f000;
 
-    fn put(image: &mut [u8], at: usize, bytes: &[u8]) {
-        image[at..at + bytes.len()].copy_from_slice(bytes);
-    }
-
-    fn put_words(image: &mut [u8], at: usize, words: &[u16]) {
-        for (i, w) in words.iter().enumerate() {
-            put(image, at + 2 * i, &w.to_le_bytes());
-        }
-    }
-
-    fn op(image: &mut [u8], (at, op): (usize, &[u8]), value: u16) {
-        put(image, at, op);
-        put(image, at + op.len(), &value.to_le_bytes());
-    }
-
-    /// A made-up image: a map area and two buttons (ids 2 and 0, in that order), two
-    /// keys, made-up handles, rectangles and words.
     fn synthetic() -> (Vec<u8>, Vec<usize>) {
-        let mut image = vec![0u8; DS + 0x200];
-        op(&mut image, WIDGETS_SEGMENT, (WIDGETS / 16) as u16);
-        op(&mut image, WIDGETS_FIRST, 0x10);
-        op(&mut image, WIDGETS_END, 0x10 + 4 * 12);
-        put_words(
-            &mut image,
-            WIDGETS,
-            &[0x40, 0, (TEMPLATE / 16) as u16, 0, 9],
-        );
-        #[rustfmt::skip]
-        put_words(&mut image, WIDGETS + 0x10, &[
-            0x36, 0, 0, 0, 200, 320,
-            MAP_AREA_TYPE, 1, 10, 5, 190, 280,
-            BUTTON_TYPE, 3, 150, 270, 160, 310,
-            BUTTON_TYPE, 6, 160, 270, 170, 310,
-        ]);
-        put(&mut image, TEMPLATE, &[0, 0, 0, 0, 2, 0, 0, 0, 0]);
-        op(&mut image, BANK_BASE, 0x100);
-        op(&mut image, BUTTON_SPRITES, 0x10);
-        op(&mut image, BUTTON_HANDLERS, 0x20);
-        put_words(&mut image, DS + 0x10, &[0x100, 0x110]);
-        put_words(&mut image, DS + 0x20, &[0x7000, 0x7100]);
-        op(&mut image, KEYS, 0x30);
-        op(&mut image, KEY_COUNT, 2);
-        put_words(&mut image, DS + 0x30, &[0x19, 0x7000, 0x2010, 0x7100]);
-        op(&mut image, LOOKS, 0x40);
-        put_words(
-            &mut image,
-            DS + 0x40,
-            &[0x120, 0x128, 0x130, 0x130, 0x138, 0x140, 0x148],
-        );
-        op(&mut image, UNAVAILABLE, 0x138);
-        op(&mut image, HIGHLIGHT, 0x150);
-        for (at, sprite, rect) in [(NAME_PANEL, 0x158, 0x60), (SCORE_PANEL, 0x160, 0x68)]
-            .into_iter()
-            .chain([(INFO_PANEL, 0x168, 0x70)])
-        {
-            op(&mut image, (at, &[0xb8]), sprite);
-            op(&mut image, (at + 3, &[0xbb]), rect);
-        }
-        put_words(
-            &mut image,
-            DS + 0x60,
-            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-        );
-        op(&mut image, ALERT_LABEL, 0x80);
-        put(&mut image, DS + 0x80, b"LEVEL\0");
-        op(&mut image, ALERT_LEVELS, 0x90);
-        put_words(&mut image, DS + 0x90, &[0, 2, 4, 6, 8, 8, 8]);
-        put(&mut image, STRINGS, b"A\0B\0C\0D\0E\0");
-        op(&mut image, STRINGS_SEGMENT, (STRINGS / 16) as u16);
-        let relocated = vec![WIDGETS_SEGMENT.0 + 1, WIDGETS + 4, STRINGS_SEGMENT.0 + 1];
+        let mut image = vec![0u8; DS + 0x100];
+        let relocated = synthetic_map_room(&mut image, DS);
         (image, relocated)
     }
 

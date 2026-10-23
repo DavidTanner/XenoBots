@@ -288,7 +288,12 @@ impl App {
             layout.picture(self.fb.view())
         );
         // The game's pointer, only over the picture's pixels for this frame.
-        let under = pointer.map(|at| pointer::draw(&mut self.fb, at, &self.palette));
+        let under = match (&self.front, pointer) {
+            (FrontEnd::Screens(screens), Some(at)) => {
+                Some(pointer::draw(&mut self.fb, at, screens.pointer()))
+            }
+            _ => None,
+        };
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         if let Some(under) = under {
             under.restore(&mut self.fb);
