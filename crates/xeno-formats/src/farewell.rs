@@ -49,7 +49,7 @@ fn invalid(offset: usize, reason: impl Into<String>) -> FormatError {
 }
 
 /// The word after `op` at `at`, if the bytes there are that instruction.
-fn operand(image: &[u8], at: usize, op: &[u8]) -> Result<u16, FormatError> {
+pub(crate) fn operand(image: &[u8], at: usize, op: &[u8]) -> Result<u16, FormatError> {
     match image.get(at..at + op.len() + 2) {
         Some(bytes) if bytes[..op.len()] == *op => {
             Ok(u16::from_le_bytes([bytes[op.len()], bytes[op.len() + 1]]))

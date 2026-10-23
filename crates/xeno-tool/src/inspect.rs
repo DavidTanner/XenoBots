@@ -170,18 +170,26 @@ fn mgavideo_details(bytes: &[u8]) -> Details {
             format!("{} {shape} ({} codes)", 2 * i, f.glyphs.len())
         })
         .collect();
+    let p = &video.pointer;
     Ok(format!(
         "mgavideo:  {} fonts: {}\n\
-         mgavideo:  a {}-byte colour-animation list of {} records\n",
+         mgavideo:  a {}-byte colour-animation list of {} records\n\
+         mgavideo:  pointer {}x{}, hot spot ({}, {}), colour {}\n",
         fonts.len(),
         fonts.join(", "),
         video.anims.len(),
         video.anim_records(),
+        p.width,
+        p.height,
+        p.hot_x,
+        p.hot_y,
+        p.colour,
     ))
 }
 
 /// What the LZEXE unpacker makes of `bytes`; for `xeno.exe`, also its intro chain
-/// (`sequence`): each entry's picture, effect, origin, end time and fades.
+/// (`sequence`): each entry's picture, effect, origin, end time and fades; and the
+/// shape of the map room's tables (`maproom`).
 fn exe_details(file: &Path, bytes: &[u8]) -> Details {
     use xeno_formats::{lzexe, sequence};
 
@@ -225,6 +233,17 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
         )
         .unwrap();
     }
+    match xeno_formats::maproom::read(&exe) {
+        Ok(room) => writeln!(
+            out,
+            "maproom:   {} buttons, {} keys, sprites from handle {:#x}",
+            room.buttons.len(),
+            room.keys.len(),
+            room.bank_base
+        ),
+        Err(e) => writeln!(out, "maproom:   cannot read: {e}"),
+    }
+    .unwrap();
     Ok(out)
 }
 
@@ -968,7 +987,8 @@ mod tests {
             out.contains(
                 "mgavideo:  4 fonts: 0 bitmap 4x3 (128 codes), 2 bitmap 6x3 (128 codes), \
                  4 shaded, 3 high (128 codes), 6 shaded, 3 high (96 codes)\n\
-                 mgavideo:  a 18-byte colour-animation list of 1 records\n"
+                 mgavideo:  a 18-byte colour-animation list of 1 records\n\
+                 mgavideo:  pointer 3x2, hot spot (1, 0), colour 60\n"
             ),
             "{out}"
         );

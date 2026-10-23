@@ -670,23 +670,31 @@ pub fn synthetic_font_block() -> Vec<u8> {
 }
 
 /// A synthetic `mgavideo.dvr`: an MZ file whose init copies a colour-animation list
-/// (one rotate record over colours 16..=17, then the end marker) and
-/// [`synthetic_font_block`] into data blocks with the instructions
-/// [`crate::mgavideo`] expects.
+/// (one rotate record over colours 16..=17, then the end marker), two pointer shapes
+/// and [`synthetic_font_block`] into data blocks, and sets up pointer shape 1 in
+/// colour 0x3c, with the instructions [`crate::mgavideo`] expects.
 pub fn synthetic_mgavideo() -> Vec<u8> {
-    use crate::mgavideo::{ANIMS, FONTS};
+    use crate::mgavideo::{ANIMS, FONTS, POINTERS};
 
     let anims_at = 0x100;
+    let pointers_at = 0x180;
     let fonts_at = 0x200;
     let mut anims = vec![16, 0, 0x01, 1, 1, 16, 2, 0, 10, 0];
     anims.extend([63, 0, 0, 0, 63, 0]);
     anims.extend([0, 0]);
+    // Two pointer shapes; the set-up picks shape 1: 3 by 2, hot spot (1, 0), image
+    // then mask, the mask clear on the left two columns.
+    let mut pointers = vec![4, 0, 4, 0, 3, 2, 1, 0, 12, 0, 18, 0];
+    pointers.extend([0xff, 0x0f, 0xff, 0x00, 0xff, 0xff]);
+    pointers.extend([0, 0, 1, 0, 0, 1]);
     let fonts = synthetic_font_block();
-    let mut image = vec![0u8; fonts_at + fonts.len()];
+    let mut image = vec![0u8; 0x2970.max(fonts_at + fonts.len())];
     image[anims_at..anims_at + anims.len()].copy_from_slice(&anims);
-    image[fonts_at..].copy_from_slice(&fonts);
+    image[pointers_at..pointers_at + pointers.len()].copy_from_slice(&pointers);
+    image[fonts_at..fonts_at + fonts.len()].copy_from_slice(&fonts);
     for (block, size, data) in [
         (ANIMS, anims.len(), anims_at),
+        (POINTERS, pointers.len(), pointers_at),
         (FONTS, fonts.len(), fonts_at),
     ] {
         let at = block.at;
@@ -699,6 +707,9 @@ pub fn synthetic_mgavideo() -> Vec<u8> {
         op.extend([0xff, 0x1e, 0x36, 0x00]);
         image[at..at + op.len()].copy_from_slice(&op);
     }
+    // The pointer set-up: shape 1 of 2, colour 0x3c.
+    image[0x2949..0x2953].copy_from_slice(&[0xb0, 1, 0xe8, 0x18, 0, 0xb0, 0x3c, 0xe8, 0x65, 0]);
+    image[0x2966..0x2968].copy_from_slice(&[0x3c, 2]);
     // The MZ header: two paragraphs, no relocations.
     let size = 0x20 + image.len();
     let mut file = b"MZ".to_vec();
