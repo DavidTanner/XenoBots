@@ -62,6 +62,18 @@ MissionViews {
                 1,
                 32487,
             ),
+            (
+                57,
+                26706,
+            ),
+            (
+                15,
+                32178,
+            ),
+            (
+                8208,
+                31986,
+            ),
         ],
     },
     scorpion: View {
@@ -122,6 +134,18 @@ MissionViews {
             (
                 1,
                 32487,
+            ),
+            (
+                57,
+                26706,
+            ),
+            (
+                15,
+                32178,
+            ),
+            (
+                8208,
+                31986,
             ),
         ],
     },
@@ -184,6 +208,18 @@ MissionViews {
                 1,
                 32487,
             ),
+            (
+                57,
+                26706,
+            ),
+            (
+                15,
+                32178,
+            ),
+            (
+                8208,
+                31986,
+            ),
         ],
     },
     situation: View {
@@ -245,6 +281,18 @@ MissionViews {
                 1,
                 32487,
             ),
+            (
+                57,
+                26706,
+            ),
+            (
+                15,
+                32178,
+            ),
+            (
+                8208,
+                31986,
+            ),
         ],
     },
     situation_bank: 672,
@@ -281,8 +329,8 @@ MissionViews {
             fill: 16,
             manual_text: 32,
             pressed: [
-                16,
                 48,
+                16,
             ],
         },
         PanelStyle {
@@ -291,8 +339,8 @@ MissionViews {
             fill: 17,
             manual_text: 33,
             pressed: [
-                17,
                 49,
+                17,
             ],
         },
         PanelStyle {
@@ -301,8 +349,8 @@ MissionViews {
             fill: 18,
             manual_text: 34,
             pressed: [
-                18,
                 50,
+                18,
             ],
         },
     ],

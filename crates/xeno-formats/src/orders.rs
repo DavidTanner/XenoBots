@@ -347,7 +347,7 @@ mod tests {
     const DS: usize = 0x20000;
 
     fn synthetic() -> Vec<u8> {
-        let mut image = vec![0u8; DS + 0x400];
+        let mut image = vec![0u8; DS + 0x900];
         synthetic_programs(&mut image, DS);
         image
     }
@@ -394,7 +394,7 @@ mod tests {
         assert!(corrupt(MASKS.0 + 1, 0x90).is_err());
         // A name that never ends.
         let mut image = synthetic();
-        image[DS + 0x100..DS + 0x200].fill(b'X');
+        image[DS + 0x740..DS + 0x840].fill(b'X');
         assert!(read_image(&image, DS).is_err());
         assert!(read_image(&synthetic()[..0x5000], DS).is_err());
     }

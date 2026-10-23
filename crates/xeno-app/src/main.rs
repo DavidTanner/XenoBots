@@ -10,6 +10,7 @@ mod intro;
 mod keymap;
 mod login;
 mod maproom;
+mod mission;
 mod pointer;
 mod screens;
 mod test_pattern;
@@ -200,11 +201,13 @@ fn main() -> ExitCode {
     let front = match start {
         // Not shown after --view.
         _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
-        Some(start) => match screens::load(&files)
-            .and_then(|p| Ok((p, login::load(&files)?, maproom::load(&files)?)))
-        {
-            Ok((pictures, login, map)) => window::FrontEnd::Screens(Box::new(
-                screens::Screens::new(pictures, login, map, start),
+        Some(start) => match screens::load(&files).and_then(|p| {
+            let login = login::load(&files)?;
+            let missions = mission::load(&files, login.campaign.scenarios.len())?;
+            Ok((p, login, maproom::load(&files)?, missions))
+        }) {
+            Ok((pictures, login, map, missions)) => window::FrontEnd::Screens(Box::new(
+                screens::Screens::new(pictures, login, map, missions, start),
             )),
             Err(e) => {
                 eprintln!("error: cannot show the screens: {e}");
