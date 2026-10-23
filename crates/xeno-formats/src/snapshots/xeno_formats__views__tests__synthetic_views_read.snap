@@ -1,0 +1,314 @@
+---
+source: crates/xeno-formats/src/views.rs
+expression: views
+---
+MissionViews {
+    humanoid: View {
+        widgets: [
+            Widget {
+                kind: 14,
+                state: 0,
+                area: None,
+            },
+            Widget {
+                kind: 340,
+                state: 3,
+                area: Some(
+                    Rect {
+                        top: 91,
+                        left: 126,
+                        bottom: 98,
+                        right: 194,
+                    },
+                ),
+            },
+            Widget {
+                kind: 342,
+                state: 4,
+                area: Some(
+                    Rect {
+                        top: 185,
+                        left: 273,
+                        bottom: 200,
+                        right: 318,
+                    },
+                ),
+            },
+            Widget {
+                kind: 344,
+                state: 5,
+                area: Some(
+                    Rect {
+                        top: 0,
+                        left: 0,
+                        bottom: 2,
+                        right: 2,
+                    },
+                ),
+            },
+            Widget {
+                kind: 324,
+                state: 6,
+                area: None,
+            },
+        ],
+        state_offset: 256,
+        keys: [
+            (
+                60,
+                54342,
+            ),
+            (
+                1,
+                32487,
+            ),
+        ],
+    },
+    scorpion: View {
+        widgets: [
+            Widget {
+                kind: 14,
+                state: 0,
+                area: None,
+            },
+            Widget {
+                kind: 340,
+                state: 3,
+                area: Some(
+                    Rect {
+                        top: 91,
+                        left: 126,
+                        bottom: 98,
+                        right: 194,
+                    },
+                ),
+            },
+            Widget {
+                kind: 342,
+                state: 4,
+                area: Some(
+                    Rect {
+                        top: 185,
+                        left: 273,
+                        bottom: 200,
+                        right: 318,
+                    },
+                ),
+            },
+            Widget {
+                kind: 344,
+                state: 5,
+                area: Some(
+                    Rect {
+                        top: 0,
+                        left: 0,
+                        bottom: 2,
+                        right: 2,
+                    },
+                ),
+            },
+            Widget {
+                kind: 324,
+                state: 6,
+                area: None,
+            },
+        ],
+        state_offset: 257,
+        keys: [
+            (
+                60,
+                54342,
+            ),
+            (
+                1,
+                32487,
+            ),
+        ],
+    },
+    scout: View {
+        widgets: [
+            Widget {
+                kind: 14,
+                state: 0,
+                area: None,
+            },
+            Widget {
+                kind: 340,
+                state: 3,
+                area: Some(
+                    Rect {
+                        top: 91,
+                        left: 126,
+                        bottom: 98,
+                        right: 194,
+                    },
+                ),
+            },
+            Widget {
+                kind: 342,
+                state: 4,
+                area: Some(
+                    Rect {
+                        top: 185,
+                        left: 273,
+                        bottom: 200,
+                        right: 318,
+                    },
+                ),
+            },
+            Widget {
+                kind: 344,
+                state: 5,
+                area: Some(
+                    Rect {
+                        top: 0,
+                        left: 0,
+                        bottom: 2,
+                        right: 2,
+                    },
+                ),
+            },
+            Widget {
+                kind: 324,
+                state: 6,
+                area: None,
+            },
+        ],
+        state_offset: 258,
+        keys: [
+            (
+                60,
+                54342,
+            ),
+            (
+                1,
+                32487,
+            ),
+        ],
+    },
+    situation: View {
+        widgets: [
+            Widget {
+                kind: 14,
+                state: 0,
+                area: None,
+            },
+            Widget {
+                kind: 84,
+                state: 3,
+                area: Some(
+                    Rect {
+                        top: 73,
+                        left: 13,
+                        bottom: 81,
+                        right: 20,
+                    },
+                ),
+            },
+            Widget {
+                kind: 82,
+                state: 4,
+                area: Some(
+                    Rect {
+                        top: 14,
+                        left: 2,
+                        bottom: 70,
+                        right: 78,
+                    },
+                ),
+            },
+            Widget {
+                kind: 346,
+                state: 5,
+                area: Some(
+                    Rect {
+                        top: 0,
+                        left: 0,
+                        bottom: 2,
+                        right: 2,
+                    },
+                ),
+            },
+            Widget {
+                kind: 324,
+                state: 6,
+                area: None,
+            },
+        ],
+        state_offset: 259,
+        keys: [
+            (
+                60,
+                54342,
+            ),
+            (
+                1,
+                32487,
+            ),
+        ],
+    },
+    situation_bank: 672,
+    situation_buttons: [
+        SpriteButton {
+            kind: 84,
+            area: Rect {
+                top: 73,
+                left: 13,
+                bottom: 81,
+                right: 20,
+            },
+            handle: 672,
+        },
+    ],
+    roster_rows: [
+        Rect {
+            top: 14,
+            left: 2,
+            bottom: 25,
+            right: 78,
+        },
+        Rect {
+            top: 25,
+            left: 2,
+            bottom: 36,
+            right: 78,
+        },
+    ],
+    program_panel: [
+        PanelStyle {
+            font: 0,
+            x_offset: 2,
+            fill: 16,
+            manual_text: 32,
+            pressed: [
+                16,
+                48,
+            ],
+        },
+        PanelStyle {
+            font: 2,
+            x_offset: 1,
+            fill: 17,
+            manual_text: 33,
+            pressed: [
+                17,
+                49,
+            ],
+        },
+        PanelStyle {
+            font: 2,
+            x_offset: 1,
+            fill: 18,
+            manual_text: 34,
+            pressed: [
+                18,
+                50,
+            ],
+        },
+    ],
+    automatic_text: 6,
+    unit_label: (
+        279,
+        191,
+    ),
+}

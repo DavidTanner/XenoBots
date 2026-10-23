@@ -73,10 +73,10 @@ mode 13h, 320x200, shown at 4:3 with non-square pixels (`video-modes.md`).
   0x08, 0x0c, 0x0e, 0x10, 0x12 and 0x14 through slot `0x490`
   (`docs/re/dvr-protocol.md`, "Screens requested"). `TITLE`, `OPTIONS` and `WALL2` are
   never requested, so the port doesn't need them.
-- In `sitroom`, `scorpcon` and `scoutcon` index 255 is pure green and fills the large
-  panels (in `sitroom`, the main view). It is presumably a placeholder that the game
-  draws over, or a key colour. Find out from the code that draws into those panels
-  (T-042, T-043).
+- Settled (T-043): index 255 (and, in the consoles, 254 and 253) marks where the
+  mission draws its 3D view and scanner. Each view builds a run-length region of those
+  colours from the picture (slot `0x59c`) and copies the picture around them (slot
+  `0x5b8`); `docs/screens.md`, "The mission's views".
 - Which of the screens' colours the sprite banks and unit models are drawn with
   (T-028, T-029).
 

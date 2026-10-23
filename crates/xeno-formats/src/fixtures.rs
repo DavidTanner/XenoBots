@@ -797,6 +797,231 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
     vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1, widgets + 4]
 }
 
+/// Writes a made-up program table (`crate::orders`) into `image`, whose data segment
+/// starts at `ds`: five programs at `ds + 0x100` on (0 never offered, 1 for every kind,
+/// 2 for every kind with a header of no item list, 3 for the scorpion only, 4 never
+/// offered), the table at `ds + 0x10` and the kind masks 1, 2, 4 at `ds + 0x30`.
+/// `image` must reach `0xd384` and `ds + 0x200`.
+pub fn synthetic_programs(image: &mut [u8], ds: usize) {
+    use crate::orders::{COUNT, MASKS, TABLE};
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(TABLE.0, &op(TABLE.1, 0x10));
+    put(COUNT.0, &[COUNT.1[0], 5]);
+    put(MASKS.0, &op(MASKS.1, 0x30));
+    put(ds + 0x30, &[1, 2, 4]);
+    let programs: [&[u8]; 5] = [
+        b"\x0f\x11\x02\x87\x05ZERO\0\x01\x02",
+        b"\x0f\x05\x12\x34\x09\x56\x78\x11\x02\x07\x04ONE\0",
+        b"\x11\x07\x04TWO\0",
+        b"\x0f\x09\x9a\xbc\x11\x02\x02\x06THREE\0",
+        b"\x0f\x11\x02\x82\x05FOUR\0",
+    ];
+    for (n, program) in programs.iter().enumerate() {
+        let at = 0x100 + 0x20 * n;
+        put(ds + 0x10 + 2 * n, &(at as u16).to_le_bytes());
+        put(ds + at, program);
+    }
+}
+
+/// A `.usg` scenario whose objects are big enough to hold orders (0x40 bytes each):
+/// a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a human
+/// relay of the usual 0x18 bytes (slot 3), a human scorpion on program 2 (slot 5) and
+/// an alien scout on program 2 (slot 7). The other chunks are
+/// [`synthetic_usg_chunks`]'s.
+pub fn synthetic_mission_usg() -> Vec<u8> {
+    let words = |ws: &[u16]| ws.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
+    let object = |slot: u16, kind: u16, size: u16, side: u8, mode: u8, program: u8| {
+        let mut o = words(&[size, slot, 0, kind, slot]);
+        o.extend((i32::from(100 + slot) << 16).to_le_bytes());
+        o.extend((130i32 << 16).to_le_bytes());
+        let mut data = synthetic_bytes(usize::from(size) - 12, u64::from(slot));
+        data[0x16 - 12] = side;
+        if size >= 0x40 {
+            data[0x23 - 12] = mode;
+            data[0x2e - 12] = program;
+            data[0x30 - 12] = program;
+        }
+        o.extend(data);
+        o
+    };
+    let mut objects = words(&[5]);
+    objects.extend(object(0, 3, 0x40, 0, 0, 0));
+    objects.extend(object(2, 0, 0x40, 0, 0x80, 1));
+    objects.extend(object(3, 4, 0x18, 0, 0, 0));
+    objects.extend(object(5, 1, 0x40, 0, 0x01, 2));
+    objects.extend(object(7, 2, 0x40, 8, 0x80, 2));
+    let mut chunks = synthetic_usg_chunks();
+    for (tag, data) in &mut chunks {
+        if tag == b"DCBS" {
+            *data = objects.clone();
+        }
+    }
+    synthetic_usg_from(&chunks)
+}
+
+/// Image offsets [`synthetic_views`] uses.
+pub struct SyntheticViews;
+
+impl SyntheticViews {
+    /// Where each view's state block starts, plus the object kind.
+    pub const STATE: u16 = 0x100;
+    /// The one key-table handler every view's key widget uses.
+    pub const KEY_HANDLER: usize = 0x1200;
+    /// The training menu's "back" action.
+    pub const BACK_ACTION: usize = 0x1430;
+}
+
+/// Writes made-up mission views and a training menu (`crate::views`) into `image`,
+/// whose data segment starts at `ds`, and returns the image offsets to relocate. Each
+/// console has a program panel, a unit-name button, a corner and a key widget; the
+/// situation room a sprite button (handle 0x2a0), a roster of two rows, a corner and a
+/// key widget; every view's keys are F2 then ESC. The training menu has two buttons
+/// (action 0, a mission `ATRAIN.USG`, and action 2, back) and two keys (ESC back, A the
+/// mission). `image` must reach `ds + 0x700` and `0xd320`.
+pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
+    use crate::views::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    const NONE: [u16; 4] = [0x7fff; 4];
+    const KEY_TYPE: u16 = 0x144;
+    let widget =
+        |kind: u16, state: u16, area: [u16; 4]| words(&[&[kind, state][..], &area].concat());
+
+    // The handler tables: everything draws and keys nothing, but for a sprite button
+    // (type 0x54) and the key widgets.
+    let (draw, keys) = (0x200, 0x400);
+    for t in (0..0x170).step_by(2) {
+        put(ds + draw + t, &words(&[0x1300]));
+        put(ds + keys + t, &words(&[0x1300]));
+    }
+    put(ds + draw + 0x54, &words(&[0x1100]));
+    put(ds + keys + usize::from(KEY_TYPE), &words(&[0x1200]));
+    put(0x1300, &[0xc3]);
+    put(
+        0x1100,
+        &[
+            0x8b, 0x3e, 0xf1, 0x62, 0x8a, 0x45, 0x40, 0x98, 0x05, 0xa0, 0x02,
+        ],
+    );
+    put(
+        SyntheticViews::KEY_HANDLER,
+        &[
+            &[0xa9, 0x00, 0x18, 0x74, 0x14, 0x8b, 0x44, 0x02, 0x24, 0x7f][..],
+            &op(&[0xbb], 0x600),
+            &op(&[0xb9], 2),
+        ]
+        .concat(),
+    );
+    put(ds + 0x600, &words(&[0x3c, 0xd446, 0x01, 0x7ee7]));
+    put(DRAW_HANDLERS.0, &op(DRAW_HANDLERS.1, draw as u16));
+    put(KEY_HANDLERS.0, &op(KEY_HANDLERS.1, keys as u16));
+
+    // The four views, each opened by its own code and with its own widget set.
+    let mut relocated = Vec::new();
+    put(VIEW_OPENERS.0, &op(VIEW_OPENERS.1, 0x100));
+    for kind in 0..4u16 {
+        let opener = 0x1000 + 0x20 * usize::from(kind);
+        let set = 0x18000 + 0x200 * usize::from(kind);
+        let list: Vec<Vec<u8>> = if kind < 3 {
+            vec![
+                widget(0x0e, 0, NONE),
+                widget(PROGRAM_PANEL_TYPE, 3, [91, 126, 98, 194]),
+                widget(UNIT_BUTTON_TYPE, 4, [185, 273, 200, 318]),
+                widget(CONSOLE_CORNER_TYPE, 5, [0, 0, 2, 2]),
+                widget(KEY_TYPE, 6, NONE),
+            ]
+        } else {
+            vec![
+                widget(0x0e, 0, NONE),
+                widget(0x54, 3, [73, 13, 81, 20]),
+                widget(ROSTER_TYPE, 4, [14, 2, 70, 78]),
+                widget(SITUATION_CORNER_TYPE, 5, [0, 0, 2, 2]),
+                widget(KEY_TYPE, 6, NONE),
+            ]
+        };
+        let end = 0x10 + 12 * list.len() as u16;
+        put(set, &words(&[0x100, (set / 16) as u16]));
+        put(set + 0x10, &list.concat());
+        put(ds + 0x100 + 2 * usize::from(kind), &words(&[opener as u16]));
+        put(
+            opener,
+            &[
+                op(&[0xb8], (set / 16) as u16),
+                op(&[0xbb], 0x10),
+                op(&[0x81, 0xc1], SyntheticViews::STATE + kind),
+                op(&[0xba], end),
+            ]
+            .concat(),
+        );
+        relocated.push(opener + 1);
+    }
+    put(SITUATION_BANK.0, &op(SITUATION_BANK.1, 0x2a0));
+    put(ROSTER_ROWS.0, &op(ROSTER_ROWS.1, 0x620));
+    put(ROSTER_COUNT.0, &[ROSTER_COUNT.1[0], ROSTER_COUNT.1[1], 4]);
+    put(ds + 0x620, &words(&[0x630, 0x638]));
+    put(ds + 0x630, &words(&[14, 2, 25, 78, 25, 2, 36, 78]));
+    for (entry, at, values) in [
+        (PANEL_FONTS, 0x640, [0, 2, 2]),
+        (PANEL_X_OFFSETS, 0x648, [2, 1, 1]),
+        (PANEL_COLOURS, 0x650, [0x2010, 0x2111, 0x2212]),
+        (PANEL_PRESSED, 0x658, [0x3010, 0x3111, 0x3212]),
+    ] {
+        put(entry.0, &op(entry.1, at as u16));
+        put(ds + at, &words(&values));
+    }
+    put(PANEL_AUTOMATIC.0, &[PANEL_AUTOMATIC.1, 6]);
+    put(UNIT_LABEL.0, &[op(&[0xb8], 191), op(&[0xbb], 279)].concat());
+
+    // The training menu.
+    let (set, template) = (0x19000, 0x19100);
+    put(
+        set,
+        &words(&[0x40, (set / 16) as u16, (template / 16) as u16, 0, 10]),
+    );
+    put(
+        set + 0x10,
+        &[
+            widget(0x30, 3, [0, 0, 200, 320]),
+            widget(TRAINING_BUTTON_TYPE, 4, [14, 200, 25, 275]),
+            widget(TRAINING_BUTTON_TYPE, 7, [24, 200, 35, 275]),
+            widget(0x34, 9, NONE),
+        ]
+        .concat(),
+    );
+    put(template, &[0, 0, 0, 0, 0, 0, 0, 0, 2, 0]);
+    put(
+        TRAINING_WIDGETS.0,
+        &op(TRAINING_WIDGETS.1, (set / 16) as u16),
+    );
+    put(TRAINING_FIRST.0, &op(TRAINING_FIRST.1, 0x10));
+    put(TRAINING_END.0, &op(TRAINING_END.1, 0x10 + 4 * 12));
+    put(TRAINING_KEYS.0, &op(TRAINING_KEYS.1, 0x680));
+    put(TRAINING_KEY_COUNT.0, &op(TRAINING_KEY_COUNT.1, 2));
+    put(TRAINING_ACTION.0, &op(TRAINING_ACTION.1, 0x5e50));
+    put(TRAINING_ACTIONS.0, &op(TRAINING_ACTIONS.1, 0x6a0));
+    put(ds + 0x680, &words(&[0x01, 0x1400, 0x1e, 0x1410]));
+    put(
+        0x1400,
+        &[op(&[0xc7, 0x06], 0x5e50), words(&[2]), vec![0xc3]].concat(),
+    );
+    put(
+        0x1410,
+        &[op(&[0xc7, 0x06], 0x5e50), words(&[0]), vec![0xc3]].concat(),
+    );
+    put(
+        ds + 0x6a0,
+        &words(&[0x1420, SyntheticViews::BACK_ACTION as u16]),
+    );
+    put(0x1420, &op(&[0xbe], 0x6c0));
+    put(SyntheticViews::BACK_ACTION, &[0xc3]);
+    put(ds + 0x6c0, b"ATRAIN.USG\0");
+    relocated.extend([TRAINING_WIDGETS.0 + 1, set + 4]);
+    relocated
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

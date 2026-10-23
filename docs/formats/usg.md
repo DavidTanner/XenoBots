@@ -115,6 +115,12 @@ Object fields known so far (offsets in the object, as in memory):
 | 0x08 | 4 | `y` | |
 | 0x0c | 4 | | Zero in every stock object. Possibly the third coordinate (the debug labels include `LOC-Z`) |
 | 0x16 | 1 | flags | Bit 3 is the side: the editor writes 0 for human and 8 for alien. The game also uses bit 0 (removed), 0x20 and others |
+| 0x23 | 1 | mode (robots) | Bit 7: manual, the pilot drives (T-043, `docs/screens.md`, "Orders"); bit 3: recalled |
+| 0x2e | 1 | program given (robots) | A number in `xeno.exe`'s program table (T-043) |
+| 0x30 | 1 | program running (robots) | That program, or a state the script entered by itself |
+| 0x31, 0x33, 0x34, 0x38 | | the script's state (robots) | +0x34 is the script pointer, saved as `0xa000` + its offset from the program table |
+| 0xbd | 0x43 | view state (bases) | The situation room's widget state (T-043) |
+| 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | view state (robots) | The humanoid, scorpion and scout console's widget state (T-043) |
 | rest | | `data` | Unknown (T-058). The editor writes one value to both +0x10 and +0x2a for robots (a heading?) |
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
@@ -181,8 +187,8 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 
 ## Open questions
 
-- The object bytes after +0x0c: orders, heading, damage, and what the 0x172-byte robot
-  layout holds (T-058).
+- The object bytes after +0x0c: heading, damage, and the rest of the 0x172-byte robot
+  layout (T-058). The orders and the views' state blocks are placed (T-043).
 - The world's size and edges, and the terrain record fields not listed above. Also how
   `point_count` and the rest of the path header are used (T-059).
 - Whether `pool_index` matters once loaded, given that stock files repeat some.
@@ -191,6 +197,7 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 
 `xeno_formats::usg` (T-020): `parse` returns a `Scenario` with the header, terrain,
 objects, both path tables, briefing and background, and keeps any other chunks.
+`xeno_formats::orders::Orders::of` reads a robot's orders (T-043).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
 positions, the terrain features, one line per object, both sides' paths and the
 briefing's first line.
