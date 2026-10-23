@@ -2,9 +2,10 @@
 //! flow (`docs/screens.md`): log-in, then the map room as the hub, from which the
 //! player plays a scenario, opens the training menu or the review, logs in again or
 //! quits. A mission shows the situation room or a robot console, and a won or lost
-//! one ends in a cutscene. Each screen is a placeholder for now: its `.m@l` picture
-//! with its palette (a synthetic card for the cutscenes), faded as the original
-//! fades, and the window title names it and its keys.
+//! one ends in a cutscene. The log-in is the original's (T-041, `login`): the name
+//! entry with its blinking cursor. The others are placeholders for now: each one's
+//! `.m@l` picture with its palette (a synthetic card for the cutscenes), faded as the
+//! original fades, and the window title names it and its keys.
 //!
 //! Keys go through (key word, action) tables, as the original's screens do
 //! (`docs/formats/key.md`, "The game's keys"); a screen claims ESC when its table
@@ -12,10 +13,11 @@
 //! retrace's input, so it is tested without a window and replays from an `InputLog`.
 
 use xeno_formats::mal;
-use xeno_render::{DAC_BYTES, Dac, Fade, Framebuffer, Rect};
+use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, ScanCode};
+use crate::login::{self, NameEntry, Outcome, Player};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 
@@ -78,8 +80,9 @@ const ALT_Q: KeyWord = KeyWord(ALT | 0x10);
 use Action::*;
 use Screen::*;
 
-/// `ui_login_and_load_save_game`: ESC leaves the game (T-041 adds the name entry).
-const LOGIN_KEYS: &[(KeyWord, Action)] = &[(ENTER, Go(MapRoom)), (ESC, Quit)];
+/// The log-in's keys go to the name entry (`login::NameEntry`); ESC is listed so the
+/// screen claims it.
+const LOGIN_KEYS: &[(KeyWord, Action)] = &[(ESC, Quit)];
 /// The map room's own keys (`DS:0x60bf`): P, Enter or Space play, T training, R
 /// review, N log in again, Q or Alt+Q quit. Not ESC.
 const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
@@ -152,7 +155,7 @@ impl Screen {
     /// The name and keys, for the window title while there is no font.
     pub fn label(self) -> &'static str {
         match self {
-            Login => "Log-in: Enter continue, ESC quit",
+            Login => "Log-in: type a name, Enter continue, ESC quit",
             MapRoom => "Map room: P/Enter play, T training, R review, N log-in, Q quit",
             Training => "Training menu: H/N/S/C train, ESC back",
             Review => "Review: ESC/Enter back",
@@ -262,22 +265,40 @@ pub struct Screens {
     quit: bool,
     /// The screen changed since [`Screens::take_changed`].
     changed: bool,
+    login: login::Assets,
+    entry: NameEntry,
+    /// The log-in screen is fading in, with the colour records held
+    /// (`ui_show_screen_fading_in`); the cursor starts blinking after.
+    login_fading: bool,
+    /// Who logged in last.
+    player: Option<Player>,
 }
 
 impl Screens {
     /// Starts at `start`, which is drawn and faded in at the first retrace.
-    pub fn new(pictures: Pictures, start: Screen) -> Screens {
+    pub fn new(pictures: Pictures, login: login::Assets, start: Screen) -> Screens {
+        let mut dac = Dac::default();
+        dac.set_anims(ColourAnims::new(login.anims.clone()));
         Screens {
             pictures,
             screen: start,
             next: Some(start),
             training: false,
-            dac: Dac::default(),
+            dac,
             fade_in: None,
             keys: Keys::default(),
             quit: false,
             changed: true,
+            login,
+            entry: NameEntry::default(),
+            login_fading: false,
+            player: None,
         }
+    }
+
+    /// What the original prints when the game exits after a log-in.
+    pub fn exit_message(&self) -> Option<String> {
+        self.player.as_ref().and_then(|p| p.farewell.clone())
     }
 
     pub fn screen(&self) -> Screen {
@@ -315,15 +336,34 @@ impl Screens {
         {
             self.dac.start(fade);
         }
+        if self.login_fading && self.fade_in.is_none() && !self.dac.fading() {
+            // The fade is over: the records run again, and the name entry starts the
+            // cursor's blink.
+            self.login_fading = false;
+            self.dac.release_anims();
+            self.dac.start_anim(login::CURSOR_RECORD, 0);
+        }
         for event in events {
-            if let InputEvent::KeyDown { code, .. } = *event
-                && self.next.is_none()
-                && !self.quit
-                && let Some(action) = self.screen.lookup(key_word(code, &self.keys))
-            {
-                self.act(action);
+            if self.next.is_none() && !self.quit {
+                match (*event, self.screen) {
+                    (InputEvent::Text(c), Login) => self.entry.typed(c),
+                    (InputEvent::KeyDown { code, .. }, Login) => {
+                        if let Some(outcome) = self.entry.key(key_word(code, &self.keys)) {
+                            self.logged_in(outcome);
+                        }
+                    }
+                    (InputEvent::KeyDown { code, .. }, screen) => {
+                        if let Some(action) = screen.lookup(key_word(code, &self.keys)) {
+                            self.act(action);
+                        }
+                    }
+                    _ => {}
+                }
             }
             self.keys.apply(event);
+        }
+        if self.screen == Login && self.next.is_none() {
+            self.entry.draw(&self.login.font, fb);
         }
         if let Some(next) = self.next
             && !self.dac.fading()
@@ -333,8 +373,32 @@ impl Screens {
         }
     }
 
+    /// The name entry is over (`ui_login_and_load_save_game`): the cursor stops
+    /// blinking where it stands; a name logs in and goes to the map room; ESC leaves
+    /// the game at the first log-in, and goes back to the map room after N.
+    fn logged_in(&mut self, outcome: Outcome) {
+        self.dac.anims_mut().set_active(login::CURSOR_RECORD, false);
+        if std::mem::take(&mut self.login_fading) {
+            self.dac.release_anims();
+        }
+        match outcome {
+            Outcome::Accepted(name) => {
+                self.player = Some(self.login.player(name));
+                self.act(Go(MapRoom));
+            }
+            Outcome::Cancelled if self.player.is_some() => self.act(Go(MapRoom)),
+            Outcome::Cancelled => self.act(Quit),
+        }
+    }
+
     fn act(&mut self, action: Action) {
         log::debug!("screens: {:?} on {:?}", action, self.screen);
+        if let (MapRoom, Go(Login) | Quit, Some(player)) = (self.screen, action, &self.player) {
+            log::info!(
+                "{}.LOG would be saved here; saving is not done yet (T-057)",
+                player.name
+            );
+        }
         let next = match action {
             Go(screen) => screen,
             Play(training) => {
@@ -370,7 +434,17 @@ impl Screens {
                 to_vga6(&test_pattern::palette())
             }
         };
-        let length = if screen == Login { LOGIN_FADE } else { FADE };
+        let length = if screen == Login {
+            // `ui_show_screen_fading_in` holds the colour records over its fade in.
+            self.entry = NameEntry::default();
+            if !self.login_fading {
+                self.dac.hold_anims();
+                self.login_fading = true;
+            }
+            LOGIN_FADE
+        } else {
+            FADE
+        };
         self.fade_in = Some(self.dac.prepare_fade_in(&dac, 0, 255, length));
         self.screen = screen;
         self.next = None;
@@ -431,7 +505,7 @@ mod tests {
 
     /// Runs `retraces` retraces of the log; returns the screen after each.
     fn run(log: &InputLog, start: Screen, retraces: u64) -> (Screens, Vec<Screen>) {
-        let mut screens = Screens::new(pictures(), start);
+        let mut screens = Screens::new(pictures(), login::test_assets(), start);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let seen = (1..=retraces)
             .map(|r| {
@@ -442,9 +516,11 @@ mod tests {
         (screens, seen)
     }
 
-    /// A log pressing and releasing each code 100 retraces apart, from retrace 100.
+    /// A log typing `A` at retrace 50, then pressing and releasing each code 100
+    /// retraces apart, from retrace 100.
     fn presses(codes: &[u16]) -> InputLog {
         let mut log = InputLog::default();
+        log.record(50, [InputEvent::Text('A')]);
         for (i, &code) in codes.iter().enumerate() {
             let r = 100 * (i as u64 + 1);
             log.record(r, [down(code)]);
@@ -501,6 +577,7 @@ mod tests {
     #[test]
     fn keys_during_a_fade_out_are_dropped() {
         let mut log = InputLog::default();
+        log.record(50, [InputEvent::Text('A')]);
         log.record(100, [down(0x1c), up(0x1c)]);
         log.record(110, [down(0x13), up(0x13)]);
         let (_, seen) = run(&log, Login, 300);
@@ -562,9 +639,59 @@ mod tests {
     }
 
     #[test]
+    fn the_log_in_takes_a_name_and_blinks_its_cursor_after_the_fade() {
+        use xeno_render::anim::flag::ACTIVE;
+        let blinking =
+            |s: &Screens| s.dac.anims().flags(login::CURSOR_RECORD).unwrap() & ACTIVE != 0;
+        let mut log = InputLog::default();
+        // Typed during the fade in, a key with no character, Backspace, more text.
+        log.record(10, [InputEvent::Text('a'), down(0x3b), up(0x3b)]);
+        log.record(80, [InputEvent::Text('e'), down(0x0e), up(0x0e)]);
+        log.record(90, [InputEvent::Text('o'), InputEvent::Text('1')]);
+        // Enter with no modifier.
+        log.record(100, [down(0x1c), up(0x1c)]);
+        let mut screens = Screens::new(pictures(), login::test_assets(), Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for r in 1..=200 {
+            screens.retrace(log.events_at(r), &mut fb);
+            match r {
+                // Held over the 64-retrace fade in, then blinking until Enter.
+                60 => assert!(!blinking(&screens)),
+                70 => assert!(blinking(&screens)),
+                95 => {
+                    assert_eq!(screens.entry.name(), "AO1");
+                    assert_eq!(fb.get(50, 69), Some(251), "the name is drawn");
+                }
+                101 => assert!(!blinking(&screens)),
+                _ => {}
+            }
+        }
+        assert_eq!(screens.screen(), MapRoom);
+        let player = screens.player.as_ref().unwrap();
+        assert_eq!((player.name.as_str(), player.save_found), ("AO1", false));
+        assert_eq!(screens.exit_message().unwrap(), "SEE YOU, AO1!");
+    }
+
+    #[test]
+    fn escape_quits_at_the_first_log_in_and_goes_back_after_n() {
+        let (screens, _) = run(&presses(&[0x01]), Login, 200);
+        assert!(screens.quit() && screens.player.is_none());
+        // Log in, N, then ESC: back to the map room as the same player.
+        let (screens, seen) = run(&presses(&[0x1c, 0x31, 0x01]), Login, 400);
+        assert!(!screens.quit());
+        assert_eq!(*seen.last().unwrap(), MapRoom);
+        assert!(seen.contains(&Login));
+        assert_eq!(screens.player.as_ref().unwrap().name, "A");
+        // Enter with an empty name does nothing.
+        let mut log = InputLog::default();
+        log.record(100, [down(0x1c), up(0x1c)]);
+        assert_eq!(*run(&log, Login, 200).1.last().unwrap(), Login);
+    }
+
+    #[test]
     fn screens_without_a_picture_get_a_placeholder() {
         let mut fb = Framebuffer::new(Size::MODE_13H);
-        let mut screens = Screens::new(Vec::new(), Cutscene(Ending::Lost));
+        let mut screens = Screens::new(Vec::new(), login::test_assets(), Cutscene(Ending::Lost));
         screens.retrace([], &mut fb);
         assert_eq!(fb.get(0, 0), Some(test_pattern::WHITE));
         assert_eq!(fb.get(160, 100), Some(test_pattern::RED));
@@ -586,21 +713,31 @@ mod tests {
             .unwrap();
         let pictures = load(&files).unwrap();
         assert_eq!(pictures.len(), 8);
+        let login = login::load(&files).unwrap();
+        assert_eq!(login.campaign.scenarios.len(), 13);
         let codes = [
             0x1c, 0x13, 0x01, 0x14, 0x23, 0x11, 0x19, 0x3c, 0x3d, 0x3e, 0x3b, 0x11, 0x1c, 0x39,
             0x26, 0x01, 0x19, 0x2e, 0x1c, 0x31,
         ];
         let log = presses(&codes);
-        let mut screens = Screens::new(pictures, Login);
+        let mut screens = Screens::new(pictures, login, Login);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut seen = vec![Login];
+        let mut blink = Vec::new();
         for r in 1..=100 * (codes.len() as u64 + 1) {
             screens.retrace(log.events_at(r), &mut fb);
+            // The user's record 23 blinks colour 254 once the fade in is over.
+            if (70..100).contains(&r) {
+                blink.push(screens.dac.hardware()[3 * 254..3 * 255].to_vec());
+            }
             if seen.last() != Some(&screens.screen()) {
                 seen.push(screens.screen());
             }
         }
         assert_eq!(seen.len(), codes.len() + 1, "{seen:?}");
+        blink.dedup();
+        assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
+        assert_eq!(screens.player.as_ref().unwrap().name, "A");
         assert_eq!(screens.screen(), Login);
     }
 }

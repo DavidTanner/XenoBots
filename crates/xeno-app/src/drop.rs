@@ -11,15 +11,18 @@
 //! each frame, so its quirks (an edge row restored after a retreat, the clean copy's
 //! first rows overwritten) show as in the original.
 //!
-//! Not yet: the credits text (it needs the game's font, T-041; the colour record that
-//! fades it runs), and the music, whose clock the drop's waits and its end count.
+//! The credits are drawn in the game's fonts, read from the user's `mgavideo.dvr`
+//! (T-041), into the credits area, where the colour record fades them. Not yet: the
+//! music, whose clock the drop's waits and its end count.
 
 use std::collections::VecDeque;
 
 use xeno_formats::fgd::Layer;
+use xeno_formats::font::Font;
+use xeno_formats::mgavideo;
 use xeno_formats::pcx;
 use xeno_formats::vgaintro::{self, CreditOp, IntroDrop, Numbers, PALETTE_BUFFER};
-use xeno_render::{ColourAnims, DAC_BYTES, Dac, Framebuffer, Palette, Size};
+use xeno_render::{ColourAnims, DAC_BYTES, Dac, Framebuffer, Palette, Size, TextCursor, TextMode};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, ScanCode};
@@ -54,6 +57,8 @@ pub struct Part {
 pub struct Assets {
     pub drop: IntroDrop,
     pub parts: [Part; 2],
+    /// Fonts 0, 2, 4 and 6 from `mgavideo.dvr`, for the credits.
+    pub fonts: Vec<Font>,
 }
 
 /// Reads `vgaintro.dvr` and the two parts' layers and backdrops.
@@ -65,6 +70,9 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     };
     let drop = vgaintro::parse(&read("vgaintro.dvr")?)
         .map_err(|e| format!("vgaintro.dvr: cannot read the drop sequence: {e}"))?;
+    let fonts = mgavideo::parse(&read("mgavideo.dvr")?)
+        .map_err(|e| format!("mgavideo.dvr: no fonts this port can read: {e}"))?
+        .fonts;
     let part = |name: &'static str, layers: &[&str]| -> Result<Part, String> {
         let bytes = read(name)?;
         let picture = pcx::parse(&bytes).map_err(|e| format!("{name}: {e}"))?;
@@ -100,7 +108,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         n.first_part_end,
         n.cave_end
     );
-    Ok(Assets { drop, parts })
+    Ok(Assets { drop, parts, fonts })
 }
 
 /// An immediate byte as the CPU uses it in a word instruction: sign-extended.
@@ -392,7 +400,7 @@ enum Op {
     Poll,
     /// List bytes into the palette buffer: from, to, length.
     Copy(u16, u16, u16),
-    /// A text list in the credits area (not drawn yet).
+    /// A text list drawn into the credits area.
     Text(u16),
     /// The credits colour's weight set to this and its record started.
     Credits(u8),
@@ -622,7 +630,7 @@ impl Player {
                 Poll::Abort => return self.abort(),
             },
             Op::Copy(from, to, len) => self.copy(from, to, len),
-            Op::Text(list) => self.text(list),
+            Op::Text(list) => self.text(list, fb),
             Op::Credits(weight) => {
                 self.weight = weight;
                 self.start_anim(self.assets.drop.numbers.credits_record, weight);
@@ -723,14 +731,28 @@ impl Player {
         }
     }
 
-    fn text(&self, list: u16) {
-        match self.assets.drop.text_list(list) {
-            Ok(items) => log::debug!(
-                "drop: text list {list:#x} ({} strings) at counter {}, not drawn (needs the game's font)",
-                items.len(),
-                self.counter
-            ),
-            Err(e) => log::warn!("drop: text list {list:#x}: {e}"),
+    /// `ui_draw_text_list`: each string at its (`x`, `y`) on the 768-wide surface, in
+    /// its font and colour, transparent (`docs/formats/font.md`).
+    fn text(&self, list: u16, fb: &mut Framebuffer) {
+        let items = match self.assets.drop.text_list(list) {
+            Ok(items) => items,
+            Err(e) => return log::warn!("drop: text list {list:#x}: {e}"),
+        };
+        log::debug!(
+            "drop: text list {list:#x} ({} strings) at counter {}",
+            items.len(),
+            self.counter
+        );
+        for item in items {
+            let Some(font) = (item.font % 2 == 0)
+                .then(|| self.assets.fonts.get(usize::from(item.font / 2)))
+                .flatten()
+            else {
+                log::warn!("drop: no font {}", item.font);
+                continue;
+            };
+            let mut cursor = TextCursor::at(item.x.into(), item.y.into(), item.colour);
+            fb.draw_text(font, &mut cursor, &item.text, TextMode::Transparent);
         }
     }
 
@@ -747,7 +769,7 @@ impl Player {
             }
             CreditOp::WaitFrame(frame) => self.script.frame >= frame,
             CreditOp::Draw(list) => {
-                self.text(list);
+                self.text(list, fb);
                 true
             }
             CreditOp::FadeIn => {
@@ -831,7 +853,7 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xeno_formats::fixtures::{synthetic_numbers, synthetic_vgaintro};
+    use xeno_formats::fixtures::{synthetic_font_block, synthetic_numbers, synthetic_vgaintro};
 
     fn numbers() -> Numbers {
         synthetic_numbers()
@@ -856,6 +878,7 @@ mod tests {
                 part("x.pcx", 5, vec![layer(100), layer(110)]),
                 part("c.pcx", 6, vec![layer(100), layer(110), layer(20)]),
             ],
+            fonts: xeno_formats::font::parse(&synthetic_font_block()).unwrap(),
         }
     }
 
@@ -1024,6 +1047,27 @@ mod tests {
     }
 
     #[test]
+    fn credits_are_drawn_in_their_font_and_colour() {
+        use xeno_formats::font::Glyph;
+        let mut assets = assets();
+        // The synthetic list draws "HI" at (9, 8) in font 6, colour 252; give `H` a
+        // one-pixel-wide glyph, a full shade over its two rows.
+        assets.fonts[3].glyphs[usize::from(b'H')] = Some(Glyph {
+            width: 1,
+            rows: vec![3, 3],
+        });
+        let player = Player::new(assets, 90);
+        let mut fb = player.framebuffer();
+        player.text(0x40, &mut fb);
+        assert_eq!(
+            (fb.get(9, 8), fb.get(9, 9), fb.get(10, 8)),
+            (Some(252), Some(252), Some(0))
+        );
+        // An unknown list draws nothing and fails nothing.
+        player.text(0xfff0, &mut fb);
+    }
+
+    #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_drop_loads_and_plays_to_its_end() {
         use crate::game_dir::{ENV_VAR, GameDir};
@@ -1055,5 +1099,21 @@ mod tests {
         assert_eq!(player.script.state, 5);
         assert!(player.counter >= n.cave_end + n.last_blend_steps);
         assert!(usize::from(player.script.view_x) + 320 <= SURFACE.width);
+        // Every credit fits the credits area in its font, which the user's driver has.
+        let drop = &player.assets.drop;
+        let lists = drop.credits.iter().filter_map(|op| match op {
+            CreditOp::Draw(list) => Some(*list),
+            _ => None,
+        });
+        for list in lists.chain([n.copyright]) {
+            for item in drop.text_list(list).unwrap() {
+                let font = &player.assets.fonts[usize::from(item.font / 2)];
+                let bottom = usize::from(item.y) + usize::from(font.header.height);
+                assert!(
+                    bottom <= CREDITS_ROWS && usize::from(item.x) < 320,
+                    "{item:?}"
+                );
+            }
+        }
     }
 }

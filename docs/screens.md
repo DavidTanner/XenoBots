@@ -99,7 +99,7 @@ key word (bit 7 of the low byte masked off) with a table at `DS:0x616a`:
 
 | Key word | Handler | Effect |
 |---|---|---|
-| `0x001c` (Enter) | `ui_name_entry_accept` (`1000:790b`) | Nothing if the name is empty. Else copies it into the save name template `DS:0x613b` (`NAME    .LOG`, padded with spaces to 8) and into the exit message at `DS:0x618c` ("THANKS FOR PLAYING, NAME.", put in the buffer shown on exit with slot `0x54`), and sets the done flag to 1 |
+| `0x001c` (Enter) | `ui_name_entry_accept` (`1000:790b`) | Nothing if the name is empty. Else copies it into the save name template `DS:0x613b` (`NAME    .LOG`, padded with spaces to 8) and into the exit message at `DS:0x618c` (a thank-you line: fixed text, padded so the name lands at `DS:0x61a0`, then a full stop and a NUL written by `1000:7927`; shown on exit with slot `0x54`, from `mov si, 0x618c` at `1000:7946`), and sets the done flag to 1 |
 | `0x0001` (ESC) | `ui_name_entry_cancel` (`1000:794e`) | Puts the previous name back from the template and sets the done flag to `0xff` |
 | `0x000e` (Backspace) | `ui_name_entry_backspace` (`1000:78f1`) | If the name is not empty, drops its last character and marks the field for redrawing |
 | Anything else | `ui_name_entry_type_char` (`1000:78a7`) | If the name is shorter than 8, turns the key word into a character (`1fe6:3e86`, not traced); accepts `0`-`9` and `A`-`Z`, and `a`-`z` turned into upper case; appends it and marks the field for redrawing |
@@ -138,15 +138,15 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 
 | State | Shows | Keys |
 |---|---|---|
-| Log-in | `login.m@l` | Enter: map room. ESC: quit |
+| Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
 | Map room | `maproom.m@l` | P, Enter, Space: mission. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys) |
 | Training menu | `trainmen.m@l` | H, N, S, C: training mission. ESC, Alt+Q: map room (the original's keys) |
 | Review | `review.m@l` | ESC, Enter: map room |
 | Mission | `sitroom.m@l`, or a console's `.m@l` | F1 to F4: situation room, humanoid, scorpion, scout. W won, L lost, C campaign won |
 | Cutscene (won, lost, campaign won) | A synthetic card: green, red or yellow block | Enter, Space, ESC: map room |
 
-Keys that only the port uses (log-in Enter, review, mission, cutscenes) are placeholders
-until the screens are built (T-041 to T-044, T-056). A training mission goes back to
+Keys that only the port uses (review, mission, cutscenes) are placeholders until the
+screens are built (T-042 to T-044, T-056). A training mission goes back to
 the map room without a cutscene, as in the original; T is not gated on `DS:0x5fab`.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
@@ -160,13 +160,27 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
 - **Fades.** Leaving a screen fades the palette out over 32 retraces (`Dac::fade_out`);
   the next screen is drawn once the black is uploaded and fades in over 32 retraces
   (64 for the log-in), ending one level short as the driver's fade does. Keys pressed
-  while fading out are dropped. The colour animations a screen starts are not run yet
-  (the log-in cursor blink, T-041).
-- **Labels.** There is no font yet, so the window title names the screen and its keys.
+  while fading out are dropped. The colour records are `mgavideo.dvr`'s own list, read
+  from the user's copy; the log-in holds them over its fade in.
+- **Log-in** (`crates/xeno-app/src/login.rs`, T-041): as "The name entry" above. Typed
+  characters arrive as `InputEvent::Text`; Enter, ESC and Backspace as key words with
+  no modifier. Keys typed during the fade in count at once (the original queues them
+  until its fade is over; the result is the same). Record 23 blinks colour 254 from the
+  end of the fade in until the name is done, then stops where it stands. The field is
+  drawn after each change, so there is no cursor before the first key, as we read the
+  original. A name logs in: the port remembers it, whether `<NAME>.LOG` is in the game
+  directory, and the campaign table from `scendef.bin`, and fades to the map room. It
+  does not read the save (T-057) and never writes one (the original saves on N and Q
+  from the map room; the port logs that it would). The original's goodbye, a thank-you line
+  with the name in it, is printed when the window closes after a log-in. It is game
+  text, so `xeno_formats::farewell` reads it from the user's `xeno.exe` (the three
+  instructions above give its start, the name's place and the closing character); if
+  it cannot, the game exits without it.
+- **Labels.** The window title names the screen and its keys.
 - **Mouse.** The pointer and buttons reach the screens through the log
   (`docs/game-loop.md`, "Input"), and a placeholder arrow is drawn at the pointer, but
   no screen acts on a click yet (the widgets are T-042 on).
-- **Not modelled**: the name entry, the save file, scenario selection, the widgets, the
+- **Not modelled**: the save file, scenario selection, the widgets, the
   real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016`
   and `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and
   the music.

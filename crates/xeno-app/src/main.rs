@@ -8,6 +8,7 @@ mod game_dir;
 mod input;
 mod intro;
 mod keymap;
+mod login;
 mod pointer;
 mod screens;
 mod test_pattern;
@@ -198,9 +199,9 @@ fn main() -> ExitCode {
     let front = match start {
         // Not shown after --view.
         _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
-        Some(start) => match screens::load(&files) {
-            Ok(pictures) => {
-                window::FrontEnd::Screens(Box::new(screens::Screens::new(pictures, start)))
+        Some(start) => match screens::load(&files).and_then(|p| Ok((p, login::load(&files)?))) {
+            Ok((pictures, login)) => {
+                window::FrontEnd::Screens(Box::new(screens::Screens::new(pictures, login, start)))
             }
             Err(e) => {
                 eprintln!("error: cannot show the screens: {e}");
