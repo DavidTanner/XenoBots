@@ -120,8 +120,11 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
   while fading out are dropped. The colour animations a screen starts are not run yet
   (the log-in cursor blink, T-041).
 - **Labels.** There is no font yet, so the window title names the screen and its keys.
-- **Not modelled**: the name entry, the save file, scenario selection, the widgets and
-  mouse, the real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016`
+- **Mouse.** The pointer and buttons reach the screens through the log
+  (`docs/game-loop.md`, "Input"), and a placeholder arrow is drawn at the pointer, but
+  no screen acts on a click yet (the widgets are T-042 on).
+- **Not modelled**: the name entry, the save file, scenario selection, the widgets, the
+  real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016`
   and `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and
   the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen

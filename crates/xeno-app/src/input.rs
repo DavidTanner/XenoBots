@@ -1,5 +1,6 @@
 //! The game's own input events, free of winit: keys by PC scan code, typed text, the
-//! set of held keys, and a log of the events each retrace received. The sim and the
+//! mouse in view pixels, the set of held keys, and a log of the events each retrace
+//! received. The sim and the
 //! screens read input only through the log, so a recorded log replays exactly
 //! (`docs/game-loop.md`). `translate` turns winit events into these.
 //!
@@ -41,6 +42,72 @@ pub enum InputEvent {
     },
     /// A printable character typed (layout and shift applied), for name entry.
     Text(char),
+    /// The pointer moved to view pixel (`x`, `y`) (T-040: clamped to the view).
+    MouseMove {
+        x: u16,
+        y: u16,
+    },
+    /// A button went down on the picture, or up.
+    MouseDown {
+        button: MouseButton,
+    },
+    MouseUp {
+        button: MouseButton,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl MouseButton {
+    fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// The mouse as the game sees it: where the pointer is (`None` until it first moves
+/// over the window) and the buttons held.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Mouse {
+    pub position: Option<(u16, u16)>,
+    buttons: u8,
+}
+
+impl Mouse {
+    pub fn is_down(&self, button: MouseButton) -> bool {
+        self.buttons & button.bit() != 0
+    }
+
+    /// Marks `button` held or not; returns whether that changed it.
+    pub fn set(&mut self, button: MouseButton, down: bool) -> bool {
+        let was = self.is_down(button);
+        self.buttons = (self.buttons & !button.bit()) | if down { button.bit() } else { 0 };
+        was != down
+    }
+
+    pub fn apply(&mut self, event: &InputEvent) {
+        match *event {
+            InputEvent::MouseMove { x, y } => self.position = Some((x, y)),
+            InputEvent::MouseDown { button } => {
+                self.set(button, true);
+            }
+            InputEvent::MouseUp { button } => {
+                self.set(button, false);
+            }
+            _ => {}
+        }
+    }
+
+    /// The buttons held, in order.
+    pub fn held(&self) -> impl Iterator<Item = MouseButton> + '_ {
+        [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+            .into_iter()
+            .filter(|&b| self.is_down(b))
+    }
 }
 
 /// The keys held down.
@@ -77,7 +144,7 @@ impl Keys {
             InputEvent::KeyUp { code } => {
                 self.release(code);
             }
-            InputEvent::Text(_) => {}
+            _ => {}
         }
     }
 
@@ -181,6 +248,38 @@ mod tests {
         assert_eq!(first[1].2, "p");
         assert!(first[4].1.is_down(ScanCode::ENTER));
         assert!(!first[3].1.is_down(ScanCode::ENTER));
+    }
+
+    #[test]
+    fn mouse_events_replay_into_the_same_pointer_and_buttons() {
+        let left = MouseButton::Left;
+        let mut log = InputLog::default();
+        log.record(1, [InputEvent::MouseMove { x: 3, y: 4 }]);
+        log.record(2, [down(0x1c), InputEvent::MouseDown { button: left }]);
+        log.record(3, [InputEvent::MouseMove { x: 319, y: 0 }]);
+        log.record(3, [InputEvent::MouseUp { button: left }]);
+        let replay = |log: &InputLog| {
+            let (mut mouse, mut keys) = (Mouse::default(), Keys::default());
+            (1..=3)
+                .map(|r| {
+                    for e in log.events_at(r) {
+                        mouse.apply(e);
+                        keys.apply(e);
+                    }
+                    (mouse.clone(), keys.held().count())
+                })
+                .collect::<Vec<_>>()
+        };
+        let seen = replay(&log);
+        assert_eq!(seen, replay(&log.clone()));
+        assert_eq!(seen[0].0.position, Some((3, 4)));
+        assert!(seen[1].0.is_down(left) && seen[1].1 == 1);
+        assert_eq!(seen[2].0.position, Some((319, 0)));
+        assert_eq!(seen[2].0.held().count(), 0);
+        let mut mouse = Mouse::default();
+        assert!(mouse.set(MouseButton::Right, true));
+        assert!(!mouse.set(MouseButton::Right, true));
+        assert_eq!(mouse.held().collect::<Vec<_>>(), [MouseButton::Right]);
     }
 
     #[test]

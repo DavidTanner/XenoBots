@@ -548,7 +548,11 @@ mod tests {
 
     #[test]
     fn a_log_replays_the_same_screens() {
-        let log = presses(&[0x1c, 0x14, 0x01, 0x19, 0x3d, 0x26, 0x1c, 0x13]);
+        let mut log = presses(&[0x1c, 0x14, 0x01, 0x19, 0x3d, 0x26, 0x1c, 0x13]);
+        // The mouse doesn't move between screens yet.
+        let left = crate::input::MouseButton::Left;
+        log.record(950, [InputEvent::MouseMove { x: 1, y: 2 }]);
+        log.record(951, [InputEvent::MouseDown { button: left }]);
         let (_, first) = run(&log, Login, 1000);
         let (_, again) = run(&log.clone(), Login, 1000);
         assert_eq!(first, again);

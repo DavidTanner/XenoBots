@@ -1,16 +1,22 @@
 //! Turns winit window events into the game's input events (`input`) and the window's
 //! own actions: quit, and the fullscreen toggle. Only this module and `window` see winit.
 //!
+//! The mouse is mapped from window pixels to view pixels through the presented
+//! layout ([`Translator::set_layout`], `xeno_render::Layout::view_point`): moves are
+//! clamped to the view, presses count only on the picture, and releases always pass so
+//! no button sticks.
+//!
 //! Keys are mapped by physical position to IBM PC scan codes (set 1), the codes the
 //! original read from the keyboard. The table follows Microsoft's "Keyboard Scan Code
 //! Specification" (rev. 1.3a, 2000), appendix C, from the USB HID usages that winit's
 //! `KeyCode` names. Pause, Print Screen and the Windows keys are left out: their codes
 //! are multi-byte sequences or later than the game.
 
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton as WinitButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+use xeno_render::{Layout, Size};
 
-use crate::input::{InputEvent, Keys, ScanCode};
+use crate::input::{InputEvent, Keys, Mouse, MouseButton, ScanCode};
 
 /// What the window should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +37,14 @@ pub struct Translator {
     /// Set by a screen that uses ESC itself (T-040). Until then ESC belongs to the
     /// window: it leaves fullscreen, or quits from a window, and the game never sees it.
     pub screen_claims_escape: bool,
+    /// The layout last presented and its view, to map the cursor.
+    layout: Option<(Layout, Size)>,
+    /// The cursor in window pixels, while it is over the window.
+    cursor: Option<(f64, f64)>,
+    /// Whether the cursor is on the picture.
+    inside: bool,
+    /// The pointer and buttons the game has been sent.
+    mouse: Mouse,
 }
 
 impl Translator {
@@ -46,6 +60,25 @@ impl Translator {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.alt = modifiers.state().alt_key();
+                None
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = Some((position.x, position.y));
+                self.map_cursor();
+                None
+            }
+            WindowEvent::CursorLeft { .. } => {
+                (self.cursor, self.inside) = (None, false);
+                None
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let button = match button {
+                    WinitButton::Left => MouseButton::Left,
+                    WinitButton::Right => MouseButton::Right,
+                    WinitButton::Middle => MouseButton::Middle,
+                    _ => return None,
+                };
+                self.button(button, *state == ElementState::Pressed);
                 None
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -116,10 +149,61 @@ impl Translator {
         None
     }
 
+    /// The layout the picture was last presented with (window pixels) and its view. A
+    /// change moves the pointer if the cursor is still.
+    pub fn set_layout(&mut self, layout: Layout, view: Size) {
+        if self.layout != Some((layout, view)) {
+            self.layout = Some((layout, view));
+            self.map_cursor();
+        }
+    }
+
+    /// Whether the cursor is over the picture (for hiding the system cursor there).
+    pub fn cursor_on_picture(&self) -> bool {
+        self.inside
+    }
+
+    /// Sends the pointer's view pixel if it moved.
+    fn map_cursor(&mut self) {
+        let (Some((layout, view)), Some((x, y))) = (self.layout, self.cursor) else {
+            return;
+        };
+        let p = layout.view_point(view, x, y);
+        self.inside = p.inside;
+        let at = Some((p.x as u16, p.y as u16));
+        if at != self.mouse.position {
+            let (x, y) = (p.x as u16, p.y as u16);
+            let event = InputEvent::MouseMove { x, y };
+            self.mouse.apply(&event);
+            self.pending.push(event);
+        }
+    }
+
+    /// A press counts only on the picture, once the pointer is known; a release only
+    /// for a button the game saw go down.
+    fn button(&mut self, button: MouseButton, pressed: bool) {
+        let send = if pressed {
+            self.inside && self.mouse.position.is_some()
+        } else {
+            self.mouse.is_down(button)
+        };
+        if send && self.mouse.set(button, pressed) {
+            self.pending.push(if pressed {
+                InputEvent::MouseDown { button }
+            } else {
+                InputEvent::MouseUp { button }
+            });
+        }
+    }
+
     fn release_all(&mut self) {
         let held: Vec<_> = self.held.held().collect();
         self.pending
             .extend(held.into_iter().map(|code| InputEvent::KeyUp { code }));
+        let buttons: Vec<_> = self.mouse.held().collect();
+        for button in buttons {
+            self.button(button, false);
+        }
         self.held = Keys::default();
         self.alt = false;
     }
@@ -378,6 +462,91 @@ mod tests {
         t.screen_claims_escape = true;
         assert_eq!(esc(&mut t, true), None);
         assert_eq!(events(&mut t), [down(0x01, false)]);
+    }
+
+    #[test]
+    fn the_cursor_maps_to_view_pixels_and_buttons_count_on_the_picture() {
+        use winit::dpi::PhysicalPosition;
+        use winit::event::DeviceId;
+        use xeno_render::{Aspect, Scale};
+        let id = DeviceId::dummy();
+        let moved = |t: &mut Translator, x, y| {
+            let position = PhysicalPosition::new(x, y);
+            t.window_event(
+                &WindowEvent::CursorMoved {
+                    device_id: id,
+                    position,
+                },
+                true,
+            )
+        };
+        let click = |t: &mut Translator, pressed| {
+            let state = if pressed {
+                ElementState::Pressed
+            } else {
+                ElementState::Released
+            };
+            let button = WinitButton::Left;
+            let event = WindowEvent::MouseInput {
+                device_id: id,
+                state,
+                button,
+            };
+            t.window_event(&event, true)
+        };
+        let left = MouseButton::Left;
+        let mut t = Translator::default();
+        // No layout yet, so no pointer, and no press.
+        moved(&mut t, 330.0, 50.0);
+        click(&mut t, true);
+        assert_eq!(events(&mut t), []);
+        // 4x5 at (320, 40) in 1920x1080, as in fullscreen with the cursor hidden.
+        let view = Size::MODE_13H;
+        let layout = Layout::new(view, Size::new(1920, 1080), Scale::Auto, Aspect::Correct);
+        t.set_layout(layout, view);
+        assert_eq!(events(&mut t), [InputEvent::MouseMove { x: 2, y: 2 }]);
+        moved(&mut t, 331.0, 51.0); // the same view pixel: nothing
+        click(&mut t, true);
+        click(&mut t, true); // already down
+        moved(&mut t, 10.0, 2000.0); // dragged off: clamped, and the release passes
+        click(&mut t, false);
+        click(&mut t, true); // on the bar: dropped
+        click(&mut t, false);
+        assert_eq!(
+            events(&mut t),
+            [
+                InputEvent::MouseDown { button: left },
+                InputEvent::MouseMove { x: 0, y: 199 },
+                InputEvent::MouseUp { button: left },
+            ]
+        );
+        // A resize under a still cursor moves the pointer; leaving keeps it.
+        moved(&mut t, 400.0, 300.0);
+        t.set_layout(
+            Layout::new(view, Size::new(800, 600), Scale::Fixed(5), Aspect::Correct),
+            view,
+        );
+        assert!(t.cursor_on_picture());
+        t.window_event(&WindowEvent::CursorLeft { device_id: id }, true);
+        assert!(!t.cursor_on_picture());
+        assert_eq!(
+            events(&mut t),
+            [
+                InputEvent::MouseMove { x: 20, y: 52 },
+                InputEvent::MouseMove { x: 160, y: 100 },
+            ]
+        );
+        // Losing focus releases a held button.
+        moved(&mut t, 400.0, 300.0);
+        click(&mut t, true);
+        t.window_event(&WindowEvent::Focused(false), true);
+        assert_eq!(
+            events(&mut t),
+            [
+                InputEvent::MouseDown { button: left },
+                InputEvent::MouseUp { button: left },
+            ]
+        );
     }
 
     #[test]

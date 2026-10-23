@@ -8,6 +8,7 @@ mod game_dir;
 mod input;
 mod intro;
 mod keymap;
+mod pointer;
 mod screens;
 mod test_pattern;
 mod translate;
