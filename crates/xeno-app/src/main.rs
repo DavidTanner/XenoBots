@@ -12,6 +12,7 @@ mod login;
 mod maproom;
 mod mission;
 mod pointer;
+mod review;
 mod screens;
 mod test_pattern;
 mod translate;

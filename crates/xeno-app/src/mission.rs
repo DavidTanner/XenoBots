@@ -3,7 +3,9 @@
 //! (`docs/screens.md`, "The mission's views", "Orders"). The simulation does not run
 //! yet (T-050 on), so what it would draw (the 3D view, scanners, instruments, the
 //! roster's contents) is a labelled placeholder for T-056; switching views and setting
-//! orders work.
+//! orders work. So does the briefing (T-044): the scenario's `ORDR` text, typed into the
+//! situation room's main view in its orders mode (O), as `ui_sitroom_type_orders_text`
+//! types it (`docs/screens.md`, "The briefing (T-044)").
 //!
 //! The orders live in [`xeno_formats::orders::OrderBook`], built from the mission's
 //! `.usg` file and kept for the whole mission, so they persist across views. The
@@ -45,7 +47,30 @@ mod handler {
     pub const VIEW_SELECTED: u16 = 0x6852;
     pub const NEXT_SELECTED: u16 = 0x67e8;
     pub const PREVIOUS_SELECTED: u16 = 0x680c;
+    /// Situation room: the main view's modes, by key (O, S, M, R, C), and the mode each
+    /// sets (`ui_sitroom_set_view_mode`).
+    pub const MODES: [(u16, u8); 5] = [
+        (0x67d0, 0),
+        (0x67ca, 2),
+        (0x67d6, 4),
+        (0x67dc, 6),
+        (0x67e2, 8),
+    ];
 }
+
+/// The situation room's main view (widget type 0x50) and its orders mode, and how
+/// `ui_sitroom_type_orders_text` types the briefing in it: font 4, colour 0x1d (0x17 for
+/// codes with bit 7), from (96, 30), after clearing the view to colour 0x10. Short code
+/// constants, kept here.
+const MAIN_VIEW_TYPE: u16 = 0x50;
+pub const ORDERS_MODE: u8 = 0;
+const ORDERS_FONT: u16 = 4;
+const ORDERS_COLOUR: u8 = 0x1d;
+const ORDERS_HIGH_COLOUR: u8 = 0x17;
+const ORDERS_CLEAR: u8 = 0x10;
+const ORDERS_CURSOR: (i32, i32) = (96, 30);
+/// The base's main view mode (+0x37) in a `.usg` object's `data` (from +0x0c).
+const BASE_MODE: usize = 0x37 - 0x0c;
 
 /// Alt+Q, the only key word the situation room's end handler acts on.
 const ALT_Q: u16 = 0x2010;
@@ -110,7 +135,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         .program_panel
         .iter()
         .map(|s| s.font)
-        .chain([UNIT_FONT])
+        .chain([UNIT_FONT, ORDERS_FONT])
     {
         let font = video
             .font(id)
@@ -240,6 +265,11 @@ pub struct Mission {
     unit_pressed: bool,
     /// The situation room's buttons' shared pressed look (base +0x40).
     button_look: bool,
+    /// The briefing (`ORDR`), the main view's mode (base +0x37) and how many of the
+    /// briefing's bytes are typed (+0x34).
+    orders: Vec<u8>,
+    mode: u8,
+    typed: usize,
     capture: Option<(Target, MouseButton)>,
     dirty: bool,
 }
@@ -247,7 +277,24 @@ pub struct Mission {
 impl Mission {
     /// A mission on `scenario`, starting in the situation room.
     pub fn new(file: String, scenario: &Scenario) -> Mission {
-        Mission::with_book(file, OrderBook::from_scenario(scenario))
+        let mut mission = Mission::with_book(file, OrderBook::from_scenario(scenario));
+        mission.orders = scenario.briefing.clone().unwrap_or_default();
+        // The mission starts in the mode saved in the player's base.
+        let base = scenario
+            .objects
+            .iter()
+            .flatten()
+            .find(|o| o.kind == usg::ObjectKind::Base && o.side() == Some(Side::Human));
+        mission.mode = base
+            .and_then(|o| o.data.get(BASE_MODE))
+            .copied()
+            .unwrap_or(ORDERS_MODE);
+        log::debug!(
+            "mission: the situation room starts in view mode {} ({} briefing bytes)",
+            mission.mode,
+            mission.orders_end()
+        );
+        mission
     }
 
     /// A mission with no file (no robots): only the views' pictures.
@@ -273,6 +320,9 @@ impl Mission {
             panel_swap: false,
             unit_pressed: false,
             button_look: false,
+            orders: Vec::new(),
+            mode: ORDERS_MODE,
+            typed: 0,
             capture: None,
             dirty: true,
         }
@@ -331,6 +381,8 @@ impl Mission {
 
     fn base(&mut self) -> Request {
         self.viewed = Viewed::Base;
+        // Drawing the situation room's picture starts the orders again (`1000:54fc`).
+        self.typed = 0;
         self.reset_looks();
         Request::Show(View::SitRoom)
     }
@@ -394,6 +446,22 @@ impl Mission {
         self.view_robot(slot).map(Request::Show)
     }
 
+    /// The briefing's length as typed: up to its first NUL or 0x1a.
+    fn orders_end(&self) -> usize {
+        let end = self.orders.iter().position(|&b| b == 0 || b == 0x1a);
+        end.unwrap_or(self.orders.len())
+    }
+
+    /// One retrace in the situation room: in the orders mode, one more byte of the
+    /// briefing, until its end (one per pass of the original's mission loop).
+    pub fn retrace(&mut self) {
+        if self.viewed == Viewed::Base && self.mode == ORDERS_MODE && self.typed < self.orders_end()
+        {
+            self.typed += 1;
+            self.dirty = true;
+        }
+    }
+
     /// The key word `word` went down in the view shown.
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
         let view = self.view();
@@ -427,6 +495,17 @@ impl Mission {
             }
             (Viewed::Base, handler::END) => (word == ALT_Q).then_some(Request::End),
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
+            (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
+                let mode = handler::MODES.iter().find(|&&(m, _)| m == h)?.1;
+                log::debug!("situation room: main view mode {mode}");
+                if mode != ORDERS_MODE {
+                    log::debug!("situation room: mode {mode} needs the running mission (T-056)");
+                }
+                self.mode = mode;
+                self.typed = 0;
+                self.dirty = true;
+                None
+            }
             (Viewed::Base, handler::NEXT_SELECTED | handler::PREVIOUS_SELECTED) => {
                 let step = if handler == handler::NEXT_SELECTED {
                     1
@@ -604,13 +683,33 @@ impl Mission {
         } else {
             &VIEW_COLOURS
         };
+        if self.viewed == Viewed::Base && self.mode == ORDERS_MODE {
+            self.draw_orders(fb, assets);
+        }
         let font = assets.fonts.get(&UNIT_FONT);
         for &colour in colours {
-            hatch(fb, colour, font);
+            hatch(fb, colour, font, "T-056");
         }
         match self.viewed {
             Viewed::Base => self.draw_situation(fb, assets),
             Viewed::Robot(slot) => self.draw_console(fb, assets, slot),
+        }
+    }
+
+    /// The orders mode: the main view's colour-255 pixels cleared to 0x10 (slot `0x5b4`,
+    /// as we read it), then the briefing's bytes typed so far, transparent, CR LF as the
+    /// font's control codes, with no wrapping.
+    fn draw_orders(&self, fb: &mut Framebuffer, assets: &Assets) {
+        let tables = &assets.views.situation;
+        if let Some(area) = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area) {
+            recolour(fb, area, 255, ORDERS_CLEAR);
+        }
+        if let Some(font) = assets.fonts.get(&ORDERS_FONT) {
+            let (x, y) = ORDERS_CURSOR;
+            let mut cursor = TextCursor::at(x, y, ORDERS_COLOUR);
+            cursor.high_colour = ORDERS_HIGH_COLOUR;
+            let typed = &self.orders[..self.typed.min(self.orders.len())];
+            fb.draw_text(font, &mut cursor, typed, TextMode::Transparent);
         }
     }
 
@@ -739,7 +838,7 @@ fn set(fb: &mut Framebuffer, (x, y): (usize, usize), colour: u8) {
 }
 
 /// Slot `0x51a`: the rectangle in one colour.
-fn fill(fb: &mut Framebuffer, area: Rect, colour: u8) {
+pub fn fill(fb: &mut Framebuffer, area: Rect, colour: u8) {
     for at in pixels(area) {
         set(fb, at, colour);
     }
@@ -781,9 +880,9 @@ fn frame(fb: &mut Framebuffer, area: Rect, colour: u8) {
 }
 
 /// The port's placeholder over the pixels of `colour`, where the mission would draw:
-/// a sparse grid of the colour on black, and a label for T-056 at the region's
-/// top-left corner.
-fn hatch(fb: &mut Framebuffer, colour: u8, font: Option<&Font>) {
+/// a sparse grid of the colour on black, and `label` (the task that fills it) at the
+/// region's top-left corner.
+pub fn hatch(fb: &mut Framebuffer, colour: u8, font: Option<&Font>, label: &str) {
     let view = fb.view();
     let mut corner: Option<(usize, usize)> = None;
     for y in 0..view.height {
@@ -801,7 +900,7 @@ fn hatch(fb: &mut Framebuffer, colour: u8, font: Option<&Font>) {
     }
     if let (Some((x, y)), Some(font)) = (corner, font) {
         let mut cursor = TextCursor::at(x as i32 + 2, y as i32 + 2, PLACEHOLDER);
-        fb.draw_text(font, &mut cursor, b"T-056", TextMode::Opaque);
+        fb.draw_text(font, &mut cursor, label.as_bytes(), TextMode::Opaque);
     }
 }
 
@@ -847,7 +946,7 @@ pub mod tests {
             views: views::read_image(&image, DS, &relocated).unwrap(),
             training: views::read_training_image(&image, DS, &relocated).unwrap(),
             programs: orders::read_image(&programs, DS).unwrap(),
-            fonts: [0, 2]
+            fonts: [0, 2, ORDERS_FONT]
                 .into_iter()
                 .map(|id| (id, fonts[0].clone()))
                 .collect(),
@@ -976,6 +1075,110 @@ pub mod tests {
         m.mouse_down(RIGHT, Some((300, 190)), &assets);
         m.draw(&mut fb, &assets);
         assert_eq!(fb.get(273, 185), Some(8));
+    }
+
+    #[test]
+    fn the_orders_type_one_byte_a_retrace_with_no_wrapping() {
+        let mut assets = test_assets();
+        let area = Rect {
+            top: 26,
+            left: 91,
+            bottom: 130,
+            right: 292,
+        };
+        let main_view = views::Widget {
+            kind: MAIN_VIEW_TYPE,
+            state: 0,
+            area: Some(area),
+        };
+        assets.views.situation.widgets.push(main_view);
+        // O and M, bound as the original binds them.
+        assets
+            .views
+            .situation
+            .keys
+            .extend([(0x18, 0x67d0), (0x32, 0x67d6)]);
+        let mut m = mission(&assets);
+        // A synthetic briefing: `A`, CR LF, `A`, a line too long for the view, then the
+        // end-of-file byte and more text that is never typed.
+        let mut orders = b"A\r\nA\r\n".to_vec();
+        orders.extend([b'A'; 60]);
+        orders.extend(b"\x1a\x1aA");
+        m.orders = orders;
+        m.mode = ORDERS_MODE;
+        for _ in 0..100 {
+            m.retrace();
+        }
+        assert_eq!(m.typed, 66, "stops at 0x1a");
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.fill_rect(xeno_render::Rect::new(91, 26, 201, 104), 255);
+        m.draw(&mut fb, &assets);
+        // The synthetic font: `A` is a bar `XXX.` over `X.X.`, cells 4 wide, lines 3
+        // high. CR goes back to x 96, LF down a line; the long line runs on past the
+        // view's right edge (no wrapping).
+        assert_eq!(fb.get(96, 30), Some(0x1d));
+        assert_eq!(fb.get(96, 33), Some(0x1d));
+        assert_eq!(fb.get(96 + 4 * 49, 36), Some(0x1d), "past the right edge");
+        assert_eq!(fb.get(96, 39), Some(0x10), "cleared, no fourth line");
+        // M: another mode, its placeholder, nothing typed; O starts the orders again.
+        assert_eq!(m.key(0x32, &assets), None);
+        m.retrace();
+        assert_eq!((m.mode, m.typed), (4, 0));
+        m.key(0x18, &assets);
+        m.retrace();
+        assert_eq!((m.mode, m.typed), (ORDERS_MODE, 1));
+        // Viewing a console stops it; coming back starts it again.
+        m.view_robot(2);
+        m.retrace();
+        assert_eq!(m.typed, 1);
+        m.key(0x01, &assets);
+        assert_eq!(m.typed, 0);
+    }
+
+    /// Types every stock scenario's briefing from the user's files to its end in the
+    /// orders mode, and checks it stays inside the main view.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_every_briefing_types_inside_the_main_view() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let tables = &assets.views.situation;
+        let area = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area).unwrap();
+        assert_eq!(assets.scenarios.len(), 17);
+        for (name, scenario) in &assets.scenarios {
+            let mut m = Mission::new(name.clone(), scenario);
+            m.mode = ORDERS_MODE;
+            while m.typed < m.orders_end() {
+                m.retrace();
+            }
+            assert!(m.typed > 0, "{name}");
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            let (w, h) = (area.right - area.left, area.bottom - area.top);
+            let rect =
+                xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
+            fb.fill_rect(rect, 255);
+            m.draw(&mut fb, &assets);
+            let mut inked = 0;
+            for (x, y) in pixels(Rect {
+                top: 0,
+                left: 0,
+                bottom: 200,
+                right: 320,
+            }) {
+                if fb.get(x, y).is_some_and(|p| (0x1d..=0x1f).contains(&p)) {
+                    assert!(area.contains(x as u16, y as u16), "{name}: ({x}, {y})");
+                    inked += 1;
+                }
+            }
+            assert!(inked > 100, "{name}: {inked} pixels inked");
+        }
     }
 
     #[test]

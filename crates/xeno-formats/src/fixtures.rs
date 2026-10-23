@@ -797,9 +797,10 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
     vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1, widgets + 4]
 }
 
-/// Where [`synthetic_review`] puts the widget set and the texts.
+/// Where [`synthetic_review`] puts the widget set and the texts (in the map room's
+/// string segment, at offset 0x40).
 pub const SYNTHETIC_REVIEW_WIDGETS: usize = 0x18400;
-pub const SYNTHETIC_REVIEW_STRINGS: usize = 0x19800;
+pub const SYNTHETIC_REVIEW_STRINGS: usize = SYNTHETIC_MAP_ROOM_STRINGS + 0x40;
 
 /// Writes made-up review tables (`crate::review`) into `image`, whose data segment
 /// starts at `ds`, and returns the image offsets to relocate, ascending: a picture, a
@@ -807,11 +808,12 @@ pub const SYNTHETIC_REVIEW_STRINGS: usize = 0x19800;
 /// previous); font 2 in colour 0x33; three panels; two pages (models 0 and 2) whose
 /// texts are `A`..`E` and `F`, new line, `G`. `image` must reach
 /// `SYNTHETIC_REVIEW_STRINGS + 16` and `ds + 0xe0`, and the tables use `ds + 0xa0` to
-/// `ds + 0xe0`; it leaves the other synthetic tables alone.
+/// `ds + 0xe0`; it leaves the other synthetic tables alone, sharing the string segment
+/// [`synthetic_map_room`] points at.
 pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
     use crate::maproom::STRINGS_SEGMENT;
     use crate::review::*;
-    let (widgets, strings) = (SYNTHETIC_REVIEW_WIDGETS, SYNTHETIC_REVIEW_STRINGS);
+    let (widgets, strings) = (SYNTHETIC_REVIEW_WIDGETS, SYNTHETIC_MAP_ROOM_STRINGS);
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let words =
         |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
@@ -851,14 +853,15 @@ pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
         &words(&[20, 10, 80, 150, 110, 10, 180, 150, 130, 170, 180, 300]),
     );
     put(KERNEL + 0x7b30, &words(&[0x7b40, 0x7b70]));
-    for (page, (model, texts)) in [(0, [0, 2, 4]), (2, [6, 8, 10])].into_iter().enumerate() {
+    let texts = [(0, [0x40, 0x42, 0x44]), (2, [0x46, 0x48, 0x4a])];
+    for (page, (model, texts)) in texts.into_iter().enumerate() {
         let code = KERNEL + 0x7b40 + 0x30 * page;
         put(code + PAGE_MODEL.0, &[PAGE_MODEL.1, &[model]].concat());
         for ((at, code_op), text) in PAGE_TEXTS.into_iter().zip(texts) {
             put(code + at, &op(code_op, text));
         }
     }
-    put(strings, b"A\0B\0C\0D\0E\0F\x0cG\0");
+    put(strings + 0x40, b"A\0B\0C\0D\0E\0F\x0cG\0");
     vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1]
 }
 
