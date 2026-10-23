@@ -112,6 +112,9 @@ cargo run --release -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n
 | Home, End | First or last sprite; for a picture, the left or right edge |
 | Space | Draw sprites opaque, or with colour 0 transparent so the checkerboard shows through |
 | Arrows | Pan a wide picture one pixel per retrace while held |
+| F | Fade the palette out to black over 32 retraces |
+| I | Fade the palette back in from black over 32 retraces |
+| R | Start or stop rotating colours 16..31 through the file's own colours, one place every 4 retraces |
 
 ESC, F11 and Alt+Enter work as above.
 

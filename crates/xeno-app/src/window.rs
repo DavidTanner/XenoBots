@@ -263,7 +263,9 @@ impl App {
         }
         match &mut self.viewer {
             Some(viewer) => {
-                if viewer.step(self.log.events_at(retrace), &self.keys) {
+                let changed = viewer.step(self.log.events_at(retrace), &self.keys);
+                self.palette = viewer.shown_palette();
+                if changed {
                     viewer.draw(&mut self.fb);
                     self.title = viewer.title();
                     log::debug!("{}", self.title);
