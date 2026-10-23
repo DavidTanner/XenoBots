@@ -3,6 +3,10 @@
 //! pictures wider or taller than the view are panned over a larger surface, as the
 //! hardware-scrolled screens are (`docs/formats/video-modes.md`).
 //!
+//! The palette goes through `xeno_render::Dac` as the original driver's does, so the
+//! viewer can fade it out and in and rotate a range of colours with a synthetic
+//! colour-animation record (T-037; `docs/formats/palette.md`).
+//!
 //! The state and its key handling are plain data, tested without a window; `window`
 //! steps it once per retrace with that retrace's input.
 
@@ -10,7 +14,8 @@ use std::path::Path;
 
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::{FormatError, Palette, mal, pcx, vcl};
-use xeno_render::{Anchor, BlitMode, Framebuffer, Rect, Size, SpriteBlit};
+use xeno_render::anim::{self, flag};
+use xeno_render::{Anchor, BlitMode, DAC_BYTES, Dac, Fade, Framebuffer, Rect, Size, SpriteBlit};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, ScanCode};
@@ -201,6 +206,16 @@ const PAGE_DOWN: ScanCode = ScanCode(0xe051);
 const HOME: ScanCode = ScanCode(0xe047);
 const END: ScanCode = ScanCode(0xe04f);
 const SPACE: ScanCode = ScanCode(0x39);
+const F: ScanCode = ScanCode(0x21);
+const I: ScanCode = ScanCode(0x17);
+const R: ScanCode = ScanCode(0x13);
+
+/// Retraces of the F and I fades (the intro's abort fade).
+const FADE: u16 = 32;
+/// The colours R rotates, a step every [`ROTATE_SPEED`] retraces. The range is the
+/// viewer's choice; the colours are the file's own.
+const ROTATE: std::ops::RangeInclusive<u8> = 16..=31;
+const ROTATE_SPEED: u8 = 4;
 
 /// Side of a background square behind sprites.
 const CHECKER: usize = 8;
@@ -217,6 +232,10 @@ pub struct Viewer {
     keyed: bool,
     /// Pictures: the view's top-left on the surface.
     origin: (usize, usize),
+    /// The palette as shown: `palette` in DAC levels, faded or rotated.
+    dac: Dac,
+    /// A fade in waiting for its black to be uploaded.
+    fade_in: Option<Fade>,
 }
 
 impl Viewer {
@@ -224,12 +243,19 @@ impl Viewer {
         Viewer {
             name,
             content,
-            palette,
             view: kind.view(),
             index: 0,
             keyed: false,
             origin: (0, 0),
+            dac: Dac::with_palette(&to_vga6(&palette)),
+            fade_in: None,
+            palette,
         }
+    }
+
+    /// What the window shows: the palette after fades and rotation.
+    pub fn shown_palette(&self) -> Palette {
+        self.dac.palette()
     }
 
     /// The view, or the picture if it is wider or taller.
@@ -268,6 +294,12 @@ impl Viewer {
         events: impl IntoIterator<Item = &'a InputEvent>,
         keys: &Keys,
     ) -> bool {
+        self.dac.retrace();
+        if !self.dac.dirty()
+            && let Some(fade) = self.fade_in.take()
+        {
+            self.dac.start(fade);
+        }
         let before = (self.index, self.keyed, self.origin);
         let mut pressed = Keys::default();
         for event in events {
@@ -289,6 +321,20 @@ impl Viewer {
     }
 
     fn key(&mut self, code: ScanCode) {
+        match code {
+            F => {
+                // Slot 0x4c0: drop a pending upload, then fade what the DAC shows.
+                self.fade_in = None;
+                self.dac.stop();
+                self.dac.fade_out(0, 255, FADE, u16::MAX);
+            }
+            I => {
+                let target = to_vga6(&self.palette);
+                self.fade_in = Some(self.dac.prepare_fade_in(&target, 0, 255, FADE));
+            }
+            R => self.toggle_rotation(),
+            _ => {}
+        }
         let last = match &self.content {
             Content::Sprites(sprites) => sprites.len().saturating_sub(1),
             Content::Picture { .. } => {
@@ -309,6 +355,28 @@ impl Viewer {
             SPACE => self.keyed = !self.keyed,
             _ => {}
         }
+    }
+
+    /// R: rotate [`ROTATE`] through the file's own colours there, or stop and put the
+    /// shadow palette back.
+    fn toggle_rotation(&mut self) {
+        let running = self
+            .dac
+            .anims()
+            .flags(0)
+            .is_some_and(|f| f & flag::ACTIVE != 0);
+        if running {
+            self.dac.anims_mut().stop_all();
+            let shadow = *self.dac.shadow();
+            self.dac.set(&shadow);
+            return;
+        }
+        let (first, last) = (*ROTATE.start(), *ROTATE.end());
+        let ring = &to_vga6(&self.palette)[usize::from(first) * 3..(usize::from(last) + 1) * 3];
+        let count = last - first + 1;
+        self.dac
+            .set_anims(anim::list(&[(1, ROTATE_SPEED, first, count, ring)]));
+        self.dac.start_anim(0, 0);
     }
 
     /// Draws the current state into `fb`, made by [`Viewer::framebuffer`].
@@ -389,6 +457,15 @@ impl Viewer {
         };
         format!("Xenobots - {}: {what}", self.name)
     }
+}
+
+/// `palette` back in 6-bit DAC levels: every palette here was widened from them (or,
+/// for a `.pcx`, stored widened the same way), so this is exact.
+fn to_vga6(palette: &Palette) -> [u8; DAC_BYTES] {
+    std::array::from_fn(|b| {
+        let c = palette[(b / 3) as u8];
+        [c.r, c.g, c.b][b % 3] >> 2
+    })
 }
 
 /// The darkest and the brightest colour of `palette` (lowest index on a tie), for a
@@ -567,6 +644,35 @@ mod tests {
         // (159, 99) is in the 8x8 square at (152, 96): the 39th across, 12th down.
         assert_eq!(fb.get(159, 99), Some(252));
         assert_eq!(fb.get(160, 99), Some(9));
+    }
+
+    #[test]
+    fn f_fades_out_i_fades_back_and_r_rotates_the_files_colours() {
+        let mut v = picture(Kind::Screen, 320, 200);
+        let grey = |v: &Viewer, c: u8| v.shown_palette()[c].r >> 2;
+        assert_eq!(grey(&v, 200), 50);
+        press(&mut v, F);
+        hold(&mut v, &[], usize::from(FADE) + 2);
+        assert!((0..=255).all(|c| grey(&v, c) == 0));
+        // The fade in starts once its black is uploaded and ends one level short.
+        press(&mut v, I);
+        hold(&mut v, &[], usize::from(FADE) + 3);
+        assert_eq!((grey(&v, 200), grey(&v, 4)), (49, 0));
+        // R: colours 16..=31 (grey 4..=7) move one place every 4 retraces, in the
+        // file's own colours.
+        let mut v = picture(Kind::Screen, 320, 200);
+        press(&mut v, R);
+        hold(&mut v, &[], 1);
+        let before: Vec<u8> = (16..=31).map(|c| grey(&v, c)).collect();
+        assert_eq!(before[..5], [4, 4, 4, 4, 5]);
+        hold(&mut v, &[], 4);
+        let after: Vec<u8> = (16..=31).map(|c| grey(&v, c)).collect();
+        assert_eq!((&after[..15], after[15]), (&before[1..], before[0]));
+        assert_eq!((grey(&v, 15), grey(&v, 32)), (3, 8));
+        // R again stops it and puts the shadow palette back.
+        press(&mut v, R);
+        hold(&mut v, &[], 1);
+        assert_eq!(grey(&v, 16), 4);
     }
 
     #[test]
