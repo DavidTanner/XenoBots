@@ -7,6 +7,7 @@
 pub mod ban;
 pub mod dsounds;
 mod error;
+pub mod farewell;
 pub mod fgd;
 pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]

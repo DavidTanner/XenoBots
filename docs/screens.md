@@ -99,7 +99,7 @@ key word (bit 7 of the low byte masked off) with a table at `DS:0x616a`:
 
 | Key word | Handler | Effect |
 |---|---|---|
-| `0x001c` (Enter) | `ui_name_entry_accept` (`1000:790b`) | Nothing if the name is empty. Else copies it into the save name template `DS:0x613b` (`NAME    .LOG`, padded with spaces to 8) and into the exit message at `DS:0x618c` ("THANKS FOR PLAYING, NAME.", put in the buffer shown on exit with slot `0x54`), and sets the done flag to 1 |
+| `0x001c` (Enter) | `ui_name_entry_accept` (`1000:790b`) | Nothing if the name is empty. Else copies it into the save name template `DS:0x613b` (`NAME    .LOG`, padded with spaces to 8) and into the exit message at `DS:0x618c` (a thank-you line: fixed text, padded so the name lands at `DS:0x61a0`, then a full stop and a NUL written by `1000:7927`; shown on exit with slot `0x54`, from `mov si, 0x618c` at `1000:7946`), and sets the done flag to 1 |
 | `0x0001` (ESC) | `ui_name_entry_cancel` (`1000:794e`) | Puts the previous name back from the template and sets the done flag to `0xff` |
 | `0x000e` (Backspace) | `ui_name_entry_backspace` (`1000:78f1`) | If the name is not empty, drops its last character and marks the field for redrawing |
 | Anything else | `ui_name_entry_type_char` (`1000:78a7`) | If the name is shorter than 8, turns the key word into a character (`1fe6:3e86`, not traced); accepts `0`-`9` and `A`-`Z`, and `a`-`z` turned into upper case; appends it and marks the field for redrawing |
@@ -171,8 +171,11 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
   original. A name logs in: the port remembers it, whether `<NAME>.LOG` is in the game
   directory, and the campaign table from `scendef.bin`, and fades to the map room. It
   does not read the save (T-057) and never writes one (the original saves on N and Q
-  from the map room; the port logs that it would). The original's goodbye, "THANKS FOR
-  PLAYING, NAME.", is printed when the window closes after a log-in.
+  from the map room; the port logs that it would). The original's goodbye, a thank-you line
+  with the name in it, is printed when the window closes after a log-in. It is game
+  text, so `xeno_formats::farewell` reads it from the user's `xeno.exe` (the three
+  instructions above give its start, the name's place and the closing character); if
+  it cannot, the game exits without it.
 - **Labels.** The window title names the screen and its keys.
 - **Mouse.** The pointer and buttons reach the screens through the log
   (`docs/game-loop.md`, "Input"), and a placeholder arrow is drawn at the pointer, but

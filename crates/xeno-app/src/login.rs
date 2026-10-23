@@ -7,11 +7,13 @@
 //!
 //! Then the original loads `<NAME>.LOG` or starts a campaign from `scendef.bin`. Here
 //! a [`Player`] remembers the name, whether the save exists, and the campaign table
-//! from `scendef.bin`; reading the save is T-057. Nothing is ever written.
+//! from `scendef.bin`; reading the save is T-057. Nothing is ever written. The goodbye
+//! printed on exit is read from the user's `xeno.exe` ([`xeno_formats::farewell`]).
 
+use xeno_formats::farewell::{self, Farewell};
 use xeno_formats::font::Font;
-use xeno_formats::mgavideo;
 use xeno_formats::scendef::{self, ScenarioTable};
+use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{Framebuffer, TextCursor, TextMode};
 
 use crate::game_dir::GameFiles;
@@ -46,10 +48,13 @@ pub struct Assets {
     pub saves: Vec<String>,
     /// `scendef.bin`: a new campaign's table.
     pub campaign: ScenarioTable,
+    /// The goodbye from `xeno.exe`, if this port can read it there.
+    pub farewell: Option<Farewell>,
 }
 
 /// Reads the font and the colour records from the user's `mgavideo.dvr`, the campaign
-/// from `scendef.bin`, and which saves exist.
+/// from `scendef.bin`, which saves exist, and the goodbye from `xeno.exe`. Only the
+/// goodbye may be missing: without it the game exits silently.
 pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let read = |name: &str| {
         files
@@ -66,11 +71,18 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         .filter_map(|name| name.strip_suffix(".log"))
         .map(str::to_string)
         .collect();
+    let farewell = read("xeno.exe")
+        .and_then(|exe| lzexe::unpack(&exe).map_err(|e| format!("xeno.exe: {e}")))
+        .and_then(|exe| farewell::read(&exe).map_err(|e| format!("xeno.exe: {e}")));
+    let farewell = farewell
+        .inspect_err(|e| log::warn!("no goodbye on exit: {e}"))
+        .ok();
     Ok(Assets {
         font,
         anims: video.anims,
         saves,
         campaign,
+        farewell,
     })
 }
 
@@ -83,13 +95,8 @@ pub struct Player {
     pub save_found: bool,
     /// The campaign's scenario table, with each scenario's `state`.
     pub campaign: ScenarioTable,
-}
-
-impl Player {
-    /// What the original leaves on the screen when the game exits.
-    pub fn farewell(&self) -> String {
-        format!("THANKS FOR PLAYING, {}.", self.name)
-    }
+    /// What the original leaves on the screen when the game exits, with the name in it.
+    pub farewell: Option<String>,
 }
 
 /// What a key did to the name entry.
@@ -169,6 +176,7 @@ impl Assets {
             log::info!("log-in: {name}, a new campaign from scendef.bin");
         }
         Player {
+            farewell: self.farewell.as_ref().map(|f| f.message(&name)),
             name,
             save_found,
             campaign: self.campaign.clone(),
@@ -178,7 +186,7 @@ impl Assets {
 
 /// Synthetic assets for tests: the synthetic font 0, a list of 24 records whose last
 /// blinks colour 254 between black and white every 2 retraces, no saves but `old`,
-/// and an empty campaign.
+/// an empty campaign and a made-up goodbye.
 #[cfg(test)]
 pub fn test_assets() -> Assets {
     use xeno_formats::fixtures::synthetic_font_block;
@@ -196,6 +204,10 @@ pub fn test_assets() -> Assets {
         campaign: ScenarioTable {
             scenarios: Vec::new(),
         },
+        farewell: Some(Farewell {
+            prefix: "SEE YOU, ".into(),
+            close: '!',
+        }),
     }
 }
 
@@ -258,6 +270,6 @@ mod tests {
         assert!(assets.player("OLD".into()).save_found);
         let player = assets.player("NEW".into());
         assert!(!player.save_found);
-        assert_eq!(player.farewell(), "THANKS FOR PLAYING, NEW.");
+        assert_eq!(player.farewell.as_deref(), Some("SEE YOU, NEW!"));
     }
 }

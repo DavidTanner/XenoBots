@@ -1,0 +1,8 @@
+---
+source: crates/xeno-formats/src/farewell.rs
+expression: farewell
+---
+Farewell {
+    prefix: "SEE YOU, ",
+    close: '!',
+}

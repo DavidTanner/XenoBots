@@ -298,7 +298,7 @@ impl Screens {
 
     /// What the original prints when the game exits after a log-in.
     pub fn exit_message(&self) -> Option<String> {
-        self.player.as_ref().map(Player::farewell)
+        self.player.as_ref().and_then(|p| p.farewell.clone())
     }
 
     pub fn screen(&self) -> Screen {
@@ -669,7 +669,7 @@ mod tests {
         assert_eq!(screens.screen(), MapRoom);
         let player = screens.player.as_ref().unwrap();
         assert_eq!((player.name.as_str(), player.save_found), ("AO1", false));
-        assert_eq!(screens.exit_message().unwrap(), "THANKS FOR PLAYING, AO1.");
+        assert_eq!(screens.exit_message().unwrap(), "SEE YOU, AO1!");
     }
 
     #[test]
