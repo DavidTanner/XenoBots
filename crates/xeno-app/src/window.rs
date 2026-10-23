@@ -30,9 +30,10 @@ use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
 use crate::clock::{Clock, Rate, Step};
 use crate::drop;
-use crate::input::{InputLog, Keys};
+use crate::input::{InputLog, Keys, Mouse};
 use crate::intro::Intro;
 use crate::keymap::KeyMap;
+use crate::pointer;
 use crate::screens::Screens;
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
@@ -95,6 +96,8 @@ pub fn run(
         input: Translator::default(),
         log: InputLog::default(),
         keys: Keys::default(),
+        mouse: Mouse::default(),
+        cursor_hidden: false,
         front,
         log_base: 0,
         sixty_hz: 0,
@@ -128,8 +131,11 @@ struct App {
     input: Translator,
     /// Every retrace's input. The game reads input only from here, so a log replays.
     log: InputLog,
-    /// The keys held, as the game sees them from the log.
+    /// The keys held, and the mouse, as the game sees them from the log.
     keys: Keys,
+    mouse: Mouse,
+    /// Whether the system cursor is hidden.
+    cursor_hidden: bool,
     /// The screens, or the test card, after the intro and the drop.
     front: FrontEnd,
     /// Retraces run at earlier rates: the clock restarts its count at a mode change,
@@ -246,6 +252,7 @@ impl App {
     /// use the one size read here, so a frame is never stretched or cropped by a stale
     /// buffer. Every resize and scale change asks for a new frame.
     fn redraw(&mut self) -> Result<(), Box<dyn Error>> {
+        let pointer = self.mouse.position.filter(|_| self.pointer_shown());
         let Some(surface) = &mut self.surface else {
             return Ok(());
         };
@@ -267,13 +274,19 @@ impl App {
                 layout.picture(self.fb.view())
             );
         }
+        self.input.set_layout(layout, self.fb.view());
         log::trace!(
             "redraw at {window_size:?} (scale factor {}, fullscreen {}): {layout:?}, picture {:?}",
             scale_factor,
             self.fullscreen,
             layout.picture(self.fb.view())
         );
+        // The game's pointer, only over the picture's pixels for this frame.
+        let under = pointer.map(|at| pointer::draw(&mut self.fb, at, &self.palette));
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        if let Some(under) = under {
+            under.restore(&mut self.fb);
+        }
         buffer.present()?;
         self.meter.frames_now += 1;
         Ok(())
@@ -290,6 +303,7 @@ impl App {
         for event in self.log.events_at(retrace) {
             log::debug!("retrace {retrace}: {event:?}");
             self.keys.apply(event);
+            self.mouse.apply(event);
         }
         let ticked = step.sixty_hz != self.sixty_hz;
         self.sixty_hz = step.sixty_hz;
@@ -366,6 +380,25 @@ impl App {
         }
     }
 
+    /// Whether the screens are up, which draw the game's pointer.
+    fn pointer_shown(&self) -> bool {
+        let screens = matches!(self.front, FrontEnd::Screens(_));
+        screens && self.viewer.is_none() && self.intro.is_none() && self.drop.is_none()
+    }
+
+    /// Hides the system cursor in fullscreen (also entered by the system, such as
+    /// macOS's green button) and over the picture while the game draws its pointer;
+    /// shows it on the bars and outside, where the game's pointer stays at the edge.
+    fn update_cursor(&mut self) {
+        let hide = self.fullscreen || (self.pointer_shown() && self.input.cursor_on_picture());
+        if hide != self.cursor_hidden
+            && let Some(surface) = &self.surface
+        {
+            self.cursor_hidden = hide;
+            surface.window().set_cursor_visible(!hide);
+        }
+    }
+
     /// Whether a screen asked to leave the game.
     fn quitting(&self) -> bool {
         matches!(&self.front, FrontEnd::Screens(s) if s.quit())
@@ -435,21 +468,16 @@ impl App {
             .is_some_and(|s| s.window().fullscreen().is_some())
     }
 
-    /// Notes a new inner size, hides the cursor in fullscreen (also entered by the
-    /// system, such as macOS's green button), and asks for a frame at that size.
+    /// Notes a new inner size and fullscreen, and asks for a frame at that size.
     fn resized(&mut self, size: PhysicalSize<u32>) {
         log::debug!("resized to {size:?}");
         self.size = size;
         let Some(surface) = &self.surface else {
             return;
         };
-        let window = surface.window();
-        let fullscreen = window.fullscreen().is_some();
-        if fullscreen != self.fullscreen {
-            self.fullscreen = fullscreen;
-            window.set_cursor_visible(!fullscreen);
-        }
-        window.request_redraw();
+        self.fullscreen = surface.window().fullscreen().is_some();
+        surface.window().request_redraw();
+        self.update_cursor();
     }
 
     /// Stops the event loop; `run` returns `error`.
@@ -539,6 +567,9 @@ impl ApplicationHandler for App {
                 window.request_redraw();
             }
             WindowEvent::Resized(size) => self.resized(size),
+            WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } => {
+                self.update_cursor();
+            }
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.redraw() {
                     self.fail(event_loop, e);

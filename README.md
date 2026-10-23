@@ -73,7 +73,9 @@ the drop alone. Then come the game's screens, as placeholders for now, in the or
 order: the log-in, then the map room, from which you play a mission, open the training
 menu or the review, log in again or quit. Each shows its picture from your `.m@l` files
 with a fade; the window title names the screen and its keys (there is no font yet), and
-nothing on them works beyond moving between them. See `docs/screens.md`.
+nothing on them works beyond moving between them. The mouse moves a placeholder arrow
+(the system cursor is hidden over the picture), but clicks do nothing yet. See
+`docs/screens.md`.
 
 | Screen | Keys |
 |---|---|

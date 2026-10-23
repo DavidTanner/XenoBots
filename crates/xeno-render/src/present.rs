@@ -125,6 +125,38 @@ impl Layout {
     pub fn picture(&self, view: Size) -> Size {
         Size::new(view.width * self.sx, view.height * self.sy)
     }
+
+    /// The view pixel under window point (`x`, `y`), the inverse of the layout: subtract
+    /// the picture's corner, divide by the factors, round down. The point is in the same
+    /// pixels as the layout (physical ones; winit's `CursorMoved` gives those), and may
+    /// be anywhere, outside the window or not a number. The result is clamped to the
+    /// view, so a point on a black bar or past the window gives the nearest edge pixel,
+    /// with `inside` false.
+    pub fn view_point(&self, view: Size, x: f64, y: f64) -> ViewPoint {
+        // `as` saturates and turns NaN into 0, which the comparisons call outside.
+        let axis = |p: f64, corner: isize, factor: usize, len: usize| {
+            let i = ((p - corner as f64) / factor.max(1) as f64).floor();
+            let inside = i >= 0.0 && i < len as f64;
+            let last = len.saturating_sub(1) as isize;
+            ((i as isize).clamp(0, last) as usize, inside)
+        };
+        let (vx, in_x) = axis(x, self.x, self.sx, view.width);
+        let (vy, in_y) = axis(y, self.y, self.sy, view.height);
+        ViewPoint {
+            x: vx,
+            y: vy,
+            inside: in_x && in_y,
+        }
+    }
+}
+
+/// A window point in view pixels ([`Layout::view_point`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewPoint {
+    pub x: usize,
+    pub y: usize,
+    /// Whether the point was on the picture, not on a bar or outside the window.
+    pub inside: bool,
 }
 
 /// The pixel shape that fills the frame, as height over width: `num / den`. A 4:3 frame
@@ -232,6 +264,58 @@ mod tests {
                 assert_eq!((l.0, l.1), (k, k), "{w}x{h} {aspect:?}");
             }
         }
+    }
+
+    #[test]
+    fn window_points_map_back_to_view_pixels() {
+        let m = Size::MODE_13H;
+        let at = |w, h, scale, x, y| {
+            let l = Layout::new(m, Size::new(w, h), scale, Aspect::Correct);
+            let p = l.view_point(m, x, y);
+            (p.x, p.y, p.inside)
+        };
+        // 5x6 filling 1600x1200, as an 800x600 window on a 2x display: physical pixels.
+        assert_eq!(at(1600, 1200, Scale::Auto, 0.0, 0.0), (0, 0, true));
+        assert_eq!(at(1600, 1200, Scale::Auto, 4.9, 6.0), (0, 1, true));
+        assert_eq!(
+            at(1600, 1200, Scale::Auto, 2.0 * 400.0, 2.0 * 300.0),
+            (160, 100, true)
+        );
+        assert_eq!(
+            at(1600, 1200, Scale::Auto, 1599.9, 1199.9),
+            (319, 199, true)
+        );
+        // 4x5 at (320, 40) in 1920x1080: the bars clamp to the nearest edge.
+        assert_eq!(at(1920, 1080, Scale::Auto, 320.0, 40.0), (0, 0, true));
+        assert_eq!(at(1920, 1080, Scale::Auto, 319.9, 40.0), (0, 0, false));
+        assert_eq!(at(1920, 1080, Scale::Auto, 100.0, 500.0), (0, 92, false));
+        assert_eq!(at(1920, 1080, Scale::Auto, 1800.0, 20.0), (319, 0, false));
+        assert_eq!(
+            at(1920, 1080, Scale::Auto, 1599.0, 1039.0),
+            (319, 199, true)
+        );
+        assert_eq!(
+            at(1920, 1080, Scale::Auto, 1600.0, 1039.0),
+            (319, 199, false)
+        );
+        // --scale 5 in 800x600: the middle 160x100 is shown, every point is on it.
+        assert_eq!(at(800, 600, Scale::Fixed(5), 0.0, 0.0), (80, 50, true));
+        assert_eq!(
+            at(800, 600, Scale::Fixed(5), 799.0, 599.0),
+            (239, 149, true)
+        );
+        // Outside the window (a drag holding a button), and nonsense.
+        assert_eq!(at(1600, 1200, Scale::Auto, -0.5, -10.0), (0, 0, false));
+        assert_eq!(at(1600, 1200, Scale::Auto, 5e9, 1e300), (319, 199, false));
+        assert_eq!(at(1600, 1200, Scale::Auto, f64::NAN, 3.0), (0, 0, false));
+        // The 320x240 mode, 3x3 at (0, 0) in 960x720.
+        let l = Layout::new(
+            Size::MODE_240,
+            Size::new(960, 720),
+            Scale::Auto,
+            Aspect::Correct,
+        );
+        assert_eq!(l.view_point(Size::MODE_240, 959.0, 719.0).y, 239);
     }
 
     #[test]

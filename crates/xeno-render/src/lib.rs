@@ -16,6 +16,6 @@ mod sprite;
 pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
 pub use framebuffer::{Framebuffer, Rect, RenderError, Size};
-pub use present::{Aspect, Layout, Scale, present};
+pub use present::{Aspect, Layout, Scale, ViewPoint, present};
 pub use sprite::{Anchor, BlitMode, Orientation, SpriteBlit};
 pub use xeno_formats::{Palette, Rgb};

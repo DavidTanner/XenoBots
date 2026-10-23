@@ -103,7 +103,20 @@ else sees winit.
   Each retrace records them in an `InputLog` and then reads them back from it, so the
   game sees input only through the log, and a log replays exactly. The log is in
   memory only for now.
-- **Mouse**: not yet (see T-040 and T-041 in `NEXT_STEPS.md`).
+- **Mouse** (T-040): `CursorMoved` (physical pixels, sent in fullscreen with the cursor
+  hidden too) is mapped to a view pixel with the inverse of the presented layout
+  (`xeno_render::Layout::view_point`: subtract the picture's corner, divide by the
+  factors, round down), clamped to the view, so the black bars and points outside the
+  window give the nearest edge, as a DOS mouse stops at the screen's edge. The game
+  gets `MouseMove { x, y }` when that pixel changes (also when a resize moves the
+  picture under a still cursor), `MouseDown` only on the picture and once the pointer
+  is known, and `MouseUp` for a button it saw go down (so a drag released off the
+  picture, or losing focus, never leaves one stuck). They are queued and logged per
+  retrace like keys, and `input::Mouse` holds the pointer and buttons. While the
+  screens are up the window draws a placeholder pointer into the framebuffer for each
+  frame (saving and restoring the pixels under it, as the original's pointer slots
+  do) and hides the system cursor over the picture; on the bars and outside the system
+  cursor shows.
 
 ## Where it goes later
 
