@@ -295,6 +295,17 @@ impl Mission {
         Some(view_of(robot.kind))
     }
 
+    /// The object viewed, for the log: the base, or the robot's slot and kind.
+    pub fn viewed_label(&self) -> String {
+        match self.viewed {
+            Viewed::Base => "the base".into(),
+            Viewed::Robot(slot) => match self.book.get(slot) {
+                Some(robot) => format!("unit {slot} ({:?})", robot.kind),
+                None => format!("unit {slot}"),
+            },
+        }
+    }
+
     /// The view of the object viewed.
     pub fn view(&self) -> View {
         match self.viewed {
@@ -874,6 +885,7 @@ pub mod tests {
         let assets = test_assets();
         let mut m = mission(&assets);
         assert_eq!(m.view(), View::SitRoom);
+        assert_eq!(m.viewed_label(), "the base");
         // Space? The synthetic situation room binds only F2 and ESC: neither does
         // anything there. The roster's first row selects unit 2; a right release opens
         // its console.
@@ -884,6 +896,7 @@ pub mod tests {
             Some(Request::Show(View::Humanoid))
         );
         assert_eq!(m.viewed(), Viewed::Robot(2));
+        assert_eq!(m.viewed_label(), "unit 2 (Humanoid)");
         // A left release on the program panel: the next program, automatic.
         assert_eq!(click(&mut m, &assets, (130, 92), LEFT), None);
         assert_eq!(m.book.get(2).unwrap().orders, Orders::given(2));

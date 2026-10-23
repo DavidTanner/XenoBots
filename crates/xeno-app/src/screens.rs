@@ -579,7 +579,7 @@ impl Screens {
     fn mission_request(&mut self, request: MissionRequest, fb: &mut Framebuffer) {
         match request {
             MissionRequest::Show(view) => {
-                log::info!("mission: {view:?} view");
+                log::info!("mission: {view:?} view of {}", self.mission.viewed_label());
                 self.screen = Mission(view);
                 self.changed = true;
                 if let Some((_, picture)) = Mission(view)
