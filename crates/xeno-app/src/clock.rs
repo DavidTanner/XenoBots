@@ -115,6 +115,12 @@ impl Clock {
         self.retraces
     }
 
+    /// The retrace rate it runs at.
+    #[cfg(test)]
+    pub fn rate(&self) -> Rate {
+        self.rate
+    }
+
     pub fn dropped(&self) -> u64 {
         self.dropped
     }

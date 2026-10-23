@@ -91,9 +91,9 @@ pub struct Endings {
     pub per_loss: u16,
     /// Each caption's bytes from the string segment, with its NUL: win, lose by index,
     /// triumph.
-    win_bytes: Vec<u8>,
-    lose_bytes: [Vec<u8>; LOSE_ENTRIES],
-    triumph_bytes: Vec<u8>,
+    pub win_bytes: Vec<u8>,
+    pub lose_bytes: [Vec<u8>; LOSE_ENTRIES],
+    pub triumph_bytes: Vec<u8>,
 }
 
 /// What the win caption's fields show.
@@ -132,9 +132,15 @@ impl Endings {
                 Value::Losses => u16::from(numbers.losses),
                 Value::Points => numbers.points,
             };
+            // `read_image` checks that each field fits; skip one that does not.
             let from = usize::from(copy.from);
-            let to = usize::from(copy.to - self.win.caption);
-            bytes[to..to + 2].copy_from_slice(&digits(value)[from..from + 2]);
+            let to = usize::from(copy.to.wrapping_sub(self.win.caption));
+            let number = digits(value);
+            if let (Some(slot), Some(word)) =
+                (bytes.get_mut(to..to + 2), number.get(from..from + 2))
+            {
+                slot.copy_from_slice(word);
+            }
         }
         sequence::caption_text(&bytes).to_vec()
     }

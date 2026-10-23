@@ -1099,6 +1099,93 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     relocated
 }
 
+/// Where [`synthetic_endings`] puts the start-up fix-up table, the entries (from
+/// `ds + SYNTHETIC_ENDINGS_DATA`) and the captions (in the map room's string segment).
+pub const SYNTHETIC_FIXUPS: usize = 0x18800;
+pub const SYNTHETIC_ENDINGS_DATA: usize = 0xe800;
+pub const SYNTHETIC_CAPTIONS: u16 = 0x100;
+
+/// Writes made-up endings (`crate::ending`) and a start-up fix-up table pointing
+/// `DS:0x60` at [`SYNTHETIC_MAP_ROOM_STRINGS`] (`crate::sequence::string_segment`)
+/// into `image`, whose data segment starts at `ds`, and returns the image offsets to
+/// relocate, ascending. Win at `DS:+0x00`, lose entries at `+0x20` and `+0x3a` (the
+/// first used for selectors 0 and 4), triumph at `+0x80`, the lose table at `+0xc0`,
+/// weights 7 and 3 at `+0x100`, the points at `+0x104`, the number buffer at `+0x110`
+/// (offsets from `ds + SYNTHETIC_ENDINGS_DATA`). Each entry holds 1 tick, with its
+/// caption at (10, 20), end time 100, fades of 4 and a caption speed of 2. The
+/// captions: win `K=00`, new line, `L=00`, new line, `P=` and six spaces; `LOST`;
+/// `GONE`; 9, 5, `ALL`. `image` must reach `SYNTHETIC_FIXUPS + 16`,
+/// `SYNTHETIC_MAP_ROOM_STRINGS + 0x200` and `ds + 0xea00`.
+pub fn synthetic_endings(image: &mut [u8], ds: usize) -> Vec<usize> {
+    use crate::ending::*;
+    use crate::sequence::{FIXUPS_SEGMENT, FIXUPS_TABLE};
+    let data = ds + SYNTHETIC_ENDINGS_DATA;
+    let at = |offset: u16| (SYNTHETIC_ENDINGS_DATA + usize::from(offset)) as u16;
+    let strings = SYNTHETIC_MAP_ROOM_STRINGS;
+    let caption = |offset: u16| SYNTHETIC_CAPTIONS + offset;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    let entry = |file_id: u16, text: u16| {
+        words(&[file_id, 0, 0, 0, 1, caption(text), 10, 20, 100, 4, 4, 2, 0])
+    };
+    put(data, &entry(0x16, 0));
+    put(data + 0x20, &entry(0x1c, 0x30));
+    put(data + 0x3a, &entry(0x1a, 0x38));
+    put(data + 0x80, &entry(0x1e, 0x40));
+    put(data + 0xc0, &words(&[at(0x20), at(0x3a), at(0x20)]));
+    put(data + 0x100, &words(&[7, 3]));
+    put(
+        strings + usize::from(caption(0)),
+        b"K=00\x0cL=00\x0cP=      \0",
+    );
+    put(strings + usize::from(caption(0x30)), b"LOST\0");
+    put(strings + usize::from(caption(0x38)), b"GONE\0");
+    put(strings + usize::from(caption(0x40)), b"\x09\x05ALL\0");
+    let buffer = at(0x110);
+    for ((code, bytes), value) in [
+        (WIN_ENTRY, at(0)),
+        (TRIUMPH_ENTRY, at(0x80)),
+        (LOSE_SELECTOR, 0x6012),
+        (LOSE_TABLE, at(0xc0)),
+        (PER_KILL, at(0x100)),
+        (PER_LOSS, at(0x102)),
+        (POINTS, at(0x104)),
+        (WIN_POINTS, at(0x104)),
+        (BUFFERS[0], buffer),
+        (BUFFERS[1], buffer),
+        (BUFFERS[2], buffer),
+    ] {
+        put(code, &op(bytes, value));
+    }
+    for es in STRINGS_LOADS {
+        put(es, LOAD_STRINGS);
+    }
+    for ((_, load, store), (from, to)) in
+        COPIES
+            .into_iter()
+            .zip([(3, 2), (3, 7), (0, 0xc), (2, 0xe), (4, 0x10)])
+    {
+        put(load, &op(&[0xa1], buffer + from));
+        put(store, &op(&[0x26, 0xa3], caption(to)));
+    }
+    // The fix-ups: `DS:0x5c` to some segment, then `DS:0x60` to the strings'.
+    let table = SYNTHETIC_FIXUPS;
+    put(FIXUPS_SEGMENT.0, &op(FIXUPS_SEGMENT.1, (table / 16) as u16));
+    put(FIXUPS_TABLE.0, &op(FIXUPS_TABLE.1, 0));
+    put(
+        table,
+        &words(&[0, 0x5c, 0x1000, 0x60, (strings / 16) as u16, 0]),
+    );
+    vec![
+        FIXUPS_SEGMENT.0 + FIXUPS_SEGMENT.1.len(),
+        table,
+        table + 4,
+        table + 8,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

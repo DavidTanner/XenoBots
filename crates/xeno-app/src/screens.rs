@@ -9,9 +9,10 @@
 //! robot consoles, switched as the original switches them, with the robots' orders set
 //! on the consoles, and the briefing typed in the situation room's orders view; the
 //! simulation's parts are placeholders. So is the review (T-044, `review`): the robot
-//! reference's pages, texts, keys and buttons. The cutscenes are still placeholders: a
-//! synthetic card, faded as the original fades, and the window title names it and its
-//! keys.
+//! reference's pages, texts, keys and buttons. A won or lost mission ends in the
+//! original's cutscene (T-045, played by the window in the 320x240 mode with
+//! `intro::Cutscene`): the screens fade out, hand it over with [`Screens::take_cutscene`]
+//! and go back to the map room when told it is over.
 //!
 //! Keys go through (key word, action) tables, as the original's screens do
 //! (`docs/formats/key.md`, "The game's keys"); a screen claims ESC when its table
@@ -24,6 +25,7 @@ use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, Mouse, ScanCode};
+use crate::intro::{Cutscene, Endings};
 use crate::login::{self, NameEntry, Outcome, Player};
 use crate::maproom::{self, Campaign, MapState, Request};
 use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
@@ -132,12 +134,8 @@ const MISSION_KEYS: &[(KeyWord, Action)] = &[
     (KeyWord(CTRL | 0x26), End(Ending::Lost)),
     (KeyWord(CTRL | 0x2e), End(Ending::Triumph)),
 ];
-/// A key ends a cutscene (the original's abort hook takes any key but P).
-const CUTSCENE_KEYS: &[(KeyWord, Action)] = &[
-    (ESC, Go(MapRoom)),
-    (ENTER, Go(MapRoom)),
-    (SPACE, Go(MapRoom)),
-];
+/// A cutscene's keys go to the player (`intro::Cutscene`): any key but P skips it.
+const CUTSCENE_KEYS: &[(KeyWord, Action)] = &[];
 
 impl Screen {
     /// The `.m@l` file shown, if any.
@@ -187,9 +185,9 @@ impl Screen {
             Mission(View::Scout) => {
                 "Mission, scout console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
             }
-            Cutscene(Ending::Won) => "Mission won (cutscene placeholder): Enter/Space/ESC",
-            Cutscene(Ending::Lost) => "Mission lost (cutscene placeholder): Enter/Space/ESC",
-            Cutscene(Ending::Triumph) => "Campaign won (cutscene placeholder): Enter/Space/ESC",
+            Cutscene(Ending::Won) => "Mission won: any key but P skips, P pauses",
+            Cutscene(Ending::Lost) => "Mission lost: any key but P skips, P pauses",
+            Cutscene(Ending::Triumph) => "Campaign won: any key but P skips, P pauses",
         }
     }
 
@@ -302,6 +300,13 @@ pub struct Screens {
     /// The training button a press captured the pointer for, and with which button.
     training_press: Option<(usize, crate::input::MouseButton)>,
     review: ReviewState,
+    /// The cutscenes after a mission, once loaded ([`Screens::set_endings`]).
+    endings: Option<Box<Endings>>,
+    /// The cutscene to hand to the window.
+    ending: Option<Ending>,
+    /// The lose selector `DS:0x6012` / 2: the robot console opened last in the mission
+    /// (0 humanoid, 1 scorpion, 2 scout), reset when a mission starts.
+    console: usize,
 }
 
 /// The logged-in player's campaign, or the guest's.
@@ -348,6 +353,66 @@ impl Screens {
             mission,
             training_press: None,
             review: ReviewState::default(),
+            endings: None,
+            ending: None,
+            console: 0,
+        }
+    }
+
+    /// The cutscenes after a mission; without them the screens go straight back to
+    /// the map room.
+    pub fn set_endings(&mut self, endings: Endings) {
+        self.endings = Some(Box::new(endings));
+    }
+
+    /// The cutscene to play now, if a mission has just ended in one: the window plays
+    /// it in the 320x240 mode, then calls [`Screens::cutscene_over`]. As
+    /// `1000:6f9e`: the campaign won, else lost (the picture by the console opened
+    /// last), else won with the mission's numbers.
+    pub fn take_cutscene(&mut self) -> Option<Cutscene> {
+        let ending = self.ending.take()?;
+        let Some(endings) = &self.endings else {
+            log::warn!("{ending:?}: no cutscenes loaded; back to the map room");
+            self.cutscene_over();
+            return None;
+        };
+        log::info!("cutscene: {ending:?}");
+        Some(match ending {
+            Ending::Triumph => endings.triumph(),
+            Ending::Lost => endings.lost(self.console),
+            Ending::Won => {
+                // Nothing counts kills and losses until the sim exists (T-046).
+                let (kills, losses) = (0, 0);
+                let points = endings.table.points(kills, losses);
+                log::info!("won: {kills} kills, {losses} losses, {points} points (0 until T-046)");
+                endings.won(xeno_formats::ending::Numbers {
+                    kills,
+                    losses,
+                    points,
+                })
+            }
+        })
+    }
+
+    /// The cutscene has ended (in mode 13h again): the map room is drawn and fades in
+    /// from black.
+    pub fn cutscene_over(&mut self) {
+        log::info!("cutscene over: back to the map room");
+        self.fade_in = None;
+        self.dac.stop();
+        self.dac.blank();
+        self.next = Some(MapRoom);
+    }
+
+    /// Notes the robot console a mission view opens, for the lose picture.
+    fn viewed(&mut self, view: View) {
+        if let Some(console) = match view {
+            View::SitRoom => None,
+            View::Humanoid => Some(0),
+            View::Scorpion => Some(1),
+            View::Scout => Some(2),
+        } {
+            self.console = console;
         }
     }
 
@@ -628,6 +693,7 @@ impl Screens {
         match request {
             MissionRequest::Show(view) => {
                 log::info!("mission: {view:?} view of {}", self.mission.viewed_label());
+                self.viewed(view);
                 self.screen = Mission(view);
                 self.changed = true;
                 if let Some((_, picture)) = Mission(view)
@@ -708,6 +774,7 @@ impl Screens {
                     }
                 };
                 self.scenario = Some(i);
+                self.console = 0;
             }
             (MapRoom, Go(Training)) if !campaign.may_train() => {
                 log::debug!("map room: no training while a mission has no result");
@@ -755,6 +822,17 @@ impl Screens {
             other => other,
         };
         log::info!("screen: {:?}", screen);
+        if let Cutscene(ending) = screen {
+            // The palette stays black; the window plays it.
+            self.ending = Some(ending);
+            self.screen = screen;
+            self.next = None;
+            self.changed = true;
+            return;
+        }
+        if let Mission(view) = screen {
+            self.viewed(view);
+        }
         let picture = screen
             .file()
             .and_then(|f| self.pictures.iter().find(|(name, _)| *name == f));
@@ -764,7 +842,7 @@ impl Screens {
                 picture.dac
             }
             None => {
-                draw_placeholder(screen, fb);
+                draw_placeholder(fb);
                 to_vga6(&test_pattern::palette())
             }
         };
@@ -845,14 +923,10 @@ fn sample_mission(assets: &mission::Assets, view: View) -> (MissionState, Screen
     (mission, Mission(shown))
 }
 
-/// A screen with no picture: a border and a block in a colour of its own.
-fn draw_placeholder(screen: Screen, fb: &mut Framebuffer) {
-    use test_pattern::{BLACK, GREEN, RED, WHITE, YELLOW};
-    let colour = match screen {
-        Cutscene(Ending::Won) => GREEN,
-        Cutscene(Ending::Lost) => RED,
-        _ => YELLOW,
-    };
+/// A screen whose picture is missing: a border and a yellow block.
+fn draw_placeholder(fb: &mut Framebuffer) {
+    use test_pattern::{BLACK, WHITE, YELLOW};
+    let colour = YELLOW;
     let view = fb.view();
     let (w, h) = (view.width as u32, view.height as u32);
     fb.clear(WHITE);
@@ -861,7 +935,7 @@ fn draw_placeholder(screen: Screen, fb: &mut Framebuffer) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::input::InputLog;
     use xeno_render::Size;
@@ -896,7 +970,7 @@ mod tests {
         }
     }
 
-    fn new(start: Screen) -> Screens {
+    pub(crate) fn new(start: Screen) -> Screens {
         let map = maproom::tests::test_assets();
         let missions = mission::tests::test_assets();
         Screens::new(pictures(), login::test_assets(), map, missions, start)
@@ -908,14 +982,18 @@ mod tests {
     const CTRL_L: u16 = CTRL_KEY | 0x26;
     const CTRL_C: u16 = CTRL_KEY | 0x2e;
 
-    /// Runs `retraces` retraces of the log; returns the screen after each.
+    /// Runs `retraces` retraces of the log; returns the screen after each. As the
+    /// window does, it takes a cutscene the screens ask for; with no cutscenes loaded
+    /// the screens go back to the map room at once.
     fn run(log: &InputLog, start: Screen, retraces: u64) -> (Screens, Vec<Screen>) {
         let mut screens = new(start);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let seen = (1..=retraces)
             .map(|r| {
                 screens.retrace(log.events_at(r), &mut fb);
-                screens.screen()
+                let screen = screens.screen();
+                assert!(screens.take_cutscene().is_none());
+                screen
             })
             .collect();
         (screens, seen)
@@ -969,19 +1047,22 @@ mod tests {
             final_screen(&[0x1c, 0x0f, 0x19, 0x39, 0x0f, 0x01]),
             Mission(View::SitRoom)
         );
+        // A mission's end fades to its cutscene, then back to the map room, where P
+        // plays again.
+        for (key, ending) in [
+            (CTRL_W, Ending::Won),
+            (CTRL_L, Ending::Lost),
+            (CTRL_C, Ending::Triumph),
+        ] {
+            let (_, seen) = run(&presses(&[0x1c, 0x0f, 0x19, key]), Login, 500);
+            let at = seen.iter().position(|&s| s == Cutscene(ending)).unwrap();
+            assert_eq!(seen[at - 1], Mission(View::SitRoom));
+            assert_eq!(seen[499], MapRoom);
+        }
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, CTRL_W]),
-            Cutscene(Ending::Won)
+            final_screen(&[0x1c, 0x0f, 0x19, CTRL_L, 0x19]),
+            Mission(View::SitRoom)
         );
-        assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, CTRL_L]),
-            Cutscene(Ending::Lost)
-        );
-        assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x39, CTRL_C]),
-            Cutscene(Ending::Triumph)
-        );
-        assert_eq!(final_screen(&[0x1c, 0x0f, 0x19, CTRL_L, 0x39]), MapRoom);
         assert_eq!(final_screen(&[0x1c, 0x31]), Login);
         // A training mission (A, the synthetic menu's) goes back to the map room
         // without a cutscene.
@@ -1051,7 +1132,8 @@ mod tests {
             .iter()
             .map(|s| s.claims_escape())
             .collect();
-        assert_eq!(claims, [true, false, true]);
+        // A cutscene's keys go to the player, which the window gives ESC to.
+        assert_eq!(claims, [true, false, false]);
         // The training menu's, the review's and the views' tables (the user's) bind ESC.
         for screen in [
             Training,
@@ -1090,7 +1172,7 @@ mod tests {
 
     #[test]
     fn a_log_replays_the_same_screens() {
-        let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x0f, CTRL_L, 0x1c, 0x13]);
+        let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x0f, CTRL_L, 0x13]);
         // A click outside the map area and the buttons does nothing.
         let left = crate::input::MouseButton::Left;
         log.record(1050, [InputEvent::MouseMove { x: 1, y: 2 }]);
@@ -1183,7 +1265,7 @@ mod tests {
         click(&mut log, 200, (285, 155), Left);
         assert_eq!(*run(&log, Login, 300).1.last().unwrap(), Review);
         let (screens, _) = run(
-            &presses(&[0x1c, 0x0f, 0x19, CTRL_W, 0x1c, 0x14, 0x1e]),
+            &presses(&[0x1c, 0x0f, 0x19, CTRL_W, 0x14, 0x1e]),
             Login,
             800,
         );
@@ -1216,14 +1298,94 @@ mod tests {
             login::test_assets(),
             map,
             mission::tests::test_assets(),
-            Cutscene(Ending::Lost),
+            MapRoom,
         );
         screens.retrace([], &mut fb);
         assert_eq!(fb.get(0, 0), Some(test_pattern::WHITE));
-        assert_eq!(fb.get(160, 100), Some(test_pattern::RED));
-        // A missing picture is drawn the same way rather than failing.
-        screens.enter(MapRoom, &mut fb);
         assert_eq!(fb.get(160, 100), Some(test_pattern::YELLOW));
+    }
+
+    /// Endings with flat synthetic pictures and the synthetic tables
+    /// (`xeno_formats::fixtures::synthetic_endings`).
+    pub(crate) fn endings() -> Endings {
+        let ds = 0x200;
+        let mut image = vec![0u8; 0x1c000];
+        xeno_formats::fixtures::synthetic_endings(&mut image, ds);
+        let strings = xeno_formats::fixtures::SYNTHETIC_MAP_ROOM_STRINGS;
+        let table = xeno_formats::ending::read_image(&image, ds, strings).unwrap();
+        let pictures = [
+            "win.vcl",
+            "slose.vcl",
+            "nlose.vcl",
+            "slose.vcl",
+            "triumph.vcl",
+        ]
+        .map(|name| crate::intro::Picture {
+            name,
+            dac: [9; DAC_BYTES],
+            pixels: vec![1; 640 * 240],
+            caption: Vec::new(),
+        });
+        Endings::new(table, pictures.to_vec(), None)
+    }
+
+    /// Plays the cutscene the screens hand over to its end, as the window does.
+    fn play_cutscene(cutscene: &mut Cutscene) -> u64 {
+        let mut fb = Cutscene::framebuffer();
+        (1..).find(|_| cutscene.retrace([], true, &mut fb)).unwrap()
+    }
+
+    #[test]
+    fn the_lose_cutscene_is_picked_by_the_console_opened_last() {
+        let mut screens = new(Login);
+        screens.set_endings(endings());
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        // Log in, select, play; Space opens the first unit's console (a humanoid), Tab
+        // the next (a scorpion), ESC back to the situation room; Ctrl+L.
+        let log = presses(&[0x1c, 0x0f, 0x19, 0x39, 0x0f, 0x01, CTRL_L]);
+        let mut cutscene = None;
+        for r in 1..=800 {
+            screens.retrace(log.events_at(r), &mut fb);
+            if let Some(c) = screens.take_cutscene() {
+                cutscene = Some((r, c));
+                break;
+            }
+        }
+        let (at, mut cutscene) = cutscene.expect("a cutscene after Ctrl+L");
+        assert_eq!(screens.screen(), Cutscene(Ending::Lost));
+        // The scorpion's entry: `GONE` on `nlose.vcl`.
+        assert_eq!(screens.console, 1);
+        assert_eq!(cutscene.kind(), crate::intro::Kind::Ending);
+        assert!(at > 700 && at < 740, "{at}");
+        assert!(play_cutscene(&mut cutscene) > 100);
+        // Then the map room, from black, which fades in and takes keys again.
+        screens.cutscene_over();
+        assert_eq!(screens.dac.hardware()[0], 0);
+        for _ in 0..40 {
+            screens.retrace([], &mut fb);
+        }
+        assert_eq!(screens.screen(), MapRoom);
+        assert!(screens.dac.hardware()[3 * 2] > 0, "the map room faded in");
+        // A new mission starts with the humanoid's.
+        screens.act(Play(false));
+        assert_eq!(screens.console, 0);
+    }
+
+    #[test]
+    fn won_and_triumph_hand_over_their_cutscenes() {
+        for (start, kind) in [
+            (Cutscene(Ending::Won), crate::intro::Kind::Ending),
+            (Cutscene(Ending::Triumph), crate::intro::Kind::Triumph),
+        ] {
+            let mut screens = new(start);
+            screens.set_endings(endings());
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            screens.retrace([], &mut fb);
+            let cutscene = screens.take_cutscene().expect("--screen starts it");
+            assert_eq!(cutscene.kind(), kind);
+            assert!(screens.take_cutscene().is_none());
+            assert_eq!(screens.screen(), start);
+        }
     }
 
     #[test]
@@ -1324,11 +1486,11 @@ mod tests {
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_every_screen_loads_and_shows() {
         // Enter, R, ESC, T, ESC (back), Tab, P (the mission's situation room), Space
-        // (the first unit's console), ESC (back), Ctrl+W (won), Enter, Space (play
-        // again), Ctrl+L, ESC (map room), P, Ctrl+C, Enter, N.
+        // (the first unit's console), ESC (back), Ctrl+W (won, then the map room), P
+        // (play again), Ctrl+L, P, Ctrl+C, N.
         let codes = [
-            0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, CTRL_W, 0x1c, 0x39, CTRL_L, 0x01,
-            0x19, CTRL_C, 0x1c, 0x31,
+            0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, CTRL_W, 0x19, CTRL_L, 0x19,
+            CTRL_C, 0x31,
         ];
         let log = presses(&codes);
         let Some(mut screens) = real_screens(Login) else {
@@ -1339,6 +1501,8 @@ mod tests {
         let mut blink = Vec::new();
         for r in 1..=100 * (codes.len() as u64 + 1) {
             screens.retrace(log.events_at(r), &mut fb);
+            // The cutscenes are not loaded here: each goes back to the map room.
+            assert!(screens.take_cutscene().is_none());
             // The user's record 23 blinks colour 254 once the fade in is over.
             if (70..100).contains(&r) {
                 blink.push(screens.dac.hardware()[3 * 254..3 * 255].to_vec());
@@ -1347,8 +1511,9 @@ mod tests {
                 seen.push(screens.screen());
             }
         }
-        // Tab stays on the map room; every other key changes the screen.
-        assert_eq!(seen.len(), codes.len(), "{seen:?}");
+        // Tab stays on the map room; every other key changes the screen, and each
+        // ending goes through its cutscene to the map room.
+        assert_eq!(seen.len(), codes.len() + 3, "{seen:?}");
         assert!(seen.contains(&Mission(View::Humanoid)), "{seen:?}");
         assert_eq!(screens.scenario(), Some(0));
         assert_eq!(screens.mission().file, "scen00a.usg");

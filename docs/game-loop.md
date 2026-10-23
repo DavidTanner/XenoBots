@@ -42,7 +42,9 @@ Reference); 25.175 MHz is the VGA's nominal 25 MHz clock.
   wake-up at which the change happened (T-036): the start-up cutscene runs at the
   320x240 rate, and when it ends the window goes on to the intro drop (T-038) and then
   the screens (T-040, `docs/screens.md`) or the test card, all in mode 13h at 70.09 Hz (the clock restarts at each change, as
-  the drop's driver re-measures after entering and leaving its mode). Retraces still due at the old rate in that wake-up are dropped. The input
+  the drop's driver re-measures after entering and leaving its mode). A cutscene after
+  a mission (T-045) switches to the 320x240 rate when the screens hand it over and back
+  to 13h when it ends. Retraces still due at the old rate in that wake-up are dropped. The input
   log keeps counting across the change, and the rate log restarts. `--view` of a `.vcl`
   picture (T-035) runs at the 320x240 rate throughout, everything else at mode 13h's.
 

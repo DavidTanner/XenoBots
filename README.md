@@ -67,7 +67,8 @@ in your `xeno.exe`. Then comes the intro drop, as in the original: a scroll over
 `xenodrop.pcx` and then the cave (`cavedrop.pcx`), with the `.fgd` ridges moving in
 front at their own speeds and the palette cross-faded, about 45 seconds, run from the
 numbers in your `vgaintro.dvr`, with the credits in the game's own font from your
-`mgavideo.dvr`. There is no music or caption text yet. Any
+`mgavideo.dvr`. Each picture's caption is typed in the game's font, as in the
+original; there is no music yet. Any
 key ends the cutscene early with a fade and skips the drop; any key ends the drop at
 once; P pauses either until the next key. `--no-intro` skips both and `--drop` plays
 the drop alone. Then come the game's screens in the original's order: the log-in, then
@@ -89,8 +90,12 @@ roster's contents are placeholders marked "T-056". The situation room's orders v
 (O) types the scenario's briefing from your `.usg` file, as the original does. The
 review is the original's reference of the robots, with its pages, texts, keys and
 buttons from your `xeno.exe`; the turning robot in it is a placeholder marked "T-047".
-The cutscenes are placeholders: a coloured card with a fade, and the window title
-names the screen and its keys. The mouse pointer is the original's, from
+A mission ended won, lost or with the campaign won (Ctrl+W, Ctrl+L, Ctrl+C until the
+mission runs) plays the original's cutscene from your files, `win.vcl`, `slose.vcl` or
+`nlose.vcl` (by the robot console you opened last), or `triumph.vcl`, with its
+caption; the win caption's kills, losses and points are 0 until the mission counts
+them. Any key but P skips it, P pauses it, and it goes back to the map room. The
+window title names the screen and its keys. The mouse pointer is the original's, from
 your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 `docs/screens.md`.
 
@@ -100,9 +105,9 @@ your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 | Map room | Click a box, or Tab, Right or Down / Alt+Tab, Left or Up: select the next / previous scenario. P, Enter or Space (or a right click on a box): play it. T: training menu. R: review. N: log-in. Q or Alt+Q: quit. The buttons do what their keys do |
 | Training menu | Click a button, or H, N, S or C: training mission. ESC or Alt+Q (or the last button): back |
 | Review | Tab or the next button (left click): next page. Alt+Tab: previous page. ESC, Alt+Q or the exit button: back to the map room |
-| Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. O: the orders view, which types the scenario's briefing (S, M, R, C pick the other views, placeholders). Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L, Ctrl+C: end it won, lost or with the campaign won (placeholders for its cutscene; a training mission goes straight back) |
+| Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. O: the orders view, which types the scenario's briefing (S, M, R, C pick the other views, placeholders). Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L, Ctrl+C: end it won, lost or with the campaign won and play its cutscene (placeholders until the mission runs; a training mission goes straight back) |
 | Mission, robot console | Click the program panel: left the next program, right the previous (and the robot back to its program). F4: next program. F2: automatic (the program drives). F3: manual (the pilot drives). Tab / Alt+Tab or the bottom-right button (left / right): next / previous unit. ESC, Alt+Q or the top-left corner: situation room. Ctrl+W, Ctrl+L, Ctrl+C as above |
-| Cutscene placeholder | Enter, Space or ESC: map room |
+| Cutscene after a mission | Any key but P (ESC too): skip it, then the map room. P: pause until the next key |
 
 `--screen test-card` shows a test card (a synthetic pattern) instead. Its white marker moves one pixel per frame of the
 original 70 Hz display and its yellow one at 60 Hz, whatever your monitor's refresh
@@ -117,7 +122,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--check` | Only check the game directory (and decode the opening cutscene, the drop and the screens), then exit without opening a window. |
 | `--no-intro` | Skip the opening cutscene and the drop. |
 | `--drop` | Play the intro drop alone (from the point the cutscene would have ended), then the log-in screen. |
-| `--screen <name>` | For development: skip the cutscene and drop and start at a screen: `login`, `map-room`, `training`, `review`, `sit-room`, `humancon`, `scorpcon`, `scoutcon`, `won`, `lost`, `triumph`, or `test-card` for the test card instead of the screens. |
+| `--screen <name>` | For development: skip the cutscene and drop and start at a screen: `login`, `map-room`, `training`, `review`, `sit-room`, `humancon`, `scorpcon`, `scoutcon`, `won`, `lost`, `triumph` (the cutscene after a mission, then the map room), or `test-card` for the test card instead of the screens. |
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
@@ -126,8 +131,8 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 
 | Key | Action |
 |---|---|
-| ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, the mission's views, review, cutscenes) take it instead. |
-| Any other key, P | During the cutscene: end it (fading out) and skip the drop, or pause it until the next key. During the drop: end it at once, or pause it. |
+| ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, the mission's views, review, the cutscenes after a mission) take it instead. |
+| Any other key, P | During the opening cutscene: end it (fading out) and skip the drop, or pause it until the next key. During a cutscene after a mission: the same, then the map room. During the drop: end it at once, or pause it. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.

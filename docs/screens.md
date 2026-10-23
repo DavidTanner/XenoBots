@@ -618,10 +618,10 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l`, the page's text panels, a placeholder for the robot (T-044) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
 | Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); Ctrl+W won, Ctrl+L lost, Ctrl+C campaign won (placeholders) |
-| Cutscene (won, lost, campaign won) | A synthetic card: green, red or yellow block | Enter, Space, ESC: map room |
+| Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
-Keys that only the port uses (the mission's endings, cutscenes) are
-placeholders until the screens are built (T-045, T-055). A training mission goes back to
+Keys that only the port uses (the mission's endings) are placeholders until the
+mission runs (T-055). A training mission goes back to
 the map room without a cutscene, as in the original.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
@@ -629,7 +629,7 @@ the map room without a cutscene, as in the original.
   low byte, `screens::key_word`) and looked up in the screen's (key word, action)
   table; the first match acts. Auto-repeat counts as a press.
 - **ESC.** A screen claims ESC exactly when its table binds it (log-in, training menu,
-  the mission's views, review, cutscenes; for the training menu and the views, the
+  the mission's views, review; and a cutscene, whose player takes any key; for the training menu and the views, the
   user's tables); then `Translator::screen_claims_escape` is set and ESC reaches the
   game. On the map room ESC still leaves fullscreen or quits, as the original binds no
   ESC there.
@@ -743,10 +743,11 @@ the map room without a cutscene, as in the original.
   in again. The buttons' frames are XORed with 9 on a press and back on a release over
   them (a release elsewhere leaves them XORed). The robot's view (the picture's
   colour-255 pixels) is hatched with a "T-047" label.
-- **Not modelled**: the save file, the review's turning robots (T-047),
-  the real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016` and
-  `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and the
-  music.
+- **Cutscenes after a mission** (T-045): as `vcl.md`, "In the port". The lose picture
+  is chosen by the robot console the mission last opened (`Screens::console`, reset
+  when the map room plays a scenario); the win caption shows 0 kills, 0 losses and 0
+  points until the mission counts them (T-046).
+- **Not modelled**: the save file, the review's turning robots (T-047) and the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
 

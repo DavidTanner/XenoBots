@@ -147,8 +147,8 @@ loop 65,536 rows) and bitmap widths over 8. `xeno_render::Framebuffer::draw_char
 spacing) in `TextMode::Transparent` or `Opaque`, clipping to the surface.
 `xeno-tool inspect mgavideo.dvr` lists the fonts, and `xeno-tool dump mgavideo.dvr`
 writes a sheet of each font's 128 codes. `xeno-app` draws the log-in name
-(`crates/xeno-app/src/login.rs`) and the intro drop's credits (`drop.rs`) with them;
-the cutscene captions are still to do (T-045).
+(`crates/xeno-app/src/login.rs`), the intro drop's credits (`drop.rs`) and the
+cutscene captions (`intro.rs`, T-045) with them.
 
 ## Open questions
 

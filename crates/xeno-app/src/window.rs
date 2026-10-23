@@ -1,7 +1,8 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
 //! framebuffer on screen. It plays the start-up cutscene (`intro`) in the 320x240 mode
 //! and, unless a key ended it, the intro drop (`drop`) in mode 13h, then the front
-//! end's screens (`screens`) until a screen quits, or ESC or close; or the test card,
+//! end's screens (`screens`), and the cutscenes they ask for after a mission in the
+//! 320x240 mode, until a screen quits, or ESC or close; or the test card,
 //! with markers driven by the game clock; or, with `--view`, one asset (`viewer`).
 //!
 //! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
@@ -31,7 +32,7 @@ use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 use crate::clock::{Clock, Rate, Step};
 use crate::drop;
 use crate::input::{InputLog, Keys, Mouse};
-use crate::intro::Intro;
+use crate::intro::{Cutscene, Kind};
 use crate::keymap::KeyMap;
 use crate::pointer;
 use crate::screens::Screens;
@@ -57,7 +58,7 @@ pub fn run(
     aspect: Aspect,
     fullscreen: bool,
     viewer: Option<Viewer>,
-    intro: Option<Intro>,
+    intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
     front: FrontEnd,
 ) -> Result<(), Box<dyn Error>> {
@@ -74,7 +75,7 @@ pub fn run(
     };
     let (fb, palette, title) = match (&viewer, &intro, &playing) {
         (Some(v), _, _) => (v.framebuffer(), v.palette.clone(), v.title()),
-        (None, Some(intro), _) => (Intro::framebuffer(), intro.palette(), "Xenobots".into()),
+        (None, Some(intro), _) => (Cutscene::framebuffer(), intro.palette(), "Xenobots".into()),
         (None, None, Some(p)) => (p.framebuffer(), p.palette(), "Xenobots".into()),
         (None, None, None) => {
             let (fb, palette) = front_end(&front);
@@ -105,7 +106,7 @@ pub fn run(
         fb,
         palette,
         viewer,
-        intro,
+        cutscene: intro,
         drop_assets: drop,
         drop: playing,
         title,
@@ -147,7 +148,7 @@ struct App {
     /// Retraces run at earlier rates: the clock restarts its count at a mode change,
     /// the log does not.
     log_base: u64,
-    /// The 60 Hz count at the last retrace, to tell the intro when it moves.
+    /// The 60 Hz count at the last retrace, to tell a cutscene when it moves.
     sixty_hz: u64,
     meter: Meter,
     /// The picture to show.
@@ -156,7 +157,8 @@ struct App {
     /// `--view`: what to show instead of the test card.
     viewer: Option<Viewer>,
     /// The start-up cutscene, while it plays.
-    intro: Option<Intro>,
+    /// The start-up cutscene, or one after a mission, while it plays.
+    cutscene: Option<Cutscene>,
     /// The intro drop's files, until the cutscene ends, and the drop while it plays.
     drop_assets: Option<drop::Assets>,
     drop: Option<drop::Player>,
@@ -303,10 +305,11 @@ impl App {
         Ok(())
     }
 
-    /// One retrace: the game reads this retrace's input from the log, then the intro,
+    /// One retrace: the game reads this retrace's input from the log, then a cutscene,
     /// the drop, the viewer or the screens act on it, or the test card's markers move.
     /// A screen's ESC claim is passed to the translator for the next key. Returns
-    /// whether the mode changed (the intro or the drop ended), so the clock must
+    /// whether the mode changed (a cutscene began or ended, or the drop ended), so the
+    /// clock must
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
@@ -319,13 +322,25 @@ impl App {
         let ticked = step.sixty_hz != self.sixty_hz;
         self.sixty_hz = step.sixty_hz;
         self.meter.sixty_hz_now = step.sixty_hz;
-        if let Some(intro) = &mut self.intro {
-            let done = intro.retrace(self.log.events_at(retrace), ticked, &mut self.fb);
-            self.palette = intro.palette();
+        if let Some(cutscene) = &mut self.cutscene {
+            let done = cutscene.retrace(self.log.events_at(retrace), ticked, &mut self.fb);
+            self.palette = cutscene.palette();
             if done {
-                let (aborted, counter) = (intro.aborted(), intro.counter());
-                self.intro = None;
-                match self.drop_assets.take() {
+                let (aborted, counter) = (cutscene.aborted(), cutscene.counter());
+                let kind = cutscene.kind();
+                self.cutscene = None;
+                // After a mission: back to the screens, which go to the map room.
+                let drop_assets = match kind {
+                    Kind::Intro => self.drop_assets.take(),
+                    _ => {
+                        if let FrontEnd::Screens(screens) = &mut self.front {
+                            screens.cutscene_over();
+                        }
+                        self.input.screen_claims_escape = false;
+                        None
+                    }
+                };
+                match drop_assets {
                     Some(assets) if !aborted => {
                         let player = drop::Player::new(assets, counter);
                         self.fb = player.framebuffer();
@@ -369,9 +384,20 @@ impl App {
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
                 self.palette = screens.palette();
                 self.input.screen_claims_escape = screens.claims_escape();
+                let cutscene = screens.take_cutscene();
                 if screens.take_changed() {
                     self.title = format!("Xenobots - {}", screens.screen().label());
                     self.set_title();
+                }
+                // A cutscene after a mission: the 320x240 mode until it ends.
+                if let Some(cutscene) = cutscene {
+                    self.fb = Cutscene::framebuffer();
+                    self.palette = cutscene.palette();
+                    self.cutscene = Some(cutscene);
+                    self.log_base = retrace;
+                    // Its keys are the game's: any key but P skips it, ESC included.
+                    self.input.screen_claims_escape = true;
+                    return true;
                 }
             }
             FrontEnd::TestCard(keymap) => test_pattern::draw_live(
@@ -394,7 +420,7 @@ impl App {
     /// Whether the screens are up, which draw the game's pointer.
     fn pointer_shown(&self) -> bool {
         let screens = matches!(self.front, FrontEnd::Screens(_));
-        screens && self.viewer.is_none() && self.intro.is_none() && self.drop.is_none()
+        screens && self.viewer.is_none() && self.cutscene.is_none() && self.drop.is_none()
     }
 
     /// Hides the system cursor in fullscreen (also entered by the system, such as
@@ -622,5 +648,78 @@ mod tests {
             size_after_scale_change(Scale::Fixed(2), false, p(0, 0)),
             None
         );
+    }
+
+    /// An app with no window around `front`, as `run` builds it.
+    fn test_app(front: FrontEnd) -> App {
+        let (fb, palette) = front_end(&front);
+        App {
+            clock: Clock::new(Rate::MODE_13H, Duration::ZERO),
+            start: None,
+            input: Translator::default(),
+            log: InputLog::default(),
+            keys: Keys::default(),
+            mouse: Mouse::default(),
+            cursor_hidden: false,
+            front,
+            log_base: 0,
+            sixty_hz: 0,
+            meter: Meter::default(),
+            fb,
+            palette,
+            viewer: None,
+            cutscene: None,
+            drop_assets: None,
+            drop: None,
+            title: String::new(),
+            layout: None,
+            scale: Scale::Auto,
+            aspect: Aspect::Correct,
+            start_fullscreen: false,
+            surface: None,
+            size: PhysicalSize::new(0, 0),
+            fullscreen: false,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_cutscene_after_a_mission_switches_modes_and_returns_to_the_map_room() {
+        use crate::screens::{Ending, Screen, tests};
+        let mut screens = tests::new(Screen::Cutscene(Ending::Won));
+        screens.set_endings(tests::endings());
+        let mut app = test_app(FrontEnd::Screens(Box::new(screens)));
+        let (mut n, mut changes) = (0, Vec::new());
+        for r in 1..2_000u64 {
+            n += 1;
+            let step = Step {
+                retrace: n,
+                sixty_hz: n,
+            };
+            if app.tick(step) {
+                // As `about_to_wait` does: the clock restarts at the new mode's rate.
+                app.restart_clock(Duration::from_millis(r));
+                n = 0;
+                changes.push((r, app.fb.view(), app.clock.rate()));
+                assert_eq!(app.input.screen_claims_escape, app.cutscene.is_some());
+            }
+        }
+        // The screens hand the cutscene over at their first retrace: the 320x240 mode
+        // at its rate; when it ends, mode 13h at its rate, and the map room.
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        assert_eq!(
+            (changes[0].0, changes[0].1, changes[0].2),
+            (1, Size::MODE_240, Rate::MODE_240)
+        );
+        assert_eq!(
+            (changes[1].1, changes[1].2),
+            (Size::MODE_13H, Rate::MODE_13H)
+        );
+        assert!(changes[1].0 > 100);
+        let FrontEnd::Screens(screens) = &app.front else {
+            unreachable!()
+        };
+        assert_eq!(screens.screen(), Screen::MapRoom);
+        assert!(app.cutscene.is_none() && app.pointer_shown());
     }
 }
