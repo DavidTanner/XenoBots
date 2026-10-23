@@ -16,6 +16,7 @@
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{self, HANDLE_STEP, MapRoom};
+use xeno_formats::review::{self, Review};
 use xeno_formats::scendef::ScenarioTable;
 use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
@@ -44,10 +45,13 @@ pub struct Assets {
     pub sprites: Vec<Sprite>,
     pub name_font: Font,
     pub info_font: Font,
+    /// The review, which the map room opens (T-044), and its panels' font.
+    pub review: Review,
+    pub review_font: Font,
 }
 
-/// Reads the tables from the user's `xeno.exe`, the sprites from `msprite5.b@n` and
-/// the fonts from `mgavideo.dvr`.
+/// Reads the tables (the map room's and the review's) from the user's `xeno.exe`, the
+/// sprites from `msprite5.b@n` and the fonts from `mgavideo.dvr`.
 pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let read = |name: &str| {
         files
@@ -57,6 +61,8 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let exe = lzexe::unpack(&read("xeno.exe")?).map_err(|e| format!("xeno.exe: {e}"))?;
     let tables = maproom::read(&exe)
         .map_err(|e| format!("xeno.exe: no map room tables this port can read: {e}"))?;
+    let review = review::read(&exe)
+        .map_err(|e| format!("xeno.exe: no review tables this port can read: {e}"))?;
     let sprites = ban::parse_sprites(&read("msprite5.b@n")?)
         .map_err(|e| format!("msprite5.b@n: {e}"))?
         .sprites;
@@ -71,6 +77,8 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     Ok(Assets {
         name_font: font(NAME_FONT)?,
         info_font: font(INFO_FONT)?,
+        review_font: font(review.font)?,
+        review,
         tables,
         sprites,
     })
@@ -455,6 +463,8 @@ pub mod tests {
             sprites: sprites(20),
             name_font: fonts[0].clone(),
             info_font: fonts[2].clone(),
+            review: crate::review::tests::tables(),
+            review_font: fonts[0].clone(),
         }
     }
 

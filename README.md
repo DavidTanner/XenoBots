@@ -85,9 +85,12 @@ training menu's buttons and keys load its training missions the same way. The mi
 itself does not run yet: its views work as the original's (the situation room, the
 view of your base, and a console for each of your robots), and you can set each
 robot's orders on its console, but the 3D views, scanners, instruments and the
-roster's contents are placeholders marked "T-056". The review and the cutscenes are
-placeholders: each shows its picture from your `.m@l` files (or a coloured card) with
-a fade, and the window title names the screen and its keys. The mouse pointer is the original's, from
+roster's contents are placeholders marked "T-056". The situation room's orders view
+(O) types the scenario's briefing from your `.usg` file, as the original does. The
+review is the original's reference of the robots, with its pages, texts, keys and
+buttons from your `xeno.exe`; the turning robot in it is a placeholder marked "T-047".
+The cutscenes are placeholders: a coloured card with a fade, and the window title
+names the screen and its keys. The mouse pointer is the original's, from
 your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 `docs/screens.md`.
 
@@ -96,8 +99,8 @@ your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 | Log-in | Letters and digits: the name. Backspace: delete. Enter: log in (map room). ESC: quit, or back to the map room after N |
 | Map room | Click a box, or Tab, Right or Down / Alt+Tab, Left or Up: select the next / previous scenario. P, Enter or Space (or a right click on a box): play it. T: training menu. R: review. N: log-in. Q or Alt+Q: quit. The buttons do what their keys do |
 | Training menu | Click a button, or H, N, S or C: training mission. ESC or Alt+Q (or the last button): back |
-| Review | ESC or Enter: back |
-| Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L, Ctrl+C: end it won, lost or with the campaign won (placeholders for its cutscene; a training mission goes straight back) |
+| Review | Tab or the next button (left click): next page. Alt+Tab: previous page. ESC, Alt+Q or the exit button: back to the map room |
+| Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. O: the orders view, which types the scenario's briefing (S, M, R, C pick the other views, placeholders). Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L, Ctrl+C: end it won, lost or with the campaign won (placeholders for its cutscene; a training mission goes straight back) |
 | Mission, robot console | Click the program panel: left the next program, right the previous (and the robot back to its program). F4: next program. F2: automatic (the program drives). F3: manual (the pilot drives). Tab / Alt+Tab or the bottom-right button (left / right): next / previous unit. ESC, Alt+Q or the top-left corner: situation room. Ctrl+W, Ctrl+L, Ctrl+C as above |
 | Cutscene placeholder | Enter, Space or ESC: map room |
 

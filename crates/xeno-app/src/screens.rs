@@ -7,10 +7,11 @@
 //! scenario boxes, selection by click and keys, the panels and the buttons. So are the
 //! training menu and the mission's views (T-043, `mission`): the situation room and the
 //! robot consoles, switched as the original switches them, with the robots' orders set
-//! on the consoles; the simulation's parts are placeholders. The review and the
-//! cutscenes are still placeholders: each one's `.m@l` picture with its palette (a
-//! synthetic card for the cutscenes), faded as the original fades, and the window
-//! title names it and its keys.
+//! on the consoles, and the briefing typed in the situation room's orders view; the
+//! simulation's parts are placeholders. So is the review (T-044, `review`): the robot
+//! reference's pages, texts, keys and buttons. The cutscenes are still placeholders: a
+//! synthetic card, faded as the original fades, and the window title names it and its
+//! keys.
 //!
 //! Keys go through (key word, action) tables, as the original's screens do
 //! (`docs/formats/key.md`, "The game's keys"); a screen claims ESC when its table
@@ -26,6 +27,7 @@ use crate::input::{InputEvent, Keys, Mouse, ScanCode};
 use crate::login::{self, NameEntry, Outcome, Player};
 use crate::maproom::{self, Campaign, MapState, Request};
 use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
+use crate::review::{self, ReviewState};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 use xeno_formats::orders::RobotKind;
@@ -119,8 +121,9 @@ const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
 /// The training menu's keys are read from the user's `xeno.exe` (`DS:0x5e9f`, in
 /// `mission::Assets::training`).
 const TRAINING_KEYS: &[(KeyWord, Action)] = &[];
-/// Not traced yet (T-044): ESC or Enter go back.
-const REVIEW_KEYS: &[(KeyWord, Action)] = &[(ESC, Go(MapRoom)), (ENTER, Go(MapRoom))];
+/// The review's keys are read from the user's `xeno.exe` (`DS:0x6244`, in
+/// `maproom::Assets::review`).
+const REVIEW_KEYS: &[(KeyWord, Action)] = &[];
 /// Placeholders until the sim exists: Ctrl+W, Ctrl+L and Ctrl+C end the mission won,
 /// lost or with the campaign won (no view's table binds them). The views' own keys are
 /// read from the user's `xeno.exe` (`mission`).
@@ -171,9 +174,9 @@ impl Screen {
                 "Map room: click/Tab/arrows select, P/Enter play, T training, R review, N log-in, Q quit"
             }
             Training => "Training menu: click or H/N/S/C train, ESC back",
-            Review => "Review: ESC/Enter back",
+            Review => "Review: Tab/Alt+Tab or the next button turn the page, ESC/Alt+Q back",
             Mission(View::SitRoom) => {
-                "Mission, situation room: click/Tab select, Space view unit, Alt+Q end; Ctrl+W/L/C won/lost/campaign"
+                "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end; Ctrl+W/L/C won/lost/campaign"
             }
             Mission(View::Humanoid) => {
                 "Mission, humanoid console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
@@ -298,6 +301,7 @@ pub struct Screens {
     mission: MissionState,
     /// The training button a press captured the pointer for, and with which button.
     training_press: Option<(usize, crate::input::MouseButton)>,
+    review: ReviewState,
 }
 
 /// The logged-in player's campaign, or the guest's.
@@ -343,6 +347,7 @@ impl Screens {
             mission_assets,
             mission,
             training_press: None,
+            review: ReviewState::default(),
         }
     }
 
@@ -384,6 +389,12 @@ impl Screens {
             Training => self
                 .mission_assets
                 .training
+                .keys
+                .iter()
+                .any(|&(word, _)| KeyWord(word) == ESC),
+            Review => self
+                .map_assets
+                .review
                 .keys
                 .iter()
                 .any(|&(word, _)| KeyWord(word) == ESC),
@@ -439,6 +450,20 @@ impl Screens {
                         if let Some(action) = action {
                             self.training_action(action);
                         }
+                    }
+                    (InputEvent::KeyDown { code, .. }, Review) => {
+                        let word = key_word(code, &self.keys).0;
+                        let request = self.review.key(word, &self.map_assets.review);
+                        self.review_request(request);
+                    }
+                    (InputEvent::MouseDown { button }, Review) => {
+                        let at = self.mouse.position;
+                        self.review.mouse_down(button, at, &self.map_assets.review);
+                    }
+                    (InputEvent::MouseUp { button }, Review) => {
+                        let at = self.mouse.position;
+                        let request = self.review.mouse_up(button, at, &self.map_assets.review);
+                        self.review_request(request);
                     }
                     (InputEvent::KeyDown { code, .. }, Mission(_)) => {
                         let word = key_word(code, &self.keys);
@@ -501,8 +526,14 @@ impl Screens {
         if self.screen == Login && self.next.is_none() {
             self.entry.draw(&self.login.font, fb);
         }
+        if self.screen == Mission(View::SitRoom) && self.next.is_none() {
+            self.mission.retrace();
+        }
         if matches!(self.screen, Mission(_)) && self.next.is_none() && self.mission.take_dirty() {
             self.draw_mission(fb);
+        }
+        if self.screen == Review && self.next.is_none() && self.review.take_dirty() {
+            self.draw_review(fb);
         }
         if let Some(next) = self.next
             && !self.dac.fading()
@@ -572,6 +603,23 @@ impl Screens {
             mission::xor_frame(fb, area, mission::TRAINING_PRESSED_XOR);
             self.training_action(action);
         }
+    }
+
+    /// What the review asked for: leaving goes back to the map room.
+    fn review_request(&mut self, request: Option<review::Request>) {
+        if request == Some(review::Request::Leave) {
+            self.act(Go(MapRoom));
+        }
+    }
+
+    /// Draws the review: its picture, then the page.
+    fn draw_review(&mut self, fb: &mut Framebuffer) {
+        if let Some((_, picture)) = self.pictures.iter().find(|(n, _)| *n == "review.m@l") {
+            fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
+        }
+        let assets = &self.map_assets;
+        self.review.draw(fb, &assets.review, &assets.review_font);
+        self.review.take_dirty();
     }
 
     /// What a mission view asked for: another view (drawn at once, with its palette,
@@ -691,6 +739,11 @@ impl Screens {
         self.next = Some(next);
         self.fade_in = None;
         self.dac.stop();
+        // The map room opens the review at once, and the review goes straight back to
+        // the map room, which fades in again (`ui_run_review_screen`).
+        if next == Review || self.screen == Review {
+            return;
+        }
         self.dac.fade_out(0, 255, FADE, u16::MAX);
     }
 
@@ -715,6 +768,16 @@ impl Screens {
                 to_vga6(&test_pattern::palette())
             }
         };
+        if screen == Review {
+            // Shown at once with its palette (slot `0x494`), on its first page.
+            self.dac.set(&dac);
+            self.screen = screen;
+            self.next = None;
+            self.changed = true;
+            self.review = ReviewState::open();
+            self.draw_review(fb);
+            return;
+        }
         let length = if screen == Login {
             // `ui_show_screen_fading_in` holds the colour records over its fade in.
             self.entry = NameEntry::default();
@@ -957,14 +1020,45 @@ mod tests {
     }
 
     #[test]
+    fn the_review_opens_at_once_turns_its_pages_and_goes_back() {
+        // Enter (map room), R at 200 (the review, its palette at once), Tab at 300 (the
+        // second page), Alt+Tab at 400, ESC at 500 (the map room, fading in).
+        let mut log = presses(&[0x1c, 0x13, 0x0f]);
+        log.record(400, [down(0x38), down(0x0f)]);
+        log.record(401, [up(0x0f), up(0x38)]);
+        log.record(500, [down(0x01)]);
+        let mut screens = new(Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for r in 1..=520 {
+            screens.retrace(log.events_at(r), &mut fb);
+            match r {
+                200 => {
+                    assert_eq!(screens.screen(), Review);
+                    assert!(!screens.dac.fading(), "no fade in");
+                }
+                300 => assert_eq!(screens.review.page(), 1),
+                400 => assert_eq!(screens.review.page(), 0),
+                500 => assert!(screens.dac.fading() || screens.fade_in.is_some()),
+                _ => {}
+            }
+        }
+        assert_eq!(screens.screen(), MapRoom);
+    }
+
+    #[test]
     fn escape_is_claimed_by_the_screens_that_bind_it() {
-        let claims: Vec<_> = [Login, MapRoom, Review, Cutscene(Ending::Won)]
+        let claims: Vec<_> = [Login, MapRoom, Cutscene(Ending::Won)]
             .iter()
             .map(|s| s.claims_escape())
             .collect();
-        assert_eq!(claims, [true, false, true, true]);
-        // The training menu's and the views' tables (the user's) bind ESC.
-        for screen in [Training, Mission(View::SitRoom), Mission(View::Humanoid)] {
+        assert_eq!(claims, [true, false, true]);
+        // The training menu's, the review's and the views' tables (the user's) bind ESC.
+        for screen in [
+            Training,
+            Review,
+            Mission(View::SitRoom),
+            Mission(View::Humanoid),
+        ] {
             let mut screens = new(screen);
             screens.retrace([], &mut Framebuffer::new(Size::MODE_13H));
             assert!(screens.claims_escape(), "{screen:?}");
@@ -1262,6 +1356,29 @@ mod tests {
         assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
         assert_eq!(screens.player.as_ref().unwrap().name, "A");
         assert_eq!(screens.screen(), Login);
+    }
+
+    /// Opens the review with the user's files, turns through every page with Tab and
+    /// leaves it with ESC.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_review_opens_and_turns_every_page() {
+        let Some(mut screens) = real_screens(Review) else {
+            return;
+        };
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        screens.retrace([], &mut fb);
+        assert_eq!(screens.screen(), Review);
+        let pages = screens.map_assets.review.pages.len();
+        assert_eq!(pages, 3);
+        for page in 1..=pages {
+            screens.retrace(&[down(0x0f)], &mut fb);
+            screens.retrace(&[up(0x0f)], &mut fb);
+            assert_eq!(screens.review.page(), page % pages);
+        }
+        screens.retrace(&[down(0x01)], &mut fb);
+        screens.retrace(&[up(0x01)], &mut fb);
+        assert_eq!(screens.screen(), MapRoom);
     }
 
     /// Opens every console and the situation room, and every training mission, from

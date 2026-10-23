@@ -614,12 +614,12 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
 | Map room | `maproom.m@l`, the boxes, panels and buttons (T-042) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
-| Review | `review.m@l` | ESC, Enter: map room |
+| Review | `review.m@l`, the page's text panels, a placeholder for the robot (T-044) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
 | Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); Ctrl+W won, Ctrl+L lost, Ctrl+C campaign won (placeholders) |
 | Cutscene (won, lost, campaign won) | A synthetic card: green, red or yellow block | Enter, Space, ESC: map room |
 
-Keys that only the port uses (review, the mission's endings, cutscenes) are
-placeholders until the screens are built (T-044, T-045, T-055). A training mission goes back to
+Keys that only the port uses (the mission's endings, cutscenes) are
+placeholders until the screens are built (T-045, T-055). A training mission goes back to
 the map room without a cutscene, as in the original.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
@@ -723,7 +723,25 @@ the map room without a cutscene, as in the original.
   `scoutcon` open the first training mission, in the menu's order, with one of the
   player's robots of that kind, on that robot; `--screen sit-room` the first training
   mission.
-- **Not modelled**: the save file, the widgets of the review,
+- **Briefing** (`crates/xeno-app/src/mission.rs`, T-044): as "The briefing (T-044)"
+  above. A mission keeps its file's `ORDR` text and starts in the main view mode saved
+  in the player's base (+0x37). O, S, M, R and C (the user's key table, by the
+  original's handlers) set the mode; in the orders mode the main view's colour-255
+  pixels are recoloured to 0x10 and the text is typed from (96, 30) in the user's font
+  4, colour 0x1d, one byte per retrace, until its NUL or 0x1a, CR LF as the font's
+  control codes. O, and coming back to the situation room, start it again. The other
+  modes keep the T-056 placeholder. The speed (one byte a retrace) is the port's
+  reading of "one per pass of the mission loop"; check it in DOSBox.
+- **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
+  from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
+  room's R opens it at once with its palette, on the first page; each page fills the
+  three panels with colour 0 and draws its texts transparent in the user's font and
+  colour; Tab, Alt+Tab and a left release on the next button turn the pages, wrapping;
+  ESC, Alt+Q and a left release on the exit button go back to the map room, which fades
+  in again. The buttons' frames are XORed with 9 on a press and back on a release over
+  them (a release elsewhere leaves them XORed). The robot's view (the picture's
+  colour-255 pixels) is hatched with a "T-047" label.
+- **Not modelled**: the save file, the review's turning robots (T-047),
   the real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016` and
   `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and the
   music.

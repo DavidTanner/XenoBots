@@ -45,7 +45,8 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     // Synthetic, not the game's: an LZEXE-packed image whose entry point loads DS =
     // 0x20, with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
     // Also made-up map room tables (`synthetic_map_room`), mission views, a training
-    // menu and programs (`synthetic_views`, `synthetic_programs`).
+    // menu and programs (`synthetic_views`, `synthetic_programs`) and a review
+    // (`synthetic_review`).
     let chain = 0x200 + 0xecac;
     let mut image = vec![0u8; 0x1c000];
     image[0x10..0x15].copy_from_slice(&[0xb8, 0x20, 0, 0x8e, 0xd8]);
@@ -59,8 +60,10 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
         &mut image, 0x200,
     ));
     relocations.extend(xeno_formats::fixtures::synthetic_views(&mut image, 0x200));
+    relocations.extend(xeno_formats::fixtures::synthetic_review(&mut image, 0x200));
     xeno_formats::fixtures::synthetic_programs(&mut image, 0x200);
     relocations.sort_unstable();
+    relocations.dedup();
     let exe = xeno_formats::fixtures::synthetic_lzexe(&image, (1, 0), &relocations);
     std::fs::write(dir.join("xeno.exe"), exe).unwrap();
     let picture = xeno_formats::fixtures::synthetic_vcl(&[0; 768], &[1; 640 * 240]);
