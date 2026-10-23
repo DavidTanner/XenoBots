@@ -289,15 +289,15 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | State | Shows | Keys |
 |---|---|---|
 | Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
-| Map room | `maproom.m@l` | P, Enter, Space: mission. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys) |
+| Map room | `maproom.m@l`, the boxes, panels and buttons (T-042) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys |
 | Training menu | `trainmen.m@l` | H, N, S, C: training mission. ESC, Alt+Q: map room (the original's keys) |
 | Review | `review.m@l` | ESC, Enter: map room |
 | Mission | `sitroom.m@l`, or a console's `.m@l` | F1 to F4: situation room, humanoid, scorpion, scout. W won, L lost, C campaign won |
 | Cutscene (won, lost, campaign won) | A synthetic card: green, red or yellow block | Enter, Space, ESC: map room |
 
 Keys that only the port uses (review, mission, cutscenes) are placeholders until the
-screens are built (T-042 to T-044, T-056). A training mission goes back to
-the map room without a cutscene, as in the original; T is not gated on `DS:0x5fab`.
+screens are built (T-043, T-044, T-056). A training mission goes back to
+the map room without a cutscene, as in the original.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
   0x08, Ctrl 0x10, Alt 0x20 in the high byte, the set 1 code with `E0` dropped in the
@@ -328,8 +328,27 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
   it cannot, the game exits without it.
 - **Labels.** The window title names the screen and its keys.
 - **Mouse.** The pointer and buttons reach the screens through the log
-  (`docs/game-loop.md`, "Input"), and a placeholder arrow is drawn at the pointer, but
-  no screen acts on a click yet (the widgets are T-042 on).
+  (`docs/game-loop.md`, "Input"), and the original's pointer
+  (`crates/xeno-app/src/pointer.rs`) is drawn at it on every screen. Only the map room
+  acts on clicks.
+- **Map room** (`crates/xeno-app/src/maproom.rs`, T-042): as "The map room (T-042)"
+  above. It draws over `maproom.m@l` the boxes (keyed: the look for each `state`, or
+  unavailable above the progress), the highlight on the selection, the name, score
+  (always 0 so far) and selection panels (the scenario's name, the label and its alert
+  word, in the user's fonts 0 and 4, colour 0xe0) and the buttons (opaque, the next
+  sprite while pressed, with the original's quirk after a release off the button). A
+  new campaign (`maproom::Campaign`) starts at progress 1 with the locked scenarios at
+  8; nothing is selected. Clicks act on the release: on the map area the left button
+  selects the selectable box under the pointer and the right one also plays it; on a
+  button, released over it, it runs the action of the first key whose handler is the
+  button's (`MapRoom::button_keys`). Tab and the arrows step through the selectable
+  scenarios. P, Enter, Space and the play button start the mission placeholder for the
+  selection, remembered in `Screens::scenario` and logged with its `scenNNa.usg`, and
+  do nothing without one; T is refused while a campaign mission has no result (never,
+  so far). With `--screen map-room` and no log-in, a guest's new campaign is shown.
+  Not done (T-046): the hover label, the campaign-won box, the developer keys, the
+  busy pointer shape during loads, and any change to the campaign on play or after a
+  mission.
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
   its bytes, with segments only from relocated words: the widget set (map area, and
@@ -340,12 +359,11 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
   the driver sets up (shape and colour from the set-up's two calls, the shape from its
   data block). The fonts, colours and blit modes the drawing code passes are kept as
   constants in the port: they are short, and they are code, not tables. `xeno-tool
-  inspect` shows the map room's and the pointer's shape. The screen itself is T-042's
-  second part.
-- **Not modelled**: the save file, scenario selection, the widgets, the
-  real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016`
-  and `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and
-  the music.
+  inspect` shows the map room's and the pointer's shape.
+- **Not modelled**: the save file, the widgets of the screens other than the map room,
+  the real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016` and
+  `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and the
+  music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
 

@@ -12,11 +12,13 @@
 
 use xeno_formats::farewell::{self, Farewell};
 use xeno_formats::font::Font;
+use xeno_formats::lzexe;
+use xeno_formats::mgavideo::{self, Pointer};
 use xeno_formats::scendef::{self, ScenarioTable};
-use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{Framebuffer, TextCursor, TextMode};
 
 use crate::game_dir::GameFiles;
+use crate::maproom::Campaign;
 use crate::screens::KeyWord;
 
 /// The longest name (the save file's 8.3 name).
@@ -50,11 +52,13 @@ pub struct Assets {
     pub campaign: ScenarioTable,
     /// The goodbye from `xeno.exe`, if this port can read it there.
     pub farewell: Option<Farewell>,
+    /// The driver's mouse pointer, which every screen shows (T-042).
+    pub pointer: Pointer,
 }
 
-/// Reads the font and the colour records from the user's `mgavideo.dvr`, the campaign
-/// from `scendef.bin`, which saves exist, and the goodbye from `xeno.exe`. Only the
-/// goodbye may be missing: without it the game exits silently.
+/// Reads the font, the colour records and the pointer from the user's `mgavideo.dvr`,
+/// the campaign from `scendef.bin`, which saves exist, and the goodbye from
+/// `xeno.exe`. Only the goodbye may be missing: without it the game exits silently.
 pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let read = |name: &str| {
         files
@@ -83,6 +87,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         saves,
         campaign,
         farewell,
+        pointer: video.pointer,
     })
 }
 
@@ -93,8 +98,8 @@ pub struct Player {
     /// Whether `<NAME>.LOG` exists. The original loads it; the port does not yet
     /// (T-057) and starts a new campaign either way.
     pub save_found: bool,
-    /// The campaign's scenario table, with each scenario's `state`.
-    pub campaign: ScenarioTable,
+    /// The campaign: the scenario table with each scenario's `state`, the progress.
+    pub campaign: Campaign,
     /// What the original leaves on the screen when the game exits, with the name in it.
     pub farewell: Option<String>,
 }
@@ -179,14 +184,14 @@ impl Assets {
             farewell: self.farewell.as_ref().map(|f| f.message(&name)),
             name,
             save_found,
-            campaign: self.campaign.clone(),
+            campaign: Campaign::new(self.campaign.clone()),
         }
     }
 }
 
 /// Synthetic assets for tests: the synthetic font 0, a list of 24 records whose last
 /// blinks colour 254 between black and white every 2 retraces, no saves but `old`,
-/// an empty campaign and a made-up goodbye.
+/// the map room's test campaign, a made-up goodbye and the synthetic pointer.
 #[cfg(test)]
 pub fn test_assets() -> Assets {
     use xeno_formats::fixtures::synthetic_font_block;
@@ -201,13 +206,14 @@ pub fn test_assets() -> Assets {
         font: fonts[0].clone(),
         anims: list(&records).bytes().to_vec(),
         saves: vec!["old".into()],
-        campaign: ScenarioTable {
-            scenarios: Vec::new(),
-        },
+        campaign: crate::maproom::tests::test_campaign().table,
         farewell: Some(Farewell {
             prefix: "SEE YOU, ".into(),
             close: '!',
         }),
+        pointer: mgavideo::parse(&xeno_formats::fixtures::synthetic_mgavideo())
+            .unwrap()
+            .pointer,
     }
 }
 
