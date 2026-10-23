@@ -80,10 +80,14 @@ as the original's too: each scenario's box in the look of its state (scenarios b
 your progress shown as unavailable), your name and score, and the five buttons; pick
 a scenario by clicking its box (on the release; the right button also plays it) or
 with Tab and the arrow keys, and its name and alert level show at the bottom. Playing
-starts the mission placeholder for that scenario (the log says which `scenNNa.usg` it
-would load). The other screens are placeholders: each shows its picture from your
-`.m@l` files with a fade, the window title names the screen and its keys, and nothing
-on them works beyond moving between them. The mouse pointer is the original's, from
+loads that scenario's `scenNNa.usg` and opens the mission in the situation room; the
+training menu's buttons and keys load its training missions the same way. The mission
+itself does not run yet: its views work as the original's (the situation room, the
+view of your base, and a console for each of your robots), and you can set each
+robot's orders on its console, but the 3D views, scanners, instruments and the
+roster's contents are placeholders marked "T-056". The review and the cutscenes are
+placeholders: each shows its picture from your `.m@l` files (or a coloured card) with
+a fade, and the window title names the screen and its keys. The mouse pointer is the original's, from
 your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 `docs/screens.md`.
 
@@ -91,9 +95,10 @@ your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 |---|---|
 | Log-in | Letters and digits: the name. Backspace: delete. Enter: log in (map room). ESC: quit, or back to the map room after N |
 | Map room | Click a box, or Tab, Right or Down / Alt+Tab, Left or Up: select the next / previous scenario. P, Enter or Space (or a right click on a box): play it. T: training menu. R: review. N: log-in. Q or Alt+Q: quit. The buttons do what their keys do |
-| Training menu | H, N, S or C: training mission. ESC or Alt+Q: back |
+| Training menu | Click a button, or H, N, S or C: training mission. ESC or Alt+Q (or the last button): back |
 | Review | ESC or Enter: back |
-| Mission | F1 to F4: situation room, humanoid, scorpion or scout console. W: won, L: lost, C: campaign won (each with a placeholder for its cutscene; a training mission goes straight back) |
+| Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L, Ctrl+C: end it won, lost or with the campaign won (placeholders for its cutscene; a training mission goes straight back) |
+| Mission, robot console | Click the program panel: left the next program, right the previous (and the robot back to its program). F4: next program. F2: automatic (the program drives). F3: manual (the pilot drives). Tab / Alt+Tab or the bottom-right button (left / right): next / previous unit. ESC, Alt+Q or the top-left corner: situation room. Ctrl+W, Ctrl+L, Ctrl+C as above |
 | Cutscene placeholder | Enter, Space or ESC: map room |
 
 `--screen test-card` shows a test card (a synthetic pattern) instead. Its white marker moves one pixel per frame of the
@@ -118,7 +123,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 
 | Key | Action |
 |---|---|
-| ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, review, cutscenes) take it instead. |
+| ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, the mission's views, review, cutscenes) take it instead. |
 | Any other key, P | During the cutscene: end it (fading out) and skip the drop, or pause it until the next key. During the drop: end it at once, or pause it. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 

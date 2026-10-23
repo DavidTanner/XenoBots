@@ -44,9 +44,10 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     );
     // Synthetic, not the game's: an LZEXE-packed image whose entry point loads DS =
     // 0x20, with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
-    // Also made-up map room tables (`synthetic_map_room`).
+    // Also made-up map room tables (`synthetic_map_room`), mission views, a training
+    // menu and programs (`synthetic_views`, `synthetic_programs`).
     let chain = 0x200 + 0xecac;
-    let mut image = vec![0u8; 0x1a000];
+    let mut image = vec![0u8; 0x1c000];
     image[0x10..0x15].copy_from_slice(&[0xb8, 0x20, 0, 0x8e, 0xd8]);
     for i in 0..10 {
         let entry = [0x20u16, 0, 0, 0, 1, 0, 0, 0, 100 * (i + 1), 32, 64, 2, 0];
@@ -57,6 +58,9 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     relocations.extend(xeno_formats::fixtures::synthetic_map_room(
         &mut image, 0x200,
     ));
+    relocations.extend(xeno_formats::fixtures::synthetic_views(&mut image, 0x200));
+    xeno_formats::fixtures::synthetic_programs(&mut image, 0x200);
+    relocations.sort_unstable();
     let exe = xeno_formats::fixtures::synthetic_lzexe(&image, (1, 0), &relocations);
     std::fs::write(dir.join("xeno.exe"), exe).unwrap();
     let picture = xeno_formats::fixtures::synthetic_vcl(&[0; 768], &[1; 640 * 240]);
@@ -91,7 +95,8 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     let campaign = synthetic_scendef(&[((0, 0, 9, 9), 1, b"HERE")]);
     std::fs::write(dir.join("scendef.bin"), campaign).unwrap();
     let bank = xeno_formats::fixtures::synthetic_sprite_bank(&[(1, 1, &[5][..]); 20]);
-    std::fs::write(dir.join("msprite5.b@n"), bank).unwrap();
+    std::fs::write(dir.join("msprite5.b@n"), &bank).unwrap();
+    std::fs::write(dir.join("msprite1.b@n"), &bank).unwrap();
     let (good, drop_alone) = (run(&["--check"]), run(&["--check", "--drop"]));
     let skipped = run(&["--check", "--no-intro"]);
     std::fs::remove_dir_all(&dir).unwrap();

@@ -4,10 +4,13 @@
 //! quits. A mission shows the situation room or a robot console, and a won or lost
 //! one ends in a cutscene. The log-in is the original's (T-041, `login`): the name
 //! entry with its blinking cursor. So is the map room (T-042, `maproom`): the
-//! scenario boxes, selection by click and keys, the panels and the buttons. The others
-//! are placeholders for now: each one's
-//! `.m@l` picture with its palette (a synthetic card for the cutscenes), faded as the
-//! original fades, and the window title names it and its keys.
+//! scenario boxes, selection by click and keys, the panels and the buttons. So are the
+//! training menu and the mission's views (T-043, `mission`): the situation room and the
+//! robot consoles, switched as the original switches them, with the robots' orders set
+//! on the consoles; the simulation's parts are placeholders. The review and the
+//! cutscenes are still placeholders: each one's `.m@l` picture with its palette (a
+//! synthetic card for the cutscenes), faded as the original fades, and the window
+//! title names it and its keys.
 //!
 //! Keys go through (key word, action) tables, as the original's screens do
 //! (`docs/formats/key.md`, "The game's keys"); a screen claims ESC when its table
@@ -22,8 +25,11 @@ use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, Mouse, ScanCode};
 use crate::login::{self, NameEntry, Outcome, Player};
 use crate::maproom::{self, Campaign, MapState, Request};
+use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
+use xeno_formats::orders::RobotKind;
+use xeno_formats::views::TrainingAction;
 
 /// A robot console or the situation room: what a mission shows depends on the object
 /// viewed (`sim_run_mission_loop`, table at `DS:0x6411`).
@@ -110,28 +116,18 @@ const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (key(0x4b), Previous),
     (key(0x48), Previous),
 ];
-/// The training menu's (`DS:0x5e9f`): H, N, S, C pick a training mission; ESC or
-/// Alt+Q go back.
-const TRAINING_KEYS: &[(KeyWord, Action)] = &[
-    (ESC, Go(MapRoom)),
-    (ALT_Q, Go(MapRoom)),
-    (key(0x23), Play(true)),
-    (key(0x31), Play(true)),
-    (key(0x1f), Play(true)),
-    (key(0x2e), Play(true)),
-];
+/// The training menu's keys are read from the user's `xeno.exe` (`DS:0x5e9f`, in
+/// `mission::Assets::training`).
+const TRAINING_KEYS: &[(KeyWord, Action)] = &[];
 /// Not traced yet (T-044): ESC or Enter go back.
 const REVIEW_KEYS: &[(KeyWord, Action)] = &[(ESC, Go(MapRoom)), (ENTER, Go(MapRoom))];
-/// Placeholders until the sim exists: F1 to F4 pick the view, W, L and C end the
-/// mission won, lost or with the campaign won.
+/// Placeholders until the sim exists: Ctrl+W, Ctrl+L and Ctrl+C end the mission won,
+/// lost or with the campaign won (no view's table binds them). The views' own keys are
+/// read from the user's `xeno.exe` (`mission`).
 const MISSION_KEYS: &[(KeyWord, Action)] = &[
-    (key(0x3b), Go(Mission(View::SitRoom))),
-    (key(0x3c), Go(Mission(View::Humanoid))),
-    (key(0x3d), Go(Mission(View::Scorpion))),
-    (key(0x3e), Go(Mission(View::Scout))),
-    (key(0x11), End(Ending::Won)),
-    (key(0x26), End(Ending::Lost)),
-    (key(0x2e), End(Ending::Triumph)),
+    (KeyWord(CTRL | 0x11), End(Ending::Won)),
+    (KeyWord(CTRL | 0x26), End(Ending::Lost)),
+    (KeyWord(CTRL | 0x2e), End(Ending::Triumph)),
 ];
 /// A key ends a cutscene (the original's abort hook takes any key but P).
 const CUTSCENE_KEYS: &[(KeyWord, Action)] = &[
@@ -174,19 +170,19 @@ impl Screen {
             MapRoom => {
                 "Map room: click/Tab/arrows select, P/Enter play, T training, R review, N log-in, Q quit"
             }
-            Training => "Training menu: H/N/S/C train, ESC back",
+            Training => "Training menu: click or H/N/S/C train, ESC back",
             Review => "Review: ESC/Enter back",
             Mission(View::SitRoom) => {
-                "Mission, situation room: F1-F4 view, W won, L lost, C campaign won"
+                "Mission, situation room: click/Tab select, Space view unit, Alt+Q end; Ctrl+W/L/C won/lost/campaign"
             }
             Mission(View::Humanoid) => {
-                "Mission, humanoid console: F1-F4 view, W won, L lost, C campaign won"
+                "Mission, humanoid console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
             }
             Mission(View::Scorpion) => {
-                "Mission, scorpion console: F1-F4 view, W won, L lost, C campaign won"
+                "Mission, scorpion console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
             }
             Mission(View::Scout) => {
-                "Mission, scout console: F1-F4 view, W won, L lost, C campaign won"
+                "Mission, scout console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
             }
             Cutscene(Ending::Won) => "Mission won (cutscene placeholder): Enter/Space/ESC",
             Cutscene(Ending::Lost) => "Mission lost (cutscene placeholder): Enter/Space/ESC",
@@ -297,6 +293,11 @@ pub struct Screens {
     /// The scenario the last mission was started for, by its record (none for
     /// training).
     scenario: Option<usize>,
+    mission_assets: mission::Assets,
+    /// The mission shown, or the last one: its file, the robots' orders, the views.
+    mission: MissionState,
+    /// The training button a press captured the pointer for, and with which button.
+    training_press: Option<(usize, crate::input::MouseButton)>,
 }
 
 /// The logged-in player's campaign, or the guest's.
@@ -310,11 +311,16 @@ impl Screens {
         pictures: Pictures,
         login: login::Assets,
         map_assets: maproom::Assets,
+        mission_assets: mission::Assets,
         start: Screen,
     ) -> Screens {
         let mut dac = Dac::default();
         dac.set_anims(ColourAnims::new(login.anims.clone()));
         let guest = Campaign::new(login.campaign.clone());
+        let (mission, start) = match start {
+            Mission(view) => sample_mission(&mission_assets, view),
+            other => (MissionState::empty(), other),
+        };
         Screens {
             pictures,
             screen: start,
@@ -334,7 +340,16 @@ impl Screens {
             map: MapState::default(),
             mouse: Mouse::default(),
             scenario: None,
+            mission_assets,
+            mission,
+            training_press: None,
         }
+    }
+
+    /// The mission shown, or the last one.
+    #[cfg(test)]
+    pub fn mission(&self) -> &MissionState {
+        &self.mission
     }
 
     /// The mouse pointer the screens show.
@@ -362,8 +377,18 @@ impl Screens {
         self.dac.palette()
     }
 
+    /// Whether the screen shown uses ESC: its key table binds it.
     pub fn claims_escape(&self) -> bool {
-        self.screen.claims_escape()
+        match self.screen {
+            Mission(view) => self.mission_assets.claims_escape(view),
+            Training => self
+                .mission_assets
+                .training
+                .keys
+                .iter()
+                .any(|&(word, _)| KeyWord(word) == ESC),
+            screen => screen.claims_escape(),
+        }
     }
 
     /// Whether a key asked to leave the game.
@@ -405,9 +430,46 @@ impl Screens {
                             self.logged_in(outcome);
                         }
                     }
+                    (InputEvent::KeyDown { code, .. }, Training) => {
+                        let word = key_word(code, &self.keys);
+                        let action = self.mission_assets.training.keys.iter();
+                        let action = action
+                            .clone()
+                            .find_map(|&(w, a)| (KeyWord(w) == word).then_some(a));
+                        if let Some(action) = action {
+                            self.training_action(action);
+                        }
+                    }
+                    (InputEvent::KeyDown { code, .. }, Mission(_)) => {
+                        let word = key_word(code, &self.keys);
+                        if let Some(action) = self.screen.lookup(word) {
+                            self.act(action);
+                        } else if let Some(request) = self.mission.key(word.0, &self.mission_assets)
+                        {
+                            self.mission_request(request, fb);
+                        }
+                    }
                     (InputEvent::KeyDown { code, .. }, screen) => {
                         if let Some(action) = screen.lookup(key_word(code, &self.keys)) {
                             self.act(action);
+                        }
+                    }
+                    (InputEvent::MouseDown { button }, Training) => {
+                        self.training_mouse(button, true, fb);
+                    }
+                    (InputEvent::MouseUp { button }, Training) => {
+                        self.training_mouse(button, false, fb);
+                    }
+                    (InputEvent::MouseDown { button }, Mission(_)) => {
+                        let at = self.mouse.position;
+                        self.mission.mouse_down(button, at, &self.mission_assets);
+                    }
+                    (InputEvent::MouseUp { button }, Mission(_)) => {
+                        let at = self.mouse.position;
+                        if let Some(request) =
+                            self.mission.mouse_up(button, at, &self.mission_assets)
+                        {
+                            self.mission_request(request, fb);
                         }
                     }
                     (InputEvent::MouseDown { button }, MapRoom) => {
@@ -439,12 +501,113 @@ impl Screens {
         if self.screen == Login && self.next.is_none() {
             self.entry.draw(&self.login.font, fb);
         }
+        if matches!(self.screen, Mission(_)) && self.next.is_none() && self.mission.take_dirty() {
+            self.draw_mission(fb);
+        }
         if let Some(next) = self.next
             && !self.dac.fading()
             && !self.dac.dirty()
         {
             self.enter(next, fb);
         }
+    }
+
+    /// A training menu action (`ui_run_training_mission`): load the mission's file and
+    /// run it, or go back. A file that could not be loaded does nothing, as in the
+    /// original.
+    fn training_action(&mut self, number: u16) {
+        match self.mission_assets.training.action(number) {
+            Some(TrainingAction::Mission(name)) => {
+                let file = mission::file_name(name);
+                match self.mission_assets.scenarios.get(&file) {
+                    Some(scenario) => {
+                        log::info!(
+                            "training menu: {file} loaded; the mission itself cannot run yet (T-050 on)"
+                        );
+                        self.mission = MissionState::new(file, scenario);
+                        self.act(Play(true));
+                    }
+                    None => log::warn!("training menu: {file} could not be loaded"),
+                }
+            }
+            Some(TrainingAction::Back) => self.act(Go(MapRoom)),
+            None => log::debug!("training menu: no action {number}"),
+        }
+    }
+
+    /// A mouse button went down (`down`) or up on the training menu
+    /// (`ui_training_button_on_mouse`): a press on a button captures the pointer and
+    /// XORs the button's frame; a release over it XORs it back and acts. Released
+    /// elsewhere, the frame stays XORed, as in the original.
+    fn training_mouse(
+        &mut self,
+        button: crate::input::MouseButton,
+        down: bool,
+        fb: &mut Framebuffer,
+    ) {
+        let buttons = &self.mission_assets.training.buttons;
+        let over = self
+            .mouse
+            .position
+            .and_then(|(x, y)| buttons.iter().position(|(area, _)| area.contains(x, y)));
+        if down {
+            if self.training_press.is_none()
+                && button != crate::input::MouseButton::Middle
+                && let Some(i) = over
+            {
+                self.training_press = Some((i, button));
+                mission::xor_frame(fb, buttons[i].0, mission::TRAINING_PRESSED_XOR);
+            }
+            return;
+        }
+        let Some((i, by)) = self.training_press else {
+            return;
+        };
+        if by != button {
+            return;
+        }
+        self.training_press = None;
+        if over == Some(i) {
+            let (area, action) = buttons[i];
+            mission::xor_frame(fb, area, mission::TRAINING_PRESSED_XOR);
+            self.training_action(action);
+        }
+    }
+
+    /// What a mission view asked for: another view (drawn at once, with its palette,
+    /// as `ui_open_view_of_object` does), or the end of the mission.
+    fn mission_request(&mut self, request: MissionRequest, fb: &mut Framebuffer) {
+        match request {
+            MissionRequest::Show(view) => {
+                log::info!("mission: {view:?} view");
+                self.screen = Mission(view);
+                self.changed = true;
+                if let Some((_, picture)) = Mission(view)
+                    .file()
+                    .and_then(|f| self.pictures.iter().find(|(name, _)| *name == f))
+                {
+                    let dac = picture.dac;
+                    self.fade_in = None;
+                    self.dac.stop();
+                    self.dac.set(&dac);
+                }
+                self.draw_mission(fb);
+            }
+            MissionRequest::End => {
+                log::info!("mission: ended with no result");
+                self.act(Go(MapRoom));
+            }
+        }
+    }
+
+    /// Draws the mission's view: its picture, then its own parts.
+    fn draw_mission(&mut self, fb: &mut Framebuffer) {
+        let file = self.screen.file();
+        if let Some((_, picture)) = file.and_then(|f| self.pictures.iter().find(|(n, _)| *n == f)) {
+            fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
+        }
+        self.mission.draw(fb, &self.mission_assets);
+        self.mission.take_dirty();
     }
 
     /// The name entry is over (`ui_login_and_load_save_game`): the cursor stops
@@ -481,10 +644,21 @@ impl Screens {
                     log::debug!("map room: nothing selected to play");
                     return;
                 };
-                log::info!(
-                    "map room: playing scenario {i}, {} (loading it is T-051)",
-                    maproom::scenario_file(i)
-                );
+                let file = maproom::scenario_file(i);
+                self.mission = match self.mission_assets.scenarios.get(&file) {
+                    Some(scenario) => {
+                        log::info!(
+                            "map room: playing scenario {i}, {file}; the mission itself cannot run yet (T-050 on)"
+                        );
+                        MissionState::new(file, scenario)
+                    }
+                    None => {
+                        log::warn!(
+                            "map room: {file} could not be loaded; a mission with no robots"
+                        );
+                        MissionState::empty()
+                    }
+                };
                 self.scenario = Some(i);
             }
             (MapRoom, Go(Training)) if !campaign.may_train() => {
@@ -522,6 +696,11 @@ impl Screens {
 
     /// Draws `screen` and starts its fade in.
     fn enter(&mut self, screen: Screen, fb: &mut Framebuffer) {
+        // A mission shows the view of the object it views.
+        let screen = match screen {
+            Mission(_) => Mission(self.mission.view()),
+            other => other,
+        };
         log::info!("screen: {:?}", screen);
         let picture = screen
             .file()
@@ -554,6 +733,13 @@ impl Screens {
         if screen == MapRoom {
             self.draw_map(fb);
         }
+        if let Mission(_) = screen {
+            self.mission.draw(fb, &self.mission_assets);
+            self.mission.take_dirty();
+        }
+        if screen == Training {
+            self.training_press = None;
+        }
     }
 
     /// Draws the map room: its picture, then the boxes, panels and buttons.
@@ -566,6 +752,34 @@ impl Screens {
         self.map.draw(fb, &self.map_assets, campaign, name);
         self.map.take_dirty();
     }
+}
+
+/// The mission `--screen` starts a view with: the first training mission with one of
+/// the player's robots of the view's kind, viewing that robot; with none, an empty
+/// mission in the situation room.
+fn sample_mission(assets: &mission::Assets, view: View) -> (MissionState, Screen) {
+    let kind = match view {
+        View::SitRoom => None,
+        View::Humanoid => Some(RobotKind::Humanoid),
+        View::Scorpion => Some(RobotKind::Scorpion),
+        View::Scout => Some(RobotKind::Scout),
+    };
+    let Some((file, scenario)) = assets.sample(kind) else {
+        log::warn!("mission: no training mission has a robot for {view:?}; no robots shown");
+        return (MissionState::empty(), Mission(View::SitRoom));
+    };
+    let mut mission = MissionState::new(file, scenario);
+    let robot = kind.and_then(|k| {
+        mission
+            .book
+            .side(xeno_formats::usg::Side::Human)
+            .find(|(_, r)| r.kind == k)
+            .map(|(slot, _)| slot)
+    });
+    let shown = robot
+        .and_then(|slot| mission.view_robot(slot))
+        .unwrap_or(View::SitRoom);
+    (mission, Mission(shown))
 }
 
 /// A screen with no picture: a border and a block in a colour of its own.
@@ -621,8 +835,15 @@ mod tests {
 
     fn new(start: Screen) -> Screens {
         let map = maproom::tests::test_assets();
-        Screens::new(pictures(), login::test_assets(), map, start)
+        let missions = mission::tests::test_assets();
+        Screens::new(pictures(), login::test_assets(), map, missions, start)
     }
+
+    /// Ctrl with a key, for [`presses`].
+    const CTRL_KEY: u16 = 0x1000;
+    const CTRL_W: u16 = CTRL_KEY | 0x11;
+    const CTRL_L: u16 = CTRL_KEY | 0x26;
+    const CTRL_C: u16 = CTRL_KEY | 0x2e;
 
     /// Runs `retraces` retraces of the log; returns the screen after each.
     fn run(log: &InputLog, start: Screen, retraces: u64) -> (Screens, Vec<Screen>) {
@@ -644,8 +865,14 @@ mod tests {
         log.record(50, [InputEvent::Text('A')]);
         for (i, &code) in codes.iter().enumerate() {
             let r = 100 * (i as u64 + 1);
-            log.record(r, [down(code)]);
-            log.record(r + 1, [up(code)]);
+            if code & CTRL_KEY != 0 {
+                let code = code & 0xff;
+                log.record(r, [down(0x1d), down(code)]);
+                log.record(r + 1, [up(code), up(0x1d)]);
+            } else {
+                log.record(r, [down(code)]);
+                log.record(r + 1, [up(code)]);
+            }
         }
         log
     }
@@ -665,30 +892,37 @@ mod tests {
         // Play needs a selection: Tab picks the first scenario.
         assert_eq!(final_screen(&[0x1c, 0x19]), MapRoom);
         assert_eq!(final_screen(&[0x1c, 0x0f, 0x19]), Mission(View::SitRoom));
+        // Space views the roster's unit (a humanoid), Tab the next one (a scorpion),
+        // ESC goes back to the situation room, Alt+Q (here Q with Alt) ends the mission.
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, 0x3c]),
+            final_screen(&[0x1c, 0x0f, 0x19, 0x39]),
             Mission(View::Humanoid)
         );
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, 0x3e]),
-            Mission(View::Scout)
+            final_screen(&[0x1c, 0x0f, 0x19, 0x39, 0x0f]),
+            Mission(View::Scorpion)
         );
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, 0x11]),
+            final_screen(&[0x1c, 0x0f, 0x19, 0x39, 0x0f, 0x01]),
+            Mission(View::SitRoom)
+        );
+        assert_eq!(
+            final_screen(&[0x1c, 0x0f, 0x19, CTRL_W]),
             Cutscene(Ending::Won)
         );
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x19, 0x26]),
+            final_screen(&[0x1c, 0x0f, 0x19, CTRL_L]),
             Cutscene(Ending::Lost)
         );
         assert_eq!(
-            final_screen(&[0x1c, 0x0f, 0x39, 0x2e]),
+            final_screen(&[0x1c, 0x0f, 0x39, CTRL_C]),
             Cutscene(Ending::Triumph)
         );
-        assert_eq!(final_screen(&[0x1c, 0x0f, 0x19, 0x26, 0x39]), MapRoom);
+        assert_eq!(final_screen(&[0x1c, 0x0f, 0x19, CTRL_L, 0x39]), MapRoom);
         assert_eq!(final_screen(&[0x1c, 0x31]), Login);
-        // A training mission goes back to the map room without a cutscene.
-        assert_eq!(final_screen(&[0x1c, 0x14, 0x23, 0x11]), MapRoom);
+        // A training mission (A, the synthetic menu's) goes back to the map room
+        // without a cutscene.
+        assert_eq!(final_screen(&[0x1c, 0x14, 0x1e, CTRL_W]), MapRoom);
         // Keys a screen doesn't bind do nothing.
         assert_eq!(final_screen(&[0x1c, 0x11, 0x01]), MapRoom);
     }
@@ -724,18 +958,17 @@ mod tests {
 
     #[test]
     fn escape_is_claimed_by_the_screens_that_bind_it() {
-        let claims: Vec<_> = [
-            Login,
-            MapRoom,
-            Training,
-            Review,
-            Mission(View::SitRoom),
-            Cutscene(Ending::Won),
-        ]
-        .iter()
-        .map(|s| s.claims_escape())
-        .collect();
-        assert_eq!(claims, [true, false, true, true, false, true]);
+        let claims: Vec<_> = [Login, MapRoom, Review, Cutscene(Ending::Won)]
+            .iter()
+            .map(|s| s.claims_escape())
+            .collect();
+        assert_eq!(claims, [true, false, true, true]);
+        // The training menu's and the views' tables (the user's) bind ESC.
+        for screen in [Training, Mission(View::SitRoom), Mission(View::Humanoid)] {
+            let mut screens = new(screen);
+            screens.retrace([], &mut Framebuffer::new(Size::MODE_13H));
+            assert!(screens.claims_escape(), "{screen:?}");
+        }
         // ESC on the log-in screen asks to quit; Q and Alt+Q do on the map room.
         assert!(run(&presses(&[0x01]), Login, 200).0.quit());
         assert!(run(&presses(&[0x1c, 0x10]), Login, 300).0.quit());
@@ -756,23 +989,23 @@ mod tests {
         assert_eq!(key_word(ScanCode(0x01), &held), KeyWord(0x3801));
         // A modifier's own press doesn't count itself.
         assert_eq!(key_word(ScanCode(0x2a), &Keys::default()), KeyWord(0x2a));
-        // Alt+Q on the training menu goes back; Q alone does nothing there.
-        assert_eq!(Training.lookup(ALT_Q), Some(Go(MapRoom)));
-        assert_eq!(Training.lookup(key(0x10)), None);
+        // Alt+Q on the map room quits; with Ctrl it does nothing.
+        assert_eq!(MapRoom.lookup(ALT_Q), Some(Quit));
+        assert_eq!(MapRoom.lookup(KeyWord(CTRL | 0x10)), None);
     }
 
     #[test]
     fn a_log_replays_the_same_screens() {
-        let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x3d, 0x26, 0x1c, 0x13]);
+        let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x0f, CTRL_L, 0x1c, 0x13]);
         // A click outside the map area and the buttons does nothing.
         let left = crate::input::MouseButton::Left;
-        log.record(950, [InputEvent::MouseMove { x: 1, y: 2 }]);
-        log.record(951, [InputEvent::MouseDown { button: left }]);
-        log.record(952, [InputEvent::MouseUp { button: left }]);
-        let (_, first) = run(&log, Login, 1000);
-        let (_, again) = run(&log.clone(), Login, 1000);
+        log.record(1050, [InputEvent::MouseMove { x: 1, y: 2 }]);
+        log.record(1051, [InputEvent::MouseDown { button: left }]);
+        log.record(1052, [InputEvent::MouseUp { button: left }]);
+        let (_, first) = run(&log, Login, 1100);
+        let (_, again) = run(&log.clone(), Login, 1100);
         assert_eq!(first, again);
-        assert_eq!(first[999], Review);
+        assert_eq!(first[1099], Review);
         assert!(first.contains(&Mission(View::Scorpion)));
         assert!(first.contains(&Cutscene(Ending::Lost)));
     }
@@ -856,11 +1089,12 @@ mod tests {
         click(&mut log, 200, (285, 155), Left);
         assert_eq!(*run(&log, Login, 300).1.last().unwrap(), Review);
         let (screens, _) = run(
-            &presses(&[0x1c, 0x0f, 0x19, 0x11, 0x1c, 0x14, 0x23]),
+            &presses(&[0x1c, 0x0f, 0x19, CTRL_W, 0x1c, 0x14, 0x1e]),
             Login,
             800,
         );
         assert_eq!(screens.scenario(), None);
+        assert_eq!(screens.mission().file, "atrain.usg");
     }
 
     #[test]
@@ -887,6 +1121,7 @@ mod tests {
             Vec::new(),
             login::test_assets(),
             map,
+            mission::tests::test_assets(),
             Cutscene(Ending::Lost),
         );
         screens.retrace([], &mut fb);
@@ -898,12 +1133,86 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs XENOBOTS_GAME_DIR"]
-    fn real_assets_every_screen_loads_and_shows() {
+    fn the_training_menu_loads_the_mission_its_button_names() {
+        use crate::input::MouseButton::Left;
+        let mut log = presses(&[0x1c, 0x14]);
+        // The first button (14, 200, 25, 275): its frame is XORed while pressed.
+        log.record(300, [InputEvent::MouseMove { x: 210, y: 20 }]);
+        log.record(301, [InputEvent::MouseDown { button: Left }]);
+        log.record(303, [InputEvent::MouseUp { button: Left }]);
+        let mut screens = new(Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for r in 1..=400 {
+            screens.retrace(log.events_at(r), &mut fb);
+            if r == 302 {
+                // The training menu's picture is pixel 3 everywhere; XOR 9 gives 10.
+                assert_eq!((fb.get(200, 14), fb.get(210, 20)), (Some(10), Some(3)));
+            }
+        }
+        assert_eq!(screens.screen(), Mission(View::SitRoom));
+        assert_eq!(screens.mission().file, "atrain.usg");
+        assert_eq!(screens.scenario(), None);
+        // ESC on the menu goes back (its table binds it).
+        assert_eq!(final_screen(&[0x1c, 0x14, 0x01]), MapRoom);
+    }
+
+    #[test]
+    fn orders_set_on_a_console_survive_switching_views() {
+        use crate::input::MouseButton::Left;
+        use xeno_formats::orders::Orders;
+        // Log in, play, Space: the humanoid console of unit 2.
+        let mut log = presses(&[0x1c, 0x0f, 0x19, 0x39]);
+        // A click on the program panel: the next program.
+        log.record(500, [InputEvent::MouseMove { x: 130, y: 92 }]);
+        log.record(501, [InputEvent::MouseDown { button: Left }]);
+        log.record(502, [InputEvent::MouseUp { button: Left }]);
+        // ESC to the situation room, Space back to the console.
+        for (r, code) in [(600, 0x01), (700, 0x39)] {
+            log.record(r, [down(code)]);
+            log.record(r + 1, [up(code)]);
+        }
+        let mut screens = new(Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        let mut seen = Vec::new();
+        for r in 1..=800 {
+            screens.retrace(log.events_at(r), &mut fb);
+            if seen.last() != Some(&screens.screen()) {
+                seen.push(screens.screen());
+            }
+        }
+        assert_eq!(
+            seen[seen.len() - 3..],
+            [
+                Mission(View::Humanoid),
+                Mission(View::SitRoom),
+                Mission(View::Humanoid)
+            ]
+        );
+        assert_eq!(
+            screens.mission().book.get(2).unwrap().orders,
+            Orders::given(2)
+        );
+        // The console shows it: the panel filled with the humanoid's colour.
+        assert_eq!(fb.get(193, 97), Some(0x10));
+    }
+
+    #[test]
+    fn a_console_screen_starts_on_a_sample_mission() {
+        let mut screens = new(Mission(View::Scorpion));
+        screens.retrace([], &mut Framebuffer::new(Size::MODE_13H));
+        assert_eq!(screens.screen(), Mission(View::Scorpion));
+        assert_eq!(screens.mission().file, "atrain.usg");
+        // No human scout in the synthetic mission: the situation room instead.
+        let mut screens = new(Mission(View::Scout));
+        screens.retrace([], &mut Framebuffer::new(Size::MODE_13H));
+        assert_eq!(screens.screen(), Mission(View::SitRoom));
+    }
+
+    /// The user's files: the screens' pictures and the assets of the log-in, the map
+    /// room and the missions.
+    fn real_screens(start: Screen) -> Option<Screens> {
         use crate::game_dir::{ENV_VAR, GameDir};
-        let Some(path) = std::env::var_os(ENV_VAR) else {
-            return;
-        };
+        let path = std::env::var_os(ENV_VAR)?;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let files = GameDir::resolve(None, Some(root.join(path).into()))
             .check()
@@ -912,15 +1221,25 @@ mod tests {
         assert_eq!(pictures.len(), 8);
         let login = login::load(&files).unwrap();
         assert_eq!(login.campaign.scenarios.len(), 13);
-        // Tab (0x0f) selects the first open scenario before the first play; it is the
-        // one key that stays on its screen.
+        let missions = mission::load(&files, login.campaign.scenarios.len()).unwrap();
+        let map = maproom::load(&files).unwrap();
+        Some(Screens::new(pictures, login, map, missions, start))
+    }
+
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_every_screen_loads_and_shows() {
+        // Enter, R, ESC, T, ESC (back), Tab, P (the mission's situation room), Space
+        // (the first unit's console), ESC (back), Ctrl+W (won), Enter, Space (play
+        // again), Ctrl+L, ESC (map room), P, Ctrl+C, Enter, N.
         let codes = [
-            0x1c, 0x13, 0x01, 0x14, 0x23, 0x11, 0x0f, 0x19, 0x3c, 0x3d, 0x3e, 0x3b, 0x11, 0x1c,
-            0x39, 0x26, 0x01, 0x19, 0x2e, 0x1c, 0x31,
+            0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, CTRL_W, 0x1c, 0x39, CTRL_L, 0x01,
+            0x19, CTRL_C, 0x1c, 0x31,
         ];
         let log = presses(&codes);
-        let map = maproom::load(&files).unwrap();
-        let mut screens = Screens::new(pictures, login, map, Login);
+        let Some(mut screens) = real_screens(Login) else {
+            return;
+        };
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut seen = vec![Login];
         let mut blink = Vec::new();
@@ -934,11 +1253,87 @@ mod tests {
                 seen.push(screens.screen());
             }
         }
+        // Tab stays on the map room; every other key changes the screen.
         assert_eq!(seen.len(), codes.len(), "{seen:?}");
+        assert!(seen.contains(&Mission(View::Humanoid)), "{seen:?}");
         assert_eq!(screens.scenario(), Some(0));
+        assert_eq!(screens.mission().file, "scen00a.usg");
         blink.dedup();
         assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
         assert_eq!(screens.player.as_ref().unwrap().name, "A");
         assert_eq!(screens.screen(), Login);
+    }
+
+    /// Opens every console and the situation room, and every training mission, from
+    /// the user's files; sets orders on each console and checks they are kept.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_every_view_and_training_mission_opens() {
+        use crate::input::MouseButton::{Left, Right};
+        for view in [View::SitRoom, View::Humanoid, View::Scorpion, View::Scout] {
+            let Some(mut screens) = real_screens(Mission(view)) else {
+                return;
+            };
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            for _ in 0..40 {
+                screens.retrace([], &mut fb);
+            }
+            assert_eq!(screens.screen(), Mission(view));
+            if view == View::SitRoom {
+                continue;
+            }
+            // A left then two right releases on the program panel.
+            let panel = screens
+                .mission_assets
+                .tables_for_test(view)
+                .find(xeno_formats::views::PROGRAM_PANEL_TYPE)
+                .and_then(|w| w.area)
+                .unwrap();
+            let at = InputEvent::MouseMove {
+                x: panel.left + 2,
+                y: panel.top + 2,
+            };
+            let slot = match screens.mission().viewed() {
+                mission::Viewed::Robot(slot) => slot,
+                other => panic!("{other:?}"),
+            };
+            let before = screens.mission().book.get(slot).unwrap().orders;
+            for button in [Left, Right, Right] {
+                screens.retrace(&[at, InputEvent::MouseDown { button }], &mut fb);
+                screens.retrace(&[InputEvent::MouseUp { button }], &mut fb);
+            }
+            let after = screens.mission().book.get(slot).unwrap().orders;
+            assert!(!after.manual, "{view:?}");
+            assert_ne!(after.program, before.program, "{view:?}");
+            // ESC to the situation room and back with Space keeps them.
+            for code in [0x01, 0x39] {
+                screens.retrace(&[down(code)], &mut fb);
+                screens.retrace(&[up(code)], &mut fb);
+            }
+            assert_eq!(screens.mission().book.get(slot).unwrap().orders, after);
+        }
+        // Each training mission (H, N, S, C) loads and opens its situation room.
+        for code in [0x23, 0x31, 0x1f, 0x2e] {
+            let Some(mut screens) = real_screens(Training) else {
+                return;
+            };
+            let mut log = InputLog::default();
+            log.record(100, [down(code)]);
+            log.record(101, [up(code)]);
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            for r in 1..=200 {
+                screens.retrace(log.events_at(r), &mut fb);
+            }
+            assert_eq!(screens.screen(), Mission(View::SitRoom), "{code:#x}");
+            assert!(screens.mission().file.ends_with("train.usg"));
+            assert!(
+                screens
+                    .mission()
+                    .book
+                    .side(xeno_formats::usg::Side::Human)
+                    .next()
+                    .is_some()
+            );
+        }
     }
 }

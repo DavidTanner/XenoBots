@@ -490,13 +490,13 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 |---|---|---|
 | Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
 | Map room | `maproom.m@l`, the boxes, panels and buttons (T-042) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys |
-| Training menu | `trainmen.m@l` | H, N, S, C: training mission. ESC, Alt+Q: map room (the original's keys) |
+| Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l` | ESC, Enter: map room |
-| Mission | `sitroom.m@l`, or a console's `.m@l` | F1 to F4: situation room, humanoid, scorpion, scout. W won, L lost, C campaign won |
+| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); Ctrl+W won, Ctrl+L lost, Ctrl+C campaign won (placeholders) |
 | Cutscene (won, lost, campaign won) | A synthetic card: green, red or yellow block | Enter, Space, ESC: map room |
 
-Keys that only the port uses (review, mission, cutscenes) are placeholders until the
-screens are built (T-043, T-044, T-056). A training mission goes back to
+Keys that only the port uses (review, the mission's endings, cutscenes) are
+placeholders until the screens are built (T-044, T-045, T-055). A training mission goes back to
 the map room without a cutscene, as in the original.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
@@ -504,9 +504,10 @@ the map room without a cutscene, as in the original.
   low byte, `screens::key_word`) and looked up in the screen's (key word, action)
   table; the first match acts. Auto-repeat counts as a press.
 - **ESC.** A screen claims ESC exactly when its table binds it (log-in, training menu,
-  review, cutscenes); then `Translator::screen_claims_escape` is set and ESC reaches the
-  game. On the map room and in a mission ESC still leaves fullscreen or quits, as the
-  original binds no ESC there.
+  the mission's views, review, cutscenes; for the training menu and the views, the
+  user's tables); then `Translator::screen_claims_escape` is set and ESC reaches the
+  game. On the map room ESC still leaves fullscreen or quits, as the original binds no
+  ESC there.
 - **Fades.** Leaving a screen fades the palette out over 32 retraces (`Dac::fade_out`);
   the next screen is drawn once the black is uploaded and fades in over 32 retraces
   (64 for the log-in), ending one level short as the driver's fade does. Keys pressed
@@ -560,7 +561,40 @@ the map room without a cutscene, as in the original.
   data block). The fonts, colours and blit modes the drawing code passes are kept as
   constants in the port: they are short, and they are code, not tables. `xeno-tool
   inspect` shows the map room's and the pointer's shape.
-- **Not modelled**: the save file, the widgets of the screens other than the map room,
+- **Training menu** (T-043): its buttons and keys are the user's (`xeno_formats::views`,
+  `read_training`): a press on a button XORs its frame with 9, a release over it XORs it
+  back and acts; released elsewhere the frame stays XORed, as in the original. A
+  mission loads its `?TRAIN.USG` with `xeno_formats::usg` (all four, and the
+  campaign's `scenNNa.usg`, are parsed when the screens load; one that cannot be read
+  is logged and does nothing when chosen, as the original's failed load does) and goes
+  to the mission; the map room's play loads `scenNNa.usg` the same way.
+- **Mission views** (`crates/xeno-app/src/mission.rs`, T-043): a mission holds the
+  loaded file, the robots' orders (`xeno_formats::orders::OrderBook`, from the file's
+  `DCBS` objects) and the views' state, for the whole mission, so orders persist across
+  views. It starts on the situation room. The widget sets, key tables, sprite buttons,
+  roster rows, program names and panel styles are the user's; what a key does is
+  chosen by the original handler it calls (a short list of handler offsets in the
+  port). Switching views draws the new picture at once with its palette, as
+  `ui_open_view_of_object` does. In the situation room: the six sprite buttons (one
+  shared pressed look), a roster of the player's robots (left press selects; right
+  release, Space, J and the view button open its console; the scroll buttons scroll;
+  Tab and Alt+Tab step the selection), and Alt+Q, the end button and the corner end the
+  mission with no result (back to the map room). In a console: the program panel
+  (filled in the kind's colour, the running program's name in the kind's font, in the
+  manual colour or colour 6; pressed, recoloured; a left release the next program
+  offered to the kind, a right release the previous, both back to automatic), F2, F3
+  and F4, the unit-name button and Tab / Alt+Tab (the next or previous of the player's
+  robots, by object slot: the order of the original's unit list is not traced), and
+  ESC, Alt+Q and the corner back to the situation room. A release away from the
+  pressed widget does nothing and leaves its pressed look, as in the original. Each
+  change of orders is logged. Placeholders, the port's own: the pixels of colour 255 (and 253, 254 in the
+  consoles) where the mission would draw are hatched black with a "T-056" label; the
+  roster rows show each robot's number and program, the selected one framed; the
+  unit-name button shows the robot's number. `--screen humancon`, `scorpcon` and
+  `scoutcon` open the first training mission, in the menu's order, with one of the
+  player's robots of that kind, on that robot; `--screen sit-room` the first training
+  mission.
+- **Not modelled**: the save file, the widgets of the review,
   the real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016` and
   `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and the
   music.

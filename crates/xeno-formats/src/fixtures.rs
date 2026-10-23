@@ -798,18 +798,19 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
 }
 
 /// Writes a made-up program table (`crate::orders`) into `image`, whose data segment
-/// starts at `ds`: five programs at `ds + 0x100` on (0 never offered, 1 for every kind,
+/// starts at `ds`: five programs at `ds + 0x740` on (0 never offered, 1 for every kind,
 /// 2 for every kind with a header of no item list, 3 for the scorpion only, 4 never
-/// offered), the table at `ds + 0x10` and the kind masks 1, 2, 4 at `ds + 0x30`.
-/// `image` must reach `0xd384` and `ds + 0x200`.
+/// offered), the table at `ds + 0x700` and the kind masks 1, 2, 4 at `ds + 0x720`.
+/// `image` must reach `0xd384` and `ds + 0x840`; it leaves the other synthetic tables
+/// alone.
 pub fn synthetic_programs(image: &mut [u8], ds: usize) {
     use crate::orders::{COUNT, MASKS, TABLE};
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    put(TABLE.0, &op(TABLE.1, 0x10));
+    put(TABLE.0, &op(TABLE.1, 0x700));
     put(COUNT.0, &[COUNT.1[0], 5]);
-    put(MASKS.0, &op(MASKS.1, 0x30));
-    put(ds + 0x30, &[1, 2, 4]);
+    put(MASKS.0, &op(MASKS.1, 0x720));
+    put(ds + 0x720, &[1, 2, 4]);
     let programs: [&[u8]; 5] = [
         b"\x0f\x11\x02\x87\x05ZERO\0\x01\x02",
         b"\x0f\x05\x12\x34\x09\x56\x78\x11\x02\x07\x04ONE\0",
@@ -818,8 +819,8 @@ pub fn synthetic_programs(image: &mut [u8], ds: usize) {
         b"\x0f\x11\x02\x82\x05FOUR\0",
     ];
     for (n, program) in programs.iter().enumerate() {
-        let at = 0x100 + 0x20 * n;
-        put(ds + 0x10 + 2 * n, &(at as u16).to_le_bytes());
+        let at = 0x740 + 0x20 * n;
+        put(ds + 0x700 + 2 * n, &(at as u16).to_le_bytes());
         put(ds + at, program);
     }
 }
@@ -876,9 +877,12 @@ impl SyntheticViews {
 /// whose data segment starts at `ds`, and returns the image offsets to relocate. Each
 /// console has a program panel, a unit-name button, a corner and a key widget; the
 /// situation room a sprite button (handle 0x2a0), a roster of two rows, a corner and a
-/// key widget; every view's keys are F2 then ESC. The training menu has two buttons
+/// key widget; every view's keys are F2, ESC, Space, Tab and Alt+Q, bound to the
+/// original's automatic, base, view-selected, next-unit and end handlers. The training menu has two buttons
 /// (action 0, a mission `ATRAIN.USG`, and action 2, back) and two keys (ESC back, A the
-/// mission). `image` must reach `ds + 0x700` and `0xd320`.
+/// mission). `image` must reach `ds + 0x700` and `0xd320`; it uses the code offsets
+/// 0x1000 to 0x1440 and the image from 0x1a000 to 0x1a910, and leaves the other
+/// synthetic tables alone.
 pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     use crate::views::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -911,11 +915,16 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
         &[
             &[0xa9, 0x00, 0x18, 0x74, 0x14, 0x8b, 0x44, 0x02, 0x24, 0x7f][..],
             &op(&[0xbb], 0x600),
-            &op(&[0xb9], 2),
+            &op(&[0xb9], 5),
         ]
         .concat(),
     );
-    put(ds + 0x600, &words(&[0x3c, 0xd446, 0x01, 0x7ee7]));
+    put(
+        ds + 0x600,
+        &words(&[
+            0x3c, 0xd446, 0x01, 0x7ee7, 0x39, 0x6852, 0x0f, 0x7db2, 0x2010, 0x7cf2,
+        ]),
+    );
     put(DRAW_HANDLERS.0, &op(DRAW_HANDLERS.1, draw as u16));
     put(KEY_HANDLERS.0, &op(KEY_HANDLERS.1, keys as u16));
 
@@ -924,7 +933,7 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     put(VIEW_OPENERS.0, &op(VIEW_OPENERS.1, 0x100));
     for kind in 0..4u16 {
         let opener = 0x1000 + 0x20 * usize::from(kind);
-        let set = 0x18000 + 0x200 * usize::from(kind);
+        let set = 0x1a000 + 0x200 * usize::from(kind);
         let list: Vec<Vec<u8>> = if kind < 3 {
             vec![
                 widget(0x0e, 0, NONE),
@@ -967,7 +976,7 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
         (PANEL_FONTS, 0x640, [0, 2, 2]),
         (PANEL_X_OFFSETS, 0x648, [2, 1, 1]),
         (PANEL_COLOURS, 0x650, [0x2010, 0x2111, 0x2212]),
-        (PANEL_PRESSED, 0x658, [0x3010, 0x3111, 0x3212]),
+        (PANEL_PRESSED, 0x658, [0x1030, 0x1131, 0x1232]),
     ] {
         put(entry.0, &op(entry.1, at as u16));
         put(ds + at, &words(&values));
@@ -976,7 +985,7 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     put(UNIT_LABEL.0, &[op(&[0xb8], 191), op(&[0xbb], 279)].concat());
 
     // The training menu.
-    let (set, template) = (0x19000, 0x19100);
+    let (set, template) = (0x1a800, 0x1a900);
     put(
         set,
         &words(&[0x40, (set / 16) as u16, (template / 16) as u16, 0, 10]),
