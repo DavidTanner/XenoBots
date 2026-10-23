@@ -2,7 +2,8 @@
 
 ## Status
 
-**Partial** (T-013). Every image in the game is 8-bit indexed and drawn through one
+**Confirmed** for the sources, the upload, the fades and the colour-animation records
+(T-013, T-036, T-037). Every image in the game is 8-bit indexed and drawn through one
 256-colour VGA palette at a time. The game has no standalone palette file. Each picture
 brings its own palette:
 
@@ -12,7 +13,7 @@ brings its own palette:
 | `.vcl` (all 14) | VGA DAC, 6 bits per channel | First 768 bytes of the file (`vcl.md`) | confirmed; `vga240.mod`'s loader reads it into a buffer of the caller's | `xeno_formats::vcl` |
 | `.m@l` screens (all 8) | VGA DAC, 6 bits per channel | First 768 bytes of the screen after unpacking (`m@l.md`) | confirmed | `xeno_formats::mal` |
 | IFF ILBM/PBM `CMAP` | 8 bits per channel (IFF standard) | `CMAP` chunk | `vgaiff.dvr` only; no IFF file is in the install (see below) | no |
-| Colour-animation records | VGA DAC, 6 bits per channel | Embedded in `mgavideo.dvr` and `vgaintro.dvr` data | partial | no |
+| Colour-animation records | VGA DAC, 6 bits per channel | Lists in `mgavideo.dvr`'s and `vgaintro.dvr`'s data (see below) | confirmed (T-037) | `xeno_render::anim` runs them; nothing reads the stock lists yet |
 
 Not palette sources, as far as the evidence goes:
 
@@ -92,8 +93,16 @@ the fade out at 0x505 and its step 0x5ba; the retrace handler 0x90f). Reproduced
 `xeno_render::Dac`.
 
 - **Order each retrace.** The host's retrace interrupt counts `DS:0x370`, then calls
-  slot `0x4f4`: upload the shadow if dirty, then call the fade routine, which writes the
-  next shadow and marks it dirty. So a step shows one retrace after it is computed.
+  slot `0x4f4`: upload the shadow if dirty, run the colour-animation records (below),
+  then call the fade routine, which writes the next shadow and marks it dirty. So a
+  step shows one retrace after it is computed.
+- **Slots** (T-037, from the driver's slot table): `0x4c0` / `0x4c4` fade all 256 out
+  and wait / start it; `0x4c8` / `0x4cc` the same for `BX..=CX`; `0x4d4` / `0x4d8` fade
+  all 256 in from the palette at `ES` (`0x4d8` takes it in `DX`) and wait / start it;
+  `0x4dc` / `0x4e0` the same for `BX..=CX`. The "start" forms of a fade in still wait
+  for the black upload. `0x4a8` copies a palette into the shadow without marking it,
+  `0x4ac` does the same and marks it, `0x4a4` drops a pending upload, `0x4b0` marks
+  the shadow for upload.
 - **Start.** Every fade first stops the running one and clears the dirty flag (a
   pending upload is dropped). The step is `0x10000 / length` (a length of 0 counts as
   1; a length of 1 overflows the division, a fault in the original).
@@ -107,50 +116,160 @@ the fade out at 0x505 and its step 0x5ba; the retrace handler 0x90f). Reproduced
   DAC back through port `0x3c7`, then starts. The level rises the same way but wraps to
   0 on overflow, and the ramp uses `0x10000 - level`, so the last step is black. It
   also stops after `DX` steps (`0x4c0` passes 0xffff).
-- **Colour range.** The routines take a first and last colour, but they read the DAC
-  into the start of their buffer and then index it from `first * 3`, and loop to
-  `count * 3`; only a first colour of 0 works as intended, which is all the `.vcl`
-  player uses (colours 0..=251, then 0..=255).
+- **Colour range.** The routines take a first and last colour (`BX`, `CX`) and
+  handle the bytes of their range correctly when they copy or read back, but the step
+  loops from byte `first * 3` up to `count * 3`, `count` being the number of colours.
+  A fade in copies colours `first..=last` of the target into the shadow and the saved
+  buffer and blackens them, but scales only `first..=last - first`; the rest stay
+  black. A fade out reads colours `first..=last` back into the start of the saved
+  buffer, so colour `c` fades from what colour `c + first` showed, again only for
+  `first..=last - first`. When `last - first < first` the loop count wraps and the step
+  runs 65,536 times over the memory after the buffers (the port scales nothing). Only a
+  first colour of 0 works as intended, which is all the `.vcl` player uses (colours
+  0..=251, then 0..=255). `xeno_render::Dac` keeps these quirks.
+- **The saved buffer** (`DS:0x696`) persists between fades: `0x4e8` copies all 768
+  bytes of it back into the shadow while any fade runs, so after a partial fade in,
+  colours outside its range get whatever an earlier fade left there.
 - **Back to back** (the player's two fades out): the second stops the first in the same
   retrace its black step was computed, dropping that upload, so the second starts from
   the first's next-to-last levels. The DAC shows those for three retraces before the
   second's first step.
 
-### Colour-animation records
+### Colour-animation records (T-037)
 
-The retrace handlers also walk a list of colour-animation records and write the colours
-of any active record straight to the DAC. Records sit back to back. The same layout
-appears in `mgavideo.dvr`'s and `vgaintro.dvr`'s data, so the drivers ship some
-animations built in.
+Read in `mgavideo.dvr` (load offsets: the retrace handlers `pal_on_retrace` 0x90f and
+`pal_on_retrace_outsb` 0x9c3, `pal_advance_colour_anims` 0xa66, the blends at slots
+`0x4ec`/`0x4f0`) and in `xeno.exe` (`1000:13a4`–`14f9`). Reproduced by
+`xeno_render::anim::ColourAnims`, run by `xeno_render::Dac`.
 
-| Offset | Size | Meaning | Confidence |
-|---|---|---|---|
-| 0x00 | u16 LE | Size of this record in bytes; the next record follows it. 0 ends the list | confirmed |
-| 0x02 | u8 | Flags. Bit 7: active. Bits 0-2: kind (0 = nothing, 1 = rotate, 2..=4 = step through frames) | confirmed for bit 7 and the kind dispatch; the meaning of each kind is inferred |
-| 0x03 | u8 | Retrace countdown; the record is applied when it reaches 0 | confirmed |
-| 0x04 | u8 | Probably the countdown reload value (the speed) | guess |
-| 0x05 | u8 | First DAC index to write | confirmed |
-| 0x06 | u8 | Number of colours | confirmed |
-| 0x07 | u8 | Rotate only: rotation position. Colours from the data pointer go first, then that many from the start of the data | confirmed |
-| 0x08 | u16 LE | Pointer to the colours to write now, relative to the driver's data. Helpers reset it to the start of the data, or to one frame past it | confirmed |
-| 0x0a | `count * 3` per frame | The colours, VGA 6-bit | confirmed |
+**The list.** Records sit back to back from offset 0 of one segment, each starting with
+its size; a size of 0 ends the list. Which list runs is a host word, `DS:0x322`, that
+points at a memory-block descriptor whose first word is the list's segment.
+`pal_install_anim_slots` (`1000:13a4`, at start-up) selects the driver's own list:
+`mgavideo.dvr`'s third data block (descriptor `DS:0x622`). Colour pointers are offsets
+from the start of the list, so a record only works at the place it was built for.
 
-The built-in records seen so far have one record size per driver: `10 + 2 * count * 3`
-bytes, which is two frames of colours. What advances the pointer and the rotation
-between steps has not been traced. It is probably the routine the handlers call after
-the list (mgavideo ~0xc66).
+| Offset | Size | Meaning |
+|---|---|---|
+| 0x00 | u16 LE | Size of this record in bytes; the next record follows it. 0 ends the list |
+| 0x02 | u8 | Flags: bit 7 active; bit 6 direction; bit 5 stop at the end of this pass; bit 4 loop; bit 3 chain (start the next record when this one stops); bits 0-2 the kind |
+| 0x03 | u8 | Countdown: the record fires when it reaches 0 |
+| 0x04 | u8 | Speed: the countdown's reload, so retraces between steps (0 is 256) |
+| 0x05 | u8 | First DAC index to write |
+| 0x06 | u8 | Number of colours written (`count`) |
+| 0x07 | u8 | Rotate only: how many colours wrap round to the start of the data (`pos`) |
+| 0x08 | u16 LE | Offset (in the list) of the colours to write next |
+| 0x0a | to the end | The colours, VGA 6-bit `r, g, b` triples |
+
+**Each retrace**, in the driver's handler: the dirty shadow palette is uploaded, then,
+unless the records are held (`DS:0x695` non-zero) or the host's pause byte `DS:0x264`
+is set, two passes run over the list, then the fade step (`0x4f8`) runs:
+
+1. **Fire.** Every active record's countdown drops by one (wrapping). At 0 its colours
+   go **straight to the DAC**, starting at its first index (the DAC's index wraps
+   after 255): `count` colours from the pointer, or for a rotate `count - pos` colours
+   from the pointer and then `pos` from the start of the data.
+2. **Advance.** Every active record whose countdown is 0 (those that just fired)
+   reloads it from the speed byte and moves on by its kind:
+   - **1, rotate.** The data is a ring of `N = (size - 10) / 3` colours and the record
+     shows a window of `count` of them starting at ring position `s` (pointer = data
+     + 3s; `pos = max(0, s + count - N)` is the part that wraps). Bit 6 clear moves
+     `s` up by one, bit 6 set down by one, wrapping at the ends, so colour `first + i`
+     shows ring colour `(s + i) mod N`. With `N == count` it is a plain rotation.
+   - **2, frames.** The data is frames of `count` colours. Bit 6 clear steps back a
+     frame, bit 6 set forward. Past either end the pointer wraps to the other end; then
+     the record keeps going if bit 4 is set and bit 5 clear, and otherwise stops
+     (clearing bits 7 and 5) and, if bit 3 is set, activates the next record with this
+     record's speed as its countdown.
+   - **3 and 4, blends.** Turn themselves off: they show one prepared frame once.
+   - 0 and 5..7: only the countdown runs.
+
+**Starting a record** (word slot `0x316`, `pal_start_anim` `1000:140b`; `AL` the index
+in the list, `AH` a weight): the record is turned off, then by kind: a rotate goes to
+ring position 0; frames go to the first frame if bit 6 is set, else to the last; kind
+3 builds frame 1 from the current palette (the shadow, through `DS:0x68e`) towards
+frame 0 and kind 4 builds frame 2 from frame 0 towards frame 1, each byte moved
+`(|distance| * 2 * weight) >> 8` levels (so rounding towards the start), a weight of
+128 or more giving the end frame itself (and for kind 4, 0 the start frame); the
+pointer is set to the built frame. Then the countdown is set to 1 and the record
+turned on, so it shows at the next retrace. Kind 0 is accepted but left off; kinds
+5..7 return carry set.
+
+The other host services, all near routines in `xeno.exe` exported as word slots
+(`docs/re/dvr-protocol.md`): `0x30e` select a list (`AX` a segment, or 0 for the
+driver's own; returns the previous one), `0x310` turn every record off, `0x312` /
+`0x314` hold and release the records (a counter that saturates both ways), `0x318` /
+`0x31a` turn record `AL` on or off where it stands, `0x31c` read its flags, `0x31e` set
+its direction from `AH` bit 6, `0x320` set its speed to `AH`.
+
+**With fades.** Neither stops the other. Records write the DAC after the upload, so on a
+retrace when a record fires its colours win, unfaded; on the retraces between, every
+upload (every retrace while a fade runs) puts the shadow's values for those colours
+back. Once nothing is uploaded the DAC keeps the record's last colours. A fade out
+reads the DAC back, animated colours included. The game avoids the mix by **holding the
+records** (`0x312`/`0x314`) around its cutscenes (`ui_play_intro_cutscene` and the
+won/lost and campaign-won routines at `1000:fde8` and `1000:fd9f`) and around
+`ui_show_screen_fading_in` (`1000:76fe`, the log-in screen's fade in).
+
+#### The lists in the stock drivers
+
+Contents are the user's to read, never committed; this is the shape only.
+
+- **`mgavideo.dvr`'s own list**: 24 records in a 0xddf-byte block, every one off at
+  start: blinks and frame cycles of single colours (253, 254, 255), two-frame blinks
+  of 23..25 and 230..255, frame cycles and one-frame loads over 32..47, rotates over
+  16..23, 24..31, 16..31 and 32..47, one-frame loads of 128..254, and blends (kind 3)
+  over 49..63, 128..252 and 16..63. `xeno.exe` starts only three of them directly:
+  - record 23 (colour 254, on and off every 32 retraces) by
+    `ui_edit_name_with_blinking_cursor` (`1000:77ce`), the log-in screen's name entry,
+    which turns it off again when the name is done: the text cursor's blink;
+  - records 5 and 6 (blends over 49..63 and 128..252) by `pal_tint_for_time_of_day`
+    (`1000:ed70`), called from `sim_advance_clock` (unless `DS:0x7d4d` is set) and
+    restarted whenever the weight changes: 128 (frame 0, night) before 06:00 and after
+    18:59, `0x78 - 2 * minute` from 06:00 to 06:59, 0 (the palette itself) from 07:00
+    to 17:59, `2 * minute` from 18:00 to 18:59. So the 3D view's colours darken at
+    dusk and lighten at dawn with the mission clock (`DS:0x7d46` hours, `0x7d47`
+    minutes).
+  No other direct caller of `pal_start_anim` or `pal_activate_anim` exists in
+  `xeno.exe`; calls through the word slots from the `1fe6` segment or `mapdvr.dvr` were
+  not searched for (the Ghidra tools at hand had no byte or instruction search).
+- **`vgaintro.dvr`'s list** (its data at load offset 0x13090): at least five blend
+  records (kind 3) over colours 0..251. Its drop sequence selects the list with `0x30e`,
+  and starts records 0, 1, 2 and 3 in turn, each with weights 0, 2, ..., 128 a retrace
+  apart (65 steps), then puts the previous list back: cross-fades from the current
+  palette to each record's colours (T-038).
+- The `.m@l` screens and `.vcl` pictures carry no records; what animates on a screen is
+  whatever the code starts.
+
+**Reading them from the user's copy.** `mgavideo.dvr` is a plain MZ file: its load image
+starts after the header (header paragraphs at MZ offset 8). Its init (load offset 0x0a)
+copies five data blocks with slot `0x36`, each as `mov ax, size; mov bx, descriptor;
+xor si, si; mov dx, paragraph; call far [0x36]`; the list is the one whose descriptor is
+`0x622`, `size` bytes from load offset `paragraph * 16` (relocated paragraphs: subtract
+the load segment). Reading the size and paragraph out of that sequence, rather than
+hardcoding them, keeps it working on other releases. `vgaintro.dvr` passes its list's
+segment in `AX` before calling `0x30e` from its run routine (slot `0x1540`).
 
 ## Open questions
 
 - Settled (T-027): a `.vcl` palette reaches the DAC through the fade-in of slot
   `0x4d8`, over the number of retraces in the sequence entry (`vcl.md`). The cutscenes
   use no colour animation records.
+- Settled (T-037): the countdown's reload is byte 4, and `pal_advance_colour_anims`
+  moves the pointer (above).
 - What sets the hidden switch (`DS:0x618 = 0xe263`) that `vgaiff.dvr`'s screenshot
   needs (T-039). Its IFF reader is never called (`docs/re/dvr-protocol.md`).
-- The countdown reload, and who advances the animation pointer.
+- Whether anything outside segment `1000` of `xeno.exe` starts the other 21 built-in
+  records, and what sets `DS:0x7d4d` (no tint). A DOSBox check of the dusk tint and the
+  log-in cursor blink.
+- `mgavideo.dvr` code at load offset 0x450 (not in the slot table that was read) dims
+  the shadow into a third buffer and points `DS:0x68e` at it while it waits for an
+  upload, so a blend started then would mix against the dimmed colours. Who calls it
+  is not known.
 
 ## Parser
 
 `xeno_formats::vcl` (the `.vcl` palette and picture, T-018), the PCX trailer in
 `xeno_formats::pcx`, the screen palette in `xeno_formats::mal` (T-017), and `Palette::from_vga6` / `Palette::from_rgb8` for raw palettes.
-Added by T-013.
+Added by T-013. The driver's shadow palette, fades and colour-animation records are
+`xeno_render::Dac` and `xeno_render::anim` (T-036, T-037).
