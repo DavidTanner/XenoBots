@@ -188,10 +188,11 @@ Once the workspace exists, these are the expected commands (keep them true):
 
 ```bash
 cargo build
-cargo run -p xeno-app -- --game-dir ./gameFiles           # intro cutscene (any key ends it, P pauses), then a test card; ESC leaves fullscreen, then quits, F11 fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles           # intro cutscene and drop (any key ends them, P pauses), then a test card; ESC leaves fullscreen, then quits, F11 fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --no-intro  # straight to the test card
+cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone, then the test card
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
-cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro) only, no window
+cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro and drop) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README)
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries

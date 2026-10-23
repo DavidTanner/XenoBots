@@ -227,6 +227,22 @@ the drop at once, with no fade: the run returns, and the leave routine sets mode
 What follows, aborted or not, is the rest of start-up: digitised sound, `dsounds.bin`,
 the models, then the log-in screen.
 
+### In the port (T-038)
+
+`xeno-app` plays the drop after the intro cutscene unless a key ended that, from the
+counter the cutscene left (about 7,690), and `--drop` plays it alone from counter
+7,648 (`crates/xeno-app/src/drop.rs`). The screen is a 320x200 view at 70.09 Hz on a
+768x341 surface (one 64 KB plane of 768-pixel rows) with the view split after row 128
+(`xeno_render::Framebuffer::set_split`). Each retrace counts, applies the origin and
+runs `xeno_render::Dac` (upload, colour records), then runs the run routine's steps
+as ops until one waits, as `intro.rs` does. The backdrop, its clean copy and the
+silhouettes' changes are drawn into the surface the way the driver draws them, so the
+quirks above appear as in the original. A run of the stock files ends the first part
+at counter 9,248 (frame 448; offsets 26, 301, 26; view x 9), jumps the view at frame
+602, ends the cave part at counter 10,768 (frame 1,208; offsets 528, 616, 528; view
+x 24) and the whole drop at 10,833, then shows the test card. Not yet: the credits
+text (font, T-041) and the music.
+
 ### Reading it from the user's copy
 
 `xeno_formats::vgaintro` reads every number above from the instruction that holds it,

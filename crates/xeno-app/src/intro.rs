@@ -257,6 +257,16 @@ impl Intro {
         self.dac.palette()
     }
 
+    /// Whether a key ended the chain (which skips the drop that follows).
+    pub fn aborted(&self) -> bool {
+        self.aborted
+    }
+
+    /// The retrace counter `DS:0x370`, which the drop goes on counting.
+    pub fn counter(&self) -> u16 {
+        self.counter
+    }
+
     /// One retrace, with its input; `ticked` is whether the 60 Hz clock moved. Returns
     /// whether the intro is over (the mode can go back to 13h).
     pub fn retrace<'a>(
