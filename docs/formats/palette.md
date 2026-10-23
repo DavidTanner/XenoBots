@@ -233,11 +233,21 @@ Contents are the user's to read, never committed; this is the shape only.
   No other direct caller of `pal_start_anim` or `pal_activate_anim` exists in
   `xeno.exe`; calls through the word slots from the `1fe6` segment or `mapdvr.dvr` were
   not searched for (the Ghidra tools at hand had no byte or instruction search).
-- **`vgaintro.dvr`'s list** (its data at load offset 0x13090): at least five blend
-  records (kind 3) over colours 0..251. Its drop sequence selects the list with `0x30e`,
-  and starts records 0, 1, 2 and 3 in turn, each with weights 0, 2, ..., 128 a retrace
-  apart (65 steps), then puts the previous list back: cross-fades from the current
-  palette to each record's colours (T-038).
+- **`vgaintro.dvr`'s list** (its data at load offset 0x13090, 0x1de1 bytes): six
+  records, all off at start. Records 0..=4 are blends from the palette (kind 3) over
+  colours 0..=251 (two frames of 252 colours each, speed 5); record 5 is a blend between
+  two frames (kind 4) over colours 252..=254, the credits text colour. Colour 0 is
+  black in every record's target. The drop sequence (T-038, `fgd.md`, "The drop
+  sequence") selects the list with `0x30e`, starts records 0, 1 and 2 before its frames
+  and record 3 at the end, each with weights 0, 2, ..., 128 a retrace apart (65
+  steps): cross-fades from the shadow palette to the record's colours. Between them it
+  copies colours from the list into its palette buffer and the shadow without an
+  upload (slot `0x4a8`), so the next blend starts from them: the first 192 colours
+  of records 0 and 1, and at the cave's change of light 255 colours from record 4's
+  start (its 252 colours and the first 3 of its second frame, as the list holds them
+  then) after record 4 is started at full weight. Record 5 is started at a weight that
+  rises or falls by 4 a frame (`fgd.md`, "Credits"). Then the previous list is put
+  back.
 - The `.m@l` screens and `.vcl` pictures carry no records; what animates on a screen is
   whatever the code starts.
 
@@ -248,7 +258,8 @@ xor si, si; mov dx, paragraph; call far [0x36]`; the list is the one whose descr
 `0x622`, `size` bytes from load offset `paragraph * 16` (relocated paragraphs: subtract
 the load segment). Reading the size and paragraph out of that sequence, rather than
 hardcoding them, keeps it working on other releases. `vgaintro.dvr` passes its list's
-segment in `AX` before calling `0x30e` from its run routine (slot `0x1540`).
+segment in `AX` before calling `0x30e` from its run routine (slot `0x1540`);
+`xeno_formats::vgaintro` reads the list from there (T-038).
 
 ## Open questions
 

@@ -241,7 +241,15 @@ install one more (0x2a and 0x3a).
 | `0x1550`, `0x1558` | Stubs for `vgaiff.dvr` |
 | `0x1496`–`0x14b2` | Mouse pointer: show/hide, shape, save/restore under it, per-frame update |
 
-**`vga240.mod`**, **`vgaintro.dvr`**, **`mapdvr.dvr`**, **`vgaiff.dvr`**: see the summary
+**`vgaintro.dvr`** (T-038; table at its segment `0x41a`, offset 0): `0x1538` enter
+(`0x2a52`), `0x153c` leave (`0x2a90`), `0x1540` run (`0x2ab4`), and `0x1544`/`0x1548`
+(`0x2d33`, `0x2d3b`), which only load its data segment and return. The run routine
+also calls the host's word slots `0x22a` (`1fe6:0432`, set the cursor on a text-mode
+debug screen) and `0x240` (`1fe6:054f`, print a number there) with the frame number
+every frame; nothing of that reaches the game's screen. See `fgd.md`, "The drop
+sequence".
+
+**`vga240.mod`**, **`mapdvr.dvr`**, **`vgaiff.dvr`**: see the summary
 table and `video-modes.md`, `vcl.md`, `fgd.md` and `map.md`. `mapdvr.dvr`'s slot `0x14fc`
 points at its `ret` and is unused.
 
@@ -324,3 +332,28 @@ in `mgavideo.dvr` `pal_start_fade_out_all` (`0x4ec`), `pal_start_fade_out` (`0x5
 `pal_on_retrace` (`0x90f`), `pal_on_retrace_outsb` (`0x9c3`, with `rep outsb`; slot
 `0x4f4` uses it when the configuration's CPU class is `'1'` or more and `DS:0x616` is
 not `0x5981`) and `pal_advance_colour_anims` (`0xa66`).
+
+Named in T-038 (the intro drop; details in `fgd.md`), all in `vgaintro.dvr`, load
+offsets: `gfx_enter_drop_mode` (`0x2a52`), `gfx_leave_drop_mode` (`0x2a90`),
+`gfx_run_intro_drop` (`0x2ab4`), `file_load_pcx_to_video` (`0x2d43`),
+`file_load_inline_name` (`0x2f17`), `gfx_set_unchained_768_split` (`0x39a4`),
+`gfx_set_drop_origin` (`0x39eb`), `gfx_reset_layers_and_floor` (`0x3a4d`),
+`gfx_draw_ceiling_full` (`0x3a80`), `gfx_reset_drop_script` (`0x3ada`),
+`ui_step_credits_script` (`0x3af7`), the credits steps `ui_credits_op_draw` (`0x3b05`),
+`ui_credits_op_wait_frame` (`0x3b11`), `ui_credits_op_fade_in` (`0x3b29`),
+`ui_credits_op_fade_out` (`0x3b49`), `ui_credits_op_clear` (`0x3b64`),
+`pal_show_credits_colour` (`0x3b24`), `pal_hide_credits_colour` (`0x3b44`),
+`gfx_step_drop_frame` (`0x3b6d`) and `gfx_step_drop_frame_cave` (`0x3b7f`), the states
+`gfx_drop_state_accelerate` (`0x3b91`), `gfx_drop_state_cruise` (`0x3bdd`),
+`gfx_drop_state_slow` (`0x3c30`), `gfx_drop_state_hold_first` (`0x3c7e`),
+`gfx_drop_state_hold_second` (`0x3c98`), `gfx_drop_state_end` (`0x3cb2`),
+`pal_switch_to_cave_light` (`0x3cb9`), `dbg_print_frame_number` (`0x3cdc`),
+`gfx_select_drop_state` (`0x3cea`), `gfx_scroll_layers_and_view` (`0x3cf9`),
+`gfx_combine_floor_layers` (`0x3d63`), `gfx_draw_floor_changes` (`0x3da1`),
+`gfx_draw_ceiling_changes` (`0x3e16`), `gfx_set_line_compare` (`0x3ea8`),
+`gfx_put_pixel_and_clean_copy` (`0x3f1c`), `gfx_clear_split_area` (`0x3ff6`),
+`ui_draw_text_list` (`0x4011`), `sim_wait_counter_reaches` (`0x40c5`),
+`pal_copy_buffer_to_shadow` (`0x40d9`, slot `0x4a8`), `pal_mark_shadow_for_upload`
+(`0x40eb`, slot `0x4b0`), `pal_copy_anim_colours_to_buffer` (`0x410b`),
+`pal_start_anim_via_slot` (`0x4121`, word slot `0x316`), `sim_wait_retrace`
+(`0x4153`) and `dbg_print_number_at` (`0x415f`). All `confirmed`.
