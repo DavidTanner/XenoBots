@@ -6,6 +6,7 @@
 
 pub mod ban;
 pub mod dsounds;
+pub mod ending;
 mod error;
 pub mod farewell;
 pub mod fgd;

@@ -189,7 +189,8 @@ fn mgavideo_details(bytes: &[u8]) -> Details {
 
 /// What the LZEXE unpacker makes of `bytes`; for `xeno.exe`, also its intro chain
 /// (`sequence`): each entry's picture, effect, origin, end time and fades; and the
-/// shape of the map room's tables (`maproom`).
+/// shape of the map room's tables (`maproom`) and of the cutscenes after a mission
+/// (`ending`).
 fn exe_details(file: &Path, bytes: &[u8]) -> Details {
     use xeno_formats::{lzexe, sequence};
 
@@ -254,6 +255,22 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
             review.font
         ),
         Err(e) => writeln!(out, "review:    cannot read: {e}"),
+    }
+    .unwrap();
+    match xeno_formats::ending::read(&exe) {
+        Ok(e) => writeln!(
+            out,
+            "endings:   win {}, lose {} by DS:{:#06x}, triumph {}; {} number fields, captions of {}, {}, {} codes",
+            e.win.file_name().unwrap_or("?"),
+            e.lose.map(|l| l.file_name().unwrap_or("?")).join("/"),
+            e.lose_selector,
+            e.triumph.file_name().unwrap_or("?"),
+            e.fields.len(),
+            e.win_caption(Default::default()).len(),
+            e.lose_caption(0).len(),
+            e.triumph_caption().len()
+        ),
+        Err(e) => writeln!(out, "endings:   cannot read: {e}"),
     }
     .unwrap();
     exe_mission_details(&exe, &mut out);

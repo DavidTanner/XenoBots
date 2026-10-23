@@ -70,9 +70,11 @@ the mission starts in the situation room. Details below, "The mission's views".
 
 **After a mission** (`1000:6f9e`, the map room's action 0): sets `DS:0x5fab` to 0 and
 the selected scenario's `state` to 12 ("in play"), runs the mission, fades out over 32 retraces, then plays `TRIUMPH` if the
-campaign is complete (`DS:0x5fac`), else the lose sequence (outcome `DS:0x5fab` = 2)
-or the win sequence (1), and goes back to the map room. The cutscenes are in `vcl.md`,
-"Sequences".
+campaign is complete (`DS:0x5fac`), else the lose sequence (outcome `DS:0x5fab` = 2,
+the picture chosen by the robot console opened last, `DS:0x6012`) or the win sequence
+(1, its caption showing the mission's kills, losses and points), and goes back to the
+map room. The cutscenes, their captions and the win caption's numbers are in `vcl.md`,
+"Sequences" (T-045).
 
 **Saving**: `<NAME>.LOG` is written when the player logs in again or quits from the map
 room (`1000:7423`, only if a game is loaded, `DS:0x6005`), and read at log-in
@@ -817,6 +819,14 @@ created), `ui_review_previous_page` (`1000:7a4c`, created),
 `ui_draw_sitroom_main_view` (`1000:5551`, created), `ui_sitroom_set_view_mode`
 (`1000:676e`) and `ui_sitroom_type_orders_text` (`1fe6:6fc1`). All `confirmed`, all
 saved.
+
+T-045 named, in `xeno.exe`: `ui_play_win_cutscene` (`1000:7059`),
+`ui_play_lose_cutscene` (`1000:702d`), `ui_play_campaign_won_cutscene` (`1000:70d0`),
+`ui_play_ending_sequence_entry` (`1000:fde8`), `ui_play_triumph_sequence`
+(`1000:fd9f`), `sim_get_mission_kills_and_losses` (`1fe6:6b0d`),
+`scen_score_mission_result` (`1000:7626`), `txt_print_u16_five_digits` (`1fe6:4a6c`)
+and `txt_format_u16_to_buffer` (`1000:02b7`); details in `docs/formats/vcl.md`. All
+`confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
