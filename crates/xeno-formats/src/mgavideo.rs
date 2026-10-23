@@ -1,7 +1,7 @@
 //! What the port reads from the user's `mgavideo.dvr`: its own colour-animation list
-//! (`docs/formats/palette.md`, "Reading them from the user's copy") and the fonts
-//! (`docs/formats/font.md`). Both are game data, read at run time and never stored in
-//! this repository.
+//! (`docs/formats/palette.md`, "Reading them from the user's copy"), the fonts
+//! (`docs/formats/font.md`) and the mouse pointer (`docs/screens.md`, "The pointer").
+//! All are game data, read at run time and never stored in this repository.
 //!
 //! The driver's init (load offset 0x0a) copies five data blocks into memory blocks of
 //! their own, each with the same five instructions: `mov ax, size; mov bx, descriptor;
@@ -38,6 +38,104 @@ pub const FONTS: DataBlock = DataBlock {
     descriptor: 0x62a,
 };
 
+/// The mouse pointer's shapes (its fourth block; the pointer routines read them
+/// through `DS:0x626`).
+pub const POINTERS: DataBlock = DataBlock {
+    at: 0x3c,
+    descriptor: 0x626,
+};
+/// Load-image offsets of the pointer set-up's last two calls (`gfx_init_pointer`):
+/// `mov al, shape; call gfx_set_pointer_shape` and `mov al, colour; call
+/// gfx_set_pointer_colour`, with their call displacements.
+const POINTER_SHAPE_AT: usize = 0x2949;
+const POINTER_SHAPE_CALL: [u8; 3] = [0xe8, 0x18, 0x00];
+const POINTER_COLOUR_AT: usize = 0x294e;
+const POINTER_COLOUR_CALL: [u8; 3] = [0xe8, 0x65, 0x00];
+/// `gfx_set_pointer_shape` refuses shapes from this number on (`cmp al, 8`).
+const POINTER_SHAPES_AT: usize = 0x2966;
+
+/// The mouse pointer as the driver draws it (`gfx_draw_pointer_saving_under`): each
+/// pixel whose mask byte is 0 is written as its image byte AND the pointer colour, the
+/// rest are left alone; the hot spot is the pixel at the pointer's position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pointer {
+    pub width: u8,
+    pub height: u8,
+    pub hot_x: u8,
+    pub hot_y: u8,
+    /// `width * height` bytes, row by row.
+    pub image: Vec<u8>,
+    /// `width * height` bytes: 0 where the pointer is drawn.
+    pub mask: Vec<u8>,
+    pub colour: u8,
+}
+
+impl Pointer {
+    /// The colour of pixel (`x`, `y`) of the shape, or `None` where it is transparent.
+    pub fn pixel(&self, x: usize, y: usize) -> Option<u8> {
+        if x >= usize::from(self.width) {
+            return None;
+        }
+        let i = y * usize::from(self.width) + x;
+        (*self.mask.get(i)? == 0).then(|| self.image[i] & self.colour)
+    }
+}
+
+/// The `mov al, value` at `at`, if a call with `call`'s bytes follows it.
+fn set_up_value(image: &[u8], at: usize, call: &[u8; 3]) -> Result<u8, FormatError> {
+    match image.get(at..at + 5) {
+        Some(&[0xb0, value, a, b, c]) if [a, b, c] == *call => Ok(value),
+        _ => Err(invalid(at, "not the pointer set-up")),
+    }
+}
+
+/// The pointer the driver sets up at start-up: the shape and colour from its set-up
+/// calls, the shape from the block of shapes (a word offset per shape, then each
+/// shape's width, height, hot spot `x` and `y` bytes and the offsets of its image and
+/// mask).
+pub fn pointer(image: &[u8]) -> Result<Pointer, FormatError> {
+    let shape = set_up_value(image, POINTER_SHAPE_AT, &POINTER_SHAPE_CALL)?;
+    let colour = set_up_value(image, POINTER_COLOUR_AT, &POINTER_COLOUR_CALL)?;
+    let shapes = match image.get(POINTER_SHAPES_AT..POINTER_SHAPES_AT + 2) {
+        Some(&[0x3c, count]) => count,
+        _ => return Err(invalid(POINTER_SHAPES_AT, "not the pointer shape check")),
+    };
+    if shape >= shapes {
+        return Err(invalid(
+            POINTER_SHAPE_AT,
+            "the pointer shape is out of range",
+        ));
+    }
+    let block = data_block(image, POINTERS)?;
+    let word = |at: usize| {
+        block
+            .get(at..at + 2)
+            .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
+            .ok_or_else(|| invalid(at, "past the end of the pointer block"))
+    };
+    let at = word(2 * usize::from(shape))?;
+    let head = block
+        .get(at..at + 4)
+        .ok_or_else(|| invalid(at, "the pointer shape is past its block"))?;
+    let (width, height, hot_x, hot_y) = (head[0], head[1], head[2], head[3]);
+    let size = usize::from(width) * usize::from(height);
+    let plane = |offset: usize| {
+        block
+            .get(offset..offset + size)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| invalid(offset, "the pointer's pixels are past its block"))
+    };
+    Ok(Pointer {
+        width,
+        height,
+        hot_x,
+        hot_y,
+        image: plane(word(at + 4)?)?,
+        mask: plane(word(at + 6)?)?,
+        colour,
+    })
+}
+
 /// The bytes of `block` in `image`, from the instructions that copy it.
 pub fn data_block(image: &[u8], block: DataBlock) -> Result<&[u8], FormatError> {
     let at = block.at;
@@ -70,6 +168,8 @@ pub struct Mgavideo {
     pub anims: Vec<u8>,
     /// Fonts 0, 2, 4 and 6, by `id / 2`.
     pub fonts: Vec<font::Font>,
+    /// The mouse pointer set up at start-up.
+    pub pointer: Pointer,
 }
 
 impl Mgavideo {
@@ -104,7 +204,12 @@ pub fn parse(bytes: &[u8]) -> Result<Mgavideo, FormatError> {
     let anims = data_block(image, ANIMS)?;
     let anims = vgaintro::anim_list(anims, 0)?;
     let fonts = font::parse(data_block(image, FONTS)?)?;
-    Ok(Mgavideo { anims, fonts })
+    let pointer = pointer(image)?;
+    Ok(Mgavideo {
+        anims,
+        fonts,
+        pointer,
+    })
 }
 
 #[cfg(test)]
@@ -121,6 +226,43 @@ mod tests {
         assert_eq!(video.font(6), Some(&video.fonts[3]));
         assert_eq!(video.font(3), None);
         assert_eq!(video.font(8), None);
+    }
+
+    #[test]
+    fn the_synthetic_pointer_reads() {
+        let pointer = parse(&synthetic_mgavideo()).unwrap().pointer;
+        assert_eq!(
+            (pointer.width, pointer.height, pointer.hot_x, pointer.hot_y),
+            (3, 2, 1, 0)
+        );
+        let rows: Vec<Vec<_>> = (0..2)
+            .map(|y| (0..4).map(|x| pointer.pixel(x, y)).collect())
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                [Some(0x3c), Some(0x0c), None, None],
+                [Some(0), Some(0x3c), None, None]
+            ]
+        );
+        assert_eq!(pointer.pixel(0, 2), None);
+    }
+
+    #[test]
+    fn another_pointer_set_up_is_refused() {
+        let file = synthetic_mgavideo();
+        let corrupt = |at: usize, value: u8| {
+            let mut bad = file.clone();
+            bad[0x20 + at] = value;
+            parse(&bad)
+        };
+        // Not the set-up calls, a shape past the count, a shape past its block.
+        assert!(corrupt(POINTER_SHAPE_AT, 0xb4).is_err());
+        assert!(corrupt(POINTER_COLOUR_AT + 3, 0x66).is_err());
+        assert!(corrupt(POINTER_SHAPES_AT, 0x3d).is_err());
+        assert!(corrupt(POINTER_SHAPE_AT + 1, 2).is_err());
+        assert!(corrupt(0x180 + 2, 0x40).is_err());
+        assert!(corrupt(0x180 + 8, 0x20).is_err());
     }
 
     #[test]
@@ -164,5 +306,11 @@ mod tests {
         assert_eq!(video.font(0).unwrap().style(), font::Style::Bitmap);
         // The list has 24 records (`palette.md`).
         assert_eq!(video.anim_records(), 24);
+        // An arrow 9 by 11 with its hot spot one pixel in (`docs/screens.md`).
+        let pointer = &video.pointer;
+        assert_eq!(
+            (pointer.width, pointer.height, pointer.hot_x, pointer.hot_y),
+            (9, 11, 1, 1)
+        );
     }
 }

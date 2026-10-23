@@ -1,0 +1,115 @@
+---
+source: crates/xeno-formats/src/maproom.rs
+expression: room
+---
+MapRoom {
+    bank_base: 256,
+    map_area: Rect {
+        top: 10,
+        left: 5,
+        bottom: 190,
+        right: 280,
+    },
+    buttons: [
+        Button {
+            id: 2,
+            area: Rect {
+                top: 150,
+                left: 270,
+                bottom: 160,
+                right: 310,
+            },
+            sprite: 272,
+            handler: 28928,
+        },
+        Button {
+            id: 0,
+            area: Rect {
+                top: 160,
+                left: 270,
+                bottom: 170,
+                right: 310,
+            },
+            sprite: 256,
+            handler: 28672,
+        },
+    ],
+    keys: [
+        (
+            25,
+            28672,
+        ),
+        (
+            8208,
+            28928,
+        ),
+    ],
+    looks: [
+        288,
+        296,
+        304,
+        304,
+        312,
+        320,
+        328,
+    ],
+    unavailable: 312,
+    highlight: 336,
+    name_panel: Panel {
+        sprite: 344,
+        area: Rect {
+            top: 1,
+            left: 2,
+            bottom: 3,
+            right: 4,
+        },
+    },
+    score_panel: Panel {
+        sprite: 352,
+        area: Rect {
+            top: 5,
+            left: 6,
+            bottom: 7,
+            right: 8,
+        },
+    },
+    info_panel: Panel {
+        sprite: 360,
+        area: Rect {
+            top: 9,
+            left: 10,
+            bottom: 11,
+            right: 12,
+        },
+    },
+    alert_label: [
+        76,
+        69,
+        86,
+        69,
+        76,
+    ],
+    alert_levels: [
+        [
+            65,
+        ],
+        [
+            66,
+        ],
+        [
+            67,
+        ],
+        [
+            68,
+        ],
+        [
+            69,
+        ],
+        [
+            69,
+        ],
+        [
+            69,
+        ],
+    ],
+}

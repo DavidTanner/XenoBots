@@ -31,24 +31,28 @@ is one (and marks a game as loaded, `DS:0x6005`), or starts a new campaign from
 
 **Map room** (`ui_run_map_room_loop`, `1000:6f26`): the hub. After the log-in it loops:
 draw, wait for an input event, hand it to the screen's widgets, and run the action
-the widgets chose (`DS:0x5f20`, handlers at `DS:0x5f44`). Its widget set (segment
-`0x384c`) is a full-screen `MAPROOM` picture, the map area (`5..288 x 10..192`) with
-one box per `scendef.bin` record (click to select, `scendef.md`), five buttons down the
-right edge (button `n`'s handler at `DS:0x5f48 + 2n`, sprite handle at `DS:0x5f52`),
-and a key handler with the table at **`DS:0x60bf`** (20 key-word pairs):
+the widgets chose (`DS:0x5f20`, handlers at `DS:0x5f44`: 0 plays the loaded mission,
+2 opens the training menu). Its widget set (segment `0x384c`) is a full-screen
+`MAPROOM` picture, the map area with one box per `scendef.bin` record, five buttons
+down the right edge, and a key handler with the table at **`DS:0x60bf`** (20 key-word
+pairs). The details are below, "The map room (T-042)"; the keys and buttons:
 
-| Keys | Action |
-|---|---|
-| P, Enter, Space; button 0 | Play the selected scenario: load its `scenNNa.usg` if it is not the one loaded (`1000:739c`), then the mission |
-| T; button 2 | The training menu (`1000:740c`), only once `DS:0x5fab` is non-zero (0 in the image; what sets it before a mission is not traced) |
-| R; button 4 | The review screen (`ui_run_review_screen`, `1000:796e`, nested: the map room comes back after it) |
-| N; button 1 | Save `<NAME>.LOG` and log in again (`1000:7401`) |
-| Q, Alt+Q; button 3 | Save and quit (`1000:741a`) |
-| Right, Down, Tab / Left, Up, Alt+Tab | Two handlers (`1000:7431`, `7445`) that start from the selection, presumably next / previous scenario (guess) |
-| `=`, `-`, Ctrl+W, Ctrl+L, Ctrl+Space, Alt+F1 | Not traced |
+| Keys | Button (id) | Action |
+|---|---|---|
+| P, Enter, Space | 2nd (0) | Play the selected scenario (`ui_map_room_play_selected`, `1000:739c`): nothing without a selection; else load its `scenNNa.usg` if it is not the one loaded, then the mission (action 0) |
+| T | 4th (4) | The training menu (`1000:740c`, action 2), only while `DS:0x5fab` is not 0 |
+| R | 1st (8) | The review screen (`ui_run_review_screen`, `1000:796e`, nested: the map room comes back after it) |
+| N | 3rd (2) | Save `<NAME>.LOG` and log in again (`1000:7401`) |
+| Q, Alt+Q | 5th (6) | Save and quit (`1000:741a`) |
+| Right, Down, Tab | | Next selectable scenario (`ui_map_room_select_next`, `1000:7431`) |
+| Left, Up, Alt+Tab | | Previous selectable scenario (`ui_map_room_select_previous`, `1000:7445`) |
+| `=`, `-` | | Developer keys, only with unlock word 8 (`key.md`): progress up (to at most 16) or down |
+| Ctrl+W, Ctrl+L | | Developer keys, the same word: the selected scenario won, or the loaded one lost (below, "Campaign rules") |
+| Ctrl+Space | | Play the loaded mission at once (`1000:73fa`, action 0), with no check |
+| Alt+F1 | | The scenario editor, only with unlock word 9 (`1000:6bcf`) |
 
-The buttons' order on screen is not checked; their ids are 0 play, 2 log-in, 4
-training, 6 quit, 8 review in the handler table. ESC is in no map room table.
+The ids index the button handler table (`DS:0x5f48`) and sprite table (`DS:0x5f52`).
+ESC is in no map room table.
 
 **Training menu** (`ui_run_training_menu`, `1000:6df6`): `TRAINMEN` fading in over 32
 retraces, widget set `0x3842`, key table **`DS:0x5e9f`** (6 pairs): H, N, S and C load
@@ -62,8 +66,8 @@ depends on the object viewed: a table at `DS:0x6411` by the object's kind opens 
 or, for kind 3, the **situation room** (`SITROOM`, widget set `0x3822`). So the
 situation room and the consoles are views inside a mission, not screens of their own.
 
-**After a mission** (`1000:6f9e`, the map room's action 0): sets the scenario's `state`
-to 12, runs the mission, fades out over 32 retraces, then plays `TRIUMPH` if the
+**After a mission** (`1000:6f9e`, the map room's action 0): sets `DS:0x5fab` to 0 and
+the selected scenario's `state` to 12 ("in play"), runs the mission, fades out over 32 retraces, then plays `TRIUMPH` if the
 campaign is complete (`DS:0x5fac`), else the lose sequence (outcome `DS:0x5fab` = 2)
 or the win sequence (1), and goes back to the map room. The cutscenes are in `vcl.md`,
 "Sequences".
@@ -77,7 +81,13 @@ rectangle) opened with `ui_open_widget_set` (`1000:2343`); events go to them wit
 `ui_dispatch_event_to_widgets` (`1000:24a9`): mouse events to the widget under the
 pointer, key events to the focused chain. Each type has an event handler in a table at
 `DS:0x3778`; a key handler compares the event's key word (release bit masked off)
-with its table and calls the first match. No separate briefing screen was found; the
+with its table and calls the first match. Mouse events carry the driver's bits (1
+moved, 2 and 4 left button down and up, 8 and 0x10 right button down and up); the
+dispatcher (`1000:2512` on) gives a press to the widget under the pointer and captures
+the pointer there until the same button comes up, adding 0x80 while the pointer is
+over the capturing widget and 0x100 when an event goes to it from elsewhere, and sends
+0x200 and 0x400 to the widgets the pointer enters and leaves. Mouse handlers are in
+the table at `DS:0x3608`, draw handlers at `DS:0x3328`. No separate briefing screen was found; the
 scenario's `ORDR` text (`usg.md`) is presumably shown inside the mission (T-044).
 
 ### The name entry (T-041)
@@ -121,6 +131,146 @@ with `1000:eefc` if it exists (`usg.md`, "Save files"); otherwise `1fe6:72a8` an
 `scendef.bin` load `1000:712e` start a campaign (on failure the game exits with a
 message). The map room's N (`1000:7401`) saves first, then runs the log-in again;
 there ESC (carry) goes back to the map room with the old name.
+
+### The map room (T-042)
+
+From a Ghidra pass over the map room's widgets, their draw and mouse handlers, the key
+handlers and the campaign routines in `kernel` segment `1fe6`. Rectangles are (top,
+left, bottom, right) as the code stores them; the dispatcher's hit test leaves the
+bottom and right edges out.
+
+**Widgets** (segment `0x384c`, 13 widgets from offset 0x10 to 0xac; each one's state
+is in a 25-byte block at `DS:0x5f78`, copied from a template in segment `0x38e9`).
+Each widget type is an offset into three handler tables: draw (`DS:0x3328`), mouse
+(`DS:0x3608`) and key (`DS:0x3778`).
+
+| Type | Rectangle | What |
+|---|---|---|
+| `0x36` | the screen | The picture: loads `msprite5` at handle 0x200 and `MAPROOM`, shows it fading in, starts colour-animation record 21 (`1000:7176`) |
+| `0x38` | (10, 5, 192, 288) | The map area: the boxes, the selection and the panels (`ui_draw_map_area`, `1000:7255`; mouse `ui_map_area_on_mouse`, `1000:72fa`) |
+| `0x3a` | none | The hover label (`ui_draw_map_tooltip`, `1000:773c`); no mouse handler |
+| `0x3c` x5 | (137, 271, 147, 311), then 9 rows lower each | The buttons (`ui_draw_map_room_button`, `1000:71fc`; mouse `ui_map_room_button_on_mouse`, `1000:721c`). Their ids, from the template, are 8, 0, 2, 4, 6 top to bottom: review, play, log-in, training, quit, as `MAPROOM`'s own art labels them |
+| `0x3e` | none | The key table (`1000:737f`) |
+| `0x148`, `0x14c`, `0x14e` | none | Keys every screen has (the screenshot key `1000:7d3f`, and `f3ef`, `f405`, not traced) |
+
+**Sprites.** All from `msprite5` (handles 0x200 on, 8 per sprite: `b@n.md`). The
+buttons are drawn **opaque** (slot `0x5c4`) at their rectangle's corner with the
+handle from `DS:0x5f52 + id` (40 by 10 pixels); a pressed button uses the next
+sprite. The boxes are drawn **colour 0 transparent** (slot `0x5d8`) at each record's
+`map_box` corner (9 by 9): with handle 0x250 when `unlock_level` is above the
+progress `DS:0x5f9b`, else with the handle for `state` from the 7-word table
+`DS:0x5f5c`. The selected record (its `id` equal to `DS:0x5f97`) then gets handle
+0x268 over its box, also transparent; the pixels under that rectangle are saved first
+and put back before the next draw. Looks by `state`, as sprite numbers in the bank:
+
+| `state` | Meaning | Box (sprite) | Hover label | Alert level |
+|---|---|---|---|---|
+| 0 | Open | 14 | ready | level 1 of 4 |
+| 2 | Open, alert raised once | 15 | ready | level 2 |
+| 4 | Open, raised twice | 16 | ready | level 3 |
+| 6 | Open, raised three times (no further) | 16 | ready | level 4 |
+| 8 | Locked: its `unlock_level` is above the progress | 10 | not yet | under way |
+| 10 | Won; can never be selected again | 11 | won | under way |
+| 12 | In play: a mission of it was started and not won | 12 | fighting | under way |
+| unlock above progress | | 10 | | |
+
+The columns give the sense in our words; the words themselves are game text in the host's string segment
+(Ghidra `38fa`), read through `DS:0x5f6a + state` (hover) and `DS:0x60b1 + state`
+(alert level).
+
+**Panels**, drawn by `ui_draw_map_room_status` (`1fe6:7406`) after the boxes every
+time the map area is drawn: in font 0, colour 0xe0, transparent text,
+- sprite 17 opaque at the rectangle `DS:0x5f2c` = (25, 10, 32, 58), then the player's
+  name at its corner;
+- sprite 18 opaque at `DS:0x5f34` = (25, 254, 32, 284), then the score `DS:0x5f9d` as
+  five decimal digits (`1fe6:4a6c`; leading zeros presumably kept, as the scenario
+  number code reads the last two of the five);
+- then in font 4 (`ui_draw_selection_info`, `1fe6:749c`): sprite 19 opaque at
+  `DS:0x5f24` = (172, 100, 190, 220) and, if a scenario is selected, its name from
+  `scendef.bin` (whose line break goes back to the left edge and down), the label at
+  `DS:0x60a4` and the alert word for its `state`, all at that corner;
+- once the campaign is won (`DS:0x5fac`), a box (68, 90, 112, 230) filled with colour
+  0xa0, framed in 0xe0 (slots `0x51a`, `0x52a`), and a message from the string segment.
+
+**The hover label** (`ui_draw_map_tooltip`): while the pointer is over a scenario's
+box with no button held (selectable or not), a box in colour 0xa0 framed in 0x80
+above the scenario's box (its bottom 3 rows above the box's top, or at the top for
+states 8 to 12), sized to its text (4 pixels a character plus 3, by 9 rows), centred
+on the box and kept between `x` 10 and 285 (265 below row 120, clear of the buttons),
+with the hover word for its `state` in font 2, colour 0xb6 on 0xa0, opaque. The pixels
+under it are saved and put back when it goes.
+
+**Selection.** `DS:0x5f97` holds the selected record's `id` (0xffff: none; a new
+campaign starts with none) and `DS:0x5ff5` its offset. A record is **selectable**
+when its `unlock_level` is at most the progress and its `state` is not 10.
+`ui_map_room_set_selection` (`1000:74c4`) then accepts it only if `DS:0x5fab` is not 0,
+or the record is in play (12); otherwise it calls `1000:0270` (presumably a beep) and
+keeps the old selection. So after a mission that ended with no result, only the
+scenario in play can be picked.
+- **Click**: the map area acts on a button's **release** (the press only captures the
+  pointer), hit-testing the pointer then (`scen_hit_test_map_box`, `1fe6:72f8`, the
+  first record whose `map_box` holds it, edges included). The left button selects; the
+  right button selects and plays at once. A miss, or a record that is not selectable,
+  changes nothing.
+- **Keys**: next and previous step through the table by one record, wrapping, skipping
+  those that are not selectable, for at most one round, and set the result. With no
+  selection, both pick the first selectable record (without the `DS:0x5fab` check).
+- **Hover**: pointer movement with no button held sets `DS:0x5f0f` to the record
+  under the pointer (selectable or not, a hit-test only) for the hover label; leaving
+  the map area clears it.
+
+**Buttons.** A press (left or right) on a button captures the pointer, remembers the
+button in `DS:0x5f0b` and flips `DS:0x5f0d` between 0 and 8, the offset added to the
+remembered button's sprite handle; a release of the same mouse button over it flips it
+again and runs the button's handler. A release elsewhere does nothing, so the button
+stays drawn pressed until the next press flips the offset (a quirk of the original).
+
+**Progress** `DS:0x5f9b`: a new campaign (`scen_start_new_campaign`, `1fe6:72a8`) sets
+it to 1, the selection and loaded scenario to none, the score, win, loss and other
+counters (`DS:0x5f9d`..`0x5fa7`) to 0, `DS:0x5fab` to 0xff and the campaign-won flag
+`DS:0x5fac` to 0. Then `scen_update_campaign_progress` (`1fe6:7366`, also run after a
+save is loaded and after each result) sets the campaign-won flag when every record
+has been won (`DS:0x5f9f` equal to the count), and otherwise walks the table: a record
+whose `unlock_level` is above the progress becomes 8, a record at 8 that is now within
+it becomes 0, and for the open records (not won) it notes the lowest and highest
+`unlock_level` (`DS:0x5ff7`, `0x5ff9`, their difference in `DS:0x5ffb`) and their
+number (`DS:0x5fff`). The progress rises by one after a won scenario if fewer than
+three records were open; the developer keys move it by hand.
+
+**Campaign rules** (from the developer keys' handlers `1000:752d` and `75f3`, which
+are presumably what a mission's end does too; the mission code is not traced):
+- **Won**: the record becomes 10, the selection clears, the win count rises,
+  `DS:0x5fab` = 1, the score rises (`1000:7626` from the mission's values, plus 1000),
+  progress as above; then, if `DS:0x5ffb` is not 0, each open record that is not at 6
+  raises its alert by 2 with a chance from the table `DS:0x6094` by its
+  `unlock_level - DS:0x5ff7` (0, 1/2, 3/16, 1/16 for 0 to 3; from the host's random
+  word `1000:0283`); then the first selectable record is selected. A record at 12 is
+  not excluded, so it could reach 14, past the tables' end (not seen; to check).
+- **Lost**: the loaded scenario is forgotten (`DS:0x5f99` = 0xffff, so play reloads
+  it), `DS:0x5fab` = 2, the loss count and score as above. Its `state` stays 12.
+- **Training gate** `DS:0x5fab`: 0xff for a new campaign, 0 from the start of a campaign
+  mission until its result, 1 won, 2 lost, 3 while in the training menu. T opens the
+  training menu whenever it is not 0, so only right after a campaign mission that
+  ended with no result is training refused.
+- **Alert**: when a scenario is played its `state` is passed to `1000:68a0`, which adds
+  a value from the table `DS:0x5a3f` by `state` to a field of the mission's command
+  object (`[DS:0x568e] + 0x2e`), so a higher alert makes the mission harder in some way
+  (T-051, T-058).
+
+**Scenario files.** Play writes `id / 2` as two decimal digits into the template
+`SCEN00A.USG` (`DS:0x6006`) and `'A'` plus the high byte of the `id` (always 0 in a
+stock table) as the letter, so record `n` loads `scenNNa.usg`, `n` counted from 0.
+
+**The pointer** is `mgavideo.dvr`'s (slots `0x1496`–`0x14b2`, `docs/re/dvr-protocol.md`):
+eight shapes in its fourth data block (`DS:0x626`): a word offset each, then per shape
+its width, height, hot spot `x` and `y` bytes and the offsets of an image and a mask of
+`width * height` bytes. The driver's set-up picks shape 0 (an arrow, 9 by 11, hot spot
+(1, 1)) and colour 12; shape 1 is shown while the map room loads its picture. Each
+frame `gfx_update_pointer` clamps the position to the screen, puts back the pixels
+under the old pointer and draws the new one at the position minus the hot spot,
+clipped to the screen: where the mask is 0 it writes the image byte AND the colour
+(so 0xff gives colour 12 and 0 black), elsewhere it leaves the screen alone. The
+sprite blitters hide it while they draw over it.
 
 ### Where it differs from T-040's list
 
@@ -180,6 +330,18 @@ the map room without a cutscene, as in the original; T is not gated on `DS:0x5fa
 - **Mouse.** The pointer and buttons reach the screens through the log
   (`docs/game-loop.md`, "Input"), and a placeholder arrow is drawn at the pointer, but
   no screen acts on a click yet (the widgets are T-042 on).
+- **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
+  from the user's `xeno.exe`, each from the instruction that uses it after checking
+  its bytes, with segments only from relocated words: the widget set (map area, and
+  each button's rectangle and id from the state template), the buttons' sprites and
+  handlers, the key table, the box looks by `state`, the unavailable and highlight
+  handles, the three panels' sprites and rectangles, the alert label and the alert
+  words (from the host's string segment). `xeno_formats::mgavideo` reads the pointer
+  the driver sets up (shape and colour from the set-up's two calls, the shape from its
+  data block). The fonts, colours and blit modes the drawing code passes are kept as
+  constants in the port: they are short, and they are code, not tables. `xeno-tool
+  inspect` shows the map room's and the pointer's shape. The screen itself is T-042's
+  second part.
 - **Not modelled**: the save file, scenario selection, the widgets, the
   real cutscenes (they need the sequence entries at `DS:0x606a`, `0x6016`
   and `0xedb0`), the 320x240 mode of the cutscenes (the placeholders are 320x200), and
@@ -204,12 +366,23 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 
 ## Open questions
 
-- The map room's untraced keys, what sets `DS:0x5fab` before the first mission (the
-  training key's gate), and the review screen's keys (T-042, T-044).
-- How a mission ends (who sets `DS:0xe87e`) and how the player switches between the
-  situation room and the consoles (T-043, T-056).
-- The mouse: the widget dispatch's event bits (`0x80` mouse, bit 0 release, `0x14`
-  click) and the pointer slots `0x1496`–`0x14b2`.
+- The review screen's keys (T-044).
+- How a mission ends (who sets `DS:0xe87e` and `DS:0x5fab`), whether it applies the
+  same won and lost rules as the map room's developer keys, and how the player
+  switches between the situation room and the consoles (T-043, T-046, T-056).
+- Whether a scenario in play (12) can have its alert raised to 14 (T-046).
+- What the keys `f3ef` and `f405` that every screen has do, and what `1000:0270`
+  (presumably a beep) does.
+
+T-042 named, in `xeno.exe`: `ui_draw_map_area` (`1000:7255`), `ui_map_area_on_mouse`
+(`1000:72fa`), `ui_map_room_play_selected` (`1000:739c`), `ui_map_room_select_next`
+(`1000:7431`), `ui_map_room_select_previous` (`1000:7445`), `ui_map_room_set_selection`
+(`1000:74c4`), `ui_draw_map_room_button` (`1000:71fc`), `ui_map_room_button_on_mouse`
+(`1000:721c`), `ui_draw_map_tooltip` (`1000:773c`), `scen_start_new_campaign`
+(`1fe6:72a8`), `scen_update_campaign_progress` (`1fe6:7366`), `scen_hit_test_map_box`
+(`1fe6:72f8`), `scen_index_scenario_table` (`1fe6:732d`), `ui_draw_map_room_status`
+(`1fe6:7406`) and `ui_draw_selection_info` (`1fe6:749c`); in `mgavideo.dvr` the pointer
+routines listed in `docs/re/dvr-protocol.md`. All `confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,

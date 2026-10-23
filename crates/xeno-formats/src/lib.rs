@@ -16,6 +16,7 @@ pub mod font;
 pub mod lzexe;
 pub mod mal;
 pub mod map;
+pub mod maproom;
 pub mod mgavideo;
 pub mod ms3;
 pub mod mxx;

@@ -241,7 +241,7 @@ install one more (0x2a and 0x3a).
 | `0x5f0` | Remap a buffer through a 256-byte table, not traced further |
 | `0x5f4`, `0x5fe`, `0x606` | Stubs for `vga240.mod` |
 | `0x1550`, `0x1558` | Stubs for `vgaiff.dvr` |
-| `0x1496`–`0x14b2` | Mouse pointer: show/hide, shape, save/restore under it, per-frame update |
+| `0x1496`–`0x14b2` | Mouse pointer (T-042; table at offset 0x1a8 of the second data block): `0x1496` set the shape (`gfx_set_pointer_shape`, 0x2966, `AL` < 8), `0x149a` set the colour (`gfx_set_pointer_colour`, 0x29b8), `0x149e` / `0x14a2` hide and show it (the host wraps cutscenes and loads in them), `0x14a6` hide it around a rectangle, `0x14aa`, `0x14ae` (posts the mouse driver's events with slot `0x324`) and `0x14b2` the per-frame update (`gfx_update_pointer`, 0x2bba). The shapes and the drawing are in `docs/screens.md`, "The pointer" |
 
 **`vgaintro.dvr`** (T-038; table at its segment `0x41a`, offset 0): `0x1538` enter
 (`0x2a52`), `0x153c` leave (`0x2a90`), `0x1540` run (`0x2ab4`), and `0x1544`/`0x1548`
@@ -375,6 +375,13 @@ Named in T-040 (the screen flow): `ui_run_startup_and_game`, `ui_login_and_load_
 (T-024's `file_load_save_game`, renamed), `ui_run_map_room_loop`, `ui_run_training_menu`,
 `sim_run_mission_loop`, `ui_run_review_screen`, `ui_open_widget_set` and
 `ui_dispatch_event_to_widgets` in `xeno.exe`; addresses in `docs/screens.md`. Saved.
+
+Named in T-042 (the map room and the pointer; details in `docs/screens.md`): in
+`mgavideo.dvr` `gfx_set_pointer_shape` (`0x2966`), `gfx_set_pointer_colour` (`0x29b8`),
+`gfx_update_pointer` (`0x2bba`, slot `0x14b2`), `gfx_draw_pointer_saving_under`
+(`0x0b95`) and `gfx_restore_under_pointer` (`0x0c18`); the `xeno.exe` names are listed
+in `docs/screens.md`, "Symbols". All `confirmed`, all saved. The pointer set-up at
+`0x2934` (a shape, then shape 0 and colour 12) is not renamed.
 
 Named in T-041 (fonts and the log-in name entry; details in `font.md` and
 `docs/screens.md`): in `xeno.exe` `gfx_select_font` (`1fe6:489c`, slot `0x38a`),

@@ -25,7 +25,7 @@ the table, and the stock file ends right after it. All words are u16 little-endi
 | 0x04 | 2 | `map_box.left` | |
 | 0x06 | 2 | `map_box.bottom` | Inclusive |
 | 0x08 | 2 | `map_box.right` | Inclusive |
-| 0x0a | 2 | `unlock_level` | The scenario can be picked once the player's progress value (`DS:0x5f9b`) is at least this. 1, 2, 3, 4 or 6 in the stock file, rising with the record number |
+| 0x0a | 2 | `unlock_level` | The scenario can be picked once the player's progress value (`DS:0x5f9b`) is at least this. 1, 2, 3, 4 or 6 in the stock file, rising with the record number. A new campaign starts at progress 1 |
 | 0x0c | 2 | `state` | Runtime progress for this scenario; 0 in the file (see below) |
 | 0x0e | to NUL | `name` | Place name, "TOWN, COUNTRY" style, NUL-terminated |
 
@@ -41,11 +41,20 @@ field). Every stock name is one line followed by `0x0c`, then the NUL.
 
 ### `state`
 
-The game keeps per-scenario progress in the loaded table itself. It writes 0, 8, 0xa
-and 0xc to this word. The map room picks how to draw each box from a 7-entry table
-indexed by `state` (`DS:0x5f5c`, so values are even), and refuses to select a
-scenario whose `state` is 0xa. Which value means won, lost or in progress has not
-been traced.
+The game keeps per-scenario progress in the loaded table itself (T-042,
+`docs/screens.md`, "The map room"):
+
+| `state` | Meaning |
+|---|---|
+| 0, 2, 4, 6 | Open, at alert level 1 to 4. After each won scenario, open records may rise by 2 (at most to 6), more likely the higher their `unlock_level` above the lowest open one |
+| 8 | Locked: `unlock_level` is above the progress. Set when the campaign is checked, and back to 0 once the progress reaches it |
+| 0xa | Won. Never selectable again |
+| 0xc | In play: a mission of it was started and not won (lost, or left with no result) |
+
+The map room picks each box's sprite from a 7-entry table indexed by `state`
+(`DS:0x5f5c`), and its hover and alert words from two more. A scenario can be selected
+when `unlock_level` is at most the progress and `state` is not 0xa; while the last
+campaign mission has no result, only the one at 0xc.
 
 The save routine (`xeno.exe` `1000:7666`) writes 36 bytes of game state from
 `DS:0x5f91` and then the whole loaded table, and the load routine (`1000:76ab`) reads
@@ -65,25 +74,31 @@ All addresses are in the unpacked `xeno.exe` (`docs/re-setup.md`), Ghidra's segm
   and scans past the NUL. It stops at a `0xffff` word or after 32 records, and stores
   the count at `DS:0x5ffd`. `xeno_formats::scendef` rejects more than 32 records,
   since the game would never see the rest.
-- **Draw** (around `1000:7282`): for each record, draws its box with a look chosen by
-  `state`, or a fixed "unavailable" look when `unlock_level` is above the player's
-  progress. The record whose `id` equals the current selection (`DS:0x5f97`) gets a
-  highlight.
-- **Hit test** (`1fe6:72f8`): a click at (x, y) selects the first record with
-  `left <= x <= right` and `top <= y <= bottom`. The click is refused when
-  `unlock_level` is above the player's progress or `state` is 0xa.
+- **Draw** (`ui_draw_map_area`, `1000:7255`): for each record, draws its box with a
+  look chosen by `state`, or a fixed "unavailable" look when `unlock_level` is above
+  the player's progress, colour 0 transparent at `map_box`'s top-left corner. The
+  record whose `id` equals the current selection (`DS:0x5f97`) gets a highlight.
+- **Hit test** (`scen_hit_test_map_box`, `1fe6:72f8`): a click at (x, y) selects the
+  first record with `left <= x <= right` and `top <= y <= bottom`. The click is
+  refused when `unlock_level` is above the player's progress or `state` is 0xa.
+- **Campaign check** (`scen_update_campaign_progress`, `1fe6:7366`): after a new
+  campaign, a loaded save and each result; sets locked records to 8 and unlocked ones
+  from 8 to 0 (above).
 
 ## Scenario files
 
-Record `n` loads `scenNNa.usg`. The game writes `id / 2` as two digits into the
-template `SCEN00A.USG`, and the selection's high byte picks the letter (T-020, see
+Record `n` (counted from 0) loads `scenNNa.usg`, `NN` in decimal: playing the
+selection writes `id / 2` as two decimal digits into the template `SCEN00A.USG`
+(`DS:0x6006`) and `'A'` plus the `id`'s high byte, 0 in every stock record, as the
+letter (`ui_map_room_play_selected`, `1000:739c`, confirmed in T-042; see also
 `usg.md`).
 
 ## Open questions
 
-- What each `state` value means, and what sets the player's progress value
-  `DS:0x5f9b` (T-042).
-- What the draw values chosen by `state` look like (T-042).
+- Settled in T-042 (`docs/screens.md`, "The map room"): the `state` values, the
+  progress, the looks.
+- Whether a mission's end applies the same rules as the map room's developer keys,
+  and whether a record at 0xc can be raised to 0xe (T-046).
 
 ## Parser
 
