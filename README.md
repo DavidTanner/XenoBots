@@ -71,7 +71,9 @@ key ends the cutscene early with a fade and skips the drop; any key ends the dro
 once; P pauses either until the next key. `--no-intro` skips both and `--drop` plays
 the drop alone. Then the window shows a test card (a synthetic pattern). Its white marker moves one pixel per frame of the
 original 70 Hz display and its yellow one at 60 Hz, whatever your monitor's refresh
-rate; the blue grid lights a cell for each key held. Press ESC or close the window to
+rate; the blue grid lights a cell for each key held, green or red for player 1's or
+2's stick keys (the defaults in your `config.dvr`, or the keys you set with the original
+setup program, saved in `XENO.CFG`; the original game itself never uses them). Press ESC or close the window to
 quit, and F11 or Alt+Enter to switch between a window and fullscreen.
 
 | Flag | Meaning |

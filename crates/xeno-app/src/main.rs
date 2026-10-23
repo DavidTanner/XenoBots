@@ -7,6 +7,7 @@ mod drop;
 mod game_dir;
 mod input;
 mod intro;
+mod keymap;
 mod test_pattern;
 mod translate;
 mod viewer;
@@ -145,10 +146,21 @@ fn main() -> ExitCode {
     } else {
         None
     };
+    // config.dvr's keyboard stick (the original game never reads it).
+    let keymap = keymap::KeyMap::load(&files);
+    log::info!("stick keys from {:?}: {}", keymap.source, keymap.describe());
     if cli.check {
         return ExitCode::SUCCESS;
     }
-    match window::run(cli.scale, cli.aspect, cli.fullscreen, viewer, intro, drop) {
+    match window::run(
+        cli.scale,
+        cli.aspect,
+        cli.fullscreen,
+        viewer,
+        intro,
+        drop,
+        keymap,
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");

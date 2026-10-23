@@ -77,8 +77,14 @@ else sees winit.
   Microsoft's "Keyboard Scan Code Specification" (rev. 1.3a), appendix C. `E0`-prefixed
   keys (cursor block, right Ctrl and Alt, keypad Enter and /) are `0xE0xx`. Every key of
   a 101- or 102-key PC keyboard is mapped except Pause and Print Screen (multi-byte
-  sequences); later keys, such as the Windows keys, are not. Which keys the original
-  uses is T-039's job.
+  sequences); later keys, such as the Windows keys, are not. The original's own keys
+  are fixed tables (`docs/formats/key.md`, "The game's keys").
+- **Stick keys** (`keymap.rs`, T-039): the six keys per player that `config.dvr`
+  remaps (up-left, up, up-right, left, right, fire), read at start-up from the user's
+  `XENO.CFG` or else from `config.dvr`'s defaults. `KeyMap::slots` gives the players and
+  slots a scan code drives; an `E0` key counts as its plain twin, as `config.dvr`
+  records them. The original never reads these keys, so only the test card uses them,
+  colouring them in its key grid.
 - **Events**: `KeyDown { code, repeat }`, `KeyUp { code }` and `Text(char)` (printable
   characters with the layout and Shift applied, for T-041's name entry). A release is
   sent only for a key that went down, and losing focus releases every held key.

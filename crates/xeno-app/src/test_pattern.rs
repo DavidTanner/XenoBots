@@ -5,6 +5,7 @@
 use xeno_render::{Framebuffer, Palette, Rect, Rgb};
 
 use crate::input::{Keys, ScanCode};
+use crate::keymap::KeyMap;
 
 pub const BLACK: u8 = 0;
 pub const WHITE: u8 = 1;
@@ -31,7 +32,8 @@ pub const CRT_CIRCLE: (i32, i32, i32, i32) = (232, 76, 48, 40);
 pub const RETRACE_TRACK: Rect = Rect::new(2, 122, 316, 6);
 pub const SIXTY_HZ_TRACK: Rect = Rect::new(2, 130, 316, 6);
 /// The held keys, one 2x2 cell per scan code: plain codes in the top four rows of 32,
-/// `E0` codes in the bottom four.
+/// `E0` codes in the bottom four. White, or green and red for player 1's and 2's
+/// stick keys (`keymap`).
 pub const KEY_GRID: Rect = Rect::new(128, 140, 64, 16);
 
 /// The test card's palette: a few named colours, then a hue ramp.
@@ -103,7 +105,7 @@ pub fn draw(fb: &mut Framebuffer) {
 
 /// Draws the moving parts over the card: each marker's position comes from its tick
 /// count, and the key grid lights the held keys.
-pub fn draw_live(fb: &mut Framebuffer, retraces: u64, sixty_hz: u64, keys: &Keys) {
+pub fn draw_live(fb: &mut Framebuffer, retraces: u64, sixty_hz: u64, keys: &Keys, map: &KeyMap) {
     for (track, ticks, colour) in [
         (RETRACE_TRACK, retraces, WHITE),
         (SIXTY_HZ_TRACK, sixty_hz, YELLOW),
@@ -115,7 +117,12 @@ pub fn draw_live(fb: &mut Framebuffer, retraces: u64, sixty_hz: u64, keys: &Keys
     fb.fill_rect(KEY_GRID, BLUE);
     for code in keys.held() {
         let (x, y) = key_cell(code);
-        fb.fill_rect(Rect::new(x, y, 2, 2), WHITE);
+        let colour = match map.slots(code).next() {
+            Some((0, _)) => GREEN,
+            Some(_) => RED,
+            None => WHITE,
+        };
+        fb.fill_rect(Rect::new(x, y, 2, 2), colour);
     }
 }
 
@@ -216,7 +223,7 @@ mod tests {
         let mut keys = Keys::default();
         keys.press(ScanCode(0x01));
         keys.press(ScanCode(0xe048));
-        draw_live(&mut fb, 316 + 5, 7, &keys);
+        draw_live(&mut fb, 316 + 5, 7, &keys, &KeyMap::empty());
         let row = |track: Rect| -> Vec<usize> {
             (0..320)
                 .filter(|&x| fb.get(x, track.y as usize) != Some(BLACK))
@@ -243,6 +250,31 @@ mod tests {
                 (16, 13),
                 (17, 13)
             ]
+        );
+    }
+
+    #[test]
+    fn stick_keys_are_coloured_by_player() {
+        use xeno_formats::setup::{KEY_SLOTS, NO_KEY, Slot};
+        let mut tables = [[NO_KEY; KEY_SLOTS]; 2];
+        tables[0][Slot::Up as usize] = 0x48;
+        tables[1][Slot::Fire as usize] = 0x01;
+        let dvr = xeno_formats::fixtures::synthetic_config_dvr(&tables);
+        let map = KeyMap::from_files(Err(std::io::ErrorKind::NotFound.into()), Ok(dvr));
+        let mut fb = card();
+        let mut keys = Keys::default();
+        for code in [0x01, 0x02, 0xe048] {
+            keys.press(ScanCode(code));
+        }
+        draw_live(&mut fb, 0, 0, &keys, &map);
+        let at = |code| {
+            let (x, y) = key_cell(ScanCode(code));
+            fb.get(x as usize, y as usize)
+        };
+        // The up arrow counts as keypad 8, player 1's up.
+        assert_eq!(
+            [0x01, 0x02, 0xe048].map(at),
+            [Some(RED), Some(WHITE), Some(GREEN)]
         );
     }
 
