@@ -113,6 +113,7 @@ fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
         "rst" => rst_details(bytes),
         "exe" | "dvr" if xeno_formats::lzexe::is_packed(bytes) => exe_details(file, bytes),
         _ if name.eq_ignore_ascii_case("vgaintro.dvr") => vgaintro_details(bytes),
+        _ if name.eq_ignore_ascii_case("mgavideo.dvr") => mgavideo_details(bytes),
         _ => return None,
     })
 }
@@ -148,6 +149,34 @@ fn vgaintro_details(bytes: &[u8]) -> Details {
         vgaintro::NUMBERS.len(),
         drop.anims.len(),
         drop.credits.len(),
+    ))
+}
+
+/// The fonts and the colour-animation list read from `mgavideo.dvr`.
+fn mgavideo_details(bytes: &[u8]) -> Details {
+    use xeno_formats::{font::Style, mgavideo};
+
+    let video = mgavideo::parse(bytes).map_err(|e| format!("mgavideo:  cannot parse: {e}\n"))?;
+    let fonts: Vec<_> = video
+        .fonts
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let h = f.header;
+            let shape = match f.style() {
+                Style::Bitmap => format!("bitmap {}x{}", h.width, h.height),
+                Style::Shaded => format!("shaded, {} high", h.height),
+            };
+            format!("{} {shape} ({} codes)", 2 * i, f.glyphs.len())
+        })
+        .collect();
+    Ok(format!(
+        "mgavideo:  {} fonts: {}\n\
+         mgavideo:  a {}-byte colour-animation list of {} records\n",
+        fonts.len(),
+        fonts.join(", "),
+        video.anims.len(),
+        video.anim_records(),
     ))
 }
 
@@ -657,8 +686,8 @@ pub fn hex_preview(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{
-        synthetic_bytes, synthetic_dsounds, synthetic_lzexe, synthetic_model, synthetic_ms3,
-        synthetic_numbers, synthetic_pcx, synthetic_scendef, synthetic_screen,
+        synthetic_bytes, synthetic_dsounds, synthetic_lzexe, synthetic_mgavideo, synthetic_model,
+        synthetic_ms3, synthetic_numbers, synthetic_pcx, synthetic_scendef, synthetic_screen,
         synthetic_sprite_bank, synthetic_usg, synthetic_vcl, synthetic_vgaintro,
     };
 
@@ -928,6 +957,23 @@ mod tests {
         );
         assert!(matches!(
             outcome(Path::new("vgaintro.dvr"), b"MZ"),
+            Outcome::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn mgavideo_shows_its_fonts() {
+        let out = report(Path::new("MGAVIDEO.DVR"), &synthetic_mgavideo());
+        assert!(
+            out.contains(
+                "mgavideo:  4 fonts: 0 bitmap 4x3 (128 codes), 2 bitmap 6x3 (128 codes), \
+                 4 shaded, 3 high (128 codes), 6 shaded, 3 high (96 codes)\n\
+                 mgavideo:  a 18-byte colour-animation list of 1 records\n"
+            ),
+            "{out}"
+        );
+        assert!(matches!(
+            outcome(Path::new("mgavideo.dvr"), b"MZ"),
             Outcome::Failed(_)
         ));
     }

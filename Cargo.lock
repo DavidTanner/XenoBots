@@ -2602,6 +2602,7 @@ dependencies = [
  "image",
  "insta",
  "xeno-formats",
+ "xeno-render",
 ]
 
 [[package]]

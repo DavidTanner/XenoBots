@@ -88,7 +88,7 @@ managed memory block with slot `0x36`.
 | `0x348` | `1fe6:30b3` | Re-measure the frame period and re-arm the retrace timer; called after every mode change |
 | `0x34c` | `1fe6:3144` | Recompute the derived tick rates from the frame period |
 | `0x358`/`0x35c`, `0x360`/`0x364` | `1fe6:33e9`–`3424` | Add/remove a per-retrace hook; add/remove a 60 Hz tick hook |
-| `0x38a`–`0x40e` | `1fe6:489c`–`4cbc` | Text: font select and glyph drawing (fonts live in `mgavideo.dvr`'s data) |
+| `0x38a`–`0x40e` | `1fe6:489c`–`4cbc` | Text (`font.md`): `0x38a` select font, `0x38e`/`0x392` per-glyph steps, `0x396`/`0x39a` set/get the cursor, `0x39e`/`0x3a2` colour, `0x3a6` the bit-7 colour, `0x3ae` two codes, `0x3b2`–`0x3c6` strings (transparent and opaque), `0x3ca`–`0x40e` numbers. The fonts live in `mgavideo.dvr`'s data block `DS:0x62a` |
 | `0x1506` | `1fe6:6a97` | Load a `.map` into the `MAPP` buffer (`map.md`) |
 | `0x30e`–`0x320` (word slots) | `1000:13be`–`14d8` | Colour-animation records (`palette.md`): select a list, stop all, hold, release, start, turn on, turn off, read flags, set direction, set speed. `vgaintro.dvr` calls `0x30e` and `0x316` through slot `0x40` |
 
@@ -232,7 +232,8 @@ install one more (0x2a and 0x3a).
 | `0x4a0`–`0x4e8` | Palette: set, blank, commit, fades to a colour or to a palette (`palette.md`; `0x4d8` is the `.vcl` fade) |
 | `0x4ec`, `0x4f0` | Colour-animation blends (`pal_blend_anim_from_palette`, `pal_blend_anim_frames`): build a record's frame between the palette and frame 0, or between frames 0 and 1 (`palette.md`) |
 | `0x4f4` | Per-retrace handler (palette upload); repointed to a second version on some configurations |
-| `0x4fa`–`0x570`, `0x590` | Drawing: pixels, rectangles and frames, probably lines, and fonts (`0x590` selects the glyph renderer) |
+| `0x4fa`–`0x570` | Drawing: pixels, rectangles and frames, probably lines |
+| `0x590`, `0x594`, `0x598` | Fonts (`font.md`): `0x590` (`gfx_select_glyph_renderer`) points `0x594` (transparent) and `0x598` (opaque) at the font kind's glyph renderers, which are not in the slot table |
 | `0x546` | Stub for `LIGHT.MOD` (dead) |
 | `0x574`–`0x58c` | Scaled model images (`mxx.md`, "Drawing"): `0x574` target, row table and clip rectangle, `0x578` anchor, `0x57c`/`0x580` get/select the scale pattern, `0x584` scale (8.8), `0x588` draw a prepared list of images (not traced), `0x58c` draw one row-span image, colour 0 transparent, mirrored if `DL` bit 0 |
 | `0x59c`–`0x5bc` | Screen-region helpers: build a run-length region of one colour from a loaded picture and compile it into copy code, then copy through it; not traced further |
@@ -267,8 +268,8 @@ sequence player). `TITLE` (0x00), `OPTIONS` (0x02) and
 
 ## Open questions
 
-- Names for most of `mgavideo.dvr`'s drawing slots below `0x5c0` and the host's
-  `0x38a`–`0x40e` text services (T-031 and later T-090 passes).
+- Names for most of `mgavideo.dvr`'s drawing slots below `0x590` (T-031 and later T-090
+  passes). The text services are in `font.md` (T-041).
 
 ## Symbols
 
@@ -374,3 +375,15 @@ Named in T-040 (the screen flow): `ui_run_startup_and_game`, `ui_login_and_load_
 (T-024's `file_load_save_game`, renamed), `ui_run_map_room_loop`, `ui_run_training_menu`,
 `sim_run_mission_loop`, `ui_run_review_screen`, `ui_open_widget_set` and
 `ui_dispatch_event_to_widgets` in `xeno.exe`; addresses in `docs/screens.md`. Saved.
+
+Named in T-041 (fonts and the log-in name entry; details in `font.md` and
+`docs/screens.md`): in `xeno.exe` `gfx_select_font` (`1fe6:489c`, slot `0x38a`),
+`gfx_set_text_cursor` (`1fe6:491f`, `0x396`), `gfx_set_text_colour` (`1fe6:4959`,
+`0x39e`), `ui_draw_name_entry` (`1000:7833`), `ui_name_entry_on_key` (`1000:7882`),
+`ui_name_entry_type_char` (`1000:78a7`), `ui_name_entry_backspace` (`1000:78f1`),
+`ui_name_entry_accept` (`1000:790b`) and `ui_name_entry_cancel` (`1000:794e`); in
+`mgavideo.dvr` `gfx_select_glyph_renderer` (`0x173f`, slot `0x590`),
+`gfx_draw_glyph_1bit` (`0x178a`), `gfx_draw_glyph_1bit_opaque` (`0x1938`),
+`gfx_draw_glyph_shaded` (`0x1aff`) and `gfx_draw_glyph_shaded_opaque` (`0x1c69`); in
+`vga240.mod` `gfx_select_glyph_renderer_planar` (`0x0b8d`), `gfx_draw_glyph_1bit_planar`
+(`0x0bd8`) and `gfx_draw_glyph_shaded_planar` (`0x0f19`). All `confirmed`, all saved.

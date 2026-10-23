@@ -174,7 +174,8 @@ what the interrupt does first (count, apply the origin, upload the palette, step
 fade, count the tick); the palette is `xeno_render::Dac`. Holds, pans, fades, the
 abort and pause hook and the end times are reproduced; still missing:
 
-- **Captions**: they need the game's font 6 and `vga240.mod`'s glyph renderer. No
+- **Captions**: they need the game's font 6 (decoded by T-041, `font.md`) and the
+  caption strings from the host's string segment (still to read). No
   entry's timing depends on them as long as typing ends before the end time. The two
   logos have none.
 - **Music**: the counter `DS:0x370` is reset when `MAINTHEM` starts, a few retraces

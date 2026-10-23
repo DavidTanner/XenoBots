@@ -23,10 +23,11 @@ sounds, the models and a sprite bank, and runs the main loop.
 
 **Log-in** (`ui_login_and_load_save_game`, `1000:70ec`): shows `LOGIN` fading in over
 64 retraces (`ui_show_screen_fading_in`) and runs the name entry
-(`ui_edit_name_with_blinking_cursor`). If that returns carry (presumably ESC), the game
-exits. Otherwise it loads `<NAME>.LOG` if there is one, or starts a new campaign from
+(`ui_edit_name_with_blinking_cursor`). If that returns carry (ESC), the start-up caller
+exits the game; the map room's N ignores it. Otherwise it loads `<NAME>.LOG` if there
+is one (and marks a game as loaded, `DS:0x6005`), or starts a new campaign from
 `scendef.bin` (`1000:712e`), then runs the campaign-won check `1fe6:7366`
-(`vcl.md`, "TRIUMPH").
+(`vcl.md`, "TRIUMPH"). Details below, "The name entry".
 
 **Map room** (`ui_run_map_room_loop`, `1000:6f26`): the hub. After the log-in it loops:
 draw, wait for an input event, hand it to the screen's widgets, and run the action
@@ -78,6 +79,48 @@ pointer, key events to the focused chain. Each type has an event handler in a ta
 `DS:0x3778`; a key handler compares the event's key word (release bit masked off)
 with its table and calls the first match. No separate briefing screen was found; the
 scenario's `ORDR` text (`usg.md`) is presumably shown inside the mission (T-044).
+
+### The name entry (T-041)
+
+`ui_edit_name_with_blinking_cursor` (`1000:77ce`) starts colour-animation record 23
+(colour 254, `palette.md`), opens a widget set of its own (segment `0x3857`, state at
+`DS:0x6149`, copied from a 9-byte template), empties the name, and loops: draw the
+widgets whose redraw bits are set, wait for an input event, hand it to the widgets,
+until the done flag `DS:0x6148` is set. Then it turns record 23 off where it stands
+(the colour keeps its last value), puts the previous widget set back, and returns carry
+if the flag is `0xff`. The `LOGIN` picture itself carries the "Operator / Log in:"
+label and the black field; the game draws only the name.
+
+The widgets: a key handler (`ui_name_entry_on_key`, `1000:7882`), the name field (its
+draw handler `ui_draw_name_entry`, `1000:7833`), a box with no drawing, and the
+screenshot key (`1000:7d3f`, Shift or Ctrl with scan code 0x37, only with the hidden
+switch of `key.md`). The key handler ignores events with bit `0x2000` and compares the
+key word (bit 7 of the low byte masked off) with a table at `DS:0x616a`:
+
+| Key word | Handler | Effect |
+|---|---|---|
+| `0x001c` (Enter) | `ui_name_entry_accept` (`1000:790b`) | Nothing if the name is empty. Else copies it into the save name template `DS:0x613b` (`NAME    .LOG`, padded with spaces to 8) and into the exit message at `DS:0x618c` ("THANKS FOR PLAYING, NAME.", put in the buffer shown on exit with slot `0x54`), and sets the done flag to 1 |
+| `0x0001` (ESC) | `ui_name_entry_cancel` (`1000:794e`) | Puts the previous name back from the template and sets the done flag to `0xff` |
+| `0x000e` (Backspace) | `ui_name_entry_backspace` (`1000:78f1`) | If the name is not empty, drops its last character and marks the field for redrawing |
+| Anything else | `ui_name_entry_type_char` (`1000:78a7`) | If the name is shorter than 8, turns the key word into a character (`1fe6:3e86`, not traced); accepts `0`-`9` and `A`-`Z`, and `a`-`z` turned into upper case; appends it and marks the field for redrawing |
+
+So a key with Shift, Ctrl or Alt never matches the table: Shift+Enter is typed as a
+character and refused. The name is at most 8 characters, upper-case letters and digits.
+
+**Drawing** (`ui_draw_name_entry`, when the field's redraw bits are set, so not before
+the first change): font 0, cursor at (`DS:0x6164` + 5, `DS:0x6162` + 3) = (50, 69),
+the field's top-left corner being (45, 66), all **opaque**: the name in colour 251 on
+0; then, if it is shorter than 7, the string at `DS:0x6187` (two spaces and two
+backspaces: clears the two cells after it and comes back); then, if it is shorter than
+8, an underscore in colour 254 on 0: the cursor, which record 23 blinks. Nothing draws
+the field before the first key is accepted, so the original shows no cursor until then
+(to confirm in DOSBox).
+
+**After the name** (`ui_login_and_load_save_game`): the save `NAME    .LOG` is loaded
+with `1000:eefc` if it exists (`usg.md`, "Save files"); otherwise `1fe6:72a8` and the
+`scendef.bin` load `1000:712e` start a campaign (on failure the game exits with a
+message). The map room's N (`1000:7401`) saves first, then runs the log-in again;
+there ESC (carry) goes back to the map room with the old name.
 
 ### Where it differs from T-040's list
 
@@ -153,3 +196,8 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   situation room and the consoles (T-043, T-056).
 - The mouse: the widget dispatch's event bits (`0x80` mouse, bit 0 release, `0x14`
   click) and the pointer slots `0x1496`–`0x14b2`.
+
+T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
+`ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
+`ui_name_entry_cancel`) and the text services; the list is in
+`docs/re/dvr-protocol.md`.

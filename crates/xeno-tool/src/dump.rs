@@ -31,6 +31,7 @@ pub fn dump(
     let grey = grey_palette();
     let palette = palette.unwrap_or(&grey);
     let images = match extension.as_str() {
+        "dvr" if stem == "mgavideo" => font_sheets(&stem, file, bytes)?,
         "pcx" => {
             let pcx = pcx::parse(bytes)
                 .with_context(|| format!("{} is not a valid PCX", file.display()))?;
@@ -224,6 +225,56 @@ fn compose<'a>(
         }
     }
     Some(canvas)
+}
+
+/// Characters a font sheet shows: a row of 16 for each of codes 0..128.
+const SHEET_COLUMNS: usize = 16;
+
+/// One sheet per font in `mgavideo.dvr` (`<stem>_font<id>`): codes 0 to 127 in rows
+/// of 16, each in a cell of the font's height and its widest glyph plus one, drawn in
+/// colour 252 (so shaded glyphs use 252 to 254) on 0, in grey.
+fn font_sheets(
+    stem: &str,
+    file: &Path,
+    bytes: &[u8],
+) -> anyhow::Result<Vec<(String, image::DynamicImage)>> {
+    use xeno_formats::{font::MAX_GLYPHS, mgavideo};
+    use xeno_render::{Framebuffer, Size, TextCursor, TextMode};
+
+    let video = mgavideo::parse(bytes)
+        .with_context(|| format!("{} has no fonts this port can read", file.display()))?;
+    let grey = grey_palette();
+    Ok(video
+        .fonts
+        .iter()
+        .enumerate()
+        .map(|(i, font)| {
+            let widest = font
+                .glyphs
+                .iter()
+                .flatten()
+                .map(|g| g.width)
+                .max()
+                .unwrap_or(0);
+            let cell_w = usize::from(widest.max(font.header.width)) + 1;
+            let cell_h = usize::from(font.header.height);
+            let rows = MAX_GLYPHS / SHEET_COLUMNS;
+            let size = Size::new(SHEET_COLUMNS * cell_w, rows * cell_h);
+            let mut sheet = Framebuffer::new(size);
+            for code in 0..MAX_GLYPHS {
+                let (x, y) = (
+                    (code % SHEET_COLUMNS) * cell_w,
+                    (code / SHEET_COLUMNS) * cell_h,
+                );
+                let mut cursor = TextCursor::at(x as i32, y as i32, 252);
+                if font.glyph(code as u8).is_some() {
+                    sheet.draw_char(font, &mut cursor, code as u8, TextMode::Transparent);
+                }
+            }
+            let image = indexed_to_rgb(size.width, size.height, sheet.pixels(), &grey);
+            (format!("{stem}_font{}", 2 * i), image.into())
+        })
+        .collect())
 }
 
 /// Index `i` as grey `i, i, i`: a stand-in for files with no palette of their own.
@@ -424,6 +475,32 @@ mod tests {
             [out.join("dsounds_00.wav"), out.join("dsounds_01.wav")]
         );
         assert_eq!(second, wav::mono_u8(1808, &[0x70]));
+    }
+
+    #[test]
+    fn fonts_dump_one_sheet_each() {
+        use xeno_formats::fixtures::synthetic_mgavideo;
+        let out = std::env::temp_dir().join(format!("xeno-tool-fonts-{}", std::process::id()));
+        let written = dump(Path::new("MGAVIDEO.DVR"), &synthetic_mgavideo(), &out, None).unwrap();
+        let sheet = image::open(&written[0]).unwrap().into_rgb8();
+        let _ = std::fs::remove_dir_all(&out);
+        let names: Vec<_> = written
+            .iter()
+            .map(|p| p.file_name().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "mgavideo_font0.png",
+                "mgavideo_font2.png",
+                "mgavideo_font4.png",
+                "mgavideo_font6.png"
+            ]
+        );
+        // Cells of 5x3; `A` (0x41) is in row 4, column 1, its top row lit.
+        assert_eq!(sheet.dimensions(), (16 * 5, 8 * 3));
+        assert_eq!(sheet.get_pixel(5, 12).0, [252; 3]);
+        assert_eq!(sheet.get_pixel(5, 11).0, [0; 3]);
     }
 
     #[test]

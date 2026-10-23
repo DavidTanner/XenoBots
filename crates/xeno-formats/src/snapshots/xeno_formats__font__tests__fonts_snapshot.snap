@@ -1,0 +1,78 @@
+---
+source: crates/xeno-formats/src/font.rs
+expression: summary
+---
+[
+    (
+        FontHeader {
+            kind: 7,
+            unknown_01: 0,
+            width: 4,
+            height: 3,
+            step_x: 0,
+            step_y: 0,
+        },
+        128,
+        [
+            (
+                65,
+                Glyph {
+                    width: 4,
+                    rows: [
+                        224,
+                        160,
+                    ],
+                },
+            ),
+        ],
+    ),
+    (
+        FontHeader {
+            kind: 7,
+            unknown_01: 0,
+            width: 6,
+            height: 3,
+            step_x: 0,
+            step_y: 0,
+        },
+        128,
+        [],
+    ),
+    (
+        FontHeader {
+            kind: 0,
+            unknown_01: 0,
+            width: 6,
+            height: 3,
+            step_x: 0,
+            step_y: 0,
+        },
+        128,
+        [],
+    ),
+    (
+        FontHeader {
+            kind: 0,
+            unknown_01: 0,
+            width: 5,
+            height: 3,
+            step_x: 0,
+            step_y: 0,
+        },
+        96,
+        [
+            (
+                66,
+                Glyph {
+                    width: 2,
+                    rows: [
+                        3,
+                        1,
+                        2,
+                        0,
+                    ],
+                },
+            ),
+        ],
+    ),
+]
