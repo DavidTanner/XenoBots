@@ -148,24 +148,107 @@ pub fn data_segment(exe: &Unpacked) -> Result<usize, FormatError> {
     }
 }
 
+/// The entry at image offset `at`, named `what` in errors, whose offsets are into the
+/// image.
+pub(crate) fn entry_at(image: &[u8], at: usize, what: &str) -> Result<Entry, FormatError> {
+    let bytes = image
+        .get(at..at + Entry::SIZE)
+        .ok_or_else(|| invalid(at, format!("the image ends inside {what}")))?;
+    parse(bytes).map_err(|e| match e {
+        FormatError::Invalid { offset, reason } => {
+            invalid(at + offset as usize, format!("{what}: {reason}"))
+        }
+        other => other,
+    })
+}
+
 /// The start-up chain, read from an unpacked `xeno.exe`. Error offsets are into the
 /// load image.
 pub fn intro_chain(exe: &Unpacked) -> Result<Vec<Entry>, FormatError> {
     let start = data_segment(exe)? + usize::from(INTRO_CHAIN);
     (0..INTRO_ENTRIES)
         .map(|i| {
-            let at = start + i * Entry::SIZE;
-            let bytes = exe
-                .image
-                .get(at..at + Entry::SIZE)
-                .ok_or_else(|| invalid(at, "the image ends inside the intro chain"))?;
-            parse(bytes).map_err(|e| match e {
-                FormatError::Invalid { offset, reason } => {
-                    invalid(at + offset as usize, format!("intro entry {i}: {reason}"))
-                }
-                other => other,
-            })
+            entry_at(
+                &exe.image,
+                start + i * Entry::SIZE,
+                &format!("intro entry {i}"),
+            )
         })
+        .collect()
+}
+
+/// The image offset of Ghidra's segment `1fe6`, the kernel.
+const KERNEL: usize = 0xfe60;
+/// The `DS` word the player reads the caption's segment from.
+pub const STRINGS_WORD: u16 = 0x60;
+/// At start-up the kernel points `DS:0x64` at a segment of fix-ups (`1fe6:00a3`, `mov
+/// word [0x64], seg`), then installs the word table at offset `SI` in it
+/// (`1fe6:00a9`, `xor bx, bx; mov si, offset`, then `drv_install_word_table`): a base
+/// word, then (`DS` offset, segment) pairs up to a 0 offset. One of them sets
+/// [`STRINGS_WORD`].
+pub(crate) const FIXUPS_SEGMENT: (usize, &[u8]) = (KERNEL + 0xa3, &[0xc7, 0x06, 0x64, 0x00]);
+pub(crate) const FIXUPS_TABLE: (usize, &[u8]) = (KERNEL + 0xa9, &[0x33, 0xdb, 0xbe]);
+/// No fix-up table is longer than this, and no caption.
+const MAX_FIXUPS: usize = 64;
+pub const MAX_CAPTION: usize = 1024;
+
+/// Image offset of the string segment that `DS:0x60` holds at run time, from the
+/// start-up fix-ups. The segment must be a word the executable relocates.
+pub fn string_segment(exe: &Unpacked) -> Result<usize, FormatError> {
+    let relocated: Vec<usize> = exe.relocations.iter().map(|r| r.linear()).collect();
+    string_segment_image(&exe.image, &relocated)
+}
+
+pub(crate) fn string_segment_image(
+    image: &[u8],
+    relocated: &[usize],
+) -> Result<usize, FormatError> {
+    use crate::farewell::operand;
+    use crate::maproom::{segment, word};
+    let (at, op) = FIXUPS_TABLE;
+    let table = segment(image, FIXUPS_SEGMENT, relocated)? + usize::from(operand(image, at, op)?);
+    // The base is the load segment itself, so the segments are stored as they are.
+    if word(image, table)? != 0 || !relocated.contains(&table) {
+        return Err(invalid(
+            table,
+            "not a fix-up table based at the load segment",
+        ));
+    }
+    for at in (table + 2..).step_by(4).take(MAX_FIXUPS) {
+        match word(image, at)? {
+            0 => break,
+            STRINGS_WORD if relocated.contains(&(at + 2)) => {
+                return Ok(usize::from(word(image, at + 2)?) * 16);
+            }
+            STRINGS_WORD => return Err(invalid(at + 2, "the string segment is not relocated")),
+            _ => {}
+        }
+    }
+    Err(invalid(table, "no fix-up sets the string segment"))
+}
+
+/// The raw bytes from `offset` in the string segment at image offset `strings`: up to
+/// [`MAX_CAPTION`] bytes (fewer at the image's end), with a NUL among them.
+pub fn caption_bytes(image: &[u8], strings: usize, offset: u16) -> Result<&[u8], FormatError> {
+    let at = strings + usize::from(offset);
+    let bytes = image
+        .get(at..(at + MAX_CAPTION).min(image.len()))
+        .filter(|b| b.contains(&0))
+        .ok_or_else(|| invalid(at, "no caption ends here"))?;
+    Ok(bytes)
+}
+
+/// A caption up to its NUL, without it: the codes the player types.
+pub fn caption_text(bytes: &[u8]) -> &[u8] {
+    bytes.split(|&b| b == 0).next().unwrap_or_default()
+}
+
+/// Each entry's caption, read from the string segment.
+pub fn captions(exe: &Unpacked, entries: &[Entry]) -> Result<Vec<Vec<u8>>, FormatError> {
+    let strings = string_segment(exe)?;
+    entries
+        .iter()
+        .map(|e| Ok(caption_text(caption_bytes(&exe.image, strings, e.caption)?).to_vec()))
         .collect()
 }
 
@@ -276,6 +359,54 @@ mod tests {
         assert!(data_segment(&exe).is_err());
     }
 
+    /// An image whose start-up fix-ups (table at 0x3000:0x10) set `DS:0x5c` and then
+    /// `DS:0x60` to segment 0x2000, which holds two captions at 0x10 and 0x20.
+    pub(crate) fn strings_image() -> (Vec<u8>, Vec<usize>) {
+        let mut image = vec![0u8; 0x30100];
+        let (seg, table) = (FIXUPS_SEGMENT.0 + 4, 0x30010);
+        image[FIXUPS_SEGMENT.0..seg].copy_from_slice(FIXUPS_SEGMENT.1);
+        image[seg..seg + 2].copy_from_slice(&0x3000u16.to_le_bytes());
+        image[FIXUPS_TABLE.0..FIXUPS_TABLE.0 + 3].copy_from_slice(FIXUPS_TABLE.1);
+        image[FIXUPS_TABLE.0 + 3] = 0x10;
+        for (i, w) in [0u16, 0x5c, 0x1000, 0x60, 0x2000, 0]
+            .into_iter()
+            .enumerate()
+        {
+            image[table + 2 * i..][..2].copy_from_slice(&w.to_le_bytes());
+        }
+        image[0x20010..0x20015].copy_from_slice(b"AB\x09\x03C");
+        image[0x20020..0x20023].copy_from_slice(b"D\x0cE");
+        (image, vec![seg, table, table + 4, table + 8])
+    }
+
+    #[test]
+    fn the_string_segment_and_captions_are_found() {
+        let (image, relocated) = strings_image();
+        let strings = string_segment_image(&image, &relocated).unwrap();
+        assert_eq!(strings, 0x20000);
+        let text = |offset| caption_text(caption_bytes(&image, strings, offset).unwrap());
+        assert_eq!(text(0x10), b"AB\x09\x03C");
+        assert_eq!(text(0x20), b"D\x0cE");
+        assert_eq!(text(0x30), b"");
+        // A caption with no NUL before the image ends.
+        let mut open = image.clone();
+        open[0x20030..].fill(b'X');
+        assert!(caption_bytes(&open, strings, 0x30).is_err());
+        // The segment word, the table's base and the string segment must be relocated.
+        for skip in 0..3 {
+            let mut fewer = relocated.clone();
+            fewer.remove(if skip == 2 { 3 } else { skip });
+            assert!(string_segment_image(&image, &fewer).is_err(), "{skip}");
+        }
+        // Another instruction, or a table without the word.
+        let mut other = image.clone();
+        other[FIXUPS_TABLE.0] = 0x90;
+        assert!(string_segment_image(&other, &relocated).is_err());
+        let mut other = image;
+        other[0x30010 + 2 + 4] = 0x62;
+        assert!(string_segment_image(&other, &relocated).is_err());
+    }
+
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_intro_chain_is_found() {
@@ -303,5 +434,16 @@ mod tests {
         for logo in [chain[0], chain[9]] {
             assert_eq!((logo.x, logo.y, logo.effect()), (0, 0, Some(Effect::Hold)));
         }
+        // `DS:0x60` is the string segment the other tables use (`docs/re-setup.md`), and
+        // only the logos have no caption.
+        let relocated: Vec<usize> = exe.relocations.iter().map(|r| r.linear()).collect();
+        assert_eq!(
+            string_segment(&exe).unwrap(),
+            crate::maproom::segment(&exe.image, crate::maproom::STRINGS_SEGMENT, &relocated)
+                .unwrap()
+        );
+        let captions = captions(&exe, &chain).unwrap();
+        assert!(captions[0].is_empty() && captions[9].is_empty());
+        assert!(captions[1..9].iter().all(|c| !c.is_empty()));
     }
 }

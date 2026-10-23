@@ -140,9 +140,24 @@ Every call of the player is between an "enter 320x240" (slot `0x5f4`) and a "lea
 | Routine | When | Music | Entries |
 |---|---|---|---|
 | `1000:fd0a` (`ui_play_intro_cutscene`) | Start-up, right after `MAINTHEM` starts | `MAINTHEM` (already playing) | Blanks the palette, enters the mode, waits 30 ticks (it ignores the abort hook's answer there, so a key pressed then is lost), then ten entries back to back at `DS:0xecac`: `EALOGO`, `DETECT`, `ARRIVAL`, `GRNDFALL`, `EMERGE`, `WAR`, `ANNIHIL`, `AFTERMTH`, `RETURN`, `PRESENTS`. An abort ends the chain and also skips the drop sequence that follows (`fgd.md`) |
-| `1000:fde8` from `1000:7059` | A mission is won (`DS:0x5fab` = 1) | `WIN1` | `WIN` at `DS:0x606a`. Its caption has three number fields that the caller fills in first (two of 2 characters, one of 6) |
-| `1000:fde8` from `1000:702d` | A mission is lost (`DS:0x5fab` = 2) | `WIN2` | One of three pointers at `DS:0x6016`, indexed by the word at `DS:0x6012` |
-| `1000:fd9f` from `1000:70d0` | Instead of the win, once `DS:0x5fac` is set | `BIGWIN3`, started inside | Waits 2 s, `TRIUMPH` at `DS:0xedb0`, waits 1.5 s, stops the music |
+| `ui_play_win_cutscene` (`1000:7059`) | A mission is won (`DS:0x5fab` = 1) | `WIN1` (song 2), started before the mode change | Fills the caption's three number fields (below, "The win caption"), starts the song, then `ui_play_ending_sequence_entry` (`1000:fde8`): hold the colour records, blank, enter the mode, play `WIN` (the entry at `DS:0x606a`), leave the mode, release the records. Then it stops the music and waits 15 ticks in mode 13h |
+| `ui_play_lose_cutscene` (`1000:702d`) | A mission is lost (`DS:0x5fab` = 2) | `WIN2` (song 4), the same way | As the win, with the entry pointed to by the word at `DS:0x6016 + [DS:0x6012]` |
+| `ui_play_triumph_sequence` (`1000:fd9f`), from `ui_play_campaign_won_cutscene` (`1000:70d0`) | Instead of either, whenever `DS:0x5fac` is set | `BIGWIN3` (song 6), started inside, after the mode change | Sets the abort hook, holds the records, blanks, enters the mode, starts the song, waits 120 ticks (2 s), `TRIUMPH` at `DS:0xedb0`, waits 90 ticks, stops the music, waits 15 ticks, leaves the mode |
+
+After a mission (`1000:6f9e`) the map room's action sets `DS:0x5fab` to 0, the lose
+selector `DS:0x6012` to 0 and the scenario's `state` to 12, runs the mission, and fades
+everything out over 32 retraces with the colour records held. Then it checks
+`DS:0x5fac` **first**, so `TRIUMPH` replaces whatever the result was once the campaign
+is complete, then 2 (lose) and 1 (win); any other value (0, no result) plays nothing.
+Each routine returns at once if `DS:0x5fab` is 3 (the training menu's value), and
+hides the mouse pointer around the cutscene (slots `0x149e`, `0x14a2`). The waits are
+`sim_wait_ticks_polled` (60 Hz ticks, the abort hook polled before each): a key ends a
+wait early. Nobody looks at the player's carry, so an aborted cutscene goes on to the
+waits that follow it. The win and lose routines do not set the abort hook; the intro,
+which always runs first, has set it already. The music is not modelled in the port
+(T-062), but each song's start resets the retrace counter `DS:0x370` the end times count
+from: the win and lose songs start just before the palette blank and the mode change,
+`BIGWIN3` just after, so `TRIUMPH`'s end time counts from before its 120-tick wait.
 
 The picture sizes and the entries agree: every vertical pan on a 400-row picture covers
 the 160 rows below the window, and every pan from `x` = 320 ends at 0.
@@ -151,17 +166,60 @@ the 160 rows below the window, and every pan from `x` = 320 ends at 0.
   over the whole picture, `GRNDFALL` and `AFTERMTH` pan down, `EMERGE` pans left over
   its full width and `ANNIHIL` pans right part of the way. Every entry but the two logos
   has a caption. The last entry ends a little over two minutes into the music.
-- **Lose.** `DS:0x6012` is reset to 0 before a mission starts (`1000:6fa3`) and set to 0,
-  2 or 4 by code in the humanoid, scorpion and scout consoles' routines (`1000:a0ce`,
-  `8471`, `bb9b`), so it is presumably the type of robot the player last commanded
-  (guess from where the stores are). The table gives `SLOSE` for 0, `NLOSE` for 2 and
-  `SLOSE` for 4. The `HLOSE` entry at `DS:0x601c` is referred to by nothing; the
-  humanoid's slot, the first, points at `SLOSE` instead, so `HLOSE` was presumably cut
-  and a stock install never asks for `hlose.vcl`. The three lose entries share one
+- **Lose.** `DS:0x6012` is reset to 0 before a mission starts and set to 0, 2 or 4 by
+  the humanoid, scorpion and scout consoles' routines (`1000:a0ce`, `8471`, `bb9b`), so
+  it is the type of the robot console the player opened last; a mission in which no
+  console was opened counts as the humanoid's. The table gives `SLOSE` for 0, `NLOSE`
+  for 2 and `SLOSE` for 4. The `HLOSE` entry at `DS:0x601c` is referred to by nothing;
+  the humanoid's slot, the first, points at `SLOSE` instead, so `HLOSE` was presumably
+  cut and a stock install never asks for `hlose.vcl`. The three lose entries share one
   caption.
-- **`TRIUMPH`.** `DS:0x5fac` is set by `1fe6:7366` when a counter at `DS:0x5f9f` equals
-  the number of `scendef.bin` records (`DS:0x5ffd`), so presumably when the campaign is
-  complete (guess).
+- **`TRIUMPH`.** `DS:0x5fac` is set by `scen_update_campaign_progress` (`1fe6:7366`)
+  when the count of won scenarios `DS:0x5f9f` equals the number of `scendef.bin` records
+  (`DS:0x5ffd`), so when the campaign is complete (`docs/screens.md`).
+
+### Captions
+
+The player reads a caption from the segment whose word is `DS:0x60`. That word is 0 in
+the image; at start-up the kernel (`1fe6:00a3`) points `DS:0x64` at a small segment of
+fix-ups and installs its first table with `drv_install_word_table` (`1fe6:0144`, slot
+`0x0a`): a base word (the load segment), then (`DS` offset, segment) pairs up to a 0
+offset, each segment relocated. One pair sets `DS:0x60` to the host's string segment
+(Ghidra `38fa`, image paragraph `0x28fa`), the same segment that slot `0x3c2` loads
+directly and the map room's and review's texts come from. A caption with no text points
+at an empty string (the two logos).
+
+Typing (`1fe6:9032` on): select font 6, colour 252, cursor at the entry's (`0x0c`,
+`0x0e`). Then for each code: poll the abort hook (a key aborts as anywhere else), read
+the code; NUL ends the caption; 9 takes the next byte `n` and moves the cursor `n`
+pixels right (`1fe6:4946`, the margin unchanged) without drawing or waiting; any other
+code goes to the glyph slot `0x594`, which draws a glyph or runs a control code (the
+stock captions use 0x0c for a new line and 0x0e to move one pixel right), and is then
+followed by a wait of `caption_speed` retraces of `DS:0x370` (0: none). So control codes
+cost a wait like a glyph; 9 and its byte do not.
+
+### The win caption
+
+Before playing `WIN`, `ui_play_win_cutscene` writes three numbers into its caption in
+the string segment, so the stock caption holds placeholders at fixed offsets:
+
+1. `sim_get_mission_kills_and_losses` (`1fe6:6b0d`) returns two bytes of the player's
+   command object (`DS:0x568e`): its kills, enemy robots it destroyed (+0x2c), and its
+   losses, its own robots killed (+0x2b).
+2. `txt_format_u16_to_buffer` (`1000:02b7`) formats a number into a buffer at
+   `DS:0x1bfe` by pointing the glyph slot at a byte store and calling
+   `txt_print_u16_five_digits` (`1fe6:4a6c`): five decimal digits **with** leading
+   zeros (its zero-suppression flag starts set), then a NUL.
+3. The last two digits of each count are copied into the caption (`mov es, [0x60]`,
+   `mov es:[field], ax`), and all five digits and the NUL of the mission's points
+   `DS:0x6014`. The points field ends the caption.
+
+The points come from `scen_score_mission_result` (`1000:7626`): the kills times the
+word at `DS:0x5ed8` less the losses times the word at `DS:0x5eda` (16-bit products), 0 if
+that would be negative; it also adds the counts to the campaign's totals
+(`DS:0x5fa3`, `0x5fa5`). In the stock game the weights are 50 and 25. (Its callers, the
+developer keys and presumably the mission's end, add 1000 to the score afterwards:
+`docs/screens.md`.) A count of 100 or more shows only its last two digits.
 
 ### In the port (T-036)
 
@@ -174,10 +232,9 @@ what the interrupt does first (count, apply the origin, upload the palette, step
 fade, count the tick); the palette is `xeno_render::Dac`. Holds, pans, fades, the
 abort and pause hook and the end times are reproduced; still missing:
 
-- **Captions**: they need the game's font 6 (decoded by T-041, `font.md`) and the
-  caption strings from the host's string segment (still to read). No
-  entry's timing depends on them as long as typing ends before the end time. The two
-  logos have none.
+- **Captions**: the strings are read (`xeno_formats::sequence::captions`, T-045);
+  typing them is T-045's second part. No entry's timing depends on them as long as
+  typing ends before the end time. The two logos have none.
 - **Music**: the counter `DS:0x370` is reset when `MAINTHEM` starts, a few retraces
   before the chain (the palette blank, the mode set and the frame re-measure come
   between). Without audio the port starts it at 0 with the chain.
@@ -190,8 +247,11 @@ aborted: `PRESENTS` is held until counter 7,640.
 
 - A DOSBox capture to confirm the timing frame by frame (T-036's note in
   `NEXT_STEPS.md` lists what to check, with the checklist in `video-modes.md`).
-- The descriptor flags the loader sets (`0x22`), what slot `0x590` (offset 0xb8d) does
-  beyond selecting the glyph routine, and what the numbers in the `WIN` caption count.
+- The descriptor flags the loader sets (`0x22`), and what slot `0x590` (offset 0xb8d)
+  does beyond selecting the glyph routine.
+- Whether the mission's end calls `scen_score_mission_result` before the win cutscene
+  as the developer keys do, and what writes the command object's +0x2b and +0x2c
+  (T-046, T-055).
 
 ## Parser
 
@@ -202,4 +262,14 @@ whole picture as one PNG.
 
 `xeno_formats::sequence` (T-036): `parse` reads one 26-byte entry (checking its file
 id and effect), `data_segment` finds `DS` in an unpacked `xeno.exe` and `intro_chain`
-the ten start-up entries. `xeno-tool inspect xeno.exe` lists them.
+the ten start-up entries. `xeno-tool inspect xeno.exe` lists them. T-045 added
+`string_segment` (from the start-up fix-ups, checking the two instructions and that
+every segment word is relocated) and `captions`.
+
+`xeno_formats::ending` (T-045) reads the cutscenes after a mission from the
+instructions that use them, after checking their bytes: the `WIN`, three lose and
+`TRIUMPH` entries, the selector word, the score's two weights, the win caption's five
+copies (value, word of the number, caption offset; each must land before the caption's
+NUL) and the captions; `Endings::win_caption` fills the fields as the game does and
+`points` scores a result. `xeno-tool inspect xeno.exe` shows their shape, never their
+text.
