@@ -241,7 +241,9 @@ quirks above appear as in the original. A run of the stock files ends the first 
 at counter 9,248 (frame 448; offsets 26, 301, 26; view x 9), jumps the view at frame
 602, ends the cave part at counter 10,768 (frame 1,208; offsets 528, 616, 528; view
 x 24) and the whole drop at 10,833, then shows the test card. Not yet: the credits
-text (the font is decoded, `font.md`; drawing it is T-041's part 2) and the music.
+music. The credits are drawn since T-041: each text list's strings in their font from
+the user's `mgavideo.dvr` (`font.md`), transparent, at their (`x`, `y`) on the 768-wide
+surface, so in the credits area below the split.
 
 ### Reading it from the user's copy
 

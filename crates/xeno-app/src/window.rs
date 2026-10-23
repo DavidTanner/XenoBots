@@ -121,6 +121,12 @@ pub fn run(
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app)?;
+    // The original leaves a goodbye to the player on the screen when it exits.
+    if let FrontEnd::Screens(screens) = &app.front
+        && let Some(message) = screens.exit_message()
+    {
+        println!("{message}");
+    }
     app.error.map_or(Ok(()), Err)
 }
 

@@ -66,20 +66,25 @@ cutscene, as the original does at start-up: `ealogo.vcl`, eight story pictures a
 in your `xeno.exe`. Then comes the intro drop, as in the original: a scroll over
 `xenodrop.pcx` and then the cave (`cavedrop.pcx`), with the `.fgd` ridges moving in
 front at their own speeds and the palette cross-faded, about 45 seconds, run from the
-numbers in your `vgaintro.dvr`. There is no music, caption or credits text yet. Any
+numbers in your `vgaintro.dvr`, with the credits in the game's own font from your
+`mgavideo.dvr`. There is no music or caption text yet. Any
 key ends the cutscene early with a fade and skips the drop; any key ends the drop at
 once; P pauses either until the next key. `--no-intro` skips both and `--drop` plays
-the drop alone. Then come the game's screens, as placeholders for now, in the original's
-order: the log-in, then the map room, from which you play a mission, open the training
-menu or the review, log in again or quit. Each shows its picture from your `.m@l` files
-with a fade; the window title names the screen and its keys (there is no font yet), and
-nothing on them works beyond moving between them. The mouse moves a placeholder arrow
+the drop alone. Then come the game's screens in the original's order: the log-in, then
+the map room, from which you play a mission, open the training menu or the review, log
+in again or quit. The log-in works as the original's: type a name of up to eight
+letters and digits (Backspace corrects, the cursor blinks), Enter logs in, ESC quits
+(after N, ESC goes back to the map room). Your name is remembered and a new campaign
+starts from `scendef.bin`; saves are neither read nor written yet. The other screens
+are placeholders: each shows its picture from your `.m@l` files with a fade, the window
+title names the screen and its keys, and nothing on them works beyond moving between
+them. The mouse moves a placeholder arrow
 (the system cursor is hidden over the picture), but clicks do nothing yet. See
 `docs/screens.md`.
 
 | Screen | Keys |
 |---|---|
-| Log-in | Enter: map room. ESC: quit |
+| Log-in | Letters and digits: the name. Backspace: delete. Enter: log in (map room). ESC: quit, or back to the map room after N |
 | Map room | P, Enter or Space: mission. T: training menu. R: review. N: log-in. Q or Alt+Q: quit |
 | Training menu | H, N, S or C: training mission. ESC or Alt+Q: back |
 | Review | ESC or Enter: back |

@@ -58,10 +58,14 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     std::fs::write(dir.join("ealogo.vcl"), picture).unwrap();
     // The drop's files are still empty.
     let no_drop = run(&["--check"]);
-    // Synthetic, not the game's: a made-up vgaintro.dvr, flat backdrops and layers.
-    use xeno_formats::fixtures::{synthetic_numbers, synthetic_pcx, synthetic_vgaintro};
+    // Synthetic, not the game's: a made-up vgaintro.dvr, mgavideo.dvr (for the
+    // credits' fonts), flat backdrops and layers.
+    use xeno_formats::fixtures::{
+        synthetic_mgavideo, synthetic_numbers, synthetic_pcx, synthetic_scendef, synthetic_vgaintro,
+    };
     let driver = synthetic_vgaintro(&synthetic_numbers());
     std::fs::write(dir.join("vgaintro.dvr"), driver).unwrap();
+    std::fs::write(dir.join("mgavideo.dvr"), synthetic_mgavideo()).unwrap();
     for name in ["xenodrop.pcx", "cavedrop.pcx"] {
         let backdrop = synthetic_pcx(768, 128, &[3; 768 * 128], &[0; 768]);
         std::fs::write(dir.join(name), backdrop).unwrap();
@@ -78,6 +82,9 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     ] {
         std::fs::write(dir.join(format!("{name}.m@l")), &screen).unwrap();
     }
+    // And a one-scenario campaign for the log-in.
+    let campaign = synthetic_scendef(&[((0, 0, 9, 9), 1, b"HERE")]);
+    std::fs::write(dir.join("scendef.bin"), campaign).unwrap();
     let (good, drop_alone) = (run(&["--check"]), run(&["--check", "--drop"]));
     let skipped = run(&["--check", "--no-intro"]);
     std::fs::remove_dir_all(&dir).unwrap();

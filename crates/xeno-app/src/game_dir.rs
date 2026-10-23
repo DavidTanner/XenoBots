@@ -142,6 +142,11 @@ impl GameFiles {
         &self.dir
     }
 
+    /// Every file's lowercase name, in no order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.by_name.keys().map(String::as_str)
+    }
+
     /// The real path of `name` (matched case-insensitively), if the directory has it.
     pub fn path(&self, name: &str) -> Option<&Path> {
         self.by_name.get(&name.to_lowercase()).map(PathBuf::as_path)
