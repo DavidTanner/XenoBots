@@ -41,7 +41,7 @@ Reference); 25.175 MHz is the VGA's nominal 25 MHz clock.
   (slot `0x348`), so the port restarts the clock at the new mode's rate, from the
   wake-up at which the change happened (T-036): the start-up cutscene runs at the
   320x240 rate, and when it ends the window goes on to the intro drop (T-038) and then
-  the test card, both in mode 13h at 70.09 Hz (the clock restarts at each change, as
+  the screens (T-040, `docs/screens.md`) or the test card, all in mode 13h at 70.09 Hz (the clock restarts at each change, as
   the drop's driver re-measures after entering and leaving its mode). Retraces still due at the old rate in that wake-up are dropped. The input
   log keeps counting across the change, and the rate log restarts. `--view` of a `.vcl`
   picture (T-035) runs at the 320x240 rate throughout, everything else at mode 13h's.
@@ -91,9 +91,14 @@ else sees winit.
   `Keys` is the set of held keys.
 - **Window keys** never reach the game. F11, or Alt+Enter (either Enter), toggles
   fullscreen; holding them does not repeat. ESC leaves fullscreen, or quits from a
-  window. A screen that wants ESC itself (T-040) sets `Translator::screen_claims_escape`;
-  then ESC is an ordinary key, and F11, Alt+Enter or closing the window remain. Closing
-  the window quits.
+  window. A screen that wants ESC itself sets `Translator::screen_claims_escape`
+  (T-040: a screen claims it when its key table binds ESC, `docs/screens.md`); then ESC
+  is an ordinary key, and F11, Alt+Enter or closing the window remain. The claim is
+  updated after every retrace, so it applies from the next key. Closing the window
+  quits, and so does a screen's quit key.
+- **Screens** (T-040) turn each key going down into the original's key word (modifiers
+  in the high byte, `E0` dropped) and look it up in their (key word, action) tables
+  (`docs/screens.md`).
 - **Per retrace.** Events that arrive between two retraces all belong to the next one.
   Each retrace records them in an `InputLog` and then reads them back from it, so the
   game sees input only through the log, and a log replays exactly. The log is in

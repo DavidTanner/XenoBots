@@ -69,28 +69,44 @@ front at their own speeds and the palette cross-faded, about 45 seconds, run fro
 numbers in your `vgaintro.dvr`. There is no music, caption or credits text yet. Any
 key ends the cutscene early with a fade and skips the drop; any key ends the drop at
 once; P pauses either until the next key. `--no-intro` skips both and `--drop` plays
-the drop alone. Then the window shows a test card (a synthetic pattern). Its white marker moves one pixel per frame of the
+the drop alone. Then come the game's screens, as placeholders for now, in the original's
+order: the log-in, then the map room, from which you play a mission, open the training
+menu or the review, log in again or quit. Each shows its picture from your `.m@l` files
+with a fade; the window title names the screen and its keys (there is no font yet), and
+nothing on them works beyond moving between them. See `docs/screens.md`.
+
+| Screen | Keys |
+|---|---|
+| Log-in | Enter: map room. ESC: quit |
+| Map room | P, Enter or Space: mission. T: training menu. R: review. N: log-in. Q or Alt+Q: quit |
+| Training menu | H, N, S or C: training mission. ESC or Alt+Q: back |
+| Review | ESC or Enter: back |
+| Mission | F1 to F4: situation room, humanoid, scorpion or scout console. W: won, L: lost, C: campaign won (each with a placeholder for its cutscene; a training mission goes straight back) |
+| Cutscene placeholder | Enter, Space or ESC: map room |
+
+`--screen test-card` shows a test card (a synthetic pattern) instead. Its white marker moves one pixel per frame of the
 original 70 Hz display and its yellow one at 60 Hz, whatever your monitor's refresh
 rate; the blue grid lights a cell for each key held, green or red for player 1's or
 2's stick keys (the defaults in your `config.dvr`, or the keys you set with the original
-setup program, saved in `XENO.CFG`; the original game itself never uses them). Press ESC or close the window to
-quit, and F11 or Alt+Enter to switch between a window and fullscreen.
+setup program, saved in `XENO.CFG`; the original game itself never uses them). Close the window to
+quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 
 | Flag | Meaning |
 |---|---|
 | `--game-dir <path>` | Where the original game files are. |
-| `--check` | Only check the game directory (and decode the opening cutscene and the drop), then exit without opening a window. |
+| `--check` | Only check the game directory (and decode the opening cutscene, the drop and the screens), then exit without opening a window. |
 | `--no-intro` | Skip the opening cutscene and the drop. |
-| `--drop` | Play the intro drop alone (from the point the cutscene would have ended), then the test card. |
+| `--drop` | Play the intro drop alone (from the point the cutscene would have ended), then the log-in screen. |
+| `--screen <name>` | For development: skip the cutscene and drop and start at a screen: `login`, `map-room`, `training`, `review`, `sit-room`, `humancon`, `scorpcon`, `scoutcon`, `won`, `lost`, `triumph`, or `test-card` for the test card instead of the screens. |
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
-| `--view <file>` | Show one file instead of the cutscene and test card (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
+| `--view <file>` | Show one file instead of the cutscene and screens (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
 
 | Key | Action |
 |---|---|
-| ESC | Leave fullscreen; in a window, quit. |
+| ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, review, cutscenes) take it instead. |
 | Any other key, P | During the cutscene: end it (fading out) and skip the drop, or pause it until the next key. During the drop: end it at once, or pause it. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 

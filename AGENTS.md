@@ -19,7 +19,8 @@ in priority order:
 
 The project is at the **scaffold stage**: the Cargo workspace exists and `xeno-app`
 checks the game files, then opens a window that plays the start-up cutscene from the
-user's `xeno.exe` and `.vcl` pictures and then shows a synthetic test card, run by a
+user's `xeno.exe` and `.vcl` pictures and the intro drop, then steps through
+placeholder screens in the original's order (`docs/screens.md`), run by a
 fixed-timestep loop at the original's retrace rate (`docs/game-loop.md`). Read `NEXT_STEPS.md` for the task backlog and pick
 tasks from there.
 
@@ -189,11 +190,12 @@ Once the workspace exists, these are the expected commands (keep them true):
 
 ```bash
 cargo build
-cargo run -p xeno-app -- --game-dir ./gameFiles           # intro cutscene and drop (any key ends them, P pauses), then a test card; ESC leaves fullscreen, then quits, F11 fullscreen
-cargo run -p xeno-app -- --game-dir ./gameFiles --no-intro  # straight to the test card
-cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone, then the test card
+cargo run -p xeno-app -- --game-dir ./gameFiles           # intro cutscene and drop (any key ends them, P pauses), then the placeholder screens (keys in the window title); ESC leaves fullscreen, then quits where no screen claims it, F11 fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles --no-intro  # straight to the log-in screen
+cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone, then the log-in screen
+cargo run -p xeno-app -- --game-dir ./gameFiles --screen map-room  # start at a screen (docs/screens.md); --screen test-card for the test card
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
-cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro and drop) only, no window
+cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README)
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries
