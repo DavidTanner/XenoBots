@@ -3,8 +3,8 @@
 ## Status
 
 **Layout confirmed** (T-024), from `mapdvr.dvr`'s save code and the `xeno.exe`
-routine that loads a `.map`. These are **not** key or joystick mappings (those are
-`config.dvr`'s `XENO.KEY`, which is not in the install; T-039). They are the map
+routine that loads a `.map`. These are **not** key or joystick mappings (`config.dvr` keeps its keyboard tables in
+`XENO.CFG`, not in the install; `cfg.md`, `key.md`). They are the map
 editor's terrain files, made of `.usg` `MAPP` records (`usg.md`).
 `xeno_formats::map` reads both stock files to their last byte.
 

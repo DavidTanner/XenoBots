@@ -1,0 +1,74 @@
+---
+source: crates/xeno-formats/src/setup.rs
+expression: parse_saved_config(&synthetic_cfg()).unwrap()
+---
+SavedConfig {
+    detected_cpu: 50,
+    detected_fpu: 48,
+    cpu: 51,
+    fpu: 50,
+    graphics: 86,
+    music: 65,
+    sound: 67,
+    players: 50,
+    player: [
+        PlayerSetup {
+            input: 75,
+            unknown_remap_toggle: 33,
+            unknown_alignment: 32,
+            unknown_switched: 32,
+        },
+        PlayerSetup {
+            input: 75,
+            unknown_remap_toggle: 32,
+            unknown_alignment: 32,
+            unknown_switched: 32,
+        },
+    ],
+    keys: [
+        KeyTable {
+            slots: [
+                1,
+                2,
+                3,
+                4,
+                96,
+                5,
+                96,
+                96,
+                96,
+                96,
+                6,
+                96,
+            ],
+            unknown_0c: [
+                0,
+                0,
+                0,
+                0,
+            ],
+        },
+        KeyTable {
+            slots: [
+                7,
+                8,
+                9,
+                10,
+                96,
+                11,
+                96,
+                96,
+                96,
+                96,
+                12,
+                96,
+            ],
+            unknown_0c: [
+                0,
+                0,
+                0,
+                0,
+            ],
+        },
+    ],
+}

@@ -578,6 +578,28 @@ pub fn synthetic_vgaintro(numbers: &crate::vgaintro::Numbers) -> Vec<u8> {
     file
 }
 
+/// An LZEXE-packed `config.dvr` holding `keys` as player 1's and 2's default tables
+/// where [`crate::setup::default_keys`] looks: the menu walker's instruction pointing
+/// at a made-up first menu entry that ends with the last remap label and the tables.
+pub fn synthetic_config_dvr(keys: &[[u8; crate::setup::KEY_SLOTS]; 2]) -> Vec<u8> {
+    use crate::setup::{MENU_HEAD_AT, MENU_HEAD_OP};
+
+    let head = 0x100;
+    let mut entry = vec![0, 0];
+    entry.extend_from_slice(b"LABELS\0FIRE\0");
+    for table in keys {
+        entry.extend_from_slice(table);
+        entry.extend([0; 4]);
+    }
+    let size = entry.len() as u16;
+    entry[..2].copy_from_slice(&size.to_le_bytes());
+    let mut image = vec![0u8; MENU_HEAD_AT + 2];
+    image[MENU_HEAD_AT - MENU_HEAD_OP.len()..MENU_HEAD_AT].copy_from_slice(&MENU_HEAD_OP);
+    image[MENU_HEAD_AT..].copy_from_slice(&(head as u16).to_le_bytes());
+    image[head..head + entry.len()].copy_from_slice(&entry);
+    synthetic_lzexe(&image, (0, 0), &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

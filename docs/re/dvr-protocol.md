@@ -143,8 +143,8 @@ the `vga240.mod` routine that uses it, so the module stays loaded. `vgaiff.dvr` 
 `0x26`, so its shutdown restores the stubs.
 
 The screenshot stub (`0x1558`) does nothing unless the word at `DS:0x618` is `0xe263`.
-That word is decoded from the configuration record (`1fe6:0a57` onwards), so it is a
-hidden switch set through `config.dvr` (T-039). `xeno.exe` calls `0x1558` from three
+That word is decoded from the configuration record (`1fe6:0a57` onwards): it is the
+hash of line 16 of `XENO.KEY` (`docs/formats/key.md`). `xeno.exe` calls `0x1558` from three
 places (one is a key handler) and `mapdvr.dvr` from one.
 
 Slots `0x2e4` (advance a load cursor) and `0x2e8` (`1fe6:45e7`, load an overlay at the
@@ -162,7 +162,8 @@ the host uses them: `0x222` is the CPU class (`'1'`, `'2'`, `'3'`; `'3'` enables
 386 patches, `'2'` is needed for digitised sound), `0x224` the first letter of the
 video driver's name (`'V'` keeps `MGAVIDEO.DVR`; any other letter replaces the `M`),
 `0x225` the music device letter for slot `0x424` and `0x226` the digitised-sound device
-letter for slot `0x438`. The rest is T-039.
+letter for slot `0x438`. The whole record, the flag words and `XENO.CFG` are in
+`docs/formats/cfg.md`; the flag words come from `XENO.KEY` (`docs/formats/key.md`).
 
 Start-up order (`1000:0002` onwards): `config.dvr`, `sounddvr.dvr`, `mgavideo.dvr`;
 later (`1000:fb1c`) the music (`MAINTHEM.MS3`), the `.vcl` intro (`vcl.md`),
@@ -267,7 +268,6 @@ sequence player). `TITLE` (0x00), `OPTIONS` (0x02) and
 
 - Names for most of `mgavideo.dvr`'s drawing slots below `0x5c0` and the host's
   `0x38a`–`0x40e` text services (T-031 and later T-090 passes).
-- The configuration record's full layout and the flag words (T-039).
 
 ## Symbols
 
@@ -357,3 +357,14 @@ offsets: `gfx_enter_drop_mode` (`0x2a52`), `gfx_leave_drop_mode` (`0x2a90`),
 (`0x40eb`, slot `0x4b0`), `pal_copy_anim_colours_to_buffer` (`0x410b`),
 `pal_start_anim_via_slot` (`0x4121`, word slot `0x316`), `sim_wait_retrace`
 (`0x4153`) and `dbg_print_number_at` (`0x415f`). All `confirmed`.
+
+Named in T-039 (`docs/formats/cfg.md`, `key.md`): in `config.dvr`
+`drv_find_host_record` (`0x02d4`), `drv_write_config_record` (`0x0790`),
+`snd_detect_devices` (`0x0c64`), `ui_init_setup` (`0x1c1e`), `ui_run_setup_menu`
+(`0x1d63`), `file_save_config_if_changed` (`0x31e7`), `file_load_saved_config`
+(`0x319a`), `file_write_saved_config` (`0x3221`), `file_load_unlock_codes` (`0x3c26`)
+and `file_hash_unlock_line` (`0x3c6e`); in `xeno.exe` `drv_decode_config_record`
+(`1fe6:09fe`), `dbg_init_mono_monitor` (`1fe6:0356`), `dos_install_keyboard_handler`
+(`1fe6:3cb8`) and `dos_remove_keyboard_handler` (`1fe6:3ce9`). All saved, all
+`confirmed`. The keyboard remap (`config.dvr` `0x20ff`) and the INT 9 handler
+(`xeno.exe` `1fe6:3d53`) are not functions in the project.

@@ -22,6 +22,7 @@ pub mod pcx;
 pub mod rst;
 pub mod scendef;
 pub mod sequence;
+pub mod setup;
 pub mod usg;
 pub mod vcl;
 pub mod vgaintro;

@@ -1,0 +1,28 @@
+---
+source: crates/xeno-formats/src/setup.rs
+expression: "parse_unlock_codes(b\"1:one\\r\\n9:nine\\r\\n\").unwrap()"
+---
+UnlockCodes {
+    hashes: [
+        Some(
+            34031,
+        ),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(
+            38740,
+        ),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ],
+}
