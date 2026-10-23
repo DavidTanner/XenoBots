@@ -797,6 +797,71 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
     vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1, widgets + 4]
 }
 
+/// Where [`synthetic_review`] puts the widget set and the texts.
+pub const SYNTHETIC_REVIEW_WIDGETS: usize = 0x18400;
+pub const SYNTHETIC_REVIEW_STRINGS: usize = 0x19800;
+
+/// Writes made-up review tables (`crate::review`) into `image`, whose data segment
+/// starts at `ds`, and returns the image offsets to relocate, ascending: a picture, a
+/// text widget, the view and both buttons; three keys (ESC leave, Tab next, Alt+Tab
+/// previous); font 2 in colour 0x33; three panels; two pages (models 0 and 2) whose
+/// texts are `A`..`E` and `F`, new line, `G`. `image` must reach
+/// `SYNTHETIC_REVIEW_STRINGS + 16` and `ds + 0xe0`, and the tables use `ds + 0xa0` to
+/// `ds + 0xe0`; it leaves the other synthetic tables alone.
+pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
+    use crate::maproom::STRINGS_SEGMENT;
+    use crate::review::*;
+    let (widgets, strings) = (SYNTHETIC_REVIEW_WIDGETS, SYNTHETIC_REVIEW_STRINGS);
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    const KERNEL: usize = 0xfe60;
+    for ((at, code), value) in [
+        (WIDGETS_SEGMENT, (widgets / 16) as u16),
+        (WIDGETS_FIRST, 0x10),
+        (WIDGETS_END, 0x10 + 5 * 12),
+        (KEYS, 0xa0),
+        (KEY_COUNT, 3),
+        (FONT, 2),
+        (COLOUR, 0x33),
+        (PANELS[0], 0xc0),
+        (PANELS[1], 0xc8),
+        (PANELS[2], 0xd0),
+        (PAGE_TABLE, 0x7b30),
+        (STRINGS_SEGMENT, (strings / 16) as u16),
+    ] {
+        put(at, &op(code, value));
+    }
+    put(LAST_PAGE.0, &[LAST_PAGE.1, &[2]].concat());
+    #[rustfmt::skip]
+    put(widgets + 0x10, &words(&[
+        PICTURE_TYPE, 0, 0, 0, 200, 320,
+        TEXT_TYPE, 1, 0, 0, 200, 320,
+        VIEW_TYPE, 2, 14, 160, 110, 310,
+        NEXT_BUTTON_TYPE, 3, 180, 10, 190, 50,
+        EXIT_BUTTON_TYPE, 4, 180, 55, 195, 100,
+    ]));
+    put(
+        ds + 0xa0,
+        &words(&[0x01, LEAVE, 0x0f, NEXT_PAGE, 0x200f, PREVIOUS_PAGE]),
+    );
+    put(
+        ds + 0xc0,
+        &words(&[20, 10, 80, 150, 110, 10, 180, 150, 130, 170, 180, 300]),
+    );
+    put(KERNEL + 0x7b30, &words(&[0x7b40, 0x7b70]));
+    for (page, (model, texts)) in [(0, [0, 2, 4]), (2, [6, 8, 10])].into_iter().enumerate() {
+        let code = KERNEL + 0x7b40 + 0x30 * page;
+        put(code + PAGE_MODEL.0, &[PAGE_MODEL.1, &[model]].concat());
+        for ((at, code_op), text) in PAGE_TEXTS.into_iter().zip(texts) {
+            put(code + at, &op(code_op, text));
+        }
+    }
+    put(strings, b"A\0B\0C\0D\0E\0F\x0cG\0");
+    vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1]
+}
+
 /// Writes a made-up program table (`crate::orders`) into `image`, whose data segment
 /// starts at `ds`: five programs at `ds + 0x740` on (0 never offered, 1 for every kind,
 /// 2 for every kind with a header of no item list, 3 for the scorpion only, 4 never

@@ -244,6 +244,18 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
         Err(e) => writeln!(out, "maproom:   cannot read: {e}"),
     }
     .unwrap();
+    match xeno_formats::review::read(&exe) {
+        Ok(review) => writeln!(
+            out,
+            "review:    {} pages, {} keys, {} panels in font {}",
+            review.pages.len(),
+            review.keys.len(),
+            review.panels.len(),
+            review.font
+        ),
+        Err(e) => writeln!(out, "review:    cannot read: {e}"),
+    }
+    .unwrap();
     exe_mission_details(&exe, &mut out);
     Ok(out)
 }

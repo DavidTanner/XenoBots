@@ -1,0 +1,92 @@
+---
+source: crates/xeno-formats/src/review.rs
+expression: review
+---
+Review {
+    view: Rect {
+        top: 14,
+        left: 160,
+        bottom: 110,
+        right: 310,
+    },
+    next_button: Rect {
+        top: 180,
+        left: 10,
+        bottom: 190,
+        right: 50,
+    },
+    exit_button: Rect {
+        top: 180,
+        left: 55,
+        bottom: 195,
+        right: 100,
+    },
+    keys: [
+        (
+            1,
+            31291,
+        ),
+        (
+            15,
+            31297,
+        ),
+        (
+            8207,
+            31308,
+        ),
+    ],
+    font: 2,
+    colour: 51,
+    panels: [
+        Rect {
+            top: 20,
+            left: 10,
+            bottom: 80,
+            right: 150,
+        },
+        Rect {
+            top: 110,
+            left: 10,
+            bottom: 180,
+            right: 150,
+        },
+        Rect {
+            top: 130,
+            left: 170,
+            bottom: 180,
+            right: 300,
+        },
+    ],
+    pages: [
+        Page {
+            model: 0,
+            texts: [
+                [
+                    65,
+                ],
+                [
+                    66,
+                ],
+                [
+                    67,
+                ],
+            ],
+        },
+        Page {
+            model: 2,
+            texts: [
+                [
+                    68,
+                ],
+                [
+                    69,
+                ],
+                [
+                    70,
+                    12,
+                    71,
+                ],
+            ],
+        },
+    ],
+}
