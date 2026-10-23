@@ -77,11 +77,15 @@ Fixed keys, in every screen:
 | Ctrl+Alt+` | Raises interrupt 5 (BIOS print screen) |
 | Shift+F1 | Calls `sounddvr.dvr`'s slot `0x450` (toggles a driver flag) |
 
-Screens dispatch the key words through tables of (key word, handler) pairs. Those
-found so far are at `DS:0x676c`, `0x6b08` and `0x6efa` (probably the cockpit of each
-robot type, going by their keys; number keys 1 to 4 drop mines and buoys, F-keys, Space, Tab, arrows
-and letters do the rest) and `DS:0x5b20` (32 pairs, perhaps the map room), plus the
-scenario editor's table at `DS:0x5bc3` (`ui_dispatch_editor_key`). Their handlers are
+Screens dispatch the key words through tables of (key word, handler) pairs: a key
+widget masks the release bit (bit 7 of the low byte) off the event's word and calls
+the first entry that matches (T-040, `docs/screens.md`). Those found so far are the
+**map room's** at `DS:0x60bf` (20 pairs) and the **training menu's** at `DS:0x5e9f` (6
+pairs), both listed in `docs/screens.md`; `DS:0x676c`, `0x6b08` and `0x6efa` (probably
+the cockpit of each robot type, going by their keys; number keys 1 to 4 drop mines and
+buoys, F-keys, Space, Tab, arrows and letters do the rest); `DS:0x5b20` (32 pairs; not
+the map room's, so not yet placed); and the scenario editor's table at `DS:0x5bc3`
+(`ui_dispatch_editor_key`). Their handlers are
 mostly not decoded; that is work for the screens that use them (T-043, T-056). The
 port's input layer already delivers these keys as scan codes with the modifiers held
 (`docs/game-loop.md`).
@@ -123,5 +127,5 @@ slot's hash; nothing in the port uses them yet.
 
 ## Open questions
 
-- The handlers of the screen key tables, and which table belongs to which screen.
+- The handlers of the screen key tables, and which screen `DS:0x5b20` belongs to.
 - What the untraced unlock words gate.

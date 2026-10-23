@@ -15,11 +15,11 @@ offset below is into the decoded data.
 | File | Shown as (guess from the art) |
 |---|---|
 | `login` | Operator log-in |
-| `sitroom` | Situation room: roster, unit status, main view |
+| `sitroom` | Situation room: roster, unit status, main view; a mission's view of the command post (`docs/screens.md`) |
 | `maproom` | Map room |
 | `review` | Mission review |
 | `trainmen` | Training menu |
-| `humancon`, `scorpcon`, `scoutcon` | Order screens for the humanoid, scorpion and scout robots |
+| `humancon`, `scorpcon`, `scoutcon` | Consoles of the humanoid, scorpion and scout robots: a mission's view of a robot (`docs/screens.md`) |
 
 Decoded sizes run from 23 KB to 42 KB.
 
@@ -67,8 +67,10 @@ mode 13h, 320x200, shown at 4:3 with non-square pixels (`video-modes.md`).
 
 ## Open questions
 
-- When each screen is shown (T-040). T-025 found the callers: `xeno.exe` loads ids
-  0x04, 0x06, 0x08, 0x0c, 0x0e, 0x10, 0x12 and 0x14 through slot `0x490`
+- Settled (T-040): when each screen is shown is in `docs/screens.md`. `login` at
+  log-in, `maproom` as the hub, `trainmen` and `review` from the map room, `sitroom`
+  and the three consoles as the views of a mission. `xeno.exe` loads ids 0x04, 0x06,
+  0x08, 0x0c, 0x0e, 0x10, 0x12 and 0x14 through slot `0x490`
   (`docs/re/dvr-protocol.md`, "Screens requested"). `TITLE`, `OPTIONS` and `WALL2` are
   never requested, so the port doesn't need them.
 - In `sitroom`, `scorpcon` and `scoutcon` index 255 is pure green and fills the large

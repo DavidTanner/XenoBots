@@ -1,8 +1,8 @@
 //! The game window: `winit` for the window and events, `softbuffer` to put the
-//! framebuffer on screen. For now it plays the start-up cutscene (`intro`) in the
-//! 320x240 mode and, unless a key ended it, the intro drop (`drop`) in mode 13h, then
-//! shows the test card, with markers driven by the game clock, until ESC or close; or,
-//! with `--view`, one asset (`viewer`).
+//! framebuffer on screen. It plays the start-up cutscene (`intro`) in the 320x240 mode
+//! and, unless a key ended it, the intro drop (`drop`) in mode 13h, then the front
+//! end's screens (`screens`) until a screen quits, or ESC or close; or the test card,
+//! with markers driven by the game clock; or, with `--view`, one asset (`viewer`).
 //!
 //! The loop (`docs/game-loop.md`): the clock runs the retraces due, each one taking the
 //! input events that arrived since the last; if any ran, a frame is requested; then the
@@ -33,15 +33,24 @@ use crate::drop;
 use crate::input::{InputLog, Keys};
 use crate::intro::Intro;
 use crate::keymap::KeyMap;
+use crate::screens::Screens;
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
 use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
+/// What comes after the intro and the drop.
+#[derive(Debug)]
+pub enum FrontEnd {
+    Screens(Box<Screens>),
+    /// `--screen test-card`, with the stick keys it colours.
+    TestCard(KeyMap),
+}
+
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
-/// there is no intro), then shows the test card, and runs until the user presses ESC
-/// or closes it.
+/// there is no intro), then runs `front`, until a screen quits or the user presses ESC
+/// or closes the window.
 pub fn run(
     scale: Scale,
     aspect: Aspect,
@@ -49,7 +58,7 @@ pub fn run(
     viewer: Option<Viewer>,
     intro: Option<Intro>,
     mut drop: Option<drop::Assets>,
-    keymap: KeyMap,
+    front: FrontEnd,
 ) -> Result<(), Box<dyn Error>> {
     // Without the intro, the drop starts at once, its counter where its first wait ends.
     let playing = match (&viewer, &intro, drop.take()) {
@@ -67,7 +76,7 @@ pub fn run(
         (None, Some(intro), _) => (Intro::framebuffer(), intro.palette(), "Xenobots".into()),
         (None, None, Some(p)) => (p.framebuffer(), p.palette(), "Xenobots".into()),
         (None, None, None) => {
-            let (fb, palette) = test_card();
+            let (fb, palette) = front_end(&front);
             (fb, palette, "Xenobots".to_string())
         }
     };
@@ -86,7 +95,7 @@ pub fn run(
         input: Translator::default(),
         log: InputLog::default(),
         keys: Keys::default(),
-        keymap,
+        front,
         log_base: 0,
         sixty_hz: 0,
         meter: Meter::default(),
@@ -121,8 +130,8 @@ struct App {
     log: InputLog,
     /// The keys held, as the game sees them from the log.
     keys: Keys,
-    /// The players' stick keys, coloured on the test card.
-    keymap: KeyMap,
+    /// The screens, or the test card, after the intro and the drop.
+    front: FrontEnd,
     /// Retraces run at earlier rates: the clock restarts its count at a mode change,
     /// the log does not.
     log_base: u64,
@@ -200,11 +209,17 @@ fn size_after_scale_change(
     (matches!(scale, Scale::Fixed(_)) && !fullscreen && known).then_some(before)
 }
 
-/// The test card in mode 13h.
-fn test_card() -> (Framebuffer, Palette) {
+/// The front end's mode 13h framebuffer: blank for the screens, which draw at their
+/// first retrace, or the test card.
+fn front_end(front: &FrontEnd) -> (Framebuffer, Palette) {
     let mut fb = Framebuffer::new(Size::MODE_13H);
-    test_pattern::draw(&mut fb);
-    (fb, test_pattern::palette())
+    match front {
+        FrontEnd::Screens(screens) => (fb, screens.palette()),
+        FrontEnd::TestCard(_) => {
+            test_pattern::draw(&mut fb);
+            (fb, test_pattern::palette())
+        }
+    }
 }
 
 fn physical(s: Size) -> PhysicalSize<u32> {
@@ -265,7 +280,8 @@ impl App {
     }
 
     /// One retrace: the game reads this retrace's input from the log, then the intro,
-    /// the drop or the viewer acts on it, or the test card's markers move. Returns
+    /// the drop, the viewer or the screens act on it, or the test card's markers move.
+    /// A screen's ESC claim is passed to the translator for the next key. Returns
     /// whether the mode changed (the intro or the drop ended), so the clock must
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
@@ -295,7 +311,7 @@ impl App {
                         if assets.is_some() {
                             log::debug!("intro aborted: the drop is skipped");
                         }
-                        (self.fb, self.palette) = test_card();
+                        (self.fb, self.palette) = front_end(&self.front);
                     }
                 }
                 self.log_base = retrace;
@@ -307,33 +323,52 @@ impl App {
             self.palette = drop.palette();
             if done {
                 self.drop = None;
-                (self.fb, self.palette) = test_card();
+                (self.fb, self.palette) = front_end(&self.front);
                 self.log_base = retrace;
             }
             return done;
         }
-        match &mut self.viewer {
-            Some(viewer) => {
-                let changed = viewer.step(self.log.events_at(retrace), &self.keys);
-                self.palette = viewer.shown_palette();
-                if changed {
-                    viewer.draw(&mut self.fb);
-                    self.title = viewer.title();
-                    log::debug!("{}", self.title);
-                    if let Some(surface) = &self.surface {
-                        surface.window().set_title(&self.title);
-                    }
+        if let Some(viewer) = &mut self.viewer {
+            let changed = viewer.step(self.log.events_at(retrace), &self.keys);
+            self.palette = viewer.shown_palette();
+            if changed {
+                viewer.draw(&mut self.fb);
+                self.title = viewer.title();
+                log::debug!("{}", self.title);
+                self.set_title();
+            }
+            return false;
+        }
+        match &mut self.front {
+            FrontEnd::Screens(screens) => {
+                screens.retrace(self.log.events_at(retrace), &mut self.fb);
+                self.palette = screens.palette();
+                self.input.screen_claims_escape = screens.claims_escape();
+                if screens.take_changed() {
+                    self.title = format!("Xenobots - {}", screens.screen().label());
+                    self.set_title();
                 }
             }
-            None => test_pattern::draw_live(
+            FrontEnd::TestCard(keymap) => test_pattern::draw_live(
                 &mut self.fb,
                 step.retrace,
                 step.sixty_hz,
                 &self.keys,
-                &self.keymap,
+                keymap,
             ),
         }
         false
+    }
+
+    fn set_title(&self) {
+        if let Some(surface) = &self.surface {
+            surface.window().set_title(&self.title);
+        }
+    }
+
+    /// Whether a screen asked to leave the game.
+    fn quitting(&self) -> bool {
+        matches!(&self.front, FrontEnd::Screens(s) if s.quit())
     }
 
     /// Restarts the clock at `now` at the rate of the current view's mode, as after the
@@ -457,6 +492,10 @@ impl ApplicationHandler for App {
                 self.restart_clock(now);
                 break;
             }
+        }
+        if self.quitting() {
+            event_loop.exit();
+            return;
         }
         if ran && let Some(surface) = &self.surface {
             surface.window().request_redraw();

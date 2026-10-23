@@ -262,7 +262,8 @@ points at its `ret` and is unused.
 `SCOUTCON` (0x10, `1000:b47e`), `REVIEW` (0x12, `1fe6:7837`) and `LOGIN` (0x14,
 through `1000:76fe` from `1000:70ec`). The only other callers pass `.vcl` ids (the
 sequence player). `TITLE` (0x00), `OPTIONS` (0x02) and
-`WALL2` (0x0a) are never requested.
+`WALL2` (0x0a) are never requested. When and in what order the screens are shown is in
+`docs/screens.md` (T-040).
 
 ## Open questions
 
@@ -368,3 +369,8 @@ and `file_hash_unlock_line` (`0x3c6e`); in `xeno.exe` `drv_decode_config_record`
 (`1fe6:3cb8`) and `dos_remove_keyboard_handler` (`1fe6:3ce9`). All saved, all
 `confirmed`. The keyboard remap (`config.dvr` `0x20ff`) and the INT 9 handler
 (`xeno.exe` `1fe6:3d53`) are not functions in the project.
+
+Named in T-040 (the screen flow): `ui_run_startup_and_game`, `ui_login_and_load_save_game`
+(T-024's `file_load_save_game`, renamed), `ui_run_map_room_loop`, `ui_run_training_menu`,
+`sim_run_mission_loop`, `ui_run_review_screen`, `ui_open_widget_set` and
+`ui_dispatch_event_to_widgets` in `xeno.exe`; addresses in `docs/screens.md`. Saved.

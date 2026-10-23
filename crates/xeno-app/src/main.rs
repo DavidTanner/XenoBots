@@ -1,6 +1,6 @@
 //! The Xenobots game binary. For now it finds the user's game files, checks that they
 //! are all there, then opens a window that plays the start-up cutscene and the intro
-//! drop and shows a test card, or with `--view` one asset.
+//! drop and steps through placeholder screens, or with `--view` one asset.
 
 mod clock;
 mod drop;
@@ -8,6 +8,7 @@ mod game_dir;
 mod input;
 mod intro;
 mod keymap;
+mod screens;
 mod test_pattern;
 mod translate;
 mod viewer;
@@ -21,6 +22,7 @@ use clap::builder::TypedValueParser;
 use xeno_render::{Aspect, Scale};
 
 use game_dir::GameDir;
+use screens::{Ending, Screen, View};
 
 /// Xenobots / Ultrabots, reimplemented. Needs your own copy of the original game.
 #[derive(Debug, Parser)]
@@ -64,11 +66,16 @@ struct Cli {
     no_intro: bool,
 
     /// Play the intro drop (vgaintro.dvr: the scroll over xenodrop.pcx and
-    /// cavedrop.pcx) alone, then show the test card.
-    #[arg(long, conflicts_with_all = ["no_intro", "view"])]
+    /// cavedrop.pcx) alone, then go on to the log-in screen.
+    #[arg(long, conflicts_with_all = ["no_intro", "view", "screen"])]
     drop: bool,
 
-    /// Show one file instead of the cutscene and test card: a sprite bank or sky strip (.b@n), a
+    /// Start at this screen, skipping the cutscene and the drop (for development).
+    /// `test-card` shows the synthetic test card instead of the screens.
+    #[arg(long, value_enum, value_name = "NAME", conflicts_with = "view")]
+    screen: Option<StartScreen>,
+
+    /// Show one file instead of the cutscene and screens: a sprite bank or sky strip (.b@n), a
     /// screen (.m@l), a cutscene picture (.vcl) or a backdrop (.pcx). A bare name is
     /// looked up in the game directory, in any case; anything else is a path.
     #[arg(long, value_name = "FILE")]
@@ -78,6 +85,44 @@ struct Cli {
     /// instead of the file's own or, for files without one, a stock screen's.
     #[arg(long, value_name = "FILE", requires = "view")]
     palette: Option<PathBuf>,
+}
+
+/// `--screen`'s values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum StartScreen {
+    Login,
+    MapRoom,
+    Training,
+    Review,
+    SitRoom,
+    Humancon,
+    Scorpcon,
+    Scoutcon,
+    Won,
+    Lost,
+    Triumph,
+    TestCard,
+}
+
+impl StartScreen {
+    /// The screen, or `None` for the test card.
+    fn screen(self) -> Option<Screen> {
+        use StartScreen::*;
+        Some(match self {
+            Login => Screen::Login,
+            MapRoom => Screen::MapRoom,
+            Training => Screen::Training,
+            Review => Screen::Review,
+            SitRoom => Screen::Mission(View::SitRoom),
+            Humancon => Screen::Mission(View::Humanoid),
+            Scorpcon => Screen::Mission(View::Scorpion),
+            Scoutcon => Screen::Mission(View::Scout),
+            Won => Screen::Cutscene(Ending::Won),
+            Lost => Screen::Cutscene(Ending::Lost),
+            Triumph => Screen::Cutscene(Ending::Triumph),
+            TestCard => return None,
+        })
+    }
 }
 
 /// Parses a flag value with its `FromStr`.
@@ -122,8 +167,9 @@ fn main() -> ExitCode {
         },
         None => None,
     };
+    let no_intro = cli.no_intro || cli.screen.is_some();
     // The intro is read from xeno.exe and decoded with --check too.
-    let intro = if viewer.is_none() && !cli.no_intro && !cli.drop {
+    let intro = if viewer.is_none() && !no_intro && !cli.drop {
         match intro::load(&files) {
             Ok(intro) => Some(intro),
             Err(e) => {
@@ -135,7 +181,7 @@ fn main() -> ExitCode {
         None
     };
     // So is the drop, from vgaintro.dvr, the layers and the backdrops.
-    let drop = if viewer.is_none() && !cli.no_intro {
+    let drop = if viewer.is_none() && !no_intro {
         match drop::load(&files) {
             Ok(drop) => Some(drop),
             Err(e) => {
@@ -146,9 +192,27 @@ fn main() -> ExitCode {
     } else {
         None
     };
-    // config.dvr's keyboard stick (the original game never reads it).
-    let keymap = keymap::KeyMap::load(&files);
-    log::info!("stick keys from {:?}: {}", keymap.source, keymap.describe());
+    // Then the screens, from the .m@l files, or the test card.
+    let start = cli.screen.map_or(Some(Screen::Login), StartScreen::screen);
+    let front = match start {
+        // Not shown after --view.
+        _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
+        Some(start) => match screens::load(&files) {
+            Ok(pictures) => {
+                window::FrontEnd::Screens(Box::new(screens::Screens::new(pictures, start)))
+            }
+            Err(e) => {
+                eprintln!("error: cannot show the screens: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => {
+            // config.dvr's keyboard stick (the original game never reads it).
+            let keymap = keymap::KeyMap::load(&files);
+            log::info!("stick keys from {:?}: {}", keymap.source, keymap.describe());
+            window::FrontEnd::TestCard(keymap)
+        }
+    };
     if cli.check {
         return ExitCode::SUCCESS;
     }
@@ -159,7 +223,7 @@ fn main() -> ExitCode {
         viewer,
         intro,
         drop,
-        keymap,
+        front,
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -199,6 +263,18 @@ mod tests {
         assert!(Cli::try_parse_from(["xeno-app", "--drop"]).unwrap().drop);
         assert!(Cli::try_parse_from(["xeno-app", "--drop", "--no-intro"]).is_err());
         assert!(Cli::try_parse_from(["xeno-app", "--drop", "--view", "x.pcx"]).is_err());
+        let screen = |name| Cli::try_parse_from(["xeno-app", "--screen", name]);
+        assert_eq!(
+            screen("map-room").unwrap().screen,
+            Some(StartScreen::MapRoom)
+        );
+        assert_eq!(StartScreen::TestCard.screen(), None);
+        assert_eq!(
+            StartScreen::Scoutcon.screen(),
+            Some(Screen::Mission(View::Scout))
+        );
+        assert!(screen("briefing").is_err());
+        assert!(Cli::try_parse_from(["xeno-app", "--screen", "login", "--drop"]).is_err());
         let cli = Cli::try_parse_from(["xeno-app", "--scale", "3", "--aspect", "off"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Fixed(3), Aspect::Off));
         assert!(

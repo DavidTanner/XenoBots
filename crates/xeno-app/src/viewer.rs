@@ -461,7 +461,7 @@ impl Viewer {
 
 /// `palette` back in 6-bit DAC levels: every palette here was widened from them (or,
 /// for a `.pcx`, stored widened the same way), so this is exact.
-fn to_vga6(palette: &Palette) -> [u8; DAC_BYTES] {
+pub(crate) fn to_vga6(palette: &Palette) -> [u8; DAC_BYTES] {
     std::array::from_fn(|b| {
         let c = palette[(b / 3) as u8];
         [c.r, c.g, c.b][b % 3] >> 2
