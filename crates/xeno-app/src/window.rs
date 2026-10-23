@@ -32,6 +32,7 @@ use crate::clock::{Clock, Rate, Step};
 use crate::drop;
 use crate::input::{InputLog, Keys};
 use crate::intro::Intro;
+use crate::keymap::KeyMap;
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
 use crate::viewer::Viewer;
@@ -48,6 +49,7 @@ pub fn run(
     viewer: Option<Viewer>,
     intro: Option<Intro>,
     mut drop: Option<drop::Assets>,
+    keymap: KeyMap,
 ) -> Result<(), Box<dyn Error>> {
     // Without the intro, the drop starts at once, its counter where its first wait ends.
     let playing = match (&viewer, &intro, drop.take()) {
@@ -84,6 +86,7 @@ pub fn run(
         input: Translator::default(),
         log: InputLog::default(),
         keys: Keys::default(),
+        keymap,
         log_base: 0,
         sixty_hz: 0,
         meter: Meter::default(),
@@ -118,6 +121,8 @@ struct App {
     log: InputLog,
     /// The keys held, as the game sees them from the log.
     keys: Keys,
+    /// The players' stick keys, coloured on the test card.
+    keymap: KeyMap,
     /// Retraces run at earlier rates: the clock restarts its count at a mode change,
     /// the log does not.
     log_base: u64,
@@ -320,7 +325,13 @@ impl App {
                     }
                 }
             }
-            None => test_pattern::draw_live(&mut self.fb, step.retrace, step.sixty_hz, &self.keys),
+            None => test_pattern::draw_live(
+                &mut self.fb,
+                step.retrace,
+                step.sixty_hz,
+                &self.keys,
+                &self.keymap,
+            ),
         }
         false
     }
