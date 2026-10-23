@@ -24,6 +24,7 @@ pub mod scendef;
 pub mod sequence;
 pub mod usg;
 pub mod vcl;
+pub mod vgaintro;
 
 pub use error::FormatError;
 pub use palette::{Palette, Rgb};

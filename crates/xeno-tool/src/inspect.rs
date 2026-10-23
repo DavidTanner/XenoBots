@@ -112,8 +112,43 @@ fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
         "map" => map_details(bytes),
         "rst" => rst_details(bytes),
         "exe" | "dvr" if xeno_formats::lzexe::is_packed(bytes) => exe_details(file, bytes),
+        _ if name.eq_ignore_ascii_case("vgaintro.dvr") => vgaintro_details(bytes),
         _ => return None,
     })
+}
+
+/// The intro drop's script, times and lists, read from `vgaintro.dvr`.
+fn vgaintro_details(bytes: &[u8]) -> Details {
+    use xeno_formats::vgaintro::{self, CreditOp};
+
+    let drop = vgaintro::parse(bytes).map_err(|e| format!("vgaintro:  cannot parse: {e}\n"))?;
+    let n = &drop.numbers;
+    let draws = drop
+        .credits
+        .iter()
+        .filter(|op| matches!(op, CreditOp::Draw(_)))
+        .count();
+    Ok(format!(
+        "vgaintro:  drop at counter {}, blends to {} and {}, frames from {}, cave part until {}\n\
+         vgaintro:  frames of {} retraces: accelerate to {}, first part ends at {}, view jumps at {}, \
+         slow from {} to {}, end at {}\n\
+         vgaintro:  {} numbers, a {}-byte colour-animation list, {} credits steps ({draws} text lists)\n",
+        n.start,
+        n.second_blend,
+        n.third_blend,
+        n.frames,
+        n.cave_end,
+        n.frame_retraces,
+        n.accelerate_until,
+        n.first_part_end,
+        n.jump_at,
+        n.slow_from,
+        n.stop_at,
+        n.hold_again_until,
+        vgaintro::NUMBERS.len(),
+        drop.anims.len(),
+        drop.credits.len(),
+    ))
 }
 
 /// What the LZEXE unpacker makes of `bytes`; for `xeno.exe`, also its intro chain
@@ -623,8 +658,8 @@ mod tests {
     use super::*;
     use xeno_formats::fixtures::{
         synthetic_bytes, synthetic_dsounds, synthetic_lzexe, synthetic_model, synthetic_ms3,
-        synthetic_pcx, synthetic_scendef, synthetic_screen, synthetic_sprite_bank, synthetic_usg,
-        synthetic_vcl,
+        synthetic_numbers, synthetic_pcx, synthetic_scendef, synthetic_screen,
+        synthetic_sprite_bank, synthetic_usg, synthetic_vcl, synthetic_vgaintro,
     };
 
     #[test]
@@ -876,6 +911,25 @@ mod tests {
         let out = report(Path::new("xeno.exe"), &synthetic_lzexe(&image, (1, 0), &[]));
         assert!(out.contains("intro:     cannot read: "), "{out}");
         assert_eq!(outcome(Path::new("xeno.exe"), b"MZ"), Outcome::NoParser);
+    }
+
+    #[test]
+    fn vgaintro_shows_its_drop() {
+        let file = synthetic_vgaintro(&synthetic_numbers());
+        let out = report(Path::new("VGAINTRO.DVR"), &file);
+        assert!(
+            out.contains(
+                "vgaintro:  drop at counter 100, blends to 110 and 120, frames from 130, cave part until 200\n\
+                 vgaintro:  frames of 2 retraces: accelerate to 4, first part ends at 10, view jumps at 14, \
+                 slow from 20 to 24, end at 34\n\
+                 vgaintro:  63 numbers, a 34-byte colour-animation list, 6 credits steps (1 text lists)\n"
+            ),
+            "{out}"
+        );
+        assert!(matches!(
+            outcome(Path::new("vgaintro.dvr"), b"MZ"),
+            Outcome::Failed(_)
+        ));
     }
 
     #[test]

@@ -453,6 +453,131 @@ pub fn synthetic_lzexe(image: &[u8], (cs, ip): (u16, u16), relocations: &[usize]
     file
 }
 
+/// Made-up numbers for a synthetic `vgaintro.dvr` ([`synthetic_vgaintro`]): a drop
+/// short enough to play through in a test. Two parts of a few frames, blends of three
+/// steps, and speeds that slow to exactly 0.
+pub fn synthetic_numbers() -> crate::vgaintro::Numbers {
+    crate::vgaintro::Numbers {
+        anim_paragraph: 0x500,
+        data_paragraph: 0x41a,
+        view_y: 72,
+        split_row: 128,
+        view_x: 448,
+        cave_view_x: 448,
+        layer_start: 1152,
+        start: 100,
+        second_blend: 110,
+        third_blend: 120,
+        frames: 130,
+        cave_end: 200,
+        frame_retraces: 2,
+        cave_frame_retraces: 2,
+        blend_steps: 3,
+        blend_record: 0,
+        second_blend_steps: 3,
+        second_blend_record: 1,
+        third_blend_steps: 3,
+        third_blend_record: 0,
+        last_blend_steps: 3,
+        last_blend_record: 1,
+        first_copy_from: 10,
+        first_copy_to: 0,
+        first_copy_len: 3,
+        second_copy_from: 26,
+        second_copy_to: 0,
+        second_copy_len: 3,
+        light_weight: 0x80,
+        light_record: 1,
+        light_from: 26,
+        light_to: crate::vgaintro::PALETTE_BUFFER + 3,
+        light_len: 3,
+        accelerate_until: 4,
+        accelerate_a: 0x40,
+        accelerate_b: 0x20,
+        accelerate_c: 0x40,
+        accelerate_view: 0x10,
+        cruise_a: 0x100,
+        cruise_b: 0x80,
+        cruise_c: 0x100,
+        cruise_view: 0x40,
+        slow_from: 20,
+        first_part_end: 10,
+        jump_at: 14,
+        jump_by: 5,
+        boost_at: 16,
+        boost_b: 0x100,
+        stop_at: 24,
+        slow_a: 0x40,
+        slow_b: 0x40,
+        slow_c: 0x40,
+        slow_view: 0x10,
+        hold_until: 30,
+        hold_again_until: 34,
+        credits_script: 0x18,
+        copyright: 0x40,
+        credits_record: 1,
+        credits_show_from: 0x7c,
+        credits_step: 4,
+        credits_full: 0x80,
+        credits_hide_from: 4,
+        credits_down: 4,
+    }
+}
+
+/// A synthetic `vgaintro.dvr`: an MZ file whose image holds `numbers` behind the
+/// instructions [`crate::vgaintro::NUMBERS`] expects, the state table, a list of two
+/// one-colour blend records (kind 3, colour 7: white, then grey), and a credits
+/// script (clear, wait for frame 3, draw "HI", fade in, fade out, wait forever).
+/// Everything else is zero.
+pub fn synthetic_vgaintro(numbers: &crate::vgaintro::Numbers) -> Vec<u8> {
+    use crate::vgaintro::{CREDIT_HANDLERS, FOREVER, NUMBERS, STATE_HANDLERS, STATE_TABLE};
+
+    let anims = usize::from(numbers.anim_paragraph) * 16;
+    let data = usize::from(numbers.data_paragraph) * 16;
+    let mut image = vec![0u8; anims.max(data + 0x60) + 34];
+    let put = |image: &mut Vec<u8>, at: usize, bytes: &[u8]| {
+        image[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+    for ((_, at, op, width), value) in NUMBERS.iter().zip(numbers.values()) {
+        put(&mut image, at - op.len(), op);
+        put(&mut image, *at, &value.to_le_bytes()[..*width]);
+    }
+    for (i, handler) in STATE_HANDLERS.iter().enumerate() {
+        put(&mut image, STATE_TABLE + 2 * i, &handler.to_le_bytes());
+    }
+    for (i, colours) in [[63u8, 63, 63], [32, 32, 32]].iter().enumerate() {
+        let at = anims + 16 * i;
+        put(&mut image, at, &[16, 0, 3, 1, 1, 7, 1, 0]);
+        put(&mut image, at + 8, &((16 * i + 10) as u16).to_le_bytes());
+        put(&mut image, at + 10, colours);
+    }
+    let script = data + usize::from(numbers.credits_script);
+    let steps = [(0, 0), (1, 3), (2, 0x40), (3, 0), (4, 0), (1, FOREVER)];
+    for (i, (handler, arg)) in steps.into_iter().enumerate() {
+        put(
+            &mut image,
+            script + 4 * i,
+            &CREDIT_HANDLERS[handler].0.to_le_bytes(),
+        );
+        put(&mut image, script + 4 * i + 2, &arg.to_le_bytes());
+    }
+    put(
+        &mut image,
+        data + 0x40,
+        &[1, 0, 9, 0, 8, 0, 6, 0, 252, 0x50, 0],
+    );
+    put(&mut image, data + 0x50, b"HI\0");
+    // The MZ header: two paragraphs, no relocations.
+    let size = 0x20 + image.len();
+    let mut file = b"MZ".to_vec();
+    for word in [(size % 512) as u16, size.div_ceil(512) as u16, 0, 2] {
+        file.extend(word.to_le_bytes());
+    }
+    file.resize(0x20, 0);
+    file.extend(image);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

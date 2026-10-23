@@ -119,9 +119,15 @@ plain linear order, spread across the four planes by cycling the map mask. See
   It turns chain-4 and odd/even off, sets CRTC offset `0x60` (192 bytes per row per
   plane, a **768-pixel virtual line**) and selects byte mode. Then it calls host slots
   `0x606` and `0x612` (with width 768) to have `vga240.mod` build the matching row table.
-- It scrolls by writing the CRTC start address (`x / 4` plus a base) and pixel panning
-  `(x mod 4) * 2` during vertical retrace. On exit it calls slot `0x60a`
-  (width 320) and sets mode 13h again.
+- It scrolls by setting the origin through slot `0x60e` once a frame (CRTC start
+  address from the row table plus `x / 4`, and pixel panning `(x mod 4) * 2` applied
+  by the host's retrace handler); the view's row is 72, where the backdrop starts.
+  On exit it calls slot `0x60a` (width 320) and sets mode 13h again.
+- It also sets the CRTC **line compare** to 255 scan lines and the attribute mode
+  control's pixel-panning bit (bit 5): from screen row 128 down, the VGA shows video
+  memory from address 0, unpanned. That band (rows 128..=199) shows the 72 rows above
+  the backdrop, where the credits are drawn (T-038, `fgd.md`, "Screen"). No other
+  screen of the game splits.
 
 ### `xeno.exe`
 
@@ -145,7 +151,8 @@ plain linear order, spread across the four planes by cycling the map mask. See
 - **Framebuffer (T-030):** the logical size is per screen: 320x200 or 320x240. Screens
   that scroll in hardware draw into a wider virtual surface (640 wide for mode B, 768
   for the intro drop) and present a 320-wide window at `(x, y)` with 1-pixel horizontal
-  precision.
+  precision. The intro drop also needs a split: rows from 128 on come from the top
+  of the surface (T-038).
 - **Aspect (T-032):** 320x200 needs the 1.2 vertical correction. 320x240 already fills
   4:3 with square pixels and must *not* be stretched. Switching between the two modes
   must not change the on-screen image size on a 4:3 frame.

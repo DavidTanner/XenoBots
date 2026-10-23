@@ -47,16 +47,19 @@ of a scanline, but the parser accepts runs that do, since other encoders produce
 
 ## Open questions
 
-- Both images are 768 pixels wide, more than the 320-pixel screen. The decoded
-  `xenodrop` is one continuous scene rather than a strip of frames, which suggests a
-  horizontally scrolling backdrop for the drop sequence. Confirm from the code that
-  draws it. `vgaintro.dvr` draws the `.fgd` silhouettes over all 768 columns of it
-  and keeps a clean copy below it in video memory (`fgd.md`); the scroll timing is
-  T-038.
+- Settled (T-038): both are the intro drop's backdrops, loaded straight into
+  `vgaintro.dvr`'s 768-pixel-wide video memory (with a clean copy 128 rows lower) and
+  scrolled in hardware under the `.fgd` silhouettes (`fgd.md`, "The drop sequence").
+  The driver's loader checks the first 8 header bytes, takes the size from the header
+  and every row it gives, and shifts the trailer right by 2 into its palette buffer.
+  Only rows 0..=127 are ever on screen: the screen splits after row 128, so
+  `xenodrop`'s last two rows are never seen (they overwrite the clean copy of its first
+  two). Colour 0 is black in both trailers.
 - The DPI fields hold 640 and 400, which look like a screen size written by the
   paint program rather than real DPI. Not used by the parser.
-- Whether the trailer palette is the one the game uploads to the DAC while showing
-  these images, or whether it uses a shared game palette (T-013).
+- Settled (T-038): the trailer is uploaded as is when each part starts. `xenodrop`'s is
+  nearly all black, and colour-animation blends then bring the scene in
+  (`palette.md`); `cavedrop`'s shows at once.
 
 ## Parser
 
