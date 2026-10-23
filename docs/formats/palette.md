@@ -13,7 +13,7 @@ brings its own palette:
 | `.vcl` (all 14) | VGA DAC, 6 bits per channel | First 768 bytes of the file (`vcl.md`) | confirmed; `vga240.mod`'s loader reads it into a buffer of the caller's | `xeno_formats::vcl` |
 | `.m@l` screens (all 8) | VGA DAC, 6 bits per channel | First 768 bytes of the screen after unpacking (`m@l.md`) | confirmed | `xeno_formats::mal` |
 | IFF ILBM/PBM `CMAP` | 8 bits per channel (IFF standard) | `CMAP` chunk | `vgaiff.dvr` only; no IFF file is in the install (see below) | no |
-| Colour-animation records | VGA DAC, 6 bits per channel | Lists in `mgavideo.dvr`'s and `vgaintro.dvr`'s data (see below) | confirmed (T-037) | `xeno_render::anim` runs them; nothing reads the stock lists yet |
+| Colour-animation records | VGA DAC, 6 bits per channel | Lists in `mgavideo.dvr`'s and `vgaintro.dvr`'s data (see below) | confirmed (T-037) | `xeno_render::anim` runs them; `xeno_formats::mgavideo` reads `mgavideo.dvr`'s list (T-041), `xeno_formats::vgaintro` the drop's |
 
 Not palette sources, as far as the evidence goes:
 
@@ -259,7 +259,9 @@ xor si, si; mov dx, paragraph; call far [0x36]`; the list is the one whose descr
 the load segment). Reading the size and paragraph out of that sequence, rather than
 hardcoding them, keeps it working on other releases. `vgaintro.dvr` passes its list's
 segment in `AX` before calling `0x30e` from its run routine (slot `0x1540`);
-`xeno_formats::vgaintro` reads the list from there (T-038).
+`xeno_formats::vgaintro` reads the list from there (T-038). `xeno_formats::mgavideo` reads
+`mgavideo.dvr`'s own list this way (T-041), with the copy's bytes checked at load
+offset 0x28; the same routine finds the fonts (`font.md`).
 
 ## Open questions
 

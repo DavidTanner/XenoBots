@@ -167,7 +167,8 @@ cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 results per extension. It exits non-zero only if a file that has a parser fails to
 parse; files with no parser (the unpacked driver modules, text) are counted, not
 failed. The LZEXE-packed `xeno.exe` and `config.dvr` are unpacked in memory, and for
-`xeno.exe` the opening cutscene's sequence entries are listed.
+`xeno.exe` the opening cutscene's sequence entries are listed; `vgaintro.dvr` and
+`mgavideo.dvr` (its fonts and colour-animation list) have parsers of their own.
 
 ```bash
 cargo run -p xeno-tool -- inspect --all ./gameFiles
@@ -176,6 +177,8 @@ cargo run -p xeno-tool -- inspect --all ./gameFiles
 ```bash
 cargo run -p xeno-tool -- dump ./gameFiles/xenodrop.pcx --out /tmp/xeno-out
 ```
+
+`dump ./gameFiles/mgavideo.dvr` writes one sheet per font (codes 0 to 127, rows of 16).
 
 ```bash
 cargo run -p xeno-tool -- palette ./gameFiles/ealogo.vcl

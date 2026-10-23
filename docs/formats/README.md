@@ -16,6 +16,7 @@ scenarios), [`fgd.md`](fgd.md) (the intro drop's foreground layers), [`ms3.md`](
 [`map.md`](map.md) (the map editor's terrain files), [`rst.md`](rst.md) (`state.rst`,
 which the game does not use), [`disk-markers.md`](disk-markers.md) (the installer's
 `xenobot.1`/`.2`),
+[`font.md`](font.md) (the fonts in `mgavideo.dvr`),
 [`palette.md`](palette.md) (where every
 palette comes from and how it reaches the DAC), and [`video-modes.md`](video-modes.md)
 (the display modes, which is not a file type but drives the renderer). Parser tasks in `NEXT_STEPS.md` (milestone

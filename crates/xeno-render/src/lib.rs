@@ -5,17 +5,19 @@
 //! scales the view into a window's pixels. See `docs/formats/video-modes.md` for the
 //! sizes and the presentation policy, and `docs/formats/b@n.md` for the sprite drawing
 //! rules. [`Dac`] holds the palette as the original's video driver does, with fades and
-//! colour-animation records ([`anim`]).
+//! colour-animation records ([`anim`]). [`Framebuffer::draw_text`] draws the game's fonts.
 
 pub mod anim;
 pub mod dac;
 mod framebuffer;
 pub mod present;
 mod sprite;
+mod text;
 
 pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
 pub use framebuffer::{Framebuffer, Rect, RenderError, Size};
 pub use present::{Aspect, Layout, Scale, ViewPoint, present};
 pub use sprite::{Anchor, BlitMode, Orientation, SpriteBlit};
+pub use text::{TextCursor, TextMode};
 pub use xeno_formats::{Palette, Rgb};

@@ -600,6 +600,116 @@ pub fn synthetic_config_dvr(keys: &[[u8; crate::setup::KEY_SLOTS]; 2]) -> Vec<u8
     synthetic_lzexe(&image, (0, 0), &[])
 }
 
+/// A glyph of a synthetic font: its code, first byte (width) and rows.
+type SyntheticGlyph<'a> = (u8, u8, &'a [u8]);
+
+/// One font laid out from `base` in a font block: the header (`kind`, `width`,
+/// `height`, no steps), a table of `count` glyph offsets, then the glyphs. Codes below
+/// 0x20 are control codes; the codes in `glyphs` get their (width, rows); every other
+/// code shares one blank glyph of `blank_width`.
+fn synthetic_font(
+    base: usize,
+    (kind, width, height): (u8, u8, u8),
+    count: usize,
+    blank_width: u8,
+    glyphs: &[SyntheticGlyph],
+) -> Vec<u8> {
+    let table = base + 6;
+    let mut data = Vec::new();
+    let control = table + 2 * count;
+    data.push(0);
+    let blank = control + data.len();
+    let rows = usize::from(height) - 1;
+    let blank_size = if kind == 7 {
+        rows
+    } else {
+        rows * usize::from(blank_width)
+    };
+    data.push(blank_width);
+    data.extend(std::iter::repeat_n(0, blank_size));
+    let mut offsets: Vec<usize> = (0..count)
+        .map(|c| if c < 0x20 { control } else { blank })
+        .collect();
+    for &(code, glyph_width, rows) in glyphs {
+        offsets[usize::from(code)] = control + data.len();
+        data.push(glyph_width);
+        data.extend_from_slice(rows);
+    }
+    let mut font = vec![kind, 0, width, height, 0, 0];
+    for offset in offsets {
+        font.extend((offset as u16).to_le_bytes());
+    }
+    font.extend(data);
+    font
+}
+
+/// A synthetic font block (`docs/formats/font.md`): the four-entry table, then
+///
+/// 0. a bitmap font (kind 7), cells 4x3 (two rows), 128 codes, `A` a bar over two
+///    outer pixels (`XXX.` / `X.X.`);
+/// 1. a bitmap font, cells 6x3, 128 codes, all blank;
+/// 2. a shaded font (kind 0), height 3, 128 codes, all one pixel wide and blank;
+/// 3. a shaded font, height 3, 0x60 codes (so lower case has none), `B` two pixels wide
+///    in all three shades (`3 1` / `2 0`), the rest one pixel wide and blank.
+///
+/// The block ends with the last glyph.
+pub fn synthetic_font_block() -> Vec<u8> {
+    let mut block = vec![0u8; 8];
+    let fonts: [(_, usize, u8, &[SyntheticGlyph]); 4] = [
+        ((7, 4, 3), 128, 4, &[(b'A', 4, &[0xe0, 0xa0])]),
+        ((7, 6, 3), 128, 6, &[]),
+        ((0, 6, 3), 128, 1, &[]),
+        ((0, 5, 3), 0x60, 1, &[(b'B', 2, &[3, 1, 2, 0])]),
+    ];
+    for (i, (shape, count, blank, glyphs)) in fonts.into_iter().enumerate() {
+        let base = block.len();
+        block[2 * i..2 * i + 2].copy_from_slice(&(base as u16).to_le_bytes());
+        block.extend(synthetic_font(base, shape, count, blank, glyphs));
+    }
+    block
+}
+
+/// A synthetic `mgavideo.dvr`: an MZ file whose init copies a colour-animation list
+/// (one rotate record over colours 16..=17, then the end marker) and
+/// [`synthetic_font_block`] into data blocks with the instructions
+/// [`crate::mgavideo`] expects.
+pub fn synthetic_mgavideo() -> Vec<u8> {
+    use crate::mgavideo::{ANIMS, FONTS};
+
+    let anims_at = 0x100;
+    let fonts_at = 0x200;
+    let mut anims = vec![16, 0, 0x01, 1, 1, 16, 2, 0, 10, 0];
+    anims.extend([63, 0, 0, 0, 63, 0]);
+    anims.extend([0, 0]);
+    let fonts = synthetic_font_block();
+    let mut image = vec![0u8; fonts_at + fonts.len()];
+    image[anims_at..anims_at + anims.len()].copy_from_slice(&anims);
+    image[fonts_at..].copy_from_slice(&fonts);
+    for (block, size, data) in [
+        (ANIMS, anims.len(), anims_at),
+        (FONTS, fonts.len(), fonts_at),
+    ] {
+        let at = block.at;
+        let mut op = vec![0xb8];
+        op.extend((size as u16).to_le_bytes());
+        op.push(0xbb);
+        op.extend(block.descriptor.to_le_bytes());
+        op.extend([0x33, 0xf6, 0xba]);
+        op.extend(((data / 16) as u16).to_le_bytes());
+        op.extend([0xff, 0x1e, 0x36, 0x00]);
+        image[at..at + op.len()].copy_from_slice(&op);
+    }
+    // The MZ header: two paragraphs, no relocations.
+    let size = 0x20 + image.len();
+    let mut file = b"MZ".to_vec();
+    for word in [(size % 512) as u16, size.div_ceil(512) as u16, 0, 2] {
+        file.extend(word.to_le_bytes());
+    }
+    file.resize(0x20, 0);
+    file.extend(image);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

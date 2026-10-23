@@ -314,7 +314,7 @@ pub fn parse(bytes: &[u8]) -> Result<IntroDrop, FormatError> {
 
 /// The records from `start`, each starting with its size, up to the zero size that
 /// ends the list (`palette.md`, "Colour-animation records").
-fn anim_list(image: &[u8], start: usize) -> Result<Vec<u8>, FormatError> {
+pub(crate) fn anim_list(image: &[u8], start: usize) -> Result<Vec<u8>, FormatError> {
     let mut at = start;
     loop {
         let size = usize::from(immediate(image, at, &[], 2)?);

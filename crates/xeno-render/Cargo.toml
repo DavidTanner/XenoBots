@@ -13,5 +13,6 @@ thiserror = "2"
 xeno-formats = { path = "../xeno-formats" }
 
 [dev-dependencies]
+xeno-formats = { path = "../xeno-formats", features = ["test-fixtures"] }
 insta = "1.49"
 proptest = "1.12"
