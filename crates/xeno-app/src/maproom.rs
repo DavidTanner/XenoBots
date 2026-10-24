@@ -164,8 +164,9 @@ pub struct Campaign {
     pub day: u8,
     /// What the last check found open.
     pub open: Open,
-    /// The host's random word, from the run's seed rather than the timer.
-    pub random: Random,
+    /// The run's one random word (`docs/sim.md`, "The run's random word"), from the
+    /// run's seed rather than the timer. `None` while a mission's sim has it.
+    random: Option<Random>,
 }
 
 impl Campaign {
@@ -185,10 +186,38 @@ impl Campaign {
             loaded: None,
             day: 0,
             open: Open::default(),
-            random,
+            random: Some(random),
         };
         campaign.check();
         campaign
+    }
+
+    /// Hands the run's random word over: to a mission's sim (`Sim::load`,
+    /// `Parked::resume`), or to the next player's campaign. The campaign draws nothing
+    /// until it is given back.
+    pub fn take_random(&mut self) -> Random {
+        self.random
+            .take()
+            .expect("the campaign has handed its random word over already")
+    }
+
+    /// The run's random word comes back (`Sim::park`).
+    pub fn give_random(&mut self, random: Random) {
+        let held = self.random.replace(random);
+        debug_assert!(held.is_none(), "a second random word");
+    }
+
+    /// Whether the campaign holds the run's random word (no mission has it).
+    #[cfg(test)]
+    pub fn has_random(&self) -> bool {
+        self.random.is_some()
+    }
+
+    /// The run's random word, to draw from.
+    pub fn random(&mut self) -> &mut Random {
+        self.random
+            .as_mut()
+            .expect("a mission has the random word: park it first")
     }
 
     /// Whether scenario `i` can be picked: within the progress and not won.

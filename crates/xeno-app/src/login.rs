@@ -57,14 +57,14 @@ pub struct Assets {
     /// and the one its set-up picks (T-049).
     pub pointers: Vec<Pointer>,
     pub pointer: u8,
-    /// The run's seed, which a new campaign's random word starts from.
+    /// The run's seed, which the run's random word starts from.
     pub seed: u32,
 }
 
 /// Reads the font, the colour records and the pointer from the user's `mgavideo.dvr`,
 /// the campaign from `scendef.bin`, which saves exist, and the goodbye from
 /// `xeno.exe`. Only the goodbye may be missing: without it the game exits silently.
-/// A new campaign's random word starts from `seed`.
+/// The run's random word starts from `seed`.
 pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
     let read = |name: &str| {
         files
@@ -178,8 +178,9 @@ impl NameEntry {
 }
 
 impl Assets {
-    /// The player who logged in as `name`: whether a save exists, and a new campaign.
-    pub fn player(&self, name: String) -> Player {
+    /// The player who logged in as `name`: whether a save exists, and a new campaign
+    /// drawing from `random`, the run's random word, carried on from the last one.
+    pub fn player(&self, name: String, random: Random) -> Player {
         let save_found = self.saves.contains(&name.to_lowercase());
         if save_found {
             log::info!(
@@ -192,7 +193,7 @@ impl Assets {
             farewell: self.farewell.as_ref().map(|f| f.message(&name)),
             name,
             save_found,
-            campaign: Campaign::new(self.campaign.clone(), Random::seeded(self.seed)),
+            campaign: Campaign::new(self.campaign.clone(), random),
         }
     }
 }
@@ -283,8 +284,9 @@ mod tests {
     #[test]
     fn a_player_knows_whether_a_save_exists() {
         let assets = test_assets();
-        assert!(assets.player("OLD".into()).save_found);
-        let player = assets.player("NEW".into());
+        let random = || Random::seeded(assets.seed);
+        assert!(assets.player("OLD".into(), random()).save_found);
+        let player = assets.player("NEW".into(), random());
         assert!(!player.save_found);
         assert_eq!(player.farewell.as_deref(), Some("SEE YOU, NEW!"));
     }

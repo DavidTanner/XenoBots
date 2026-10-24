@@ -328,7 +328,7 @@ menu's value), so a training mission changes nothing.
   loaded scenario and plays nothing), `sim_apply_scenario_alert` (`1000:68a0`) adds a
   value from the table `DS:0x5a3f` by the record's `state` **before** it becomes 12 to a
   field of the mission's command object (`[DS:0x568e] + 0x2e`), so a higher alert makes
-  the mission harder in some way (T-051, T-058), and `sim_reset_mission_counts`
+  the mission harder in some way (T-058), and `sim_reset_mission_counts`
   (`1000:68ae`) zeroes its kills and losses and sets the situation room's view mode to
   0. Then the game counts as loaded (`DS:0x6005`, so N and Q save) and action 0 runs.
 - **Developer keys**: `=` raises the progress by one unless it is 16 (`1000:74ee`); `-`
@@ -846,7 +846,8 @@ the map room without a cutscene, as in the original.
   instead of saving and restoring the pixels under the label, and draws the label over
   the boxes every time. The random word is the original's shift register
   (`xeno_sim::Random`, T-050), seeded from the run's seed (`--seed`, else the clock)
-  instead of the timer. The calendar's day advances but is not shown. Not done: the
+  instead of the timer; there is one for the run, which a mission's sim takes and gives
+  back and a second log-in carries on (T-051, `docs/sim.md`). The calendar's day advances but is not shown. Not done: the
   save (T-057).
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
@@ -873,9 +874,9 @@ the map room without a cutscene, as in the original.
   is logged and does nothing when chosen, as the original's failed load does) and goes
   to the mission; the map room's play loads `scenNNa.usg` the same way.
 - **Mission views** (`crates/xeno-app/src/mission.rs`, T-043): a mission holds the
-  loaded file, the robots' orders (`xeno_sim::orders::OrderBook`, T-050, from the file's
-  `DCBS` objects) and the views' state, for the whole mission, so orders persist across
-  views. It starts on the situation room. The widget sets, key tables, sprite buttons,
+  loaded file, its `xeno_sim::Sim` (T-051: the file's `DCBS` objects and the robots'
+  orders, which the views change only through the sim; `docs/sim.md`) and the views'
+  state, for the whole mission, so orders persist across views. It starts on the situation room. The widget sets, key tables, sprite buttons,
   roster rows, program names and panel styles are the user's; what a key does is
   chosen by the original handler it calls (a short list of handler offsets in the
   port). Switching views draws the new picture at once with its palette, as

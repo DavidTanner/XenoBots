@@ -6,7 +6,9 @@
 //!
 //! The alert rise and the calendar draw from the host's random word, the sim's
 //! [`xeno_sim::Random`]. The original seeds it from the timer chip; here it starts from
-//! the run's seed (`--seed`), so a campaign can be replayed.
+//! the run's seed (`--seed`), so a campaign can be replayed. There is one word for the
+//! run: a mission's sim takes it from the campaign and gives it back at the end, and
+//! the next player's campaign carries it on (`docs/sim.md`).
 
 use xeno_formats::campaign::Campaign as Rules;
 use xeno_formats::ending::Numbers;
@@ -112,7 +114,7 @@ impl Campaign {
                     continue;
                 }
                 let chance = rules.alert_chance(level.wrapping_sub(self.open.lowest));
-                if self.random.below(chance) {
+                if self.random().below(chance) {
                     // A scenario in play is not spared, so it can pass 12 (T-046).
                     self.table.scenarios[i].state = state + 2;
                 }
@@ -161,7 +163,7 @@ impl Campaign {
 
     /// `scen_advance_campaign_day`: 0 to 3 days pass.
     fn advance_day(&mut self) {
-        self.day = self.day.wrapping_add((self.random.word() & 3) as u8);
+        self.day = self.day.wrapping_add((self.random().word() & 3) as u8);
     }
 }
 

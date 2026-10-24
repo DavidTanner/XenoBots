@@ -371,9 +371,9 @@ impl Screens {
     ) -> Screens {
         let mut dac = Dac::default();
         dac.set_anims(ColourAnims::new(login.anims.clone()));
-        let guest = Campaign::new(login.campaign.clone(), Random::seeded(login.seed));
+        let mut guest = Campaign::new(login.campaign.clone(), Random::seeded(login.seed));
         let (mission, start) = match start {
-            Mission(view) => sample_mission(&mission_assets, view),
+            Mission(view) => sample_mission(&mission_assets, view, &mut guest),
             other => (MissionState::empty(), other),
         };
         // The start-up hides the pointer before the intro; the map room's loop shows
@@ -723,9 +723,10 @@ impl Screens {
                 match self.mission_assets.scenarios.get(&file) {
                     Some(scenario) => {
                         log::info!(
-                            "training menu: {file} loaded; the mission itself cannot run yet (T-050 on)"
+                            "training menu: {file} loaded; the mission itself cannot run yet (T-052 on)"
                         );
-                        self.mission = MissionState::new(file, scenario);
+                        let campaign = campaign_mut(&mut self.player, &mut self.guest);
+                        self.mission = MissionState::new(file, scenario, campaign.take_random());
                         self.act(Play(true));
                     }
                     None => log::warn!("training menu: {file} could not be loaded"),
@@ -846,7 +847,9 @@ impl Screens {
         }
         match outcome {
             Outcome::Accepted(name) => {
-                self.player = Some(self.login.player(name));
+                // One random word for the run: the new campaign carries on the last one's.
+                let random = campaign_mut(&mut self.player, &mut self.guest).take_random();
+                self.player = Some(self.login.player(name, random));
                 // A new campaign: nothing selected (`scen_start_new_campaign`).
                 self.map = MapState::default();
                 self.act(Go(MapRoom));
@@ -861,6 +864,12 @@ impl Screens {
         let selection = self.map.selection();
         let rules = &self.map_assets.rules;
         let campaign = campaign_mut(&mut self.player, &mut self.guest);
+        // Every action but playing leaves the mission, whatever its result, or is taken
+        // away from it: its sim is parked, so the run's random word is back with the
+        // campaign before the campaign draws from it.
+        if !matches!(action, Play(_) | PlayLoaded) {
+            self.mission.park(campaign);
+        }
         match (self.screen, action) {
             (MapRoom, Next | Previous) => {
                 let step = if action == Next { 1 } else { -1 };
@@ -907,13 +916,14 @@ impl Screens {
                         return;
                     };
                     log::info!(
-                        "map room: playing scenario {i}, {file} at state {}; the mission itself cannot run yet (T-050 on)",
+                        "map room: playing scenario {i}, {file} at state {}; the mission itself cannot run yet (T-052 on)",
                         campaign.table.scenarios[i].state
                     );
-                    self.mission = MissionState::new(file, scenario);
+                    self.mission = MissionState::new(file, scenario, campaign.take_random());
                     campaign.loaded = Some(i);
                 } else {
                     log::info!("map room: scenario {i} is loaded; the mission resumes");
+                    self.mission.resume(campaign);
                 }
                 campaign.run_mission(selection);
                 self.scenario = Some(i);
@@ -924,6 +934,7 @@ impl Screens {
                     "map room: running the loaded mission ({:?})",
                     campaign.loaded
                 );
+                self.mission.resume(campaign);
                 campaign.run_mission(selection);
                 self.scenario = campaign.loaded;
                 self.console = 0;
@@ -1091,7 +1102,11 @@ impl Screens {
 /// The mission `--screen` starts a view with: the first training mission with one of
 /// the player's robots of the view's kind, viewing that robot; with none, an empty
 /// mission in the situation room.
-fn sample_mission(assets: &mission::Assets, view: View) -> (MissionState, Screen) {
+fn sample_mission(
+    assets: &mission::Assets,
+    view: View,
+    campaign: &mut Campaign,
+) -> (MissionState, Screen) {
     let kind = match view {
         View::SitRoom => None,
         View::Humanoid => Some(RobotKind::Humanoid),
@@ -1102,10 +1117,10 @@ fn sample_mission(assets: &mission::Assets, view: View) -> (MissionState, Screen
         log::warn!("mission: no training mission has a robot for {view:?}; no robots shown");
         return (MissionState::empty(), Mission(View::SitRoom));
     };
-    let mut mission = MissionState::new(file, scenario);
+    let mut mission = MissionState::new(file, scenario, campaign.take_random());
     let robot = kind.and_then(|k| {
         mission
-            .book
+            .book()
             .side(xeno_formats::usg::Side::Human)
             .find(|(_, r)| r.kind == k)
             .map(|(slot, _)| slot)
@@ -1286,6 +1301,8 @@ pub(crate) mod tests {
         let c = screens.campaign();
         assert_eq!(c.table.scenarios[0].state, maproom::WON);
         assert_eq!((c.result, c.score, c.wins, c.loaded), (1, 1000, 1, Some(0)));
+        // The mission gave the run's random word back for the win to draw from.
+        assert!(c.has_random() && !screens.mission().is_running());
         assert_eq!(screens.numbers.points, 1000);
         assert_ne!(screens.map.selection(), Some(0));
         // Lost: in play, forgotten, no score.
@@ -1296,14 +1313,32 @@ pub(crate) mod tests {
         // No result: training is refused and only the scenario in play is selectable;
         // Ctrl+Space runs the mission again.
         let (mut screens, _) = run(&presses(&[0x1c, 0x0f, 0x19]), Login, 300);
+        assert!(screens.mission().is_running() && !screens.campaign().has_random());
         let mut fb = Framebuffer::new(Size::MODE_13H);
         screens.act(Go(MapRoom));
         (0..100).for_each(|_| screens.retrace(&[], &mut fb));
         assert_eq!((screens.screen(), screens.campaign().result), (MapRoom, 0));
+        assert!(!screens.mission().is_running() && screens.campaign().has_random());
         screens.act(Go(Training));
         assert_eq!(screens.next, None);
         screens.act(PlayLoaded);
         assert_eq!(screens.next, Some(Mission(View::SitRoom)));
+        assert!(screens.mission().is_running() && !screens.campaign().has_random());
+    }
+
+    #[test]
+    fn a_second_log_in_carries_the_run_s_random_word_on() {
+        let (mut screens, _) = run(&presses(&[0x1c]), Login, 200);
+        assert_eq!(screens.screen(), MapRoom);
+        // The campaign draws, as a result would; then the player logs in again.
+        let random = campaign_mut(&mut screens.player, &mut screens.guest).random();
+        random.word();
+        let drawn = random.clone();
+        screens.logged_in(Outcome::Accepted("B".into()));
+        assert_eq!(screens.player.as_ref().unwrap().name, "B");
+        let random = campaign_mut(&mut screens.player, &mut screens.guest).random();
+        assert_eq!(*random, drawn);
+        assert_ne!(*random, Random::seeded(screens.login.seed));
     }
 
     #[test]
@@ -1715,7 +1750,7 @@ pub(crate) mod tests {
             ]
         );
         assert_eq!(
-            screens.mission().book.get(2).unwrap().orders,
+            screens.mission().book().get(2).unwrap().orders,
             Orders::given(2)
         );
         // The console shows it: the panel filled with the humanoid's colour.
@@ -1906,12 +1941,12 @@ pub(crate) mod tests {
                 mission::Viewed::Robot(slot) => slot,
                 other => panic!("{other:?}"),
             };
-            let before = screens.mission().book.get(slot).unwrap().orders;
+            let before = screens.mission().book().get(slot).unwrap().orders;
             for button in [Left, Right, Right] {
                 screens.retrace(&[at, InputEvent::MouseDown { button }], &mut fb);
                 screens.retrace(&[InputEvent::MouseUp { button }], &mut fb);
             }
-            let after = screens.mission().book.get(slot).unwrap().orders;
+            let after = screens.mission().book().get(slot).unwrap().orders;
             assert!(!after.manual, "{view:?}");
             assert_ne!(after.program, before.program, "{view:?}");
             // ESC to the situation room and back with Space keeps them.
@@ -1919,7 +1954,7 @@ pub(crate) mod tests {
                 screens.retrace(&[down(code)], &mut fb);
                 screens.retrace(&[up(code)], &mut fb);
             }
-            assert_eq!(screens.mission().book.get(slot).unwrap().orders, after);
+            assert_eq!(screens.mission().book().get(slot).unwrap().orders, after);
         }
         // Each training mission (H, N, S, C) loads and opens its situation room.
         for code in [0x23, 0x31, 0x1f, 0x2e] {
@@ -1938,7 +1973,7 @@ pub(crate) mod tests {
             assert!(
                 screens
                     .mission()
-                    .book
+                    .book()
                     .side(xeno_formats::usg::Side::Human)
                     .next()
                     .is_some()

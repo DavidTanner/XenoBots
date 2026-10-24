@@ -18,7 +18,7 @@ tested headless in CI. It depends only on `xeno-formats`.
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
   `InputLog`. For now a tick only counts the retrace and tracks held keys and
-  buttons; the rules come with T-051 on.
+  buttons; the rules come with T-052 on.
 - **`Sim::state_hash()`** is a 64-bit hash of everything in the state.
 - **`input`**: `ScanCode`, `InputEvent`, `Keys`, `Mouse` and `InputLog`, moved from
   `xeno-app` (`docs/game-loop.md`, "Input"). `xeno-app` still names them
@@ -38,9 +38,8 @@ tested headless in CI. It depends only on `xeno-formats`.
   `xeno_formats::orders`: it is read from the user's `xeno.exe` by a parser, and
   `xeno-tool` and the views' tables use it too. `xeno_sim::orders` re-exports it
   with `RobotKind`, so `xeno-app` takes the orders' types from the sim and only
-  calls the parser in `xeno-formats`. The
-  mission still keeps its own `OrderBook`; it moves into the mission's `Sim` with
-  T-051.
+  calls the parser in `xeno-formats`. `xeno-app`'s mission keeps no orders of its
+  own: they are in its `Sim`'s world, and it changes them only through the sim.
 - **`World`** holds the mission's objects, by `EntityId` (the object's slot in the
   original's 240-entry object table). An `Entity` is a kind and side
   (`xeno_formats::usg::{ObjectKind, Side}`) and a `Position` of two 16.16 `Fixed`
@@ -88,8 +87,15 @@ instead of copying it, so there is never a second one:
 
 - A mission takes the word with `Sim::load` (a new mission) or `Parked::resume` (the
   loaded scenario played again).
-- It gives it back with `Sim::end` (won or lost) or `Sim::park` (no result: the
-  original keeps the mission's objects, and the map room's play resumes it).
+- It gives it back with `Sim::park`, keeping its world, or `Sim::end`, dropping it.
+
+In `xeno-app` the campaign holds the word between missions
+(`Campaign::take_random`, `give_random`). The mission's sim takes it when the mission
+starts or resumes, and every action but play parks the mission, so the word is back
+before the campaign draws for a result. The app parks at every end, won, lost or with
+no result, because the original keeps the objects in memory until another scenario
+loads: playing the loaded scenario, or Ctrl+Space, runs them again. A second log-in
+hands the word on to the new player's campaign instead of seeding a new one.
 
 ## Determinism rules
 
