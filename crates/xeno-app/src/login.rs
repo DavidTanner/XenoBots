@@ -68,6 +68,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let video = mgavideo::parse(&read("mgavideo.dvr")?)
         .map_err(|e| format!("mgavideo.dvr: no fonts this port can read: {e}"))?;
     let font = video.font(FONT).cloned().ok_or("mgavideo.dvr: no font 0")?;
+    let pointer = video.set_up_pointer().clone();
     let campaign =
         scendef::parse(&read("scendef.bin")?).map_err(|e| format!("scendef.bin: {e}"))?;
     let saves = files
@@ -87,7 +88,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         saves,
         campaign,
         farewell,
-        pointer: video.pointer,
+        pointer,
     })
 }
 
@@ -213,7 +214,8 @@ pub fn test_assets() -> Assets {
         }),
         pointer: mgavideo::parse(&xeno_formats::fixtures::synthetic_mgavideo())
             .unwrap()
-            .pointer,
+            .set_up_pointer()
+            .clone(),
     }
 }
 
