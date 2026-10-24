@@ -154,11 +154,17 @@ cargo run --release -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n
 | `.m@l` | The 320x200 screen | Its own |
 | `.vcl` | The 640-wide picture in the 320x240 mode (59.94 Hz), panned | Its own |
 | `.pcx` | The 768-wide backdrop on a 768x200 surface, panned | Its own |
+| `.m08`, `.m16`, `.m32` | A unit model: one frame of one facing (or of every animation at once, by depth, as the game draws a unit), at the centre of the checkerboard, drawn with the game's scaled model blit; parts from the model's `.m00` are found next to the file | The model's own cockpit: `scorpion` the Scorpion's, `scout` the Scout's, the rest the Humanoid's |
+| `.m00` | A model's direction-free images, one at a time, centred | As above |
 
 | Key | Action |
 |---|---|
 | Right or Page Down, Left or Page Up | Next or previous sprite (stops at the ends) |
 | Home, End | First or last sprite; for a picture, the left or right edge |
+| Page Down, Page Up | A model's next or previous facing (64ths of a turn, in the title) |
+| Down, Up | A model's next or previous animation; past the last, all of them at once |
+| Right, Left | A model's next or previous frame (an animation with fewer stays on its last), or a `.m00`'s next or previous image |
+| `=`, `-`, Home | A model larger or smaller by 32/256, or back to 1:1 (32/256 to 1024/256) |
 | Space | Draw sprites opaque, or with colour 0 transparent so the checkerboard shows through |
 | Arrows | Pan a wide picture one pixel per retrace while held |
 | F | Fade the palette out to black over 32 retraces |

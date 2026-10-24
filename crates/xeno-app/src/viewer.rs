@@ -3,6 +3,9 @@
 //! pictures wider or taller than the view are panned over a larger surface, as the
 //! hardware-scrolled screens are (`docs/formats/video-modes.md`).
 //!
+//! Unit models are shown one frame of one facing at a time, drawn with the game's
+//! scaled model blit (T-056; `docs/formats/mxx.md`, "Drawing").
+//!
 //! The palette goes through `xeno_render::Dac` as the original driver's does, so the
 //! viewer can fade it out and in and rotate a range of colours with a synthetic
 //! colour-animation record (T-037; `docs/formats/palette.md`).
@@ -13,16 +16,19 @@
 use std::path::Path;
 
 use xeno_formats::ban::{self, Sprite};
-use xeno_formats::{FormatError, Palette, mal, pcx, vcl};
+use xeno_formats::{FormatError, Palette, mal, mxx, pcx, vcl};
 use xeno_render::anim::{self, flag};
-use xeno_render::{Anchor, BlitMode, DAC_BYTES, Dac, Fade, Framebuffer, Rect, Size, SpriteBlit};
+use xeno_render::{
+    Anchor, BlitMode, DAC_BYTES, Dac, Fade, Framebuffer, ModelScale, ModelTarget, Rect, Size,
+    SpriteBlit,
+};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, ScanCode};
 
 /// The kinds `--view` shows, for error messages.
-pub const SUPPORTED: &str = "sprite banks and sky strips (.b@n), screens (.m@l), cutscene pictures (.vcl) and \
-     backdrops (.pcx)";
+pub const SUPPORTED: &str = "sprite banks and sky strips (.b@n), screens (.m@l), cutscene pictures (.vcl), \
+     backdrops (.pcx) and unit models (.m00 to .m32)";
 
 /// What a file is, by its name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +43,8 @@ pub enum Kind {
     Cutscene,
     /// `.pcx`: a backdrop 768 wide.
     Backdrop,
+    /// `.m00`..`.m32`: a unit model, one frame of one facing at a time, centred.
+    Model,
 }
 
 impl Kind {
@@ -50,6 +58,7 @@ impl Kind {
             "m@l" => Kind::Screen,
             "vcl" => Kind::Cutscene,
             "pcx" => Kind::Backdrop,
+            "m00" | "m08" | "m16" | "m32" => Kind::Model,
             _ => return Err(format!("cannot view {name}: the viewer shows {SUPPORTED}")),
         })
     }
@@ -77,7 +86,9 @@ pub enum PaletteChoice<'a> {
 /// The palette for file `name` of `kind`. `--palette` wins. Banks get the screen they
 /// are loaded with (`b@n.md`, "Sprite numbers"); `msprite0`, loaded at start-up, gets
 /// the situation room's, which shares most colours with the cockpits (a guess). Sky
-/// strips get the Humanoid cockpit's, which holds the 3D view they are drawn in.
+/// strips get the Humanoid cockpit's, which holds the 3D view they are drawn in. Models
+/// get the cockpit of their own robot kind, the rest the Humanoid's (`mxx.md`,
+/// "Palette": the cockpits differ only in colours 253 and 254).
 pub fn palette_choice<'a>(kind: Kind, name: &str, given: Option<&'a Path>) -> PaletteChoice<'a> {
     if let Some(path) = given {
         return PaletteChoice::Given(path);
@@ -93,11 +104,15 @@ pub fn palette_choice<'a>(kind: Kind, name: &str, given: Option<&'a Path>) -> Pa
             _ => "sitroom.m@l",
         }),
         Kind::Sky => PaletteChoice::Stock("humancon.m@l"),
+        Kind::Model if lower.starts_with("scorpion.") => PaletteChoice::Stock("scorpcon.m@l"),
+        Kind::Model if lower.starts_with("scout.") => PaletteChoice::Stock("scoutcon.m@l"),
+        Kind::Model => PaletteChoice::Stock("humancon.m@l"),
         Kind::Screen | Kind::Cutscene | Kind::Backdrop => PaletteChoice::Own,
     }
 }
 
-/// A decoded file: sprites, or one picture (`width * height` indices, row by row).
+/// A decoded file: sprites, one picture (`width * height` indices, row by row) or a
+/// model.
 #[derive(Debug, Clone)]
 pub enum Content {
     Sprites(Vec<Sprite>),
@@ -106,6 +121,70 @@ pub enum Content {
         height: usize,
         pixels: Vec<u8>,
     },
+    Model(Box<Model>),
+}
+
+/// A unit model file, and the `.m00` images its parts can reach.
+#[derive(Debug, Clone)]
+pub struct Model {
+    model: mxx::Model,
+    /// The model's `.m00` images ([`mxx::Part::is_direction_free`]).
+    direction_free: Vec<mxx::Image>,
+    /// Every facing in the file, in order: (facing, view, whether it is the view's
+    /// mirror facing). Empty for a `.m00`, whose images are shown one at a time.
+    facings: Vec<(i16, usize, bool)>,
+}
+
+impl Model {
+    pub fn new(model: mxx::Model) -> Model {
+        let mut facings = Vec::new();
+        for (v, view) in model.views.iter().enumerate() {
+            let h = &view.header;
+            if h.has_facing() {
+                facings.push((h.facing, v, false));
+                if view.mirror_animations.is_some() {
+                    facings.push((h.mirror_facing, v, true));
+                }
+            }
+        }
+        facings.sort();
+        let direction_free = Self::images_without_facing(&model);
+        Model {
+            model,
+            direction_free,
+            facings,
+        }
+    }
+
+    /// The images of a model's view with no facing (its `.m00` view).
+    fn images_without_facing(model: &mxx::Model) -> Vec<mxx::Image> {
+        let view = model.views.iter().find(|v| !v.header.has_facing());
+        view.map(|v| v.images.clone()).unwrap_or_default()
+    }
+
+    /// The animations shown at facing number `index`.
+    fn animations(&self, index: usize) -> &[mxx::Animation] {
+        let Some(&(_, v, mirror)) = self.facings.get(index) else {
+            return &[];
+        };
+        let view = &self.model.views[v];
+        match (&view.mirror_animations, mirror) {
+            (Some(animations), true) => animations,
+            _ => &view.animations,
+        }
+    }
+
+    /// How many frames `animation` has at facing `index` (the most of any for "all").
+    fn frame_count(&self, index: usize, animation: usize) -> usize {
+        if self.facings.is_empty() {
+            return self.direction_free.len();
+        }
+        let animations = self.animations(index);
+        match animations.get(animation) {
+            Some(frames) => frames.len(),
+            None => animations.iter().map(Vec::len).max().unwrap_or(0),
+        }
+    }
 }
 
 /// Decodes `bytes` as `kind` with the existing parsers, and the palette it carries.
@@ -137,6 +216,10 @@ pub fn decode(kind: Kind, bytes: &[u8]) -> Result<(Content, Option<Palette>), Fo
             let p = pcx::parse(bytes)?;
             (picture(p.width(), p.height(), p.pixels), Some(p.palette))
         }
+        Kind::Model => (
+            Content::Model(Box::new(Model::new(mxx::parse(bytes)?))),
+            None,
+        ),
     })
 }
 
@@ -175,7 +258,12 @@ fn read(files: &GameFiles, spec: &Path) -> Result<(String, Vec<u8>), String> {
 pub fn load(files: &GameFiles, view: &Path, palette: Option<&Path>) -> Result<Viewer, String> {
     let (name, bytes) = read(files, view)?;
     let kind = Kind::of(&name)?;
-    let (content, own) = decode(kind, &bytes).map_err(|e| format!("{name}: {e}"))?;
+    let (mut content, own) = decode(kind, &bytes).map_err(|e| format!("{name}: {e}"))?;
+    if let Content::Model(model) = &mut content
+        && !model.facings.is_empty()
+    {
+        model.direction_free = direction_free_images(files, view, &name);
+    }
     let (palette, source) = match palette_choice(kind, &name, palette) {
         PaletteChoice::Given(path) => {
             let (palette_name, bytes) = read(files, path)?;
@@ -197,6 +285,21 @@ pub fn load(files: &GameFiles, view: &Path, palette: Option<&Path>) -> Result<Vi
     Ok(viewer)
 }
 
+/// The `.m00` images of the model in file `name` (found as `view` was), or none.
+fn direction_free_images(files: &GameFiles, view: &Path, name: &str) -> Vec<mxx::Image> {
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let m00 = view.with_file_name(format!("{stem}.m00"));
+    let parsed = read(files, &m00)
+        .and_then(|(_, bytes)| mxx::parse(&bytes).map_err(|e| format!("{}: {e}", m00.display())));
+    match parsed {
+        Ok(model) => Model::images_without_facing(&model),
+        Err(e) => {
+            log::warn!("{name}: no .m00 images, so parts drawn from it are left out: {e}");
+            Vec::new()
+        }
+    }
+}
+
 const LEFT: ScanCode = ScanCode(0xe04b);
 const RIGHT: ScanCode = ScanCode(0xe04d);
 const UP: ScanCode = ScanCode(0xe048);
@@ -209,6 +312,12 @@ const SPACE: ScanCode = ScanCode(0x39);
 const F: ScanCode = ScanCode(0x21);
 const I: ScanCode = ScanCode(0x17);
 const R: ScanCode = ScanCode(0x13);
+const MINUS: ScanCode = ScanCode(0x0c);
+const EQUALS: ScanCode = ScanCode(0x0d);
+
+/// The model scale step of `-` and `=`, and its limits (8.8, 256 = 1:1).
+const SCALE_STEP: u16 = 32;
+const SCALE_RANGE: std::ops::RangeInclusive<u16> = 32..=1024;
 
 /// Retraces of the F and I fades (the intro's abort fade).
 const FADE: u16 = 32;
@@ -232,6 +341,11 @@ pub struct Viewer {
     keyed: bool,
     /// Pictures: the view's top-left on the surface.
     origin: (usize, usize),
+    /// Models: the facing is `index`; the animation shown (one past the last: all of
+    /// them), the frame (each animation's last if it has fewer) and the scale.
+    animation: usize,
+    frame: usize,
+    scale: u16,
     /// The palette as shown: `palette` in DAC levels, faded or rotated.
     dac: Dac,
     /// A fade in waiting for its black to be uploaded.
@@ -247,6 +361,9 @@ impl Viewer {
             index: 0,
             keyed: false,
             origin: (0, 0),
+            animation: 0,
+            frame: 0,
+            scale: ModelScale::ONE,
             dac: Dac::with_palette(&to_vga6(&palette)),
             fade_in: None,
             palette,
@@ -265,7 +382,7 @@ impl Viewer {
                 (*width).max(self.view.width),
                 (*height).max(self.view.height),
             ),
-            Content::Sprites(_) => self.view,
+            Content::Sprites(_) | Content::Model(_) => self.view,
         }
     }
 
@@ -300,7 +417,7 @@ impl Viewer {
         {
             self.dac.start(fade);
         }
-        let before = (self.index, self.keyed, self.origin);
+        let before = self.position();
         let mut pressed = Keys::default();
         for event in events {
             if let InputEvent::KeyDown { code, .. } = *event {
@@ -317,7 +434,13 @@ impl Viewer {
                 pan(self.origin.1, on(DOWN) - on(UP), max_y),
             );
         }
-        before != (self.index, self.keyed, self.origin)
+        before != self.position()
+    }
+
+    /// Everything the keys move.
+    fn position(&self) -> (usize, bool, (usize, usize), usize, usize, u16) {
+        let (index, keyed, origin) = (self.index, self.keyed, self.origin);
+        (index, keyed, origin, self.animation, self.frame, self.scale)
     }
 
     fn key(&mut self, code: ScanCode) {
@@ -337,6 +460,7 @@ impl Viewer {
         }
         let last = match &self.content {
             Content::Sprites(sprites) => sprites.len().saturating_sub(1),
+            Content::Model(_) => return self.model_key(code),
             Content::Picture { .. } => {
                 let max_x = self.max_origin().0;
                 match code {
@@ -355,6 +479,31 @@ impl Viewer {
             SPACE => self.keyed = !self.keyed,
             _ => {}
         }
+    }
+
+    /// Page Up/Down: facing; Up/Down: animation (then all); Left/Right: frame; `-`, `=`
+    /// and Home: smaller, larger and 1:1. Each stops at its ends.
+    fn model_key(&mut self, code: ScanCode) {
+        let Content::Model(model) = &self.content else {
+            return;
+        };
+        let facings = model.facings.len();
+        let animations = model.animations(self.index).len();
+        match code {
+            PAGE_DOWN => self.index = (self.index + 1).min(facings.saturating_sub(1)),
+            PAGE_UP => self.index = self.index.saturating_sub(1),
+            DOWN if animations > 1 => self.animation = (self.animation + 1).min(animations),
+            UP => self.animation = self.animation.saturating_sub(1),
+            RIGHT => self.frame += 1,
+            LEFT => self.frame = self.frame.saturating_sub(1),
+            MINUS => self.scale = self.scale.saturating_sub(SCALE_STEP),
+            EQUALS => self.scale = self.scale.saturating_add(SCALE_STEP),
+            HOME => self.scale = ModelScale::ONE,
+            _ => {}
+        }
+        self.scale = self.scale.clamp(*SCALE_RANGE.start(), *SCALE_RANGE.end());
+        let frames = model.frame_count(self.index, self.animation);
+        self.frame = self.frame.min(frames.saturating_sub(1));
     }
 
     /// R: rotate [`ROTATE`] through the file's own colours there, or stop and put the
@@ -383,19 +532,7 @@ impl Viewer {
     pub fn draw(&self, fb: &mut Framebuffer) {
         match &self.content {
             Content::Sprites(sprites) => {
-                let (dark, light) = contrast_pair(&self.palette);
-                let view = fb.view();
-                for y in (0..view.height).step_by(CHECKER) {
-                    for x in (0..view.width).step_by(CHECKER) {
-                        let colour = if ((x + y) / CHECKER).is_multiple_of(2) {
-                            dark
-                        } else {
-                            light
-                        };
-                        let size = CHECKER as u32;
-                        fb.fill_rect(Rect::new(x as i32, y as i32, size, size), colour);
-                    }
-                }
+                checkerboard(fb, &self.palette);
                 let Some(sprite) = sprites.get(self.index) else {
                     return;
                 };
@@ -429,7 +566,47 @@ impl Viewer {
                 fb.set_origin(self.origin.0, self.origin.1)
                     .expect("the origin stays on the surface");
             }
+            Content::Model(model) => {
+                checkerboard(fb, &self.palette);
+                self.draw_model(model, fb);
+            }
         }
+    }
+
+    /// The model's frame (or a `.m00` image) anchored at the view's centre.
+    fn draw_model(&self, model: &Model, fb: &mut Framebuffer) {
+        let view = fb.view();
+        let target = ModelTarget {
+            clip: Rect::new(0, 0, view.width as u32, view.height as u32),
+            anchor: (view.width as i32 / 2, view.height as i32 / 2),
+            scale: ModelScale::new(self.scale),
+        };
+        let Some(&(_, v, _)) = model.facings.get(self.index) else {
+            if let Some(image) = model.direction_free.get(self.frame) {
+                let (x, y) = (-i32::from(image.width) / 2, -i32::from(image.height) / 2);
+                fb.blit_model_image(image, x, y, false, &target);
+            }
+            return;
+        };
+        let animations = model.animations(self.index);
+        let shown = match animations.get(self.animation) {
+            Some(one) => std::slice::from_ref(one),
+            None => animations,
+        };
+        let frames: Vec<&mxx::Frame> = shown
+            .iter()
+            .filter_map(|frames| frames.get(self.frame).or(frames.last()))
+            .collect();
+        let images = &model.model.views[v].images;
+        let image = |part: &mxx::Part| {
+            let from = if part.is_direction_free() {
+                &model.direction_free
+            } else {
+                images
+            };
+            from.get(part.image_index())
+        };
+        fb.draw_model_frames(&frames, image, &target);
     }
 
     /// The window title: the file, and the sprite or the view's position.
@@ -454,8 +631,54 @@ impl Viewer {
                 let (x, y) = self.origin;
                 format!("{width}x{height}, view at ({x}, {y})")
             }
+            Content::Model(model) => self.model_title(model),
         };
         format!("Xenobots - {}: {what}", self.name)
+    }
+}
+
+impl Viewer {
+    fn model_title(&self, model: &Model) -> String {
+        let last_frame = model
+            .frame_count(self.index, self.animation)
+            .saturating_sub(1);
+        let scale = format!("scale {}/256", self.scale);
+        let Some(&(facing, _, _)) = model.facings.get(self.index) else {
+            return match model.direction_free.get(self.frame) {
+                Some(i) => format!(
+                    "image {} (0 to {last_frame}), {}x{}, {scale}",
+                    self.frame, i.width, i.height
+                ),
+                None => "no images".to_string(),
+            };
+        };
+        let animations = model.animations(self.index).len();
+        let animation = if self.animation < animations {
+            format!("animation {} (0 to {})", self.animation, animations - 1)
+        } else {
+            "all animations".to_string()
+        };
+        format!(
+            "facing {facing}/64, {animation}, frame {} (0 to {last_frame}), {scale}",
+            self.frame
+        )
+    }
+}
+
+/// Fills the view with a checkerboard of the palette's darkest and brightest colours.
+fn checkerboard(fb: &mut Framebuffer, palette: &Palette) {
+    let (dark, light) = contrast_pair(palette);
+    let view = fb.view();
+    for y in (0..view.height).step_by(CHECKER) {
+        for x in (0..view.width).step_by(CHECKER) {
+            let colour = if ((x + y) / CHECKER).is_multiple_of(2) {
+                dark
+            } else {
+                light
+            };
+            let size = CHECKER as u32;
+            fb.fill_rect(Rect::new(x as i32, y as i32, size, size), colour);
+        }
     }
 }
 
@@ -540,10 +763,12 @@ mod tests {
             ("login.m@l", Kind::Screen),
             ("EALOGO.VCL", Kind::Cutscene),
             ("xenodrop.pcx", Kind::Backdrop),
+            ("humanoid.m08", Kind::Model),
+            ("NETRELAY.M00", Kind::Model),
         ] {
             assert_eq!(Kind::of(name), Ok(kind), "{name}");
         }
-        for name in ["scen00a.usg", "humanoid.m08", "readme"] {
+        for name in ["scen00a.usg", "humanoid.m64", "readme"] {
             let e = Kind::of(name).unwrap_err();
             assert!(e.contains(name) && e.contains(SUPPORTED), "{e}");
         }
@@ -571,6 +796,14 @@ mod tests {
         );
         for kind in [Kind::Screen, Kind::Cutscene, Kind::Backdrop] {
             assert_eq!(palette_choice(kind, "x", None), Own);
+        }
+        for (name, screen) in [
+            ("SCORPION.M16", "scorpcon.m@l"),
+            ("scout.m00", "scoutcon.m@l"),
+            ("humanoid.m08", "humancon.m@l"),
+            ("netrelay.m32", "humancon.m@l"),
+        ] {
+            assert_eq!(palette_choice(Kind::Model, name, None), Stock(screen));
         }
         let given = Path::new("review.m@l");
         assert_eq!(palette_choice(Kind::Screen, "x", Some(given)), Given(given));
@@ -745,6 +978,56 @@ mod tests {
     }
 
     #[test]
+    fn models_step_through_facings_frames_and_scales() {
+        let bytes = fixtures::synthetic_model(&[(0, &[(1, 1, &[5])]), (8, &[(2, 1, &[7, 8])])]);
+        let mut v = viewer(Kind::Model, &bytes);
+        assert_eq!(v.surface(), Size::MODE_13H);
+        let title = "facing 0/64, animation 0 (0 to 0), frame 0 (0 to 0), scale 256/256";
+        assert!(v.title().ends_with(title), "{}", v.title());
+        // Parts are placed from the view's centre.
+        assert_eq!(v.framebuffer().get(160, 100), Some(5));
+        assert!(press(&mut v, PAGE_DOWN));
+        let fb = v.framebuffer();
+        assert_eq!((fb.get(160, 100), fb.get(161, 100)), (Some(7), Some(8)));
+        // Facing 56 is facing 8's mirror: its parts draw the image flipped.
+        assert!(press(&mut v, PAGE_DOWN));
+        assert!(v.title().contains("facing 56/64"), "{}", v.title());
+        let fb = v.framebuffer();
+        assert_eq!((fb.get(160, 100), fb.get(161, 100)), (Some(8), Some(7)));
+        assert!(!press(&mut v, PAGE_DOWN));
+        // One animation of one frame: nothing else to step to.
+        for code in [DOWN, UP, RIGHT, LEFT] {
+            assert!(!press(&mut v, code));
+        }
+        // Twice the size: each unit two pixels each way.
+        for _ in 0..8 {
+            press(&mut v, EQUALS);
+        }
+        assert!(v.title().ends_with("scale 512/256"), "{}", v.title());
+        let fb = v.framebuffer();
+        let row: Vec<_> = (160..164).map(|x| fb.get(x, 101)).collect();
+        assert_eq!(row, [Some(8), Some(8), Some(7), Some(7)]);
+        assert!(press(&mut v, HOME));
+        hold(&mut v, &[], 1);
+        (0..20).for_each(|_| _ = press(&mut v, MINUS));
+        assert!(v.title().ends_with("scale 32/256"), "{}", v.title());
+    }
+
+    #[test]
+    fn m00_files_show_their_images_one_at_a_time() {
+        let bytes = fixtures::synthetic_model(&[(-2, &[(1, 1, &[3]), (2, 2, &[4; 4])])]);
+        let mut v = viewer(Kind::Model, &bytes);
+        assert!(v.title().ends_with("image 0 (0 to 1), 1x1, scale 256/256"));
+        assert!(press(&mut v, RIGHT));
+        assert!(!press(&mut v, RIGHT));
+        // Centred on the view: a 2x2 image from (159, 99).
+        let fb = v.framebuffer();
+        assert_eq!((fb.get(159, 99), fb.get(160, 100)), (Some(4), Some(4)));
+        let empty = fixtures::synthetic_model(&[(-2, &[])]);
+        assert!(viewer(Kind::Model, &empty).title().ends_with("no images"));
+    }
+
+    #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR pointing at a real install"]
     fn real_assets_every_supported_file_loads_into_the_viewer() {
         use crate::game_dir::{ENV_VAR, GameDir};
@@ -761,14 +1044,21 @@ mod tests {
             .filter(|name| Kind::of(name).is_ok())
             .collect();
         entries.sort();
-        assert_eq!(entries.len(), 38, "{entries:?}");
+        assert_eq!(entries.len(), 78, "{entries:?}");
         for name in entries {
             let mut v = load(&files, Path::new(&name), None).unwrap_or_else(|e| panic!("{e}"));
             let mut fb = v.framebuffer();
-            // Page through every sprite in both modes, and pan to the far corner.
+            // Page through every sprite in both modes (and a model's first facing's
+            // frames), every facing of a model, and pan to the far corner.
             press(&mut v, SPACE);
             while press(&mut v, RIGHT) {
                 v.draw(&mut fb);
+            }
+            if matches!(v.content, Content::Model(_)) {
+                while press(&mut v, PAGE_DOWN) {
+                    press(&mut v, DOWN);
+                    v.draw(&mut fb);
+                }
             }
             hold(&mut v, &[RIGHT, DOWN], 1000);
             v.draw(&mut fb);
