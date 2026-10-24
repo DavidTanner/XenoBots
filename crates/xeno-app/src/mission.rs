@@ -525,6 +525,11 @@ impl Mission {
         }
     }
 
+    /// Whether (`x`, `y`) is over the view's corner, which shows its own pointer shape.
+    pub fn over_corner(&self, assets: &Assets, at: (u16, u16)) -> bool {
+        self.target(assets, at) == Some(Target::Corner)
+    }
+
     /// The widget under (`x`, `y`) in the view shown.
     fn target(&self, assets: &Assets, (x, y): (u16, u16)) -> Option<Target> {
         let view = self.view();

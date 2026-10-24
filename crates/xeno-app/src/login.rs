@@ -52,8 +52,10 @@ pub struct Assets {
     pub campaign: ScenarioTable,
     /// The goodbye from `xeno.exe`, if this port can read it there.
     pub farewell: Option<Farewell>,
-    /// The driver's mouse pointer, which every screen shows (T-042).
-    pub pointer: Pointer,
+    /// The driver's mouse pointer shapes, by number, which the screens show (T-042),
+    /// and the one its set-up picks (T-049).
+    pub pointers: Vec<Pointer>,
+    pub pointer: u8,
 }
 
 /// Reads the font, the colour records and the pointer from the user's `mgavideo.dvr`,
@@ -68,7 +70,6 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let video = mgavideo::parse(&read("mgavideo.dvr")?)
         .map_err(|e| format!("mgavideo.dvr: no fonts this port can read: {e}"))?;
     let font = video.font(FONT).cloned().ok_or("mgavideo.dvr: no font 0")?;
-    let pointer = video.set_up_pointer().clone();
     let campaign =
         scendef::parse(&read("scendef.bin")?).map_err(|e| format!("scendef.bin: {e}"))?;
     let saves = files
@@ -88,7 +89,8 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         saves,
         campaign,
         farewell,
-        pointer,
+        pointers: video.pointers,
+        pointer: video.pointer,
     })
 }
 
@@ -192,7 +194,7 @@ impl Assets {
 
 /// Synthetic assets for tests: the synthetic font 0, a list of 24 records whose last
 /// blinks colour 254 between black and white every 2 retraces, no saves but `old`,
-/// the map room's test campaign, a made-up goodbye and the synthetic pointer.
+/// the map room's test campaign, a made-up goodbye and the synthetic pointer's two shapes, the first set up.
 #[cfg(test)]
 pub fn test_assets() -> Assets {
     use xeno_formats::fixtures::synthetic_font_block;
@@ -212,10 +214,10 @@ pub fn test_assets() -> Assets {
             prefix: "SEE YOU, ".into(),
             close: '!',
         }),
-        pointer: mgavideo::parse(&xeno_formats::fixtures::synthetic_mgavideo())
+        pointers: mgavideo::parse(&xeno_formats::fixtures::synthetic_mgavideo())
             .unwrap()
-            .set_up_pointer()
-            .clone(),
+            .pointers,
+        pointer: 0,
     }
 }
 

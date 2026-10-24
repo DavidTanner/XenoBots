@@ -12,7 +12,10 @@
 //! reference's pages, texts, keys and buttons. A won or lost mission ends in the
 //! original's cutscene (T-045, played by the window in the 320x240 mode with
 //! `intro::Cutscene`): the screens fade out, hand it over with [`Screens::take_cutscene`]
-//! and go back to the map room when told it is over.
+//! and go back to the map room when told it is over. The pointer's shape and
+//! visibility follow the host's calls (T-049, `pointer::State`): hidden until the map
+//! room first opens and during the cutscenes, busy for one retrace before each
+//! picture loads, and its corner shape over the mission views' corners.
 //!
 //! Keys go through (key word, action) tables, as the original's screens do
 //! (`docs/formats/key.md`, "The game's keys"); a screen claims ESC when its table
@@ -30,6 +33,7 @@ use crate::intro::{Cutscene, Endings};
 use crate::login::{self, NameEntry, Outcome, Player};
 use crate::maproom::{self, Campaign, MapState, Request};
 use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
+use crate::pointer::{self, ARROW, BUSY, CORNER};
 use crate::review::{self, ReviewState};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
@@ -281,6 +285,14 @@ pub fn load(files: &GameFiles) -> Result<Pictures, String> {
 const FADE: u16 = 32;
 const LOGIN_FADE: u16 = 64;
 
+/// A picture the original loads with the busy pointer shown: the screen waits one
+/// retrace with that shape, then draws it (T-049).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Load {
+    Enter(Screen),
+    View(View),
+}
+
 /// The front end's state.
 #[derive(Debug, Clone)]
 pub struct Screens {
@@ -327,6 +339,15 @@ pub struct Screens {
     console: usize,
     /// The last won mission's kills, losses and points, for the `WIN` caption.
     numbers: Numbers,
+    /// The pointer's shape and hide counter.
+    pointer: pointer::State,
+    /// The map room's loop has shown the pointer (`1000:6f37`), once after the first
+    /// log-in.
+    map_room_shown: bool,
+    /// A picture to load at the next retrace, with the busy pointer shown until then.
+    loading: Option<Load>,
+    /// The pointer is over a mission view's corner.
+    corner: bool,
 }
 
 /// The logged-in player's campaign, or the guest's.
@@ -354,6 +375,10 @@ impl Screens {
             Mission(view) => sample_mission(&mission_assets, view),
             other => (MissionState::empty(), other),
         };
+        // The start-up hides the pointer before the intro; the map room's loop shows
+        // it after the first log-in. Every other screen comes after that.
+        let map_room_shown = start != Login;
+        let pointer = pointer::State::new(login.pointer, map_room_shown);
         Screens {
             pictures,
             screen: start,
@@ -381,6 +406,10 @@ impl Screens {
             ending: None,
             console: 0,
             numbers: Numbers::default(),
+            pointer,
+            map_room_shown,
+            loading: None,
+            corner: false,
         }
     }
 
@@ -413,6 +442,8 @@ impl Screens {
     /// from black.
     pub fn cutscene_over(&mut self) {
         log::info!("cutscene over: back to the map room");
+        // The cutscene routines show the pointer again at their end (`1000:702d` on).
+        self.pointer.show();
         self.fade_in = None;
         self.dac.stop();
         self.dac.blank();
@@ -443,9 +474,29 @@ impl Screens {
         campaign(&self.player, &self.guest)
     }
 
-    /// The mouse pointer the screens show.
-    pub fn pointer(&self) -> &Pointer {
-        &self.login.pointer
+    /// The mouse pointer's shape, if the screens show it.
+    pub fn pointer(&self) -> Option<&Pointer> {
+        let shape = usize::from(self.pointer.shape());
+        self.pointer
+            .shown()
+            .then(|| self.login.pointers.get(shape))
+            .flatten()
+    }
+
+    /// Picks pointer shape `shape` (slot `0x1496`).
+    fn set_shape(&mut self, shape: u8) {
+        self.pointer.set_shape(shape, self.login.pointers.len());
+    }
+
+    /// The pointer moved to `at` in a mission view: entering a corner shows the
+    /// corner shape, leaving it the arrow (`ui_sitroom_corner_on_mouse`,
+    /// `ui_console_corner_on_mouse`, on the dispatcher's enter and leave bits).
+    fn corner_hover(&mut self, at: (u16, u16)) {
+        let over = self.mission.over_corner(&self.mission_assets, at);
+        if over != self.corner {
+            self.corner = over;
+            self.set_shape(if over { CORNER } else { ARROW });
+        }
     }
 
     /// The scenario the last mission was started for (T-043, T-044 and T-051 load its
@@ -505,6 +556,17 @@ impl Screens {
         events: impl IntoIterator<Item = &'a InputEvent>,
         fb: &mut Framebuffer,
     ) {
+        // A picture whose load showed the busy pointer last retrace is drawn now, and
+        // the arrow comes back, as each loader ends (T-049). A view opens with the
+        // pointer outside its corner.
+        if let Some(load) = self.loading.take() {
+            match load {
+                Load::Enter(screen) => self.enter(screen, fb),
+                Load::View(view) => self.show_view(view, fb),
+            }
+            self.set_shape(ARROW);
+            self.corner = false;
+        }
         self.dac.retrace();
         if !self.dac.dirty()
             && let Some(fade) = self.fade_in.take()
@@ -519,7 +581,7 @@ impl Screens {
             self.dac.start_anim(login::CURSOR_RECORD, 0);
         }
         for event in events {
-            if self.next.is_none() && !self.quit {
+            if self.next.is_none() && self.loading.is_none() && !self.quit {
                 match (*event, self.screen) {
                     (InputEvent::Text(c), Login) => self.entry.typed(c),
                     (InputEvent::KeyDown { code, .. }, Login) => {
@@ -557,7 +619,7 @@ impl Screens {
                             self.act(action);
                         } else if let Some(request) = self.mission.key(word.0, &self.mission_assets)
                         {
-                            self.mission_request(request, fb);
+                            self.mission_request(request);
                         }
                     }
                     (InputEvent::KeyDown { code, .. }, screen) => {
@@ -580,9 +642,10 @@ impl Screens {
                         if let Some(request) =
                             self.mission.mouse_up(button, at, &self.mission_assets)
                         {
-                            self.mission_request(request, fb);
+                            self.mission_request(request);
                         }
                     }
+                    (InputEvent::MouseMove { x, y }, Mission(_)) => self.corner_hover((x, y)),
                     (InputEvent::MouseMove { x, y }, MapRoom) => {
                         let campaign = campaign(&self.player, &self.guest);
                         self.map.mouse_move((x, y), &self.map_assets, campaign);
@@ -619,7 +682,11 @@ impl Screens {
         if self.screen == Mission(View::SitRoom) && self.next.is_none() {
             self.mission.retrace();
         }
-        if matches!(self.screen, Mission(_)) && self.next.is_none() && self.mission.take_dirty() {
+        if matches!(self.screen, Mission(_))
+            && self.next.is_none()
+            && self.loading.is_none()
+            && self.mission.take_dirty()
+        {
             self.draw_mission(fb);
         }
         if self.screen == Review && self.next.is_none() && self.review.take_dirty() {
@@ -629,7 +696,19 @@ impl Screens {
             && !self.dac.fading()
             && !self.dac.dirty()
         {
-            self.enter(next, fb);
+            if matches!(next, MapRoom | Training | Review | Mission(_)) {
+                // These screens' pictures load with the busy pointer shown. The map
+                // room's loop shows the pointer first, once, after the first log-in.
+                if next == MapRoom && !self.map_room_shown {
+                    self.map_room_shown = true;
+                    self.pointer.show();
+                }
+                self.next = None;
+                self.loading = Some(Load::Enter(next));
+                self.set_shape(BUSY);
+            } else {
+                self.enter(next, fb);
+            }
         }
     }
 
@@ -712,31 +791,38 @@ impl Screens {
         self.review.take_dirty();
     }
 
-    /// What a mission view asked for: another view (drawn at once, with its palette,
-    /// as `ui_open_view_of_object` does), or the end of the mission.
-    fn mission_request(&mut self, request: MissionRequest, fb: &mut Framebuffer) {
+    /// What a mission view asked for: another view (shown at the next retrace, after
+    /// one with the busy pointer), or the end of the mission.
+    fn mission_request(&mut self, request: MissionRequest) {
         match request {
             MissionRequest::Show(view) => {
-                log::info!("mission: {view:?} view of {}", self.mission.viewed_label());
-                self.viewed(view);
-                self.screen = Mission(view);
-                self.changed = true;
-                if let Some((_, picture)) = Mission(view)
-                    .file()
-                    .and_then(|f| self.pictures.iter().find(|(name, _)| *name == f))
-                {
-                    let dac = picture.dac;
-                    self.fade_in = None;
-                    self.dac.stop();
-                    self.dac.set(&dac);
-                }
-                self.draw_mission(fb);
+                // The view's picture loads with the busy pointer shown.
+                self.loading = Some(Load::View(view));
+                self.set_shape(BUSY);
             }
             MissionRequest::End => {
                 log::info!("mission: ended with no result");
                 self.act(Go(MapRoom));
             }
         }
+    }
+
+    /// Shows a mission view at once with its palette (`ui_open_view_of_object`).
+    fn show_view(&mut self, view: View, fb: &mut Framebuffer) {
+        log::info!("mission: {view:?} view of {}", self.mission.viewed_label());
+        self.viewed(view);
+        self.screen = Mission(view);
+        self.changed = true;
+        if let Some((_, picture)) = Mission(view)
+            .file()
+            .and_then(|f| self.pictures.iter().find(|(name, _)| *name == f))
+        {
+            let dac = picture.dac;
+            self.fade_in = None;
+            self.dac.stop();
+            self.dac.set(&dac);
+        }
+        self.draw_mission(fb);
     }
 
     /// Draws the mission's view: its picture, then its own parts.
@@ -927,7 +1013,9 @@ impl Screens {
         };
         log::info!("screen: {:?}", screen);
         if let Cutscene(ending) = screen {
-            // The palette stays black; the window plays it.
+            // The palette stays black; the window plays it, with the pointer hidden
+            // (`1000:702d` on).
+            self.pointer.hide();
             self.ending = Some(ending);
             self.screen = screen;
             self.next = None;
@@ -1274,8 +1362,9 @@ pub(crate) mod tests {
 
     #[test]
     fn the_review_opens_at_once_turns_its_pages_and_goes_back() {
-        // Enter (map room), R at 200 (the review, its palette at once), Tab at 300 (the
-        // second page), Alt+Tab at 400, ESC at 500 (the map room, fading in).
+        // Enter (map room), R at 200 (the busy pointer over the map room for one
+        // retrace, then the review, its palette at once), Tab at 300 (the second
+        // page), Alt+Tab at 400, ESC at 500 (the map room, fading in).
         let mut log = presses(&[0x1c, 0x13, 0x0f]);
         log.record(400, [down(0x38), down(0x0f)]);
         log.record(401, [up(0x0f), up(0x38)]);
@@ -1286,12 +1375,18 @@ pub(crate) mod tests {
             screens.retrace(log.events_at(r), &mut fb);
             match r {
                 200 => {
+                    assert_eq!(screens.screen(), MapRoom);
+                    assert_eq!(screens.pointer.shape(), BUSY);
+                }
+                201 => {
                     assert_eq!(screens.screen(), Review);
+                    assert_eq!(screens.pointer.shape(), ARROW);
                     assert!(!screens.dac.fading(), "no fade in");
                 }
                 300 => assert_eq!(screens.review.page(), 1),
                 400 => assert_eq!(screens.review.page(), 0),
-                500 => assert!(screens.dac.fading() || screens.fade_in.is_some()),
+                500 => assert_eq!(screens.pointer.shape(), BUSY),
+                501 => assert!(screens.dac.fading() || screens.fade_in.is_some()),
                 _ => {}
             }
         }
@@ -1472,6 +1567,8 @@ pub(crate) mod tests {
             mission::tests::test_assets(),
             MapRoom,
         );
+        // One retrace with the busy pointer, then the picture.
+        screens.retrace([], &mut fb);
         screens.retrace([], &mut fb);
         assert_eq!(fb.get(0, 0), Some(test_pattern::WHITE));
         assert_eq!(fb.get(160, 100), Some(test_pattern::YELLOW));
@@ -1622,6 +1719,61 @@ pub(crate) mod tests {
         );
         // The console shows it: the panel filled with the humanoid's colour.
         assert_eq!(fb.get(193, 97), Some(0x10));
+    }
+
+    #[test]
+    fn the_pointer_hides_until_the_map_room_goes_busy_for_loads_and_marks_corners() {
+        // Log in, play, Space: the humanoid console; over its corner and away; ESC
+        // back to the situation room.
+        let mut log = presses(&[0x1c, 0x0f, 0x19, 0x39]);
+        log.record(500, [InputEvent::MouseMove { x: 1, y: 1 }]);
+        log.record(510, [InputEvent::MouseMove { x: 50, y: 50 }]);
+        log.record(600, [down(0x01)]);
+        log.record(601, [up(0x01)]);
+        // A third shape, so the corner's can be picked.
+        let mut login = login::test_assets();
+        login.pointers.push(login.pointers[0].clone());
+        let missions = mission::tests::test_assets();
+        let map = maproom::tests::test_assets();
+        let mut screens = Screens::new(pictures(), login, map, missions, Login);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        let mut states = Vec::new();
+        for r in 1..=610 {
+            screens.retrace(log.events_at(r), &mut fb);
+            let state = (screens.pointer().is_some(), screens.pointer.shape());
+            if states.last().map(|&(_, s)| s) != Some(state) {
+                states.push((r, state));
+            }
+        }
+        let (busy, shown) = ((true, BUSY), (true, ARROW));
+        let changes: Vec<_> = states.iter().map(|&(_, s)| s).collect();
+        // Hidden at the log-in; busy then the arrow for the map room, the situation
+        // room, the console (one retrace each) and back; the corner's shape.
+        assert_eq!(
+            changes,
+            [
+                (false, ARROW),
+                busy,
+                shown,
+                busy,
+                shown,
+                busy,
+                shown,
+                (true, CORNER),
+                shown,
+                busy,
+                shown
+            ]
+        );
+        let at = |i: usize| states[i].0;
+        assert_eq!((at(5), at(6)), (400, 401));
+        assert_eq!((at(7), at(8), at(9), at(10)), (500, 510, 600, 601));
+        // The cutscenes hide it; it comes back with the map room.
+        let mut screens = new(Cutscene(Ending::Won));
+        screens.retrace([], &mut fb);
+        assert!(screens.pointer().is_none());
+        screens.cutscene_over();
+        assert!(screens.pointer().is_some());
     }
 
     #[test]

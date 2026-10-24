@@ -289,11 +289,12 @@ impl App {
             self.fullscreen,
             layout.picture(self.fb.view())
         );
-        // The game's pointer, only over the picture's pixels for this frame.
+        // The game's pointer, if the screens show it (T-049), only over the picture's
+        // pixels for this frame.
         let under = match (&self.front, pointer) {
-            (FrontEnd::Screens(screens), Some(at)) => {
-                Some(pointer::draw(&mut self.fb, at, screens.pointer()))
-            }
+            (FrontEnd::Screens(screens), Some(at)) => screens
+                .pointer()
+                .map(|shape| pointer::draw(&mut self.fb, at, shape)),
             _ => None,
         };
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
@@ -417,7 +418,9 @@ impl App {
         }
     }
 
-    /// Whether the screens are up, which draw the game's pointer.
+    /// Whether the screens are up, which draw the game's pointer where they show it
+    /// (the system cursor stays hidden over the picture even where they hide it, as
+    /// the original shows no pointer there).
     fn pointer_shown(&self) -> bool {
         let screens = matches!(self.front, FrontEnd::Screens(_));
         screens && self.viewer.is_none() && self.cutscene.is_none() && self.drop.is_none()
