@@ -1,10 +1,8 @@
 //! The game's own input events, free of winit: keys by PC scan code, typed text, the
 //! mouse in view pixels, the set of held keys, and a log of the events each retrace
-//! received. The sim and the
-//! screens read input only through the log, so a recorded log replays exactly
-//! (`docs/game-loop.md`). `translate` turns winit events into these.
-//!
-//! When `xeno-sim` exists (T-050), these types move there; nothing here needs a window.
+//! received. The sim and the screens read input only through the log, so a recorded
+//! log replays exactly (`docs/game-loop.md`). `xeno-app`'s `translate` turns winit
+//! events into these.
 
 /// A key, by its IBM PC scan code (set 1, as the original's input queue sees it: P is
 /// 0x19). Keys sent with an `E0` prefix (the cursor block, right Ctrl and Alt, keypad

@@ -7,7 +7,6 @@ mod campaign;
 mod clock;
 mod drop;
 mod game_dir;
-mod input;
 mod intro;
 mod keymap;
 mod login;
@@ -29,7 +28,9 @@ use clap::builder::TypedValueParser;
 use xeno_render::{Aspect, Scale};
 
 use game_dir::GameDir;
+// The game's input types live in the sim; `crate::input` keeps naming them.
 use screens::{Ending, Screen, View};
+use xeno_sim::input;
 
 /// Xenobots / Ultrabots, reimplemented. Needs your own copy of the original game.
 #[derive(Debug, Parser)]
@@ -93,6 +94,12 @@ struct Cli {
     /// instead of the file's own or, for files without one, a stock screen's.
     #[arg(long, value_name = "FILE", requires = "view")]
     palette: Option<PathBuf>,
+
+    /// The seed of the game's random word (the campaign's alert rises and calendar).
+    /// The original seeds it from the timer, and so does the port by default; the seed
+    /// is logged at start-up, and passing it again repeats the run.
+    #[arg(long, value_name = "N")]
+    seed: Option<u32>,
 }
 
 /// `--screen`'s values.
@@ -136,6 +143,12 @@ impl StartScreen {
 /// Parses a flag value with its `FromStr`.
 fn parse<T: std::str::FromStr<Err = String>>(s: &str) -> Result<T, String> {
     s.parse()
+}
+
+/// A seed from the system clock, as the original seeds its random word from the timer.
+fn timer_seed() -> u32 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    now.map_or(0, |t| t.subsec_nanos() ^ t.as_secs() as u32)
 }
 
 /// The name and version shown to the user, e.g. `xeno-app 0.1.0`.
@@ -202,11 +215,13 @@ fn main() -> ExitCode {
     };
     // Then the screens, from the .m@l files, or the test card.
     let start = cli.screen.map_or(Some(Screen::Login), StartScreen::screen);
+    let seed = cli.seed.unwrap_or_else(timer_seed);
+    log::info!("random seed {seed} (--seed {seed} repeats it)");
     let front = match start {
         // Not shown after --view.
         _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
         Some(start) => match screens::load(&files).and_then(|p| {
-            let login = login::load(&files)?;
+            let login = login::load(&files, seed)?;
             let missions = mission::load(&files, login.campaign.scenarios.len())?;
             let endings = intro::load_endings(&files)?;
             Ok((p, login, maproom::load(&files)?, missions, endings))
@@ -318,5 +333,10 @@ mod tests {
         assert_eq!(cli.palette, Some(PathBuf::from("./x/login.m@l")));
         // A palette without a file to view is refused.
         assert!(Cli::try_parse_from(["xeno-app", "--palette", "login.m@l"]).is_err());
+        let seed =
+            |args: &[&str]| Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.seed);
+        assert_eq!(seed(&[]).unwrap(), None);
+        assert_eq!(seed(&["--seed", "7"]).unwrap(), Some(7));
+        assert!(seed(&["--seed", "-1"]).is_err());
     }
 }

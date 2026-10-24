@@ -128,6 +128,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
 | `--view <file>` | Show one file instead of the cutscene and screens (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
+| `--seed <n>` | The seed of the game's random word (the campaign's alert rises and calendar). By default it comes from the clock, as the original's comes from the timer; it is logged at start-up, and passing it again repeats the run. |
 
 | Key | Action |
 |---|---|

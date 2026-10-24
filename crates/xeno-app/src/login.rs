@@ -16,6 +16,7 @@ use xeno_formats::lzexe;
 use xeno_formats::mgavideo::{self, Pointer};
 use xeno_formats::scendef::{self, ScenarioTable};
 use xeno_render::{Framebuffer, TextCursor, TextMode};
+use xeno_sim::Random;
 
 use crate::game_dir::GameFiles;
 use crate::maproom::Campaign;
@@ -56,12 +57,15 @@ pub struct Assets {
     /// and the one its set-up picks (T-049).
     pub pointers: Vec<Pointer>,
     pub pointer: u8,
+    /// The run's seed, which a new campaign's random word starts from.
+    pub seed: u32,
 }
 
 /// Reads the font, the colour records and the pointer from the user's `mgavideo.dvr`,
 /// the campaign from `scendef.bin`, which saves exist, and the goodbye from
 /// `xeno.exe`. Only the goodbye may be missing: without it the game exits silently.
-pub fn load(files: &GameFiles) -> Result<Assets, String> {
+/// A new campaign's random word starts from `seed`.
+pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
     let read = |name: &str| {
         files
             .read(name)
@@ -91,6 +95,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         farewell,
         pointers: video.pointers,
         pointer: video.pointer,
+        seed,
     })
 }
 
@@ -187,7 +192,7 @@ impl Assets {
             farewell: self.farewell.as_ref().map(|f| f.message(&name)),
             name,
             save_found,
-            campaign: Campaign::new(self.campaign.clone()),
+            campaign: Campaign::new(self.campaign.clone(), Random::seeded(self.seed)),
         }
     }
 }
@@ -218,6 +223,7 @@ pub fn test_assets() -> Assets {
             .unwrap()
             .pointers,
         pointer: 0,
+        seed: 1,
     }
 }
 

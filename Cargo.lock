@@ -2572,6 +2572,7 @@ dependencies = [
  "winit",
  "xeno-formats",
  "xeno-render",
+ "xeno-sim",
 ]
 
 [[package]]
@@ -2590,6 +2591,14 @@ dependencies = [
  "insta",
  "proptest",
  "thiserror 2.0.21",
+ "xeno-formats",
+]
+
+[[package]]
+name = "xeno-sim"
+version = "0.1.0"
+dependencies = [
+ "proptest",
  "xeno-formats",
 ]
 

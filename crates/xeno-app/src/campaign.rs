@@ -4,10 +4,9 @@
 //! lost routines, as in the original. The values (bonus, limits, chances) are the
 //! user's, read by [`xeno_formats::campaign`].
 //!
-//! The alert rise and the calendar draw from the host's random word, reproduced in
-//! [`Random`]. The original seeds it from the timer chip; here it starts from a fixed
-//! seed so that a campaign replays the same, until the sim's own seeded source (T-050)
-//! takes it over.
+//! The alert rise and the calendar draw from the host's random word, the sim's
+//! [`xeno_sim::Random`]. The original seeds it from the timer chip; here it starts from
+//! the run's seed (`--seed`), so a campaign can be replayed.
 
 use xeno_formats::campaign::Campaign as Rules;
 use xeno_formats::ending::Numbers;
@@ -18,54 +17,6 @@ use crate::maproom::{Campaign, IN_PLAY, LOCKED, WON};
 const TOP_ALERT: u16 = 6;
 /// The result flag while the training menu is open; the rules then change nothing.
 pub const TRAINING: u8 = 3;
-/// The port's seed for a new campaign's random word.
-const SEED: u32 = 0x5845_4e4f;
-
-/// The host's random word (`sim_random_word`, `1000:0283`): four 16-bit shift
-/// registers used in turn; each step shifts one right and, if a 1 fell out, XORs its
-/// high byte with 0xb4. A call returns the new word less one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Random {
-    words: [u16; 4],
-    next: usize,
-}
-
-impl Default for Random {
-    fn default() -> Self {
-        Random::seeded(SEED)
-    }
-}
-
-impl Random {
-    /// Four odd words from `seed` (the original makes its timer reads odd too).
-    pub fn seeded(seed: u32) -> Random {
-        let mut state = seed;
-        let words = std::array::from_fn(|_| {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (state >> 16) as u16 | 1
-        });
-        Random { words, next: 0 }
-    }
-
-    /// The next word, 0 to 0xfffe.
-    pub fn word(&mut self) -> u16 {
-        let at = self.next;
-        self.next = (at + 1) % self.words.len();
-        let word = &mut self.words[at];
-        let carry = *word & 1 != 0;
-        *word >>= 1;
-        if carry {
-            *word ^= 0xb400;
-        }
-        word.wrapping_sub(1)
-    }
-
-    /// Whether the next word is below `chance` (`sim_random_below`).
-    pub fn below(&mut self, chance: u16) -> bool {
-        self.word() < chance
-    }
-}
-
 /// What a check finds open: scenarios within the progress and not won.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Open {
@@ -247,19 +198,6 @@ pub(crate) mod tests {
             losses,
             points,
         }
-    }
-
-    #[test]
-    fn the_random_word_is_the_hosts_shift_register() {
-        let mut random = Random {
-            words: [1, 2, 3, 4],
-            next: 0,
-        };
-        // 1 shifts out a 1: 0 ^ 0xb400; 2 shifts to 1; 3 to 1 ^ 0xb400; 4 to 2.
-        let words: Vec<_> = (0..5).map(|_| random.word()).collect();
-        assert_eq!(words, [0xb3ff, 0, 0xb400, 1, 0x59ff]);
-        assert_eq!(Random::seeded(7), Random::seeded(7));
-        assert!(Random::default().words.iter().all(|w| w & 1 == 1));
     }
 
     #[test]

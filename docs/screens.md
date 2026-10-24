@@ -844,9 +844,9 @@ the map room without a cutscene, as in the original.
   above in the user's font 2; the campaign-won box and message, and the prompt with
   nothing selected, are drawn with the panels. The port redraws the whole map room
   instead of saving and restoring the pixels under the label, and draws the label over
-  the boxes every time. The random word is the original's shift register, seeded from a
-  fixed value instead of the timer (`campaign::Random`), until the sim's own seeded
-  source exists (T-050). The calendar's day advances but is not shown. Not done: the
+  the boxes every time. The random word is the original's shift register
+  (`xeno_sim::Random`, T-050), seeded from the run's seed (`--seed`, else the clock)
+  instead of the timer. The calendar's day advances but is not shown. Not done: the
   save (T-057).
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
