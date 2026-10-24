@@ -189,8 +189,8 @@ fn mgavideo_details(bytes: &[u8]) -> Details {
 
 /// What the LZEXE unpacker makes of `bytes`; for `xeno.exe`, also its intro chain
 /// (`sequence`): each entry's picture, effect, origin, end time and fades; and the
-/// shape of the map room's tables (`maproom`) and of the cutscenes after a mission
-/// (`ending`).
+/// shape of the map room's tables (`maproom`), the campaign's rules (`campaign`) and
+/// the cutscenes after a mission (`ending`).
 fn exe_details(file: &Path, bytes: &[u8]) -> Details {
     use xeno_formats::{lzexe, sequence};
 
@@ -243,6 +243,27 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
             room.bank_base
         ),
         Err(e) => writeln!(out, "maproom:   cannot read: {e}"),
+    }
+    .unwrap();
+    match xeno_formats::campaign::read(&exe) {
+        Ok(c) => {
+            let b = c.won_box;
+            writeln!(
+                out,
+                "campaign:  win bonus {}, progress +1 under {} open, up to {} by hand; {} alert chances; {} hover words; won box ({}, {}, {}, {}), message of {} codes",
+                c.win_bonus,
+                c.open_limit,
+                c.max_progress,
+                c.alert_chances.len(),
+                c.hover_words.len(),
+                b.top,
+                b.left,
+                b.bottom,
+                b.right,
+                c.won_message.len()
+            )
+        }
+        Err(e) => writeln!(out, "campaign:  cannot read: {e}"),
     }
     .unwrap();
     match xeno_formats::review::read(&exe) {

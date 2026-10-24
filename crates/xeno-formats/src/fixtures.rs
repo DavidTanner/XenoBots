@@ -797,6 +797,44 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
     vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1, widgets + 4]
 }
 
+/// Writes made-up campaign rules (`crate::campaign`) into `image`, beside
+/// [`synthetic_map_room`]'s tables (whose string segment and alert label it uses):
+/// unlock values 0x1234 and 0x5678, a bonus of 100, an open limit of 2, a progress cap
+/// of 9, four chances ending at the label, hover words `B`..`H`, a box and a two-line
+/// message, and two prompts. It uses `ds + 0x78` to `ds + 0x80` and `ds + 0xe0` to
+/// `ds + 0xf8`, and the string segment from offset 0xa0 to 0xc0.
+pub fn synthetic_campaign(image: &mut [u8], ds: usize) {
+    use crate::campaign::*;
+    let strings = SYNTHETIC_MAP_ROOM_STRINGS;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    for ((at, op), value) in [
+        (DEVELOPER_UNLOCK, 0x1234),
+        (EDITOR_UNLOCK, 0x5678),
+        (WIN_BONUS, 100),
+        (OPEN_LIMIT, 2),
+        (MAX_PROGRESS, 9),
+        (CHANCES, 0x78),
+        (HOVER_WORDS, 0xe0),
+        (WON_BOX, 0xf0),
+        (WON_MESSAGE, 0xb0),
+        (PROMPT, 0xb8),
+        (PROMPT_WON, 0xbc),
+    ] {
+        put(at, op);
+        put(at + op.len(), &u16::to_le_bytes(value));
+    }
+    put(ds + 0x78, &words(&[0x8000, 0x3000, 0x1000, 0]));
+    put(
+        ds + 0xe0,
+        &words(&[0xa0, 0xa2, 0xa4, 0xa6, 0xa8, 0xaa, 0xac]),
+    );
+    put(ds + 0xf0, &words(&[60, 90, 110, 230]));
+    put(strings + 0xa0, b"B\0C\0D\0E\0F\0G\0H\0\0");
+    put(strings + 0xb0, b"W\x0cW\0\0\0\0\0P\0\0\0Q\0");
+}
+
 /// Where [`synthetic_review`] puts the widget set and the texts (in the map room's
 /// string segment, at offset 0x40).
 pub const SYNTHETIC_REVIEW_WIDGETS: usize = 0x18400;

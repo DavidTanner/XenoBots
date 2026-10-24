@@ -46,10 +46,10 @@ pairs). The details are below, "The map room (T-042)"; the keys and buttons:
 | Q, Alt+Q | 5th (6) | Save and quit (`1000:741a`) |
 | Right, Down, Tab | | Next selectable scenario (`ui_map_room_select_next`, `1000:7431`) |
 | Left, Up, Alt+Tab | | Previous selectable scenario (`ui_map_room_select_previous`, `1000:7445`) |
-| `=`, `-` | | Developer keys, only with unlock word 8 (`key.md`): progress up (to at most 16) or down |
-| Ctrl+W, Ctrl+L | | Developer keys, the same word: the selected scenario won, or the loaded one lost (below, "Campaign rules") |
-| Ctrl+Space | | Play the loaded mission at once (`1000:73fa`, action 0), with no check |
-| Alt+F1 | | The scenario editor, only with unlock word 9 (`1000:6bcf`) |
+| `=`, `-` | | Developer keys, only with unlock word 8 (`key.md`): progress up (`ui_map_room_raise_progress`, `1000:74e5`, to at most 16) or down (`ui_map_room_lower_progress`, `1000:7504`, to 0), then the campaign check |
+| Ctrl+W, Ctrl+L | | Developer keys, the same word (`ui_map_room_dev_key_won`, `1000:752d`, and `_lost`, `75f3`): the selected scenario won, or the loaded one lost, by the same routines as a mission's end (below, "Campaign rules") |
+| Ctrl+Space | | Run the mission at once (`ui_map_room_play_loaded`, `1000:73fa`, action 0), with no check and no load: whatever is loaded, the selection set to 12 |
+| Alt+F1 | | The scenario editor, only with unlock word 9 (`ui_map_room_open_editor`, `1000:6bcf`) |
 
 The ids index the button handler table (`DS:0x5f48`) and sprite table (`DS:0x5f52`).
 ESC is in no map room table.
@@ -68,12 +68,14 @@ or, for kind 3 (a base), the **situation room** (`SITROOM`, widget set `0x3822`)
 situation room and the consoles are views inside a mission, not screens of their own;
 the mission starts in the situation room. Details below, "The mission's views".
 
-**After a mission** (`1000:6f9e`, the map room's action 0): sets `DS:0x5fab` to 0 and
-the selected scenario's `state` to 12 ("in play"), runs the mission, fades out over 32 retraces, then plays `TRIUMPH` if the
-campaign is complete (`DS:0x5fac`), else the lose sequence (outcome `DS:0x5fab` = 2,
-the picture chosen by the robot console opened last, `DS:0x6012`) or the win sequence
-(1, its caption showing the mission's kills, losses and points), and goes back to the
-map room. The cutscenes, their captions and the win caption's numbers are in `vcl.md`,
+**After a mission** (`ui_map_room_run_mission`, `1000:6f9e`, the map room's action
+0): sets `DS:0x5fab` to 0 and the selected scenario's `state` to 12 ("in play"), runs
+the mission, fades out over 32 retraces, then plays `TRIUMPH` if the campaign is
+complete (`DS:0x5fac`), else the lose sequence (outcome `DS:0x5fab` = 2, the picture
+chosen by the robot console opened last, `DS:0x6012`) or the win sequence (1, its
+caption showing the mission's kills, losses and points), and goes back to the map
+room. The result itself is applied inside the mission, when it ends (below, "Campaign
+rules"); a mission left with no result keeps 0. The cutscenes, their captions and the win caption's numbers are in `vcl.md`,
 "Sequences" (T-045).
 
 **Saving**: `<NAME>.LOG` is written when the player logs in again or quits from the map
@@ -193,17 +195,42 @@ time the map area is drawn: in font 0, colour 0xe0, transparent text,
 - then in font 4 (`ui_draw_selection_info`, `1fe6:749c`): sprite 19 opaque at
   `DS:0x5f24` = (172, 100, 190, 220) and, if a scenario is selected, its name from
   `scendef.bin` (whose line break goes back to the left edge and down), the label at
-  `DS:0x60a4` and the alert word for its `state`, all at that corner;
-- once the campaign is won (`DS:0x5fac`), a box (68, 90, 112, 230) filled with colour
-  0xa0, framed in 0xe0 (slots `0x51a`, `0x52a`), and a message from the string segment.
+  `DS:0x60a4` and the alert word for its `state`, all at that corner; with nothing
+  selected, a prompt from the string segment instead (`1fe6:74e5`): one before the
+  campaign is won, another after (T-046);
+- once the campaign is won (`DS:0x5fac`), the box at `DS:0x5f3c` = (68, 90, 112, 230)
+  filled with colour 0xa0 (slot `0x51a`), framed in 0xe0 (slot `0x52a`), and a message
+  from the string segment in font 4, colour 0xe0, transparent, from (left + 5, top + 4);
+  its line breaks (0x0c) go back to that left edge (T-046).
 
-**The hover label** (`ui_draw_map_tooltip`): while the pointer is over a scenario's
-box with no button held (selectable or not), a box in colour 0xa0 framed in 0x80
-above the scenario's box (its bottom 3 rows above the box's top, or at the top for
-states 8 to 12), sized to its text (4 pixels a character plus 3, by 9 rows), centred
-on the box and kept between `x` 10 and 285 (265 below row 120, clear of the buttons),
-with the hover word for its `state` in font 2, colour 0xb6 on 0xa0, opaque. The pixels
-under it are saved and put back when it goes.
+The fill and frame slots (`mgavideo.dvr`'s `gfx_fill_rect`, 0x0e6e, and
+`gfx_frame_rect`, 0x0fb8, T-046) take the same rectangle as the widgets: the fill
+covers rows `top..bottom` and columns `left..right` with the bottom and right edges
+out, and the frame is the one-pixel border just inside them (rows `top` and
+`bottom - 1`, columns `left` and `right - 1`).
+
+**The hover label** (`ui_draw_map_tooltip`, T-046): while the pointer is over a
+scenario's box with no button held (selectable or not), a label above the box.
+`ui_place_map_tooltip` (`1fe6:74fe`) sizes and places it from the hover word for the
+record's `state` (the string segment, through the word table `DS:0x5f6a`):
+- width `w` = 4 x (the word's length) + 3, height 9;
+- bottom 3 rows above the box's `top` while `state` is at most 6, else at the box's
+  `top` (so the label of a locked, won or in-play scenario covers 3 rows less of the
+  map), top 9 rows above that;
+- left = box `left` + 5 - `w / 2`, then at least 10 (a signed compare), then at most
+  285 - `w`, or 265 - `w` when the label's top is at row 120 or below (clear of the
+  buttons); right = left + `w`.
+
+It saves the pixels under that rectangle (slots `0x50a`, `0x50e`), fills it with 0xa0
+and frames it in 0x80 (as above), and types the word in font 2, colour 0xb6 on 0xa0,
+**opaque**, from (left + 2, top + 2). `ui_restore_under_map_tooltip` (`1000:77b1`) puts
+the pixels back (slot `0x512`) before the label is drawn again or goes. The map area's
+mouse handler sets the hovered record (`DS:0x5f0f`, its `id`) on a move with no button
+held, hit-testing every record, and marks the label for redrawing when it changes; a
+move over no box clears it; leaving the map area (0x400) and a release that selects
+nothing (a miss, or a record that cannot be selected) clear it and redraw the map area.
+Moves with a button held change nothing. A won scenario's routine clears the saved-label
+flag `DS:0x5f11` as the map area is redrawn anyway.
 
 **Selection.** `DS:0x5f97` holds the selected record's `id` (0xffff: none; a new
 campaign starts with none) and `DS:0x5ff5` its offset. A record is **selectable**
@@ -222,7 +249,7 @@ scenario in play can be picked.
   selection, both pick the first selectable record (without the `DS:0x5fab` check).
 - **Hover**: pointer movement with no button held sets `DS:0x5f0f` to the record
   under the pointer (selectable or not, a hit-test only) for the hover label; leaving
-  the map area clears it.
+  the map area, a move over no box and a release that selects nothing clear it.
 
 **Buttons.** A press (left or right) on a button captures the pointer, remembers the
 button in `DS:0x5f0b` and flips `DS:0x5f0d` between 0 and 8, the offset added to the
@@ -232,35 +259,89 @@ stays drawn pressed until the next press flips the offset (a quirk of the origin
 
 **Progress** `DS:0x5f9b`: a new campaign (`scen_start_new_campaign`, `1fe6:72a8`) sets
 it to 1, the selection and loaded scenario to none, the score, win, loss and other
-counters (`DS:0x5f9d`..`0x5fa7`) to 0, `DS:0x5fab` to 0xff and the campaign-won flag
-`DS:0x5fac` to 0. Then `scen_update_campaign_progress` (`1fe6:7366`, also run after a
-save is loaded and after each result) sets the campaign-won flag when every record
-has been won (`DS:0x5f9f` equal to the count), and otherwise walks the table: a record
-whose `unlock_level` is above the progress becomes 8, a record at 8 that is now within
-it becomes 0, and for the open records (not won) it notes the lowest and highest
-`unlock_level` (`DS:0x5ff7`, `0x5ff9`, their difference in `DS:0x5ffb`) and their
-number (`DS:0x5fff`). The progress rises by one after a won scenario if fewer than
-three records were open; the developer keys move it by hand.
+counters (`DS:0x5f9d`..`0x5fa7`) to 0, `DS:0x5fab` to 0xff, the campaign-won flag
+`DS:0x5fac` to 0, the game-loaded flag `DS:0x6005` to 0, and the campaign's calendar
+(`DS:0x7d4a`, a day, and `DS:0x7d4b`, a month index; the mission clock's) to day 0 of
+month 3. Then `scen_update_campaign_progress` (`1fe6:7366`, also run after a save is
+loaded and after each result) sets the campaign-won flag and stops when the win count
+`DS:0x5f9f` equals the number of records; otherwise it walks the table in order:
+- a record whose `unlock_level` is above the progress becomes 8, **whatever its
+  `state`** (a won record too: only the developer key `-` can do that);
+- else a won record (10) is skipped;
+- else a record at 8 becomes 0, and the record (any other `state`, 12 included) counts
+  as open: the lowest and highest open `unlock_level` (`DS:0x5ff7`, `0x5ff9`, their
+  difference `DS:0x5ffb`) and the number open (`DS:0x5fff`).
 
-**Campaign rules** (from the developer keys' handlers `1000:752d` and `75f3`, which
-are presumably what a mission's end does too; the mission code is not traced):
-- **Won**: the record becomes 10, the selection clears, the win count rises,
-  `DS:0x5fab` = 1, the score rises (`1000:7626` from the mission's values, plus 1000),
-  progress as above; then, if `DS:0x5ffb` is not 0, each open record that is not at 6
-  raises its alert by 2 with a chance from the table `DS:0x6094` by its
-  `unlock_level - DS:0x5ff7` (0, 1/2, 3/16, 1/16 for 0 to 3; from the host's random
-  word `1000:0283`); then the first selectable record is selected. A record at 12 is
-  not excluded, so it could reach 14, past the tables' end (not seen; to check).
-- **Lost**: the loaded scenario is forgotten (`DS:0x5f99` = 0xffff, so play reloads
-  it), `DS:0x5fab` = 2, the loss count and score as above. Its `state` stays 12.
+**Campaign rules** (T-046). The won and lost routines are shared by the developer keys
+and the mission's end: `sim_end_mission_with_result` (`1000:68c1`) runs, for an object
+(`DI`) whose flags +0x16 have bit 0 set, the end-of-mission script that +0x30 counts
+through (`1000:e691`, a jump table by +0x30 / 4: messages); once +0x30 reaches 0x24 it
+calls `scen_win_selected_scenario` (`1000:7536`) if bit 3 of +0x16 is set, else
+`scen_lose_loaded_scenario` (`1000:75fc`), and sets the quit flag `DS:0xe87e`. These are
+the developer keys' handlers past their unlock check. Who calls `1000:68c1` and who sets
+those flags (presumably the player's base or command object) is not traced (T-055): no
+instruction names it, so it is reached through a table. Nothing else writes 1 or 2 to
+`DS:0x5fab`. Both routines first return at once if `DS:0x5fab` is 3 (the training
+menu's value), so a training mission changes nothing.
+- **Won** (`scen_win_selected_scenario`): nothing without a selection (`DS:0x5ff5`).
+  The selected record becomes 10; the selection clears (`DS:0x5f97`, `0x5ff5`);
+  `DS:0x5ef2` (not traced) and the saved-label flag `DS:0x5f11` are cleared and the map
+  area and a button marked for redrawing; the win count `DS:0x5f9f` rises; `DS:0x5fab`
+  = 1; `scen_score_mission_result` (`1000:7626`) sets the mission's points `DS:0x6014`
+  (`vcl.md`, "The win caption"), the bonus at `1000:757d` (1000) is added to **those
+  points**, and the points are added to the score `DS:0x5f9d` (16-bit, wrapping). Then
+  the campaign check; then, if fewer than 3 records are open (`1000:758f`), the progress
+  rises by one and the check runs again. Then, if the open levels differ
+  (`DS:0x5ffb` not 0), for each record in table order whose `unlock_level` is within
+  the progress and whose `state` is neither 10 nor 6, `sim_random_below`
+  (`1000:772a`) draws a random word and the `state` rises by 2 if the word is below the
+  chance at `DS:0x6094` indexed by `unlock_level - DS:0x5ff7`: 0x8000, 0x3000, 0x1000
+  and then 0 (about 1/2, 3/16 and 1/16 for the lowest open level and the next two, never
+  above that; the table's zeros run on to the alert label at `DS:0x60a4`, and the stock
+  levels never index past them). Then `ui_map_room_select_first` (`1000:745b`) selects
+  the first record within the progress and not won (with no check of `DS:0x5fab`), and
+  `scen_advance_campaign_day` (`1000:7732`) adds a random 0 to 3 to the calendar's day.
+- **Lost** (`scen_lose_loaded_scenario`): the campaign check; the loaded scenario is
+  forgotten (`DS:0x5f99` = 0xffff, so play loads it again); `DS:0x5fab` = 2; the loss
+  count `DS:0x5fa1` rises; the points are scored as above (no bonus) and added to the
+  score; the calendar's day advances as above. The record's `state` stays 12 and the
+  selection stays.
+- **Alert past 6.** A record at 12 (lost earlier, or left with no result) is neither 10
+  nor 6, so a later win can raise it to 14 (and on by 2). Then its box look, hover word
+  and alert word are read past their tables (the hover word table's first word, the
+  widget state block, the key table's first word as a string offset), it stays
+  selectable while `DS:0x5fab` is not 0, and playing it sets 12 again.
+- **Random word** (`sim_random_word`, `1000:0283`): four 16-bit words at `DS:0x1bf6`
+  used in turn (the index `DS:0x1bf4` steps by 2 and wraps); each call shifts the next
+  word right by one and, if a 1 fell out, XORs its high byte with 0xb4; it returns the
+  new word less one (0 to 0xfffe), also kept at `DS:0x296`. `sim_seed_random_from_timer`
+  (`1fe6:42e8`) seeds the four from the timer chip's counter (`1fe6:4301`, made odd), so
+  the original is not repeatable.
 - **Training gate** `DS:0x5fab`: 0xff for a new campaign, 0 from the start of a campaign
-  mission until its result, 1 won, 2 lost, 3 while in the training menu. T opens the
-  training menu whenever it is not 0, so only right after a campaign mission that
-  ended with no result is training refused.
-- **Alert**: when a scenario is played its `state` is passed to `1000:68a0`, which adds
-  a value from the table `DS:0x5a3f` by `state` to a field of the mission's command
-  object (`[DS:0x568e] + 0x2e`), so a higher alert makes the mission harder in some way
-  (T-051, T-058).
+  mission until its result, 1 won, 2 lost, 3 once the training menu opens
+  (`ui_map_room_open_training`, `1000:6ff8`, which also clears the selection and the
+  loaded scenario). T opens the training menu whenever it is not 0, so only right after
+  a campaign mission that ended with no result is training refused.
+- **Play** (`ui_map_room_play_selected`): when the selection is already the loaded
+  scenario (`DS:0x5f99`), nothing is loaded and the mission goes on as it was left (its
+  objects and counts kept); otherwise its `scenNNa.usg` is loaded (a failure forgets the
+  loaded scenario and plays nothing), `sim_apply_scenario_alert` (`1000:68a0`) adds a
+  value from the table `DS:0x5a3f` by the record's `state` **before** it becomes 12 to a
+  field of the mission's command object (`[DS:0x568e] + 0x2e`), so a higher alert makes
+  the mission harder in some way (T-051, T-058), and `sim_reset_mission_counts`
+  (`1000:68ae`) zeroes its kills and losses and sets the situation room's view mode to
+  0. Then the game counts as loaded (`DS:0x6005`, so N and Q save) and action 0 runs.
+- **Developer keys**: `=` raises the progress by one unless it is 16 (`1000:74ee`); `-`
+  lowers it unless it is 0; both run the check, so `-` can lock won records and `=`
+  then reopens them at 0. Ctrl+W wins the selected scenario and Ctrl+L loses the loaded
+  one, as above, outside any mission and with no cutscene. Alt+F1 opens the scenario
+  editor (`1000:4856`).
+
+`xeno_formats::campaign` reads the bonus, the open limit, the progress cap, the chances,
+the two unlock values, the hover words, the campaign-won box and message and the two
+prompts from the user's `xeno.exe`, from the instructions that use them after checking
+their bytes; the colours, fonts, the label's geometry and the random word's taps are
+code constants.
 
 **Scenario files.** Play writes `id / 2` as two decimal digits into the template
 `SCEN00A.USG` (`DS:0x6006`) and `'A'` plus the high byte of the `id` (always 0 in a
@@ -672,9 +753,10 @@ the map room without a cutscene, as in the original.
   selection, remembered in `Screens::scenario` and logged with its `scenNNa.usg`, and
   do nothing without one; T is refused while a campaign mission has no result (never,
   so far). With `--screen map-room` and no log-in, a guest's new campaign is shown.
-  Not done (T-046): the hover label, the campaign-won box, the developer keys, the
-  busy pointer shape during loads, and any change to the campaign on play or after a
-  mission.
+  Not done yet (T-046, part 2): the hover label, the campaign-won box, the prompts,
+  the developer keys, the busy pointer shape during loads, and any change to the
+  campaign on play or after a mission; `xeno_formats::campaign` already reads what
+  they need.
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
   its bytes, with segments only from relocated words: the widget set (map area, and
@@ -773,14 +855,16 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   the orders' typing speed (T-044; check in DOSBox).
 - The review's 3D view: the render hook's node layout, the due check `1fe6:39c3`, the
   parts routines and the scripts' steps in ticks (T-047, with T-056).
-- How a mission ends by itself (the situation room's end button, corner and Alt+Q set
-  `DS:0xe87e`; who else sets it, and `DS:0x5fab`), and whether it applies the same won
-  and lost rules as the map room's developer keys (T-046, T-055).
+- What reaches `sim_end_mission_with_result` (`1000:68c1`, through a table) and sets
+  the object's flags +0x16 bits 0 and 3 and its end script +0x30, which decide when a
+  mission ends won or lost (T-055). The quit flag `DS:0xe87e` is also set at
+  `1000:424b`, `5c25`, `5c50` and `7cf9` (not traced).
 - The situation room's panels, spinners and remaining keys, the consoles'
   instruments, and the keys that drive and fight (T-056).
 - Whether the object-loaded hook changes a robot's manual bit, and what +0x2e is used
   for once a state replaces +0x30 (T-053, T-058).
-- Whether a scenario in play (12) can have its alert raised to 14 (T-046).
+- What `DS:0x5ef2` is (cleared by the won routine and the `-` key), and where the
+  campaign's calendar (`DS:0x7d4a`, `0x7d4b`) is shown (T-056).
 - What the keys `f3ef` and `f405` that every screen has do, and what `1000:0270`
   (presumably a beep) does.
 
@@ -828,6 +912,22 @@ T-045 named, in `xeno.exe`: `ui_play_win_cutscene` (`1000:7059`),
 `scen_score_mission_result` (`1000:7626`), `txt_print_u16_five_digits` (`1fe6:4a6c`)
 and `txt_format_u16_to_buffer` (`1000:02b7`); details in `docs/formats/vcl.md`. All
 `confirmed`, all saved.
+
+T-046 named, in `xeno.exe`: `sim_end_mission_with_result` (`1000:68c1`, created),
+`ui_map_room_dev_key_won` (`1000:752d`, created), `scen_win_selected_scenario`
+(`1000:7536`), `ui_map_room_dev_key_lost` (`1000:75f3`, created),
+`scen_lose_loaded_scenario` (`1000:75fc`), `ui_map_room_raise_progress` (`1000:74e5`,
+created), `ui_map_room_lower_progress` (`1000:7504`, created),
+`ui_map_room_select_first` (`1000:745b`), `ui_map_room_run_mission` (`1000:6f9e`,
+created), `ui_map_room_open_training` (`1000:6ff8`, created), `ui_map_room_play_loaded`
+(`1000:73fa`, created), `ui_map_room_open_editor` (`1000:6bcf`, created),
+`sim_apply_scenario_alert` (`1000:68a0`), `sim_reset_mission_counts` (`1000:68ae`),
+`sim_random_word` (`1000:0283`), `sim_random_below` (`1000:772a`),
+`scen_advance_campaign_day` (`1000:7732`), `sim_seed_random_from_timer` (`1fe6:42e8`),
+`ui_place_map_tooltip` (`1fe6:74fe`) and `ui_restore_under_map_tooltip` (`1000:77b1`);
+in `mgavideo.dvr` `gfx_alloc_rect_save` (0x0cf7, slot `0x50a`), `gfx_save_rect`
+(0x0d17, `0x50e`), `gfx_restore_rect` (0x0d99, `0x512`), `gfx_fill_rect` (0x0e6e,
+`0x51a`) and `gfx_frame_rect` (0x0fb8, `0x52a`), all created. All `confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,

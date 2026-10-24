@@ -1,0 +1,57 @@
+---
+source: crates/xeno-formats/src/campaign.rs
+expression: rules
+---
+Campaign {
+    developer_unlock: 4660,
+    editor_unlock: 22136,
+    win_bonus: 100,
+    open_limit: 2,
+    max_progress: 9,
+    alert_chances: [
+        32768,
+        12288,
+        4096,
+        0,
+    ],
+    hover_words: [
+        [
+            66,
+        ],
+        [
+            67,
+        ],
+        [
+            68,
+        ],
+        [
+            69,
+        ],
+        [
+            70,
+        ],
+        [
+            71,
+        ],
+        [
+            72,
+        ],
+    ],
+    won_box: Rect {
+        top: 60,
+        left: 90,
+        bottom: 110,
+        right: 230,
+    },
+    won_message: [
+        87,
+        12,
+        87,
+    ],
+    prompt: [
+        80,
+    ],
+    prompt_won: [
+        81,
+    ],
+}

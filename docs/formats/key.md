@@ -118,8 +118,8 @@ match. The words land in flag words:
 | 0 | `DS:0x1594` | equal to 0xcfc0, and record byte 1 is `M` (`dbg_init_mono_monitor`) | Debug text on a monochrome adapter |
 | 2 | `DS:0x1aba` | equal to 0xd0ca (`1fe6:3674`, the event reader) | A screenshot key (Shift with code 0x37, the keypad `*` / Print Screen key), Ctrl+Alt+F11 (a toggle) and Ctrl+Alt+F12 (a timing benchmark that runs while F12 is held, `1fe6:3900`) |
 | 6 | `DS:0x616` | not 0x5981 | When equal, `mgavideo.dvr` keeps its plain palette upload rather than the `rep outsb` one (`dvr-protocol.md`) |
-| 8 | `DS:0x1598` | equal to 0xba17 | Ctrl+P in the cockpit: sets some of the robot's values to full (not decoded further). In the map room (T-042): `=` and `-` move the progress, Ctrl+W wins the selected scenario and Ctrl+L loses the loaded one (`docs/screens.md`) |
-| 9 | `DS:0x5bc1` | equal to 0xab65 (`ui_dispatch_editor_key`) | The scenario editor's Ctrl keys, including the terrain editor; Alt+F1 in the map room opens the editor |
+| 8 | `DS:0x1598` | equal to 0xba17 | Ctrl+P in the cockpit: sets some of the robot's values to full (not decoded further). In the map room (T-042): `=` and `-` move the progress, Ctrl+W wins the selected scenario and Ctrl+L loses the loaded one (`docs/screens.md`); `xeno_formats::campaign` reads the value from the user's `xeno.exe` |
+| 9 | `DS:0x5bc1` | equal to 0xab65 (`ui_dispatch_editor_key`) | The scenario editor's Ctrl keys, including the terrain editor; Alt+F1 in the map room opens the editor (`ui_map_room_open_editor`, `1000:6bcf`; value read by `xeno_formats::campaign`) |
 | 15 | `DS:0x618` | equal to 0xe263 (`mgavideo.dvr`'s stub at slot `0x1558`) | Screenshots to `CAMERA00.LBM` |
 | 1, 3, 4, 5, 7, 10 to 14 | `DS:0x15a4`, `0x16f6`, `0x1676`, `0x16f8`, `0x1596`, `0x159a`–`0x15a2` | not traced | |
 

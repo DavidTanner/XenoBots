@@ -94,7 +94,7 @@ pub struct Review {
 }
 
 /// A NUL-terminated string of up to [`MAX_TEXT`] bytes at `at`, without the NUL.
-fn text(image: &[u8], at: usize) -> Result<Vec<u8>, FormatError> {
+pub(crate) fn text(image: &[u8], at: usize) -> Result<Vec<u8>, FormatError> {
     let bytes = image
         .get(at..(at + MAX_TEXT).min(image.len()))
         .ok_or_else(|| invalid(at, "the text is past the end of the image"))?;

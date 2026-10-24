@@ -217,9 +217,11 @@ the string segment, so the stock caption holds placeholders at fixed offsets:
 The points come from `scen_score_mission_result` (`1000:7626`): the kills times the
 word at `DS:0x5ed8` less the losses times the word at `DS:0x5eda` (16-bit products), 0 if
 that would be negative; it also adds the counts to the campaign's totals
-(`DS:0x5fa3`, `0x5fa5`). In the stock game the weights are 50 and 25. (Its callers, the
-developer keys and presumably the mission's end, add 1000 to the score afterwards:
-`docs/screens.md`.) A count of 100 or more shows only its last two digits.
+(`DS:0x5fa3`, `0x5fa5`). In the stock game the weights are 50 and 25. A won mission then
+adds a bonus (1000 in the stock game) to `DS:0x6014` itself before adding it to the score
+(`scen_win_selected_scenario`, T-046, `docs/screens.md`), and the caption is filled after
+that, so the `WIN` caption's points include the bonus. A count of 100 or more shows only
+its last two digits.
 
 ### In the port (T-036, T-045)
 
