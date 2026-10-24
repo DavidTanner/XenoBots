@@ -25,6 +25,7 @@
 use xeno_formats::mal;
 use xeno_formats::mgavideo::Pointer;
 use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
+use xeno_sim::Random;
 
 use crate::campaign::TRAINING;
 use crate::game_dir::GameFiles;
@@ -370,7 +371,7 @@ impl Screens {
     ) -> Screens {
         let mut dac = Dac::default();
         dac.set_anims(ColourAnims::new(login.anims.clone()));
-        let guest = Campaign::new(login.campaign.clone());
+        let guest = Campaign::new(login.campaign.clone(), Random::seeded(login.seed));
         let (mission, start) = match start {
             Mission(view) => sample_mission(&mission_assets, view),
             other => (MissionState::empty(), other),
@@ -1799,7 +1800,7 @@ pub(crate) mod tests {
             .unwrap();
         let pictures = load(&files).unwrap();
         assert_eq!(pictures.len(), 8);
-        let login = login::load(&files).unwrap();
+        let login = login::load(&files, 1).unwrap();
         assert_eq!(login.campaign.scenarios.len(), 13);
         let missions = mission::load(&files, login.campaign.scenarios.len()).unwrap();
         let map = maproom::load(&files).unwrap();

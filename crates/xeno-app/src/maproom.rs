@@ -23,8 +23,9 @@ use xeno_formats::scendef::{MapBox, ScenarioTable};
 use xeno_formats::setup;
 use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{BlitMode, Framebuffer, Rect, SpriteBlit, TextCursor, TextMode};
+use xeno_sim::Random;
 
-use crate::campaign::{Open, Random};
+use crate::campaign::Open;
 
 use crate::game_dir::GameFiles;
 use crate::input::MouseButton;
@@ -163,14 +164,14 @@ pub struct Campaign {
     pub day: u8,
     /// What the last check found open.
     pub open: Open,
-    /// The host's random word, seeded here rather than from the timer.
+    /// The host's random word, from the run's seed rather than the timer.
     pub random: Random,
 }
 
 impl Campaign {
     /// A new campaign from `scendef.bin` (`scen_start_new_campaign`), checked as the
-    /// game checks it after (`scen_update_campaign_progress`).
-    pub fn new(table: ScenarioTable) -> Campaign {
+    /// game checks it after (`scen_update_campaign_progress`), drawing from `random`.
+    pub fn new(table: ScenarioTable, random: Random) -> Campaign {
         let mut campaign = Campaign {
             table,
             progress: FIRST_PROGRESS,
@@ -184,7 +185,7 @@ impl Campaign {
             loaded: None,
             day: 0,
             open: Open::default(),
-            random: Random::default(),
+            random,
         };
         campaign.check();
         campaign
@@ -661,7 +662,7 @@ pub mod tests {
                 .map(|(i, &unlock)| scenario(i as u16, unlock, 0))
                 .collect(),
         };
-        let mut campaign = Campaign::new(table);
+        let mut campaign = Campaign::new(table, Random::seeded(1));
         campaign.table.scenarios[1].state = WON;
         campaign
     }
@@ -907,8 +908,8 @@ pub mod tests {
             .check()
             .unwrap();
         let assets = load(&files).unwrap();
-        let table = crate::login::load(&files).unwrap().campaign;
-        let mut campaign = Campaign::new(table);
+        let table = crate::login::load(&files, 1).unwrap().campaign;
+        let mut campaign = Campaign::new(table, Random::seeded(1));
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut state = MapState::default();
         // Every state, every scenario selected in turn, every button pressed.

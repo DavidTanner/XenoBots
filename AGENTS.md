@@ -21,7 +21,8 @@ The project is at the **scaffold stage**: the Cargo workspace exists and `xeno-a
 checks the game files, then opens a window that plays the start-up cutscene from the
 user's `xeno.exe` and `.vcl` pictures and the intro drop, then steps through
 placeholder screens in the original's order (`docs/screens.md`), run by a
-fixed-timestep loop at the original's retrace rate (`docs/game-loop.md`). Read `NEXT_STEPS.md` for the task backlog and pick
+fixed-timestep loop at the original's retrace rate (`docs/game-loop.md`). `xeno-sim`
+holds the start of the deterministic simulation (`docs/sim.md`). Read `NEXT_STEPS.md` for the task backlog and pick
 tasks from there.
 
 ## Hard rules
@@ -196,6 +197,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --no-intro  # straight to the lo
 cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone, then the log-in screen
 cargo run -p xeno-app -- --game-dir ./gameFiles --screen map-room  # start at a screen (docs/screens.md); --screen test-card for the test card
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word's seed (logged at start-up; the clock's otherwise)
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README)
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
