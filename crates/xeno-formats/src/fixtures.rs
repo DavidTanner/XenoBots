@@ -931,33 +931,48 @@ pub fn synthetic_programs(image: &mut [u8], ds: usize) {
     }
 }
 
-/// A `.usg` scenario whose objects are big enough to hold orders (0x40 bytes each):
-/// a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a human
-/// relay of the usual 0x18 bytes (slot 3), a human scorpion on program 2 (slot 5) and
-/// an alien scout on program 2 (slot 7). The other chunks are
-/// [`synthetic_usg_chunks`]'s.
+/// A `.usg` scenario whose objects have the stock sizes (0x172 bytes, 0x34 for the
+/// relay): a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a
+/// human relay (slot 3), a human scorpion on program 2 (slot 5) and an alien scout on
+/// program 2 (slot 7), at x 100 + slot, y 130, heading slot x 0x1000. The robots are
+/// units with helm 90 and power 80; the base has taken 20 damage and starts in view
+/// mode 0; the relay has taken 3. The other bytes are synthetic, and the other chunks
+/// are [`synthetic_usg_chunks`]'s.
 pub fn synthetic_mission_usg() -> Vec<u8> {
     let words = |ws: &[u16]| ws.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
-    let object = |slot: u16, kind: u16, size: u16, side: u8, mode: u8, program: u8| {
+    let object = |slot: u16, kind: u16, side: u8, mode: u8, program: u8| {
+        let size: u16 = if kind == 4 { 0x34 } else { 0x172 };
         let mut o = words(&[size, slot, 0, kind, slot]);
         o.extend((i32::from(100 + slot) << 16).to_le_bytes());
         o.extend((130i32 << 16).to_le_bytes());
+        // From +0x0c; `at(n)` is in-memory offset n.
         let mut data = synthetic_bytes(usize::from(size) - 12, u64::from(slot));
-        data[0x16 - 12] = side;
-        if size >= 0x40 {
-            data[0x23 - 12] = mode;
-            data[0x2e - 12] = program;
-            data[0x30 - 12] = program;
+        let at = |offset: usize| offset - 12;
+        data[at(0x10)..at(0x12)].copy_from_slice(&(slot << 12).to_le_bytes());
+        data[at(0x16)] = side | if kind <= 2 { 0x20 } else { 0 };
+        match kind {
+            0..=2 => {
+                data[at(0x23)] = mode;
+                data[at(0x24)] = 90;
+                data[at(0x2e)] = program;
+                data[at(0x30)] = program;
+                data[at(0x4e)] = 80;
+            }
+            3 => {
+                data[at(0x2e)..at(0x30)].copy_from_slice(&20u16.to_le_bytes());
+                data[at(0x37)] = 0;
+            }
+            _ => data[at(0x33)] = 3,
         }
         o.extend(data);
         o
     };
     let mut objects = words(&[5]);
-    objects.extend(object(0, 3, 0x40, 0, 0, 0));
-    objects.extend(object(2, 0, 0x40, 0, 0x80, 1));
-    objects.extend(object(3, 4, 0x18, 0, 0, 0));
-    objects.extend(object(5, 1, 0x40, 0, 0x01, 2));
-    objects.extend(object(7, 2, 0x40, 8, 0x80, 2));
+    objects.extend(object(0, 3, 0, 0, 0));
+    objects.extend(object(2, 0, 0, 0x80, 1));
+    objects.extend(object(3, 4, 0, 0, 0));
+    objects.extend(object(5, 1, 0, 0x01, 2));
+    objects.extend(object(7, 2, 8, 0x80, 2));
     let mut chunks = synthetic_usg_chunks();
     for (tag, data) in &mut chunks {
         if tag == b"DCBS" {

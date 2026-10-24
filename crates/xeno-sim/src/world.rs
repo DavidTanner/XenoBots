@@ -102,10 +102,9 @@ impl Census {
 
 impl World {
     /// The objects of `scenario` (its `DCBS` chunk), each in its slot with its kind,
-    /// side and position, and the robots' orders as the file sets them. An object too
-    /// short to reach the flags byte (+0x16) has no side and is left out, as the
-    /// orders leave out robots too short to hold them; no stock object is that short.
-    /// If two objects share a slot, the later one is kept; no stock file has that.
+    /// side and position, and the robots' orders as the file sets them (robots without
+    /// the stock layout have none; no stock robot lacks it). If two objects share a
+    /// slot, the later one is kept; no stock file has that.
     /// A file with no `DCBS` chunk gives an empty world. The objects' other bytes are
     /// not copied: they stay in `scenario` until T-058 names them.
     pub fn from_scenario(scenario: &Scenario) -> World {
@@ -113,16 +112,16 @@ impl World {
             .objects
             .iter()
             .flatten()
-            .filter_map(|o| {
+            .map(|o| {
                 let entity = Entity {
                     kind: o.kind,
-                    side: o.side()?,
+                    side: o.side(),
                     position: Position {
                         x: Fixed(o.x),
                         y: Fixed(o.y),
                     },
                 };
-                Some((EntityId(o.slot), entity))
+                (EntityId(o.slot), entity)
             })
             .collect();
         World {
@@ -309,7 +308,7 @@ mod tests {
                 let parsed = |kind: ObjectKind| {
                     objects
                         .iter()
-                        .filter(|o| o.kind == kind && o.side() == Some(side))
+                        .filter(|o| o.kind == kind && o.side() == side)
                         .count()
                 };
                 let census = world.census(side);

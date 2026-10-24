@@ -74,8 +74,6 @@ const ORDERS_COLOUR: u8 = 0x1d;
 const ORDERS_HIGH_COLOUR: u8 = 0x17;
 const ORDERS_CLEAR: u8 = 0x10;
 const ORDERS_CURSOR: (i32, i32) = (96, 30);
-/// The base's main view mode (+0x37) in a `.usg` object's `data` (from +0x0c).
-const BASE_MODE: usize = 0x37 - 0x0c;
 
 /// Alt+Q, the only key word the situation room's end handler acts on.
 const ALT_Q: u16 = 0x2010;
@@ -329,11 +327,10 @@ impl Mission {
             .objects
             .iter()
             .flatten()
-            .find(|o| o.kind == usg::ObjectKind::Base && o.side() == Some(Side::Human));
+            .find(|o| o.kind == usg::ObjectKind::Base && o.side() == Side::Human);
         mission.mode = base
-            .and_then(|o| o.data.get(BASE_MODE))
-            .copied()
-            .unwrap_or(ORDERS_MODE);
+            .and_then(|o| o.base())
+            .map_or(ORDERS_MODE, |b| b.view_mode);
         log::debug!(
             "mission: the situation room starts in view mode {} ({} briefing bytes)",
             mission.mode,

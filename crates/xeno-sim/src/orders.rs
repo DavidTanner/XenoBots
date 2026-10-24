@@ -1,7 +1,7 @@
 //! The robots' orders (`docs/screens.md`, "Orders"): the program each was given, the
 //! one it runs, and whether its pilot drives it by hand. All three are in a `.usg`
-//! file's `DCBS` objects (`docs/formats/usg.md`): the program given at +0x2e, the one
-//! running at +0x30 and the manual switch in bit 7 of +0x23.
+//! file's `DCBS` objects (`docs/formats/usg.md`, `usg::Robot`): the program given at
+//! +0x2e, the one running at +0x30 and the manual switch in bit 7 of +0x23.
 //!
 //! [`OrderBook`] is mission state the player changes, so it lives in the sim. The
 //! program table it consults is game data read from the user's `xeno.exe`, so
@@ -11,17 +11,10 @@
 use std::collections::BTreeMap;
 
 pub use xeno_formats::orders::{Program, Programs, RobotKind};
-use xeno_formats::usg::{Object, Scenario, Side};
+use xeno_formats::usg::{self, Object, Scenario, Side};
 
 use crate::hash::{StateHash, StateHasher};
 use crate::world::side_code;
-
-/// In-memory object offsets: the program given, the program running and the manual
-/// switch (bit 7).
-pub const ORDERED_OFFSET: usize = 0x2e;
-pub const PROGRAM_OFFSET: usize = 0x30;
-pub const MODE_OFFSET: usize = 0x23;
-pub const MANUAL: u8 = 0x80;
 
 /// A robot's orders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,13 +39,14 @@ impl Orders {
         }
     }
 
-    /// A robot object's orders (+0x2e, +0x30 and bit 7 of +0x23), if the object is
-    /// that big.
+    /// A robot object's orders (+0x2e, +0x30 and bit 7 of +0x23), if it is a robot
+    /// with the stock layout.
     pub fn of(object: &Object) -> Option<Orders> {
+        let robot = object.robot()?;
         Some(Orders {
-            ordered: object.byte_at(ORDERED_OFFSET)?,
-            program: object.byte_at(PROGRAM_OFFSET)?,
-            manual: object.byte_at(MODE_OFFSET)? & MANUAL != 0,
+            ordered: robot.program_given,
+            program: robot.program_running,
+            manual: robot.mode & usg::Robot::MANUAL != 0,
         })
     }
 }
@@ -80,8 +74,8 @@ pub struct OrderBook {
 }
 
 impl OrderBook {
-    /// The robots of `scenario` with their orders as the file sets them. Objects too
-    /// small to hold orders are left out.
+    /// The robots of `scenario` with their orders as the file sets them. Robots without
+    /// the stock layout are left out.
     pub fn from_scenario(scenario: &Scenario) -> OrderBook {
         let robots = scenario
             .objects
@@ -90,7 +84,7 @@ impl OrderBook {
             .filter_map(|o| {
                 let robot = Robot {
                     kind: RobotKind::of(o.kind)?,
-                    side: o.side()?,
+                    side: o.side(),
                     orders: Orders::of(o)?,
                 };
                 Some((o.slot, robot))
