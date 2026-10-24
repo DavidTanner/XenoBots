@@ -2,8 +2,8 @@
 //! (`docs/screens.md`, "Campaign rules" and "The hover label"): the developer keys'
 //! unlock values, the bonus a won scenario adds to the score, the open-scenario limit
 //! under which a win raises the progress, the progress cap, the alert chances, the
-//! hover label's words, the campaign-won box and its message, and the selection
-//! panel's prompts. They are game data, so they are read from the user's own
+//! hover label's words, the campaign-won box and its message, the selection panel's
+//! prompts, and the damage a scenario's alert level gives the player's base. They are game data, so they are read from the user's own
 //! `xeno.exe` at run time and never stored in this repository.
 //!
 //! As in [`crate::maproom`], each value is found from the instruction that uses it,
@@ -35,6 +35,8 @@ pub(crate) const OPEN_LIMIT: (usize, &[u8]) = (0x758f, &[0x83, 0x3e, 0xff, 0x5f]
 pub(crate) const MAX_PROGRESS: (usize, &[u8]) = (0x74ee, &[0x83, 0x3e, 0x9b, 0x5f]);
 /// `mov bx, [bx + table]` in `scen_win_selected_scenario`.
 pub(crate) const CHANCES: (usize, &[u8]) = (0x75d8, &[0x8b, 0x9f]);
+/// `mov ax, [bx + table]` in `sim_apply_scenario_alert`.
+pub(crate) const ALERT_DAMAGE: (usize, &[u8]) = (0x68a6, &[0x8b, 0x87]);
 /// `mov ax, [bx + table]` in `ui_draw_map_tooltip`.
 pub(crate) const HOVER_WORDS: (usize, &[u8]) = (0x7764, &[0x8b, 0x87]);
 /// `mov bx, rect` and `mov si, message` in `ui_draw_map_room_status`.
@@ -67,6 +69,9 @@ pub struct Campaign {
     pub alert_chances: Vec<u16>,
     /// The hover label's word by `state / 2`.
     pub hover_words: [Vec<u8>; STATES],
+    /// Playing a scenario that is not loaded adds this, by its `state / 2` before
+    /// play, to the player's base's damage (`docs/formats/usg.md`, bases).
+    pub alert_damage: [u16; STATES],
     /// Filled and framed once the campaign is won, with the message in it.
     pub won_box: Rect,
     pub won_message: Vec<u8>,
@@ -117,6 +122,12 @@ pub fn read_image(image: &[u8], ds: usize, relocated: &[usize]) -> Result<Campai
         .map(|i| word(image, chances + 2 * i))
         .collect::<Result<_, _>>()?;
 
+    let damage = ds + usize::from(op(ALERT_DAMAGE)?);
+    let mut alert_damage = [0; STATES];
+    for (state, value) in alert_damage.iter_mut().enumerate() {
+        *value = word(image, damage + 2 * state)?;
+    }
+
     let hover = ds + usize::from(op(HOVER_WORDS)?);
     let mut hover_words: [Vec<u8>; STATES] = Default::default();
     for (state, words) in hover_words.iter_mut().enumerate() {
@@ -134,6 +145,7 @@ pub fn read_image(image: &[u8], ds: usize, relocated: &[usize]) -> Result<Campai
         max_progress: byte_operand(image, MAX_PROGRESS)?,
         alert_chances,
         hover_words,
+        alert_damage,
         won_box: rect(image, ds + usize::from(op(WON_BOX)?))?,
         won_message: text(image, strings + usize::from(op(WON_MESSAGE)?))?,
         prompt: string(image, strings + usize::from(op(PROMPT)?))?,
@@ -172,6 +184,7 @@ mod tests {
         assert_eq!(rules.alert_chance(1), 0x3000);
         assert_eq!(rules.alert_chance(9), 0);
         assert_eq!(rules.hover_words[6], b"H");
+        assert_eq!(rules.alert_damage[..4], [0, 5, 10, 15]);
         assert_eq!(rules.won_message, b"W\x0cW");
         insta::assert_debug_snapshot!(rules);
     }
@@ -191,6 +204,7 @@ mod tests {
             MAX_PROGRESS,
             CHANCES,
             HOVER_WORDS,
+            ALERT_DAMAGE,
             WON_BOX,
             WON_MESSAGE,
             PROMPT,
@@ -228,6 +242,9 @@ mod tests {
         assert!(rules.alert_chances.windows(2).all(|w| w[0] >= w[1]));
         assert!(rules.alert_chances[0] > 0 && rules.alert_chances[3..].iter().all(|&c| c == 0));
         assert!(rules.open_limit > 0 && rules.max_progress > rules.open_limit);
+        // A higher open alert level never damages the base less, nor destroys it (300).
+        assert!(rules.alert_damage[..4].windows(2).all(|w| w[0] <= w[1]));
+        assert!(rules.alert_damage.iter().all(|&d| d < 300));
         assert!(rules.won_box.right <= 288 && rules.won_box.bottom <= 192);
         let texts =
             rules

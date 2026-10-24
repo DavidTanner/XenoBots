@@ -12,7 +12,7 @@ pub mod world;
 
 pub use random::Random;
 pub use rate::Rate;
-pub use world::{Census, Entity, EntityId, Fixed, Position, World};
+pub use world::{Census, Components, Damage, Entity, EntityId, Fixed, Position, World};
 
 use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};

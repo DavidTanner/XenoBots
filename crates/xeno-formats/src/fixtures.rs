@@ -800,9 +800,10 @@ pub fn synthetic_map_room(image: &mut [u8], ds: usize) -> Vec<usize> {
 /// Writes made-up campaign rules (`crate::campaign`) into `image`, beside
 /// [`synthetic_map_room`]'s tables (whose string segment and alert label it uses):
 /// unlock values 0x1234 and 0x5678, a bonus of 100, an open limit of 2, a progress cap
-/// of 9, four chances ending at the label, hover words `B`..`H`, a box and a two-line
-/// message, and two prompts. It uses `ds + 0x78` to `ds + 0x80` and `ds + 0xe0` to
-/// `ds + 0xf8`, and the string segment from offset 0xa0 to 0xc0.
+/// of 9, four chances ending at the label, alert damage 0, 5, 10, 15 then zeros, hover
+/// words `B`..`H`, a box and a two-line message, and two prompts. It uses `ds + 0x78`
+/// to `ds + 0x80`, `ds + 0xc0` to `ds + 0xce` and `ds + 0xe0` to `ds + 0xf8`, and the
+/// string segment from offset 0xa0 to 0xc0.
 pub fn synthetic_campaign(image: &mut [u8], ds: usize) {
     use crate::campaign::*;
     let strings = SYNTHETIC_MAP_ROOM_STRINGS;
@@ -816,6 +817,7 @@ pub fn synthetic_campaign(image: &mut [u8], ds: usize) {
         (OPEN_LIMIT, 2),
         (MAX_PROGRESS, 9),
         (CHANCES, 0x78),
+        (ALERT_DAMAGE, 0xc0),
         (HOVER_WORDS, 0xe0),
         (WON_BOX, 0xf0),
         (WON_MESSAGE, 0xb0),
@@ -826,6 +828,7 @@ pub fn synthetic_campaign(image: &mut [u8], ds: usize) {
         put(at + op.len(), &u16::to_le_bytes(value));
     }
     put(ds + 0x78, &words(&[0x8000, 0x3000, 0x1000, 0]));
+    put(ds + 0xc0, &words(&[0, 5, 10, 15, 0, 0, 0]));
     put(
         ds + 0xe0,
         &words(&[0xa0, 0xa2, 0xa4, 0xa6, 0xa8, 0xaa, 0xac]),

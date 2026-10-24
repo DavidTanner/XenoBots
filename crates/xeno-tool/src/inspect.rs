@@ -258,11 +258,12 @@ fn exe_details(file: &Path, bytes: &[u8]) -> Details {
             let b = c.won_box;
             writeln!(
                 out,
-                "campaign:  win bonus {}, progress +1 under {} open, up to {} by hand; {} alert chances; {} hover words; won box ({}, {}, {}, {}), message of {} codes",
+                "campaign:  win bonus {}, progress +1 under {} open, up to {} by hand; {} alert chances; alert damage {:?} by open level; {} hover words; won box ({}, {}, {}, {}), message of {} codes",
                 c.win_bonus,
                 c.open_limit,
                 c.max_progress,
                 c.alert_chances.len(),
+                &c.alert_damage[..4],
                 c.hover_words.len(),
                 b.top,
                 b.left,
@@ -739,7 +740,7 @@ fn usg_details(bytes: &[u8]) -> Details {
     }
     writeln!(
         out,
-        "usg:       {} object(s): slot, kind, side, x, y, references",
+        "usg:       {} object(s): slot, kind, side, x, y, references, heading (degrees), radius, flags; then by kind",
         objects.len()
     )
     .unwrap();
@@ -748,14 +749,37 @@ fn usg_details(bytes: &[u8]) -> Details {
             Side::Human => "human",
             Side::Alien => "alien",
         };
+        let body = match &o.body {
+            usg::Body::Robot(r) => format!(
+                "program {} running {}{}, helm {}, power {}, damage bits {:#04x} {:#04x} {:#04x}",
+                r.program_given,
+                r.program_running,
+                if r.mode & usg::Robot::MANUAL != 0 {
+                    " manual"
+                } else {
+                    ""
+                },
+                r.helm,
+                r.power,
+                r.weapons,
+                r.targeting,
+                r.systems
+            ),
+            usg::Body::Base(b) => format!("damage {}, view mode {}", b.damage, b.view_mode),
+            usg::Body::Relay(r) => format!("damage {}", r.damage),
+            usg::Body::Other(bytes) => format!("{} bytes", bytes.len()),
+        };
         writeln!(
             out,
-            "usg:       {:3}  {:<10} {side}  {:.2}, {:.2}  refs {}",
+            "usg:       {:3}  {:<10} {side}  {:.2}, {:.2}  refs {}  {:.1}  {:.2}  {:#04x}  {body}",
             o.slot,
             format!("{:?}", o.kind).to_lowercase(),
             f(o.x),
             f(o.y),
-            o.ref_count
+            o.ref_count,
+            f64::from(o.heading) * 360.0 / 65536.0,
+            f64::from(o.radius) / 256.0,
+            o.flags
         )
         .unwrap();
     }
