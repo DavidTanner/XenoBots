@@ -170,15 +170,23 @@ fn mgavideo_details(bytes: &[u8]) -> Details {
             format!("{} {shape} ({} codes)", 2 * i, f.glyphs.len())
         })
         .collect();
-    let p = &video.pointer;
+    let p = video.set_up_pointer();
+    let shapes: Vec<_> = video
+        .pointers
+        .iter()
+        .map(|s| format!("{}x{}", s.width, s.height))
+        .collect();
     Ok(format!(
         "mgavideo:  {} fonts: {}\n\
          mgavideo:  a {}-byte colour-animation list of {} records\n\
-         mgavideo:  pointer {}x{}, hot spot ({}, {}), colour {}\n",
+         mgavideo:  pointer {} of {} shapes ({}), {}x{}, hot spot ({}, {}), colour {}\n",
         fonts.len(),
         fonts.join(", "),
         video.anims.len(),
         video.anim_records(),
+        video.pointer,
+        shapes.len(),
+        shapes.join(", "),
         p.width,
         p.height,
         p.hot_x,
@@ -1101,7 +1109,7 @@ mod tests {
                 "mgavideo:  4 fonts: 0 bitmap 4x3 (128 codes), 2 bitmap 6x3 (128 codes), \
                  4 shaded, 3 high (128 codes), 6 shaded, 3 high (96 codes)\n\
                  mgavideo:  a 18-byte colour-animation list of 1 records\n\
-                 mgavideo:  pointer 3x2, hot spot (1, 0), colour 60\n"
+                 mgavideo:  pointer 1 of 2 shapes (3x2, 3x2), 3x2, hot spot (1, 0), colour 60\n"
             ),
             "{out}"
         );

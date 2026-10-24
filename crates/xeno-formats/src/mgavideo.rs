@@ -89,23 +89,21 @@ fn set_up_value(image: &[u8], at: usize, call: &[u8; 3]) -> Result<u8, FormatErr
     }
 }
 
-/// The pointer the driver sets up at start-up: the shape and colour from its set-up
-/// calls, the shape from the block of shapes (a word offset per shape, then each
-/// shape's width, height, hot spot `x` and `y` bytes and the offsets of its image and
-/// mask).
-pub fn pointer(image: &[u8]) -> Result<Pointer, FormatError> {
-    let shape = set_up_value(image, POINTER_SHAPE_AT, &POINTER_SHAPE_CALL)?;
+/// The pointer the driver sets up at start-up, by its number in [`pointers`].
+pub fn pointer_shape(image: &[u8]) -> Result<u8, FormatError> {
+    set_up_value(image, POINTER_SHAPE_AT, &POINTER_SHAPE_CALL)
+}
+
+/// Every pointer shape `gfx_set_pointer_shape` accepts (it refuses numbers from the
+/// count in its `cmp al, count` on), by number, in the colour the set-up picks. The
+/// block of shapes holds a word offset per shape, then each shape's width, height,
+/// hot spot `x` and `y` bytes and the offsets of its image and mask.
+pub fn pointers(image: &[u8]) -> Result<Vec<Pointer>, FormatError> {
     let colour = set_up_value(image, POINTER_COLOUR_AT, &POINTER_COLOUR_CALL)?;
     let shapes = match image.get(POINTER_SHAPES_AT..POINTER_SHAPES_AT + 2) {
         Some(&[0x3c, count]) => count,
         _ => return Err(invalid(POINTER_SHAPES_AT, "not the pointer shape check")),
     };
-    if shape >= shapes {
-        return Err(invalid(
-            POINTER_SHAPE_AT,
-            "the pointer shape is out of range",
-        ));
-    }
     let block = data_block(image, POINTERS)?;
     let word = |at: usize| {
         block
@@ -113,27 +111,31 @@ pub fn pointer(image: &[u8]) -> Result<Pointer, FormatError> {
             .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
             .ok_or_else(|| invalid(at, "past the end of the pointer block"))
     };
-    let at = word(2 * usize::from(shape))?;
-    let head = block
-        .get(at..at + 4)
-        .ok_or_else(|| invalid(at, "the pointer shape is past its block"))?;
-    let (width, height, hot_x, hot_y) = (head[0], head[1], head[2], head[3]);
-    let size = usize::from(width) * usize::from(height);
-    let plane = |offset: usize| {
-        block
-            .get(offset..offset + size)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| invalid(offset, "the pointer's pixels are past its block"))
-    };
-    Ok(Pointer {
-        width,
-        height,
-        hot_x,
-        hot_y,
-        image: plane(word(at + 4)?)?,
-        mask: plane(word(at + 6)?)?,
-        colour,
-    })
+    (0..usize::from(shapes))
+        .map(|shape| {
+            let at = word(2 * shape)?;
+            let head = block
+                .get(at..at + 4)
+                .ok_or_else(|| invalid(at, "the pointer shape is past its block"))?;
+            let (width, height, hot_x, hot_y) = (head[0], head[1], head[2], head[3]);
+            let size = usize::from(width) * usize::from(height);
+            let plane = |offset: usize| {
+                block
+                    .get(offset..offset + size)
+                    .map(<[u8]>::to_vec)
+                    .ok_or_else(|| invalid(offset, "the pointer's pixels are past its block"))
+            };
+            Ok(Pointer {
+                width,
+                height,
+                hot_x,
+                hot_y,
+                image: plane(word(at + 4)?)?,
+                mask: plane(word(at + 6)?)?,
+                colour,
+            })
+        })
+        .collect()
 }
 
 /// The bytes of `block` in `image`, from the instructions that copy it.
@@ -168,8 +170,10 @@ pub struct Mgavideo {
     pub anims: Vec<u8>,
     /// Fonts 0, 2, 4 and 6, by `id / 2`.
     pub fonts: Vec<font::Font>,
-    /// The mouse pointer set up at start-up.
-    pub pointer: Pointer,
+    /// The mouse pointer's shapes, by number (`docs/screens.md`, "The pointer").
+    pub pointers: Vec<Pointer>,
+    /// The shape the driver sets up at start-up.
+    pub pointer: u8,
 }
 
 impl Mgavideo {
@@ -185,6 +189,11 @@ impl Mgavideo {
             records += 1;
         }
         records
+    }
+
+    /// The shape the driver sets up at start-up.
+    pub fn set_up_pointer(&self) -> &Pointer {
+        &self.pointers[usize::from(self.pointer)]
     }
 
     /// The font the host selects with `id` (0, 2, 4 or 6); `None` for any other id
@@ -204,10 +213,18 @@ pub fn parse(bytes: &[u8]) -> Result<Mgavideo, FormatError> {
     let anims = data_block(image, ANIMS)?;
     let anims = vgaintro::anim_list(anims, 0)?;
     let fonts = font::parse(data_block(image, FONTS)?)?;
-    let pointer = pointer(image)?;
+    let pointers = pointers(image)?;
+    let pointer = pointer_shape(image)?;
+    if usize::from(pointer) >= pointers.len() {
+        return Err(invalid(
+            POINTER_SHAPE_AT,
+            "the pointer shape is out of range",
+        ));
+    }
     Ok(Mgavideo {
         anims,
         fonts,
+        pointers,
         pointer,
     })
 }
@@ -230,7 +247,9 @@ mod tests {
 
     #[test]
     fn the_synthetic_pointer_reads() {
-        let pointer = parse(&synthetic_mgavideo()).unwrap().pointer;
+        let video = parse(&synthetic_mgavideo()).unwrap();
+        assert_eq!((video.pointers.len(), video.pointer), (2, 1));
+        let pointer = video.set_up_pointer();
         assert_eq!(
             (pointer.width, pointer.height, pointer.hot_x, pointer.hot_y),
             (3, 2, 1, 0)
@@ -307,10 +326,16 @@ mod tests {
         // The list has 24 records (`palette.md`).
         assert_eq!(video.anim_records(), 24);
         // An arrow 9 by 11 with its hot spot one pixel in (`docs/screens.md`).
-        let pointer = &video.pointer;
+        let pointer = video.set_up_pointer();
         assert_eq!(
             (pointer.width, pointer.height, pointer.hot_x, pointer.hot_y),
             (9, 11, 1, 1)
         );
+        // Eight shapes, each drawing something; the set-up's is the arrow, 0; the
+        // busy (1) and corner (2) shapes the host picks are among them (T-049).
+        assert_eq!((video.pointers.len(), video.pointer), (8, 0));
+        for shape in &video.pointers {
+            assert!(shape.mask.contains(&0));
+        }
     }
 }

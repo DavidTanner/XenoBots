@@ -358,6 +358,58 @@ clipped to the screen: where the mask is 0 it writes the image byte AND the colo
 (so 0xff gives colour 12 and 0 black), elsewhere it leaves the screen alone. The
 sprite blitters hide it while they draw over it.
 
+**Shape and visibility (T-049).** The driver keeps the shape in `DS:0x14b6` and a
+hide counter in `DS:0x14d8` (both in the host's data segment):
+- `0x1496` (`gfx_set_pointer_shape`): a number from 8 on becomes 0; the old shape
+  comes back in `AL`. It only stores the shape and its size and hot spot; the next
+  retrace redraws the pointer (the retrace handler calls `0x14b2` after the palette
+  upload), so a shape set before a long load is on screen for the whole load.
+- `0x149e` (`gfx_hide_pointer`) adds one to the counter and, on its way from 0xff to
+  0, puts back the pixels under the pointer. `0x14a2` (`gfx_show_pointer`) draws it
+  if the counter is 0 and takes one away. The pointer is drawn only while the counter
+  is 0xff, so hides nest, and a show with nothing hidden hides it until a hide.
+  The counter starts at 0: hidden.
+- `0x14a6` / `0x14aa` (`gfx_hide_pointer_over_rect`, `gfx_clear_pointer_rect`): a
+  rectangle, grown by the pointer's size, that the pointer is not drawn in until it
+  is cleared. `vga240.mod` wraps its drawing in them. The driver's own copies and
+  blitters hide it the same way while they draw.
+- `0x14ae` (`gfx_post_mouse_events`) is the mouse driver's callback; it posts the
+  move and button bits through host slot `0x324`.
+
+Every caller in `xeno.exe`, read from Ghidra's listing of both code segments:
+- **Start-up.** The entry point shows it once the drivers are loaded;
+  `ui_run_startup_and_game` hides it again before the intro and sets colour 12 after
+  the loads. So the intro, the drop and the **first log-in have no pointer**. The map
+  room's loop (`ui_run_map_room_loop`, `1000:6f37`) shows it after the first log-in.
+  The map room's N calls the log-in from inside the loop, so a second log-in shows the
+  pointer. Nothing hides it again but the cutscenes.
+- **Cutscenes after a mission.** `ui_play_lose_cutscene`, `ui_play_win_cutscene` and
+  `ui_play_campaign_won_cutscene` hide it before the song and show it after the
+  wait. `vga240.mod`'s enter routine hides it again and its leave routine shows it.
+- **Picture loads (shape 1, busy).** Each of these sets shape 1, loads the full-screen
+  picture and draws it, then sets shape 0: `ui_load_map_room_picture` (`1000:71d3`,
+  `MAPROOM`), `ui_load_training_picture` (`1000:6e7f`), `ui_load_sitroom_picture`
+  (`1000:53fa`), `ui_load_scorpion_console_picture` (`1000:7fb3`),
+  `ui_load_humanoid_console_picture` (`1000:9cb7`), `ui_load_scout_console_picture`
+  (`1000:b473`) and `ui_load_review_picture` (`1fe6:782c`). The busy shape is seen
+  only where the old picture is still on screen with its palette: the map room's R
+  (the review is shown at once), the way back from the review, and a mission's view
+  switches. After a fade out the palette is black, so it cannot be seen.
+  `gfx_load_all_models` (`1000:7b55`) also shows shape 1 and puts the old shape back,
+  but the pointer is hidden then.
+- **Corners.** A mission view's corner (`ui_sitroom_corner_on_mouse`, `1000:5c30`, and
+  `ui_console_corner_on_mouse`, `1000:7cbf`) picks shape 2 when the dispatcher says
+  the pointer entered it (0x200) and shape 0 when it left (0x400).
+- **Not ported yet.** The situation room's main view picks its shape by the view mode
+  (a word table at `DS:0x5a14`, by the mode byte) while the pointer is over the
+  view's region, and 0 off it; each console does the same over its instruments
+  (shapes 3, 4 or 6 by the unit's state). They need the views' regions (T-056).
+  `ui_run_file_dialog` (`1fe6:83db`) shows shape 0 while a file dialog runs and puts
+  the old one back (the editor and saves, T-048). Pixel and text drawing straight to
+  the screen (`1000:376c`, `40a0`–`41b2`, `1fe6:4d54`) and a screenshot routine
+  (`1fe6:4ce9`) hide and show it around their writes. The terrain editor in
+  `mapdvr.dvr` sets shapes and hides it too (T-048).
+
 ### The mission's views (T-043)
 
 From a Ghidra pass over the view switch, the four widget sets, their key tables and
@@ -886,6 +938,12 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   for once a state replaces +0x30 (T-053, T-058).
 - What `DS:0x5ef2` is (cleared by the won routine and the `-` key), and where the
   campaign's calendar (`DS:0x7d4a`, `0x7d4b`) is shown (T-056).
+- Whether a picture loader always reads the file: the map room's draw handler skips
+  `ui_load_map_room_picture` when bit 7 of the picture descriptor's flags
+  (`DS:0x5efd`) is set (presumably: still in memory), which would mean no busy shape (T-049; check in DOSBox how long
+  the busy shape shows on R, on the way back from the review and on view switches).
+  Whether the dispatcher sends a corner its enter bit when a view opens with the
+  pointer already over it (the port waits for the next move into it).
 - What the keys `f3ef` and `f405` that every screen has do, and what `1000:0270`
   (presumably a beep) does.
 
@@ -954,3 +1012,12 @@ T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_k
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
 `ui_name_entry_cancel`) and the text services; the list is in
 `docs/re/dvr-protocol.md`.
+
+T-049 named, in `xeno.exe`: `ui_load_map_room_picture` (`1000:71d3`),
+`ui_load_training_picture` (`1000:6e7f`), `ui_load_sitroom_picture` (`1000:53fa`),
+`ui_load_review_picture` (`1fe6:782c`) and `ui_run_file_dialog` (`1fe6:83db`), and
+created `ui_load_scorpion_console_picture` (`1000:7fb3`),
+`ui_load_humanoid_console_picture` (`1000:9cb7`), `ui_load_scout_console_picture`
+(`1000:b473`), `ui_sitroom_corner_on_mouse` (`1000:5c30`) and
+`ui_console_corner_on_mouse` (`1000:7cbf`); in `mgavideo.dvr` the pointer routines
+listed in `docs/re/dvr-protocol.md`. All `confirmed`, all saved.

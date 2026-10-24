@@ -241,7 +241,7 @@ install one more (0x2a and 0x3a).
 | `0x5f0` | Remap a buffer through a 256-byte table, not traced further |
 | `0x5f4`, `0x5fe`, `0x606` | Stubs for `vga240.mod` |
 | `0x1550`, `0x1558` | Stubs for `vgaiff.dvr` |
-| `0x1496`–`0x14b2` | Mouse pointer (T-042; table at offset 0x1a8 of the second data block): `0x1496` set the shape (`gfx_set_pointer_shape`, 0x2966, `AL` < 8), `0x149a` set the colour (`gfx_set_pointer_colour`, 0x29b8), `0x149e` / `0x14a2` hide and show it (the host wraps cutscenes and loads in them), `0x14a6` hide it around a rectangle, `0x14aa`, `0x14ae` (posts the mouse driver's events with slot `0x324`) and `0x14b2` the per-frame update (`gfx_update_pointer`, 0x2bba). The shapes and the drawing are in `docs/screens.md`, "The pointer" |
+| `0x1496`–`0x14b2` | Mouse pointer (T-042, T-049; table at offset 0x1a8 of the second data block): `0x1496` set the shape (`gfx_set_pointer_shape`, 0x2966: 8 on picks 0; returns the old shape), `0x149a` set the colour (`gfx_set_pointer_colour`, 0x29b8), `0x149e` / `0x14a2` hide and show it (`gfx_hide_pointer` 0x29d6, `gfx_show_pointer` 0x29eb: a nesting counter, drawn only at 0xff), `0x14a6` / `0x14aa` keep it out of a rectangle and clear that (`gfx_hide_pointer_over_rect` 0x2a06, `gfx_clear_pointer_rect` 0x2aab), `0x14ae` the mouse driver's callback (`gfx_post_mouse_events`, 0x2b8a, posts the events with slot `0x324`) and `0x14b2` the per-frame update (`gfx_update_pointer`, 0x2bba, called by the retrace handler). The shapes, the drawing and every caller are in `docs/screens.md`, "The pointer" |
 
 **`vgaintro.dvr`** (T-038; table at its segment `0x41a`, offset 0): `0x1538` enter
 (`0x2a52`), `0x153c` leave (`0x2a90`), `0x1540` run (`0x2ab4`), and `0x1544`/`0x1548`
@@ -382,6 +382,20 @@ Named in T-042 (the map room and the pointer; details in `docs/screens.md`): in
 (`0x0b95`) and `gfx_restore_under_pointer` (`0x0c18`); the `xeno.exe` names are listed
 in `docs/screens.md`, "Symbols". All `confirmed`, all saved. The pointer set-up at
 `0x2934` (a shape, then shape 0 and colour 12) is not renamed.
+
+Named in T-049 (the pointer's shape and visibility; details in `docs/screens.md`, "The
+pointer"): in `mgavideo.dvr` `gfx_init_pointer` (`0x2934`, the set-up), `gfx_hide_pointer`
+(`0x29d6`), `gfx_show_pointer` (`0x29eb`), `gfx_hide_pointer_over_rect` (`0x2a06`),
+`gfx_hide_pointer_over_pixel` (`0x2a56`, the same for one pixel),
+`gfx_clear_pointer_rect` (`0x2aab`), `gfx_begin_pointer_rect_draw` and
+`gfx_end_pointer_rect_draw` (`0x2ad8`, `0x2b24`: the sprite blitters hold the counter and
+the rectangle while they draw), `gfx_test_pointer_in_rect` (`0x2b5e`) and
+`gfx_post_mouse_events` (`0x2b8a`, created). All `confirmed` but the two blitter
+helpers (`guess`: what they do with a pointer already kept out is not settled), all
+saved. `vga240.mod` hides the pointer in its enter routine (`0x0069`), shows it in its
+leave routine (`0x00af`) and keeps it out of each rectangle it draws (`0x14a6`/`0x14aa`
+around four routines); `vgaintro.dvr`, `sounddvr.dvr` and `vgaiff.dvr` never call the
+pointer slots.
 
 Named in T-041 (fonts and the log-in name entry; details in `font.md` and
 `docs/screens.md`): in `xeno.exe` `gfx_select_font` (`1fe6:489c`, slot `0x38a`),
