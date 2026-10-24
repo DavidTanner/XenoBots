@@ -695,7 +695,7 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | State | Shows | Keys |
 |---|---|---|
 | Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
-| Map room | `maproom.m@l`, the boxes, panels and buttons (T-042) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys |
+| Map room | `maproom.m@l`, the boxes, panels, buttons, hover label and campaign-won box (T-042, T-046) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. Ctrl+Space: run the mission again. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys. With the user's `XENO.KEY`: `=`, `-` progress, Ctrl+W won, Ctrl+L lost |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l`, the page's text panels, a placeholder for the robot (T-044) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
 | Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); Ctrl+W won, Ctrl+L lost, Ctrl+C campaign won (placeholders) |
@@ -741,7 +741,7 @@ the map room without a cutscene, as in the original.
 - **Map room** (`crates/xeno-app/src/maproom.rs`, T-042): as "The map room (T-042)"
   above. It draws over `maproom.m@l` the boxes (keyed: the look for each `state`, or
   unavailable above the progress), the highlight on the selection, the name, score
-  (always 0 so far) and selection panels (the scenario's name, the label and its alert
+  and selection panels (the scenario's name, the label and its alert
   word, in the user's fonts 0 and 4, colour 0xe0) and the buttons (opaque, the next
   sprite while pressed, with the original's quirk after a release off the button). A
   new campaign (`maproom::Campaign`) starts at progress 1 with the locked scenarios at
@@ -751,12 +751,32 @@ the map room without a cutscene, as in the original.
   button's (`MapRoom::button_keys`). Tab and the arrows step through the selectable
   scenarios. P, Enter, Space and the play button start the mission placeholder for the
   selection, remembered in `Screens::scenario` and logged with its `scenNNa.usg`, and
-  do nothing without one; T is refused while a campaign mission has no result (never,
-  so far). With `--screen map-room` and no log-in, a guest's new campaign is shown.
-  Not done yet (T-046, part 2): the hover label, the campaign-won box, the prompts,
-  the developer keys, the busy pointer shape during loads, and any change to the
-  campaign on play or after a mission; `xeno_formats::campaign` already reads what
-  they need.
+  do nothing without one; T is refused while a campaign mission has no result. With
+  `--screen map-room` and no log-in, a guest's new campaign is shown.
+- **Campaign** (`crates/xeno-app/src/campaign.rs` and `maproom.rs`, T-046): as
+  "Campaign rules" above, with the user's values (`xeno_formats::campaign`, kept in
+  `maproom::Assets::rules`). Play loads the selection's `scenNNa.usg` only when it is
+  not the loaded scenario (else the mission and its orders resume; a file that cannot
+  be read forgets the loaded scenario and plays nothing), then sets the result to 0 and
+  the scenario to 12. A mission ended with Ctrl+W or Ctrl+L (the placeholders for the
+  mission's own end, T-055) runs the won or lost routine with 0 kills and 0 losses, so
+  a win scores the bonus alone (1000) and the `WIN` caption shows those numbers; the
+  cutscene is then chosen as `ui_map_room_run_mission` does (campaign won, lost, won,
+  else none). Ctrl+C, the port's stand-in for the last win, wins the scenario and sets
+  the campaign-won flag. The training menu sets the result to 3 and clears the
+  selection and the loaded scenario. The developer keys (`=`, `-`, Ctrl+W, Ctrl+L in
+  the map room) work only when the user's `XENO.KEY` gives unlock word 8 the value the
+  user's `xeno.exe` checks; Alt+F1 with word 9 logs that the editor is not ported
+  (T-048). Ctrl+Space runs the mission again with no check. The hover label follows
+  the pointer over the boxes (none while a button is held, cleared off the boxes and
+  by a release that selects nothing), placed, filled, framed and typed as described
+  above in the user's font 2; the campaign-won box and message, and the prompt with
+  nothing selected, are drawn with the panels. The port redraws the whole map room
+  instead of saving and restoring the pixels under the label, and draws the label over
+  the boxes every time. The random word is the original's shift register, seeded from a
+  fixed value instead of the timer (`campaign::Random`), until the sim's own seeded
+  source exists (T-050). The calendar's day advances but is not shown. Not done: the
+  busy pointer shape during loads (T-049), and the save (T-057).
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
   its bytes, with segments only from relocated words: the widget set (map area, and
@@ -827,8 +847,9 @@ the map room without a cutscene, as in the original.
   colour-255 pixels) is hatched with a "T-047" label.
 - **Cutscenes after a mission** (T-045): as `vcl.md`, "In the port". The lose picture
   is chosen by the robot console the mission last opened (`Screens::console`, reset
-  when the map room plays a scenario); the win caption shows 0 kills, 0 losses and 0
-  points until the mission counts them (T-046).
+  when the map room plays a scenario); the win caption shows the numbers the won
+  routine returns (T-046): 0 kills, 0 losses and the bonus as points until the
+  mission counts them.
 - **Not modelled**: the save file, the review's turning robots (T-047) and the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.

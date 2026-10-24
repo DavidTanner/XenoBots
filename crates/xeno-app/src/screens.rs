@@ -23,6 +23,7 @@ use xeno_formats::mal;
 use xeno_formats::mgavideo::Pointer;
 use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
 
+use crate::campaign::TRAINING;
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, Keys, Mouse, ScanCode};
 use crate::intro::{Cutscene, Endings};
@@ -32,6 +33,7 @@ use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
 use crate::review::{self, ReviewState};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
+use xeno_formats::ending::Numbers;
 use xeno_formats::orders::RobotKind;
 use xeno_formats::views::TrainingAction;
 
@@ -75,6 +77,15 @@ enum Action {
     Previous,
     End(Ending),
     Quit,
+    /// The map room's Ctrl+Space: run the mission with no check and no load.
+    PlayLoaded,
+    /// The developer keys (unlock word 8): progress up and down, the selected
+    /// scenario won, the loaded one lost; and Alt+F1 (unlock word 9), the editor.
+    ProgressUp,
+    ProgressDown,
+    DevWin,
+    DevLose,
+    Editor,
 }
 
 /// A key word as the original's keyboard handler posts it: modifiers in the high byte
@@ -103,7 +114,8 @@ use Screen::*;
 const LOGIN_KEYS: &[(KeyWord, Action)] = &[(ESC, Quit)];
 /// The map room's own keys (`DS:0x60bf`): P, Enter or Space play, T training, R
 /// review, N log in again, Q or Alt+Q quit; Right, Down and Tab the next scenario,
-/// Alt+Tab, Left and Up the previous. Not ESC. The developer keys are T-046's.
+/// Alt+Tab, Left and Up the previous; `=`, `-`, Ctrl+W, Ctrl+L the developer keys,
+/// Ctrl+Space run the loaded mission, Alt+F1 the editor. Not ESC.
 const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (key(0x13), Go(Review)),
     (ENTER, Play(false)),
@@ -119,6 +131,12 @@ const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (KeyWord(ALT | 0x0f), Previous),
     (key(0x4b), Previous),
     (key(0x48), Previous),
+    (key(0x0d), ProgressUp),
+    (key(0x0c), ProgressDown),
+    (KeyWord(CTRL | 0x11), DevWin),
+    (KeyWord(CTRL | 0x26), DevLose),
+    (KeyWord(CTRL | 0x39), PlayLoaded),
+    (KeyWord(ALT | 0x3b), Editor),
 ];
 /// The training menu's keys are read from the user's `xeno.exe` (`DS:0x5e9f`, in
 /// `mission::Assets::training`).
@@ -307,11 +325,17 @@ pub struct Screens {
     /// The lose selector `DS:0x6012` / 2: the robot console opened last in the mission
     /// (0 humanoid, 1 scorpion, 2 scout), reset when a mission starts.
     console: usize,
+    /// The last won mission's kills, losses and points, for the `WIN` caption.
+    numbers: Numbers,
 }
 
 /// The logged-in player's campaign, or the guest's.
 fn campaign<'a>(player: &'a Option<Player>, guest: &'a Campaign) -> &'a Campaign {
     player.as_ref().map_or(guest, |p| &p.campaign)
+}
+
+fn campaign_mut<'a>(player: &'a mut Option<Player>, guest: &'a mut Campaign) -> &'a mut Campaign {
+    player.as_mut().map_or(guest, |p| &mut p.campaign)
 }
 
 impl Screens {
@@ -356,6 +380,7 @@ impl Screens {
             endings: None,
             ending: None,
             console: 0,
+            numbers: Numbers::default(),
         }
     }
 
@@ -380,17 +405,7 @@ impl Screens {
         Some(match ending {
             Ending::Triumph => endings.triumph(),
             Ending::Lost => endings.lost(self.console),
-            Ending::Won => {
-                // Nothing counts kills and losses until the sim exists (T-046).
-                let (kills, losses) = (0, 0);
-                let points = endings.table.points(kills, losses);
-                log::info!("won: {kills} kills, {losses} losses, {points} points (0 until T-046)");
-                endings.won(xeno_formats::ending::Numbers {
-                    kills,
-                    losses,
-                    points,
-                })
-            }
+            Ending::Won => endings.won(self.numbers),
         })
     }
 
@@ -420,6 +435,12 @@ impl Screens {
     #[cfg(test)]
     pub fn mission(&self) -> &MissionState {
         &self.mission
+    }
+
+    /// The logged-in player's campaign, or the guest's.
+    #[cfg(test)]
+    pub fn campaign(&self) -> &Campaign {
+        campaign(&self.player, &self.guest)
     }
 
     /// The mouse pointer the screens show.
@@ -561,6 +582,10 @@ impl Screens {
                         {
                             self.mission_request(request, fb);
                         }
+                    }
+                    (InputEvent::MouseMove { x, y }, MapRoom) => {
+                        let campaign = campaign(&self.player, &self.guest);
+                        self.map.mouse_move((x, y), &self.map_assets, campaign);
                     }
                     (InputEvent::MouseDown { button }, MapRoom) => {
                         self.map
@@ -746,41 +771,107 @@ impl Screens {
 
     fn act(&mut self, action: Action) {
         log::debug!("screens: {:?} on {:?}", action, self.screen);
-        let campaign = campaign(&self.player, &self.guest);
+        let selection = self.map.selection();
+        let rules = &self.map_assets.rules;
+        let campaign = campaign_mut(&mut self.player, &mut self.guest);
         match (self.screen, action) {
             (MapRoom, Next | Previous) => {
                 let step = if action == Next { 1 } else { -1 };
                 self.map.step(step, campaign);
                 return;
             }
+            (MapRoom, ProgressUp | ProgressDown | DevWin | DevLose) => {
+                if !self.map_assets.developer {
+                    log::debug!("map room: {action:?} needs unlock word 8 (XENO.KEY)");
+                    return;
+                }
+                match action {
+                    ProgressUp => campaign.raise_progress(rules),
+                    ProgressDown => campaign.lower_progress(),
+                    DevWin => {
+                        if let Some((_, next)) = campaign.win(selection, Numbers::default(), rules)
+                        {
+                            self.map.set_selection(next);
+                        }
+                    }
+                    _ => _ = campaign.lose(Numbers::default()),
+                }
+                log::info!("map room: {action:?}, {}", summary(campaign));
+                self.map.redraw();
+                return;
+            }
+            (MapRoom, Editor) => {
+                if self.map_assets.editor {
+                    log::info!("map room: the scenario editor is not in the port yet (T-048)");
+                }
+                return;
+            }
             (MapRoom, Play(false)) => {
-                let Some(i) = self.map.selection() else {
+                let Some(i) = selection else {
                     log::debug!("map room: nothing selected to play");
                     return;
                 };
-                let file = maproom::scenario_file(i);
-                self.mission = match self.mission_assets.scenarios.get(&file) {
-                    Some(scenario) => {
-                        log::info!(
-                            "map room: playing scenario {i}, {file}; the mission itself cannot run yet (T-050 on)"
-                        );
-                        MissionState::new(file, scenario)
-                    }
-                    None => {
-                        log::warn!(
-                            "map room: {file} could not be loaded; a mission with no robots"
-                        );
-                        MissionState::empty()
-                    }
-                };
+                // The loaded scenario resumes where it was left; another is loaded.
+                if campaign.loaded != Some(i) {
+                    let file = maproom::scenario_file(i);
+                    let Some(scenario) = self.mission_assets.scenarios.get(&file) else {
+                        log::warn!("map room: {file} could not be loaded");
+                        campaign.loaded = None;
+                        return;
+                    };
+                    log::info!(
+                        "map room: playing scenario {i}, {file} at state {}; the mission itself cannot run yet (T-050 on)",
+                        campaign.table.scenarios[i].state
+                    );
+                    self.mission = MissionState::new(file, scenario);
+                    campaign.loaded = Some(i);
+                } else {
+                    log::info!("map room: scenario {i} is loaded; the mission resumes");
+                }
+                campaign.run_mission(selection);
                 self.scenario = Some(i);
+                self.console = 0;
+            }
+            (MapRoom, PlayLoaded) => {
+                log::info!(
+                    "map room: running the loaded mission ({:?})",
+                    campaign.loaded
+                );
+                campaign.run_mission(selection);
+                self.scenario = campaign.loaded;
                 self.console = 0;
             }
             (MapRoom, Go(Training)) if !campaign.may_train() => {
                 log::debug!("map room: no training while a mission has no result");
                 return;
             }
+            (MapRoom, Go(Training)) => {
+                campaign.open_training();
+                self.map.set_selection(None);
+            }
             (_, Play(true)) => self.scenario = None,
+            (Mission(_), End(ending)) => {
+                // Until the sim counts them, a mission scores no kills or losses.
+                let base = self.endings.as_ref().map_or(0, |e| e.table.points(0, 0));
+                let mission = Numbers {
+                    points: base,
+                    ..Numbers::default()
+                };
+                match ending {
+                    Ending::Lost => _ = campaign.lose(mission),
+                    Ending::Won | Ending::Triumph => {
+                        if let Some((shown, next)) = campaign.win(selection, mission, rules) {
+                            self.numbers = shown;
+                            self.map.set_selection(next);
+                        }
+                        // Ctrl+C: the port's stand-in for the campaign's last win.
+                        if ending == Ending::Triumph && campaign.result == 1 {
+                            campaign.won = true;
+                        }
+                    }
+                }
+                log::info!("mission: {ending:?}, {}", summary(campaign));
+            }
             _ => {}
         }
         if let (MapRoom, Go(Login) | Quit, Some(player)) = (self.screen, action, &self.player) {
@@ -795,9 +886,22 @@ impl Screens {
                 self.training = training;
                 Mission(View::SitRoom)
             }
-            Next | Previous => return,
-            End(_) if self.training => MapRoom,
-            End(ending) => Cutscene(ending),
+            Next | Previous | ProgressUp | ProgressDown | DevWin | DevLose | Editor => return,
+            PlayLoaded => {
+                self.training = false;
+                Mission(View::SitRoom)
+            }
+            // As `ui_map_room_run_mission`: the campaign won first, then lost, then won;
+            // no result (and training) goes straight back.
+            End(_) => {
+                let c = self::campaign(&self.player, &self.guest);
+                match c.result {
+                    _ if c.won && c.result != TRAINING => Cutscene(Ending::Triumph),
+                    2 => Cutscene(Ending::Lost),
+                    1 => Cutscene(Ending::Won),
+                    _ => MapRoom,
+                }
+            }
             Quit => {
                 self.quit = true;
                 return;
@@ -921,6 +1025,20 @@ fn sample_mission(assets: &mission::Assets, view: View) -> (MissionState, Screen
         .and_then(|slot| mission.view_robot(slot))
         .unwrap_or(View::SitRoom);
     (mission, Mission(shown))
+}
+
+/// The campaign's numbers for the log.
+fn summary(c: &Campaign) -> String {
+    format!(
+        "progress {}, result {}, score {}, wins {}, losses {}, day {}{}",
+        c.progress,
+        c.result,
+        c.score,
+        c.wins,
+        c.losses,
+        c.day,
+        if c.won { ", campaign won" } else { "" }
+    )
 }
 
 /// A screen whose picture is missing: a border and a yellow block.
@@ -1069,6 +1187,60 @@ pub(crate) mod tests {
         assert_eq!(final_screen(&[0x1c, 0x14, 0x1e, CTRL_W]), MapRoom);
         // Keys a screen doesn't bind do nothing.
         assert_eq!(final_screen(&[0x1c, 0x11, 0x01]), MapRoom);
+    }
+
+    #[test]
+    fn a_mission_s_result_changes_the_campaign() {
+        // Won: the scenario is won, the score has the bonus, the next one is selected,
+        // and the WIN caption gets the points.
+        let (screens, _) = run(&presses(&[0x1c, 0x0f, 0x19, CTRL_W]), Login, 500);
+        let c = screens.campaign();
+        assert_eq!(c.table.scenarios[0].state, maproom::WON);
+        assert_eq!((c.result, c.score, c.wins, c.loaded), (1, 1000, 1, Some(0)));
+        assert_eq!(screens.numbers.points, 1000);
+        assert_ne!(screens.map.selection(), Some(0));
+        // Lost: in play, forgotten, no score.
+        let (screens, _) = run(&presses(&[0x1c, 0x0f, 0x19, CTRL_L]), Login, 500);
+        let c = screens.campaign();
+        assert_eq!(c.table.scenarios[0].state, maproom::IN_PLAY);
+        assert_eq!((c.result, c.score, c.losses, c.loaded), (2, 0, 1, None));
+        // No result: training is refused and only the scenario in play is selectable;
+        // Ctrl+Space runs the mission again.
+        let (mut screens, _) = run(&presses(&[0x1c, 0x0f, 0x19]), Login, 300);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        screens.act(Go(MapRoom));
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        assert_eq!((screens.screen(), screens.campaign().result), (MapRoom, 0));
+        screens.act(Go(Training));
+        assert_eq!(screens.next, None);
+        screens.act(PlayLoaded);
+        assert_eq!(screens.next, Some(Mission(View::SitRoom)));
+    }
+
+    #[test]
+    fn training_and_the_developer_keys_follow_the_rules() {
+        // The training menu clears the selection and sets the result to 3.
+        let (screens, _) = run(&presses(&[0x1c, 0x0f, 0x14]), Login, 400);
+        assert_eq!(screens.screen(), Training);
+        assert_eq!(
+            (screens.campaign().result, screens.map.selection()),
+            (3, None)
+        );
+        // `=` raises the progress (the test assets unlock the developer keys); Ctrl+W
+        // wins the selection with no cutscene.
+        let (screens, _) = run(&presses(&[0x1c, 0x0d, 0x0f, CTRL_W]), Login, 500);
+        let c = screens.campaign();
+        assert_eq!(
+            (c.progress, c.wins, c.table.scenarios[0].state),
+            (2, 1, maproom::WON)
+        );
+        assert_eq!(screens.screen(), MapRoom);
+        // Locked without the unlock word.
+        let mut locked = new(Login);
+        locked.map_assets.developer = false;
+        locked.screen = MapRoom;
+        locked.act(ProgressUp);
+        assert_eq!(locked.campaign().progress, 1);
     }
 
     #[test]
@@ -1487,7 +1659,7 @@ pub(crate) mod tests {
     fn real_assets_every_screen_loads_and_shows() {
         // Enter, R, ESC, T, ESC (back), Tab, P (the mission's situation room), Space
         // (the first unit's console), ESC (back), Ctrl+W (won, then the map room), P
-        // (play again), Ctrl+L, P, Ctrl+C, N.
+        // (play the next scenario), Ctrl+L, P, Ctrl+C, N.
         let codes = [
             0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, CTRL_W, 0x19, CTRL_L, 0x19,
             CTRL_C, 0x31,
@@ -1515,8 +1687,10 @@ pub(crate) mod tests {
         // ending goes through its cutscene to the map room.
         assert_eq!(seen.len(), codes.len() + 3, "{seen:?}");
         assert!(seen.contains(&Mission(View::Humanoid)), "{seen:?}");
-        assert_eq!(screens.scenario(), Some(0));
-        assert_eq!(screens.mission().file, "scen00a.usg");
+        // The win moved the selection to the next scenario, which P then played.
+        assert_eq!(screens.scenario(), Some(1));
+        assert_eq!(screens.mission().file, "scen01a.usg");
+        assert_eq!(screens.campaign().table.scenarios[0].state, maproom::WON);
         blink.dedup();
         assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
         assert_eq!(screens.player.as_ref().unwrap().name, "A");
