@@ -12,10 +12,11 @@ pub mod world;
 
 pub use random::Random;
 pub use rate::Rate;
-pub use world::{Entity, EntityId, Fixed, Position, World};
+pub use world::{Census, Entity, EntityId, Fixed, Position, World};
 
 use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};
+use xeno_formats::usg::Scenario;
 
 /// The simulation's whole state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +45,41 @@ impl Sim {
             mouse: Mouse::default(),
             world: World::default(),
         }
+    }
+
+    /// A mission on `scenario` ([`World::from_scenario`]), drawing from the run's
+    /// random word. The original has one word for the whole run, so the mission takes
+    /// the campaign's and gives it back with [`Sim::park`] or [`Sim::end`].
+    pub fn load(scenario: &Scenario, random: Random) -> Sim {
+        Sim {
+            world: World::from_scenario(scenario),
+            ..Sim::with_random(random)
+        }
+    }
+
+    /// The mission stops for now (it ended with no result, so the map room can resume
+    /// it): the random word goes back to the caller, and the rest waits in a
+    /// [`Parked`] that cannot tick or draw until [`Parked::resume`] gives it a word.
+    pub fn park(self) -> (Parked, Random) {
+        let Sim {
+            retrace,
+            random,
+            keys,
+            mouse,
+            world,
+        } = self;
+        let parked = Parked {
+            retrace,
+            keys,
+            mouse,
+            world,
+        };
+        (parked, random)
+    }
+
+    /// The mission is over (won or lost): the random word goes back to the caller.
+    pub fn end(self) -> Random {
+        self.random
     }
 
     pub fn retrace(&self) -> u64 {
@@ -88,6 +124,35 @@ impl Sim {
         self.mouse.state_hash(&mut h);
         self.world.state_hash(&mut h);
         h.finish()
+    }
+}
+
+/// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
+/// and retrace count, kept to resume.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Parked {
+    retrace: u64,
+    keys: Keys,
+    mouse: Mouse,
+    pub world: World,
+}
+
+impl Parked {
+    /// The mission goes on where it stopped, drawing from `random` again.
+    pub fn resume(self, random: Random) -> Sim {
+        let Parked {
+            retrace,
+            keys,
+            mouse,
+            world,
+        } = self;
+        Sim {
+            retrace,
+            random,
+            keys,
+            mouse,
+            world,
+        }
     }
 }
 
@@ -151,5 +216,30 @@ mod tests {
         // Drawing a word is part of the state.
         sim.random().word();
         assert_ne!(sim.state_hash(), before.state_hash());
+    }
+
+    #[test]
+    fn a_mission_takes_the_run_s_random_word_and_gives_it_back() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        // The campaign draws, then lends its word to the mission, which draws more.
+        let mut campaign = Random::seeded(9);
+        campaign.word();
+        let mut sim = Sim::load(&scenario, campaign);
+        assert_eq!(sim.world.len(), 5);
+        assert_eq!(sim.world, World::from_scenario(&scenario));
+        sim.tick(&[InputEvent::MouseMove { x: 1, y: 2 }]);
+        sim.random().word();
+        // Parked, it keeps its world and input and hands the word back as it stands.
+        let (parked, mut random) = sim.clone().park();
+        let mut same = Random::seeded(9);
+        (0..2).for_each(|_| _ = same.word());
+        assert_eq!(random, same);
+        // The campaign draws in between; the mission resumes with the word as it is.
+        random.word();
+        let resumed = parked.resume(random.clone());
+        assert_eq!((resumed.retrace(), resumed.mouse()), (1, sim.mouse()));
+        assert_eq!(resumed.world, sim.world);
+        assert_eq!(resumed.end(), random);
     }
 }
