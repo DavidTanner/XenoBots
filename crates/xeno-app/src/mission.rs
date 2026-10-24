@@ -7,8 +7,11 @@
 //! situation room's main view in its orders mode (O), as `ui_sitroom_type_orders_text`
 //! types it (`docs/screens.md`, "The briefing (T-044)").
 //!
-//! The orders live in [`xeno_sim::orders::OrderBook`], built from the mission's
-//! `.usg` file and kept for the whole mission, so they persist across views. The
+//! The mission's state is a [`xeno_sim::Sim`] loaded from its `.usg` file
+//! (`docs/sim.md`, "Loading a scenario"): its world holds the objects and the robots'
+//! orders, which the views change only through the sim, so they persist across views.
+//! The sim has the run's random word while the mission runs, and gives it back to the
+//! campaign when the mission stops (`docs/sim.md`, "The run's random word"). The
 //! widget sets, key tables, sprite buttons, program names and panel styles all come
 //! from the user's `xeno.exe`, `msprite1.b@n` and `mgavideo.dvr`; what a key does is
 //! chosen by the original handler it calls.
@@ -27,10 +30,11 @@ use xeno_formats::views::{
 use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
+use xeno_sim::{Parked, Random, Sim, World};
 
 use crate::game_dir::GameFiles;
 use crate::input::MouseButton;
-use crate::maproom::scenario_file;
+use crate::maproom::{Campaign, scenario_file};
 use crate::screens::View;
 
 /// Original handlers (offsets in `xeno.exe`'s segment `1000`) whose keys the port acts
@@ -170,6 +174,30 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
     })
 }
 
+/// Logs what a mission loaded: each side's units (its robots) by kind, and the rest.
+fn log_census(file: &str, world: &World) {
+    let side = |side: Side| {
+        let c = world.census(side);
+        format!(
+            "{} units ({} humanoid, {} scorpion, {} scout), {} base, {} relays, {} obstacles",
+            c.units(),
+            c.humanoids,
+            c.scorpions,
+            c.scouts,
+            c.bases,
+            c.relays,
+            c.obstacles
+        )
+    };
+    log::info!(
+        "mission: {file}, {} objects; the player's: {}, {} robots with orders; the enemy's: {}",
+        world.len(),
+        side(Side::Human),
+        world.orders.side(Side::Human).count(),
+        side(Side::Alien)
+    );
+}
+
 /// A padded 8.3 name as the game writes it, as a lower-case file name.
 pub fn file_name(padded: &[u8]) -> String {
     String::from_utf8_lossy(padded)
@@ -249,12 +277,25 @@ enum Target {
     Button(usize),
 }
 
-/// A mission in progress: its file, the orders, and the views' state.
+/// The mission's sim: running, with the run's random word, or parked without it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Run {
+    Running(Sim),
+    Parked(Parked),
+}
+
+impl Default for Run {
+    fn default() -> Self {
+        Run::Parked(Parked::default())
+    }
+}
+
+/// A mission in progress: its file, its sim, and the views' state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mission {
     /// The `.usg` file it was loaded from.
     pub file: String,
-    pub book: OrderBook,
+    run: Run,
     viewed: Viewed,
     /// The situation room's roster: its selection (base +0x3e) and first row (+0x4c).
     selected: Option<u16>,
@@ -276,9 +317,12 @@ pub struct Mission {
 }
 
 impl Mission {
-    /// A mission on `scenario`, starting in the situation room.
-    pub fn new(file: String, scenario: &Scenario) -> Mission {
-        let mut mission = Mission::with_book(file, OrderBook::from_scenario(scenario));
+    /// A mission on `scenario`, starting in the situation room, its sim drawing from
+    /// `random`, the run's random word (from [`Campaign::take_random`]).
+    pub fn new(file: String, scenario: &Scenario, random: Random) -> Mission {
+        let sim = Sim::load(scenario, random);
+        log_census(&file, &sim.world);
+        let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
         // The mission starts in the mode saved in the player's base.
         let base = scenario
@@ -298,24 +342,17 @@ impl Mission {
         mission
     }
 
-    /// A mission with no file (no robots): only the views' pictures.
+    /// A mission with no file (no robots), parked: only the views' pictures.
     pub fn empty() -> Mission {
-        Mission::with_book(String::new(), OrderBook::default())
+        Mission::with_run(String::new(), Run::default())
     }
 
-    fn with_book(file: String, book: OrderBook) -> Mission {
-        if !file.is_empty() {
-            log::info!(
-                "mission: {file}, {} robots of the player's with orders",
-                book.side(Side::Human).count()
-            );
-        }
-        let selected = book.side(Side::Human).map(|(slot, _)| slot).next();
-        Mission {
+    fn with_run(file: String, run: Run) -> Mission {
+        let mut mission = Mission {
             file,
-            book,
+            run,
             viewed: Viewed::Base,
-            selected,
+            selected: None,
             roster_top: 0,
             panel_pressed: false,
             panel_swap: false,
@@ -326,7 +363,61 @@ impl Mission {
             typed: 0,
             capture: None,
             dirty: true,
+        };
+        let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
+        mission.selected = first;
+        mission
+    }
+
+    /// The mission stops (it ended, won, lost or with no result): its sim gives the
+    /// run's random word back to `campaign`. The objects stay, as the original keeps
+    /// them until another scenario loads, so the map room can run the mission again.
+    pub fn park(&mut self, campaign: &mut Campaign) {
+        if let Run::Running(sim) = std::mem::take(&mut self.run) {
+            let (parked, random) = sim.park();
+            self.run = Run::Parked(parked);
+            campaign.give_random(random);
         }
+    }
+
+    /// The mission goes on where it stopped, its sim taking the run's random word from
+    /// `campaign`.
+    pub fn resume(&mut self, campaign: &mut Campaign) {
+        self.run = match std::mem::take(&mut self.run) {
+            Run::Parked(parked) => Run::Running(parked.resume(campaign.take_random())),
+            running => running,
+        };
+    }
+
+    #[cfg(test)]
+    pub fn is_running(&self) -> bool {
+        matches!(self.run, Run::Running(_))
+    }
+
+    pub fn world(&self) -> &World {
+        match &self.run {
+            Run::Running(sim) => &sim.world,
+            Run::Parked(parked) => &parked.world,
+        }
+    }
+
+    /// The robots' orders, in the sim's world.
+    pub fn book(&self) -> &OrderBook {
+        &self.world().orders
+    }
+
+    /// Changes the orders through the running sim, and logs the change; a parked
+    /// mission changes nothing.
+    fn change_orders(
+        &mut self,
+        programs: &Programs,
+        f: impl FnOnce(&mut OrderBook) -> Option<Change>,
+    ) {
+        let change = match &mut self.run {
+            Run::Running(sim) => f(&mut sim.world.orders),
+            Run::Parked(_) => None,
+        };
+        self.log_change(change, programs);
     }
 
     #[cfg(test)]
@@ -336,7 +427,7 @@ impl Mission {
 
     /// Views `robot` (the player's), as with Tab or the roster.
     pub fn view_robot(&mut self, slot: u16) -> Option<View> {
-        let robot = *self.book.get(slot)?;
+        let robot = *self.book().get(slot)?;
         if robot.side != Side::Human {
             log::debug!("mission: cannot view the enemy's unit {slot}");
             return None;
@@ -350,7 +441,7 @@ impl Mission {
     pub fn viewed_label(&self) -> String {
         match self.viewed {
             Viewed::Base => "the base".into(),
-            Viewed::Robot(slot) => match self.book.get(slot) {
+            Viewed::Robot(slot) => match self.book().get(slot) {
                 Some(robot) => format!("unit {slot} ({:?})", robot.kind),
                 None => format!("unit {slot}"),
             },
@@ -362,7 +453,7 @@ impl Mission {
         match self.viewed {
             Viewed::Base => View::SitRoom,
             Viewed::Robot(slot) => self
-                .book
+                .book()
                 .get(slot)
                 .map_or(View::SitRoom, |r| view_of(r.kind)),
         }
@@ -390,7 +481,10 @@ impl Mission {
 
     /// The player's robots, by slot (the port's order for the side's unit list).
     fn robots(&self) -> Vec<u16> {
-        self.book.side(Side::Human).map(|(slot, _)| slot).collect()
+        self.book()
+            .side(Side::Human)
+            .map(|(slot, _)| slot)
+            .collect()
     }
 
     /// The next (`step` 1) or previous robot after `from`, wrapping.
@@ -475,18 +569,15 @@ impl Mission {
         match (self.viewed, handler) {
             (Viewed::Robot(_), handler::BASE) => Some(self.base()),
             (Viewed::Robot(slot), handler::AUTOMATIC) => {
-                let change = self.book.set_manual(slot, false);
-                self.log_change(change, programs);
+                self.change_orders(programs, |book| book.set_manual(slot, false));
                 None
             }
             (Viewed::Robot(slot), handler::MANUAL) => {
-                let change = self.book.set_manual(slot, true);
-                self.log_change(change, programs);
+                self.change_orders(programs, |book| book.set_manual(slot, true));
                 None
             }
             (Viewed::Robot(slot), handler::AUTOMATIC_NEXT) => {
-                let change = self.book.select_next(slot, programs);
-                self.log_change(change, programs);
+                self.change_orders(programs, |book| book.select_next(slot, programs));
                 None
             }
             (Viewed::Robot(slot), handler::NEXT_UNIT | handler::PREVIOUS_UNIT) => {
@@ -623,12 +714,13 @@ impl Mission {
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
-                let change = if right {
-                    self.book.select_previous(slot, programs)
-                } else {
-                    self.book.select_next(slot, programs)
-                };
-                self.log_change(change, programs);
+                self.change_orders(programs, |book| {
+                    if right {
+                        book.select_previous(slot, programs)
+                    } else {
+                        book.select_next(slot, programs)
+                    }
+                });
                 None
             }
             Target::UnitButton => {
@@ -748,7 +840,7 @@ impl Mission {
             let Some(&slot) = robots.get(self.roster_top + row) else {
                 break;
             };
-            let program = self.book.get(slot).map_or(0, |r| r.orders.program);
+            let program = self.book().get(slot).map_or(0, |r| r.orders.program);
             let mut text = format!("{slot:>3} ").into_bytes();
             text.extend(assets.programs.name(program));
             let mut cursor = TextCursor::at(
@@ -764,7 +856,7 @@ impl Mission {
     }
 
     fn draw_console(&self, fb: &mut Framebuffer, assets: &Assets, slot: u16) {
-        let Some(robot) = self.book.get(slot) else {
+        let Some(robot) = self.book().get(slot) else {
             return;
         };
         let tables = assets.console_tables(robot.kind);
@@ -966,7 +1058,7 @@ pub mod tests {
 
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
-        Mission::new(file, scenario)
+        Mission::new(file, scenario, Random::seeded(1))
     }
 
     fn click(
@@ -1004,10 +1096,10 @@ pub mod tests {
         assert_eq!(m.viewed_label(), "unit 2 (Humanoid)");
         // A left release on the program panel: the next program, automatic.
         assert_eq!(click(&mut m, &assets, (130, 92), LEFT), None);
-        assert_eq!(m.book.get(2).unwrap().orders, Orders::given(2));
+        assert_eq!(m.book().get(2).unwrap().orders, Orders::given(2));
         // A right release: back to 1.
         click(&mut m, &assets, (130, 92), RIGHT);
-        assert_eq!(m.book.get(2).unwrap().orders.program, 1);
+        assert_eq!(m.book().get(2).unwrap().orders.program, 1);
         // F2 binds the automatic handler; it is already automatic.
         assert_eq!(m.key(0x3c, &assets), None);
         // The unit-name button: the next unit, the scorpion in slot 5.
@@ -1016,13 +1108,13 @@ pub mod tests {
             Some(Request::Show(View::Scorpion))
         );
         click(&mut m, &assets, (130, 92), LEFT);
-        assert_eq!(m.book.get(5).unwrap().orders.program, 3);
+        assert_eq!(m.book().get(5).unwrap().orders.program, 3);
         // ESC: back to the situation room; the orders are kept.
         assert_eq!(m.key(0x01, &assets), Some(Request::Show(View::SitRoom)));
-        assert_eq!(m.book.get(2).unwrap().orders.program, 1);
-        assert_eq!(m.book.get(5).unwrap().orders.program, 3);
+        assert_eq!(m.book().get(2).unwrap().orders.program, 1);
+        assert_eq!(m.book().get(5).unwrap().orders.program, 3);
         assert_eq!(
-            m.book.get(7).unwrap().orders.program,
+            m.book().get(7).unwrap().orders.program,
             2,
             "the enemy's unchanged"
         );
@@ -1030,7 +1122,7 @@ pub mod tests {
         m.view_robot(2);
         m.mouse_down(LEFT, Some((130, 92)), &assets);
         m.mouse_up(LEFT, Some((10, 150)), &assets);
-        assert_eq!(m.book.get(2).unwrap().orders.program, 1);
+        assert_eq!(m.book().get(2).unwrap().orders.program, 1);
         assert!(m.panel_pressed);
         m.view_robot(2);
         // The corner goes back to the situation room, and there ends the mission.
@@ -1041,6 +1133,34 @@ pub mod tests {
         assert_eq!(click(&mut m, &assets, (1, 1), LEFT), Some(Request::End));
         // The enemy's robots are never viewed.
         assert_eq!(m.view_robot(7), None);
+    }
+
+    #[test]
+    fn a_mission_holds_the_run_s_random_word_only_while_it_runs() {
+        let assets = test_assets();
+        let mut campaign = crate::maproom::tests::test_campaign();
+        let (file, scenario) = assets.sample(None).unwrap();
+        let mut m = Mission::new(file, scenario, campaign.take_random());
+        assert!(m.is_running() && !campaign.has_random());
+        // The sim's world is the scenario's.
+        assert_eq!(m.world().len(), 5);
+        assert_eq!(m.world().census(Side::Human).units(), 2);
+        // Parked, the word is back as it was; the orders stay but cannot change.
+        m.park(&mut campaign);
+        assert!(!m.is_running());
+        assert_eq!(campaign.random().clone(), Random::seeded(1));
+        m.view_robot(2);
+        click(&mut m, &assets, (130, 92), LEFT);
+        assert_eq!(m.book().get(2).unwrap().orders.program, 1);
+        // Resumed, it takes the word again, and the orders change through its sim.
+        m.resume(&mut campaign);
+        assert!(m.is_running() && !campaign.has_random());
+        click(&mut m, &assets, (130, 92), LEFT);
+        assert_eq!(m.book().get(2).unwrap().orders, Orders::given(2));
+        // Parking twice gives back one word.
+        m.park(&mut campaign);
+        m.park(&mut campaign);
+        assert!(campaign.has_random());
     }
 
     #[test]
@@ -1159,7 +1279,7 @@ pub mod tests {
         let area = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area).unwrap();
         assert_eq!(assets.scenarios.len(), 17);
         for (name, scenario) in &assets.scenarios {
-            let mut m = Mission::new(name.clone(), scenario);
+            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1));
             m.mode = ORDERS_MODE;
             while m.typed < m.orders_end() {
                 m.retrace();
