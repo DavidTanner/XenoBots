@@ -4,9 +4,63 @@
 //! ([`xeno_formats::mgavideo::Pointer`]), placed by its hot spot and clipped to the
 //! view. The pixels under it are saved first and put back after the frame is shown,
 //! so the screens never see it.
+//!
+//! Which shape is shown, and whether it is shown at all, follow the host's calls to
+//! the driver's slots (`State`; `docs/screens.md`, "The pointer", T-049).
 
 use xeno_formats::mgavideo::Pointer;
 use xeno_render::Framebuffer;
+
+/// Shape numbers the host passes to slot `0x1496` (`mov al, n` in its code): the
+/// arrow, the busy shape it shows while a picture loads, and the one over the
+/// mission views' corners.
+pub const ARROW: u8 = 0;
+pub const BUSY: u8 = 1;
+pub const CORNER: u8 = 2;
+
+/// The pointer's shape (`DS:0x14b6`) and its hide counter (`DS:0x14d8`), as the
+/// driver keeps them: `gfx_hide_pointer` (slot `0x149e`) adds one and
+/// `gfx_show_pointer` (`0x14a2`) takes one away, and the pointer is drawn only while
+/// the counter is 0xff. It starts at 0, hidden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct State {
+    shape: u8,
+    counter: u8,
+}
+
+impl State {
+    /// `shape`, hidden (`shown` false) or shown.
+    pub fn new(shape: u8, shown: bool) -> State {
+        let counter = if shown { 0xff } else { 0 };
+        State { shape, counter }
+    }
+
+    pub fn hide(&mut self) {
+        self.counter = self.counter.wrapping_add(1);
+    }
+
+    pub fn show(&mut self) {
+        self.counter = self.counter.wrapping_sub(1);
+    }
+
+    pub fn shown(self) -> bool {
+        self.counter == 0xff
+    }
+
+    pub fn shape(self) -> u8 {
+        self.shape
+    }
+
+    /// Picks `shape` of `shapes`, as `gfx_set_pointer_shape` does: a number past the
+    /// last shape picks shape 0.
+    pub fn set_shape(&mut self, shape: u8, shapes: usize) {
+        self.shape = if usize::from(shape) < shapes {
+            shape
+        } else {
+            0
+        };
+    }
+}
 
 /// The pixels a drawn pointer covered: (index into the surface, colour).
 #[derive(Debug)]
@@ -65,6 +119,27 @@ mod tests {
             mask: vec![0, 0, 1, 0, 0, 1],
             colour: 0x3c,
         }
+    }
+
+    #[test]
+    fn the_counter_nests_and_shapes_past_the_last_pick_the_first() {
+        let mut state = State::new(ARROW, false);
+        assert!(!state.shown());
+        state.show();
+        assert!(state.shown());
+        state.hide();
+        state.hide();
+        state.show();
+        assert!(!state.shown());
+        state.show();
+        assert!(state.shown());
+        // A second show hides it again, as the driver's counter does.
+        state.show();
+        assert!(!state.shown());
+        state.set_shape(BUSY, 8);
+        assert_eq!(state.shape(), BUSY);
+        state.set_shape(CORNER, 2);
+        assert_eq!(state.shape(), ARROW);
     }
 
     #[test]

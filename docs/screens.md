@@ -788,8 +788,27 @@ the map room without a cutscene, as in the original.
 - **Labels.** The window title names the screen and its keys.
 - **Mouse.** The pointer and buttons reach the screens through the log
   (`docs/game-loop.md`, "Input"), and the original's pointer
-  (`crates/xeno-app/src/pointer.rs`) is drawn at it on every screen. Only the map room
-  acts on clicks.
+  (`crates/xeno-app/src/pointer.rs`) is drawn at it where the screens show it. Only the
+  map room acts on clicks.
+- **Pointer** (T-049): as "Shape and visibility" above. `pointer::State` keeps the
+  shape and the driver's hide counter; all eight shapes are read from the user's
+  `mgavideo.dvr`. It is hidden at the first log-in (also with `--screen login`) and
+  shown when the map room first opens; a log-in from the map room's N shows it; each
+  cutscene after a mission hides it and shows it again. Every other `--screen` starts
+  with it shown. The window keeps the system cursor hidden over the picture while the
+  screens are up, so the first log-in shows no pointer at all, as the original.
+  **The busy shape is shown for one retrace.** Before the map room, the training menu,
+  the review or a mission view draws its picture, the screens set shape 1 and wait one
+  retrace (the frame shows the old picture with the busy pointer), then draw the new
+  picture and set shape 0. The original shows it for as long as its disk load takes,
+  which depends on the machine and is never under a retrace (the pointer is redrawn
+  only on the retrace). The port's own load is far shorter than a retrace, so one
+  retrace is the least the original would show; a longer, made-up span would only add
+  lag. Input in that retrace is dropped, as during a fade out. After a fade the
+  palette is black, so the busy retrace only delays those screens by one retrace. In
+  the mission views, moving into a corner picks shape 2 and moving out picks 0; a view
+  that opens starts outside its corner. The main view's and the instruments' shapes
+  wait for their regions (T-056).
 - **Map room** (`crates/xeno-app/src/maproom.rs`, T-042): as "The map room (T-042)"
   above. It draws over `maproom.m@l` the boxes (keyed: the look for each `state`, or
   unavailable above the progress), the highlight on the selection, the name, score
@@ -828,7 +847,7 @@ the map room without a cutscene, as in the original.
   the boxes every time. The random word is the original's shift register, seeded from a
   fixed value instead of the timer (`campaign::Random`), until the sim's own seeded
   source exists (T-050). The calendar's day advances but is not shown. Not done: the
-  busy pointer shape during loads (T-049), and the save (T-057).
+  save (T-057).
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
   its bytes, with segments only from relocated words: the widget set (map area, and
