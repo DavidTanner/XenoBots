@@ -12,4 +12,5 @@ publish.workspace = true
 xeno-formats = { path = "../xeno-formats" }
 
 [dev-dependencies]
+xeno-formats = { path = "../xeno-formats", features = ["test-fixtures"] }
 proptest = "1.12"

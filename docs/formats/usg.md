@@ -204,7 +204,7 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 
 `xeno_formats::usg` (T-020): `parse` returns a `Scenario` with the header, terrain,
 objects, both path tables, briefing and background, and keeps any other chunks.
-`xeno_formats::orders::Orders::of` reads a robot's orders (T-043).
+`xeno_sim::orders::Orders::of` reads a robot's orders (T-043).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
 positions, the terrain features, one line per object, both sides' paths and the
 briefing's first line.

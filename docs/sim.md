@@ -21,11 +21,25 @@ tested headless in CI. It depends only on `xeno-formats`.
   four shift registers with taps 0xb400). The original seeds it from the timer chip;
   the port seeds it from the run's seed through a small linear congruential step that
   makes four odd words. The words after that follow the original exactly.
+- **`Rate`**: the retrace rates as exact fractions (`docs/game-loop.md`, "The
+  clock"), moved from `xeno-app`'s `clock.rs`. The host's `Clock` steps with it.
+  `Rate::hz` is a float for logs only.
+- **`orders`**: `OrderBook` (the robots' orders by object slot, changed only through
+  `select_next`, `select_previous` and `set_manual`, each returning the change),
+  `Orders`, `Robot` and `Change`, moved unchanged from `xeno_formats::orders`. They
+  are mission state the player changes, so they belong to the sim, and the world
+  holds an `OrderBook` in its hash. The program table, `Programs`, stays in
+  `xeno_formats::orders`: it is read from the user's `xeno.exe` by a parser, and
+  `xeno-tool` and the views' tables use it too. `xeno_sim::orders` re-exports it
+  with `RobotKind`, so `xeno-app` takes the orders' types from the sim and only
+  calls the parser in `xeno-formats`. The
+  mission still keeps its own `OrderBook`; it moves into the mission's `Sim` with
+  T-051.
 - **`World`** holds the mission's objects, by `EntityId` (the object's slot in the
   original's 240-entry object table). An `Entity` is a kind and side
   (`xeno_formats::usg::{ObjectKind, Side}`) and a `Position` of two 16.16 `Fixed`
   numbers, the fields of a `.usg` `DCBS` object, so T-051 can fill it from
-  `usg::Object` field for field.
+  `usg::Object` field for field. It also holds the `OrderBook`.
 
 ## The run's seed
 

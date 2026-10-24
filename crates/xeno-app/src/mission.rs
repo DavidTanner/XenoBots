@@ -7,7 +7,7 @@
 //! situation room's main view in its orders mode (O), as `ui_sitroom_type_orders_text`
 //! types it (`docs/screens.md`, "The briefing (T-044)").
 //!
-//! The orders live in [`xeno_formats::orders::OrderBook`], built from the mission's
+//! The orders live in [`xeno_sim::orders::OrderBook`], built from the mission's
 //! `.usg` file and kept for the whole mission, so they persist across views. The
 //! widget sets, key tables, sprite buttons, program names and panel styles all come
 //! from the user's `xeno.exe`, `msprite1.b@n` and `mgavideo.dvr`; what a key does is
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
-use xeno_formats::orders::{self, Change, OrderBook, Programs, RobotKind};
+use xeno_formats::orders;
 use xeno_formats::usg::{self, Scenario, Side};
 use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
@@ -26,6 +26,7 @@ use xeno_formats::views::{
 };
 use xeno_formats::{lzexe, mgavideo};
 use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 
 use crate::game_dir::GameFiles;
 use crate::input::MouseButton;
@@ -913,8 +914,8 @@ pub fn hatch(fb: &mut Framebuffer, colour: u8, font: Option<&Font>, label: &str)
 pub mod tests {
     use super::*;
     use xeno_formats::fixtures::{synthetic_mission_usg, synthetic_programs, synthetic_views};
-    use xeno_formats::orders::Orders;
     use xeno_render::Size;
+    use xeno_sim::orders::Orders;
 
     const DS: usize = 0x20000;
     const LEFT: MouseButton = MouseButton::Left;

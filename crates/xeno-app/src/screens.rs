@@ -39,8 +39,8 @@ use crate::review::{self, ReviewState};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 use xeno_formats::ending::Numbers;
-use xeno_formats::orders::RobotKind;
 use xeno_formats::views::TrainingAction;
+use xeno_sim::orders::RobotKind;
 
 /// A robot console or the situation room: what a mission shows depends on the object
 /// viewed (`sim_run_mission_loop`, table at `DS:0x6411`).
@@ -1685,7 +1685,7 @@ pub(crate) mod tests {
     #[test]
     fn orders_set_on_a_console_survive_switching_views() {
         use crate::input::MouseButton::Left;
-        use xeno_formats::orders::Orders;
+        use xeno_sim::orders::Orders;
         // Log in, play, Space: the humanoid console of unit 2.
         let mut log = presses(&[0x1c, 0x0f, 0x19, 0x39]);
         // A click on the program panel: the next program.
