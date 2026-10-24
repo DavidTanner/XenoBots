@@ -10,16 +10,21 @@
 //! ([`xeno_formats::maproom`]); the fonts, colours and blit modes the drawing code
 //! passes are constants here.
 //!
-//! Not done here (T-046): the hover label, the campaign-won box, the developer keys,
-//! and the campaign's changes when a scenario is played and when a mission ends.
+//! The hover label, the campaign-won box and the prompt with nothing selected are
+//! drawn here too (T-046); the campaign's rules on play and after a mission are in
+//! `crate::campaign`.
 
 use xeno_formats::ban::{self, Sprite};
+use xeno_formats::campaign::Campaign as Rules;
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{self, HANDLE_STEP, MapRoom};
 use xeno_formats::review::{self, Review};
-use xeno_formats::scendef::ScenarioTable;
+use xeno_formats::scendef::{MapBox, ScenarioTable};
+use xeno_formats::setup;
 use xeno_formats::{lzexe, mgavideo};
-use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{BlitMode, Framebuffer, Rect, SpriteBlit, TextCursor, TextMode};
+
+use crate::campaign::{Open, Random};
 
 use crate::game_dir::GameFiles;
 use crate::input::MouseButton;
@@ -29,9 +34,18 @@ use crate::input::MouseButton;
 const NAME_FONT: u16 = 0;
 const INFO_FONT: u16 = 4;
 const TEXT_COLOUR: u8 = 0xe0;
+/// The hover label (`ui_draw_map_tooltip`): font 2, colour 0xb6 on 0xa0, framed in
+/// 0x80; the campaign-won box is filled with 0xa0 and framed in `TEXT_COLOUR`.
+const HOVER_FONT: u16 = 2;
+const HOVER_TEXT: u8 = 0xb6;
+const BOX_FILL: u8 = 0xa0;
+const HOVER_FRAME: u8 = 0x80;
 /// A new campaign's progress and result flag (`scen_start_new_campaign`).
 const FIRST_PROGRESS: u16 = 1;
 const NEW_CAMPAIGN: u8 = 0xff;
+/// The unlock words the developer keys and the editor key need (`key.md`).
+const DEVELOPER_WORD: usize = 8;
+const EDITOR_WORD: usize = 9;
 /// The `state` of a locked, a won and an in-play scenario.
 pub const LOCKED: u16 = 8;
 pub const WON: u16 = 0xa;
@@ -45,6 +59,12 @@ pub struct Assets {
     pub sprites: Vec<Sprite>,
     pub name_font: Font,
     pub info_font: Font,
+    pub hover_font: Font,
+    /// The campaign's rules, the hover words and the campaign-won box.
+    pub rules: Rules,
+    /// Whether the user's `XENO.KEY` unlocks the developer keys and the editor key.
+    pub developer: bool,
+    pub editor: bool,
     /// The review, which the map room opens (T-044), and its panels' font.
     pub review: Review,
     pub review_font: Font,
@@ -61,6 +81,15 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     let exe = lzexe::unpack(&read("xeno.exe")?).map_err(|e| format!("xeno.exe: {e}"))?;
     let tables = maproom::read(&exe)
         .map_err(|e| format!("xeno.exe: no map room tables this port can read: {e}"))?;
+    let rules = xeno_formats::campaign::read(&exe)
+        .map_err(|e| format!("xeno.exe: no campaign rules this port can read: {e}"))?;
+    // `XENO.KEY` is optional; without it nothing is unlocked, as in the original.
+    let unlocks = files
+        .read("xeno.key")
+        .ok()
+        .and_then(|bytes| setup::parse_unlock_codes(&bytes).ok())
+        .unwrap_or_default();
+    let unlocked = |word: usize, value: u16| unlocks.hashes[word] == Some(value);
     let review = review::read(&exe)
         .map_err(|e| format!("xeno.exe: no review tables this port can read: {e}"))?;
     let sprites = ban::parse_sprites(&read("msprite5.b@n")?)
@@ -77,6 +106,10 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
     Ok(Assets {
         name_font: font(NAME_FONT)?,
         info_font: font(INFO_FONT)?,
+        hover_font: font(HOVER_FONT)?,
+        developer: unlocked(DEVELOPER_WORD, rules.developer_unlock),
+        editor: unlocked(EDITOR_WORD, rules.editor_unlock),
+        rules,
         review_font: font(review.font)?,
         review,
         tables,
@@ -106,13 +139,32 @@ impl Assets {
 }
 
 /// The campaign as the map room sees it: the scenario table with each `state`, the
-/// progress (`DS:0x5f9b`) and the last campaign mission's result (`DS:0x5fab`: 0xff
-/// for a new campaign, 0 while a mission has no result, 1 won, 2 lost).
+/// progress (`DS:0x5f9b`), the last campaign mission's result (`DS:0x5fab`: 0xff
+/// for a new campaign, 0 while a mission has no result, 1 won, 2 lost, 3 since the
+/// training menu opened), and the counters the rules keep (`docs/screens.md`,
+/// "Campaign rules").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Campaign {
     pub table: ScenarioTable,
     pub progress: u16,
     pub result: u8,
+    /// The score `DS:0x5f9d`, wins `0x5f9f`, losses `0x5fa1`, and every mission's
+    /// kills and own robots lost (`0x5fa3`, `0x5fa5`).
+    pub score: u16,
+    pub wins: u16,
+    pub losses: u16,
+    pub kills: u16,
+    pub robots_lost: u16,
+    /// Every scenario has been won (`DS:0x5fac`).
+    pub won: bool,
+    /// The scenario whose file is loaded (`DS:0x5f99`): playing it again resumes it.
+    pub loaded: Option<usize>,
+    /// The calendar's day (`DS:0x7d4a`), advanced after each result.
+    pub day: u8,
+    /// What the last check found open.
+    pub open: Open,
+    /// The host's random word, seeded here rather than from the timer.
+    pub random: Random,
 }
 
 impl Campaign {
@@ -123,21 +175,19 @@ impl Campaign {
             table,
             progress: FIRST_PROGRESS,
             result: NEW_CAMPAIGN,
+            score: 0,
+            wins: 0,
+            losses: 0,
+            kills: 0,
+            robots_lost: 0,
+            won: false,
+            loaded: None,
+            day: 0,
+            open: Open::default(),
+            random: Random::default(),
         };
         campaign.check();
         campaign
-    }
-
-    /// Locks the scenarios above the progress (`state` 8) and opens those at 8 that
-    /// it has reached (0).
-    pub fn check(&mut self) {
-        for scenario in &mut self.table.scenarios {
-            if scenario.unlock_level > self.progress {
-                scenario.state = LOCKED;
-            } else if scenario.state == LOCKED {
-                scenario.state = 0;
-            }
-        }
     }
 
     /// Whether scenario `i` can be picked: within the progress and not won.
@@ -201,6 +251,8 @@ pub struct MapState {
     pressed_look: bool,
     /// The widget a press captured the pointer for, and with which button.
     capture: Option<(Target, MouseButton)>,
+    /// The scenario under the pointer, for the hover label (`DS:0x5f0f`).
+    hover: Option<usize>,
     /// Something changed since the last draw.
     dirty: bool,
 }
@@ -208,6 +260,35 @@ pub struct MapState {
 impl MapState {
     pub fn selection(&self) -> Option<usize> {
         self.selection
+    }
+
+    /// Sets the selection (the campaign's rules move it).
+    pub fn set_selection(&mut self, selection: Option<usize>) {
+        self.selection = selection;
+        self.dirty = true;
+    }
+
+    /// Something outside changed what the map room shows.
+    pub fn redraw(&mut self) {
+        self.dirty = true;
+    }
+
+    fn set_hover(&mut self, hover: Option<usize>) {
+        if self.hover != hover {
+            self.hover = hover;
+            self.dirty = true;
+        }
+    }
+
+    /// The pointer moved to `at` (`ui_map_area_on_mouse`): with no button held, over
+    /// the map area, the hover label follows the box under it, selectable or not;
+    /// elsewhere it goes.
+    pub fn mouse_move(&mut self, at: (u16, u16), assets: &Assets, campaign: &Campaign) {
+        if self.capture.is_some() {
+            return;
+        }
+        let over_map = target(assets, at) == Some(Target::Map);
+        self.set_hover(over_map.then(|| campaign.hit(at.0, at.1)).flatten());
     }
 
     /// Whether the map room needs drawing again; clears it.
@@ -291,9 +372,14 @@ impl MapState {
                 assets.tables.button_keys(button).next().map(Request::Key)
             }
             // The map area hit-tests the release, wherever it is.
+            // A release that selects nothing clears the hover label.
             Target::Map => {
-                let (x, y) = at?;
-                let i = campaign.hit(x, y).filter(|&i| campaign.selectable(i))?;
+                let hit = at.and_then(|(x, y)| campaign.hit(x, y));
+                let Some(i) = hit.filter(|&i| campaign.selectable(i)) else {
+                    self.set_hover(None);
+                    self.dirty = true;
+                    return None;
+                };
                 let selected = self.select(i, campaign);
                 (selected && button == MouseButton::Right).then_some(Request::Play)
             }
@@ -322,8 +408,8 @@ impl MapState {
             assets.blit(fb, tables.highlight, corner, BlitMode::Keyed);
         }
 
-        // ui_draw_map_room_status: the name, the score (none yet: T-046), and the
-        // selected scenario's name, the label and its alert level.
+        // ui_draw_map_room_status: the name, the score, and the selected scenario's
+        // name, the label and its alert level, or a prompt; the campaign-won box.
         let text = |fb: &mut Framebuffer, panel: maproom::Panel, font: &Font, lines: &[&[u8]]| {
             let corner = (panel.area.left, panel.area.top);
             assets.blit(fb, panel.sprite, corner, BlitMode::Opaque);
@@ -333,16 +419,50 @@ impl MapState {
             }
         };
         text(fb, tables.name_panel, &assets.name_font, &[name.as_bytes()]);
-        text(fb, tables.score_panel, &assets.name_font, &[b"00000"]);
+        let score = format!("{:05}", campaign.score);
+        text(
+            fb,
+            tables.score_panel,
+            &assets.name_font,
+            &[score.as_bytes()],
+        );
         let info: Vec<&[u8]> = match selected {
             Some(scenario) => {
                 let level = state_index(scenario.state)
                     .map_or(&[][..], |i| tables.alert_levels[i].as_slice());
                 vec![&scenario.name[..], &tables.alert_label[..], level]
             }
-            None => Vec::new(),
+            None if campaign.won => vec![&assets.rules.prompt_won[..]],
+            None => vec![&assets.rules.prompt[..]],
         };
         text(fb, tables.info_panel, &assets.info_font, &info);
+        if campaign.won {
+            let area = assets.rules.won_box;
+            fill_and_frame(fb, area, TEXT_COLOUR);
+            let (x, y) = (i32::from(area.left) + 5, i32::from(area.top) + 4);
+            let mut cursor = TextCursor::at(x, y, TEXT_COLOUR);
+            let message = &assets.rules.won_message;
+            fb.draw_text(
+                &assets.info_font,
+                &mut cursor,
+                message,
+                TextMode::Transparent,
+            );
+        }
+        if let Some((i, scenario)) = self
+            .hover
+            .and_then(|i| Some((i, campaign.table.scenarios.get(i)?)))
+        {
+            let word =
+                state_index(scenario.state).map_or(&[][..], |s| &assets.rules.hover_words[s]);
+            let area = label_area(scenario.map_box, scenario.state, word.len());
+            log::trace!("map room: hover label for scenario {i} at {area:?}");
+            fill_and_frame(fb, area, HOVER_FRAME);
+            let (x, y) = (i32::from(area.left) + 2, i32::from(area.top) + 2);
+            let mut cursor = TextCursor::at(x, y, HOVER_TEXT);
+            cursor.background = BOX_FILL;
+            fb.draw_text(&assets.hover_font, &mut cursor, word, TextMode::Opaque);
+        }
 
         for (i, button) in tables.buttons.iter().enumerate() {
             let pressed = self.pressed == Some(i) && self.pressed_look;
@@ -361,6 +481,50 @@ fn target(assets: &Assets, (x, y): (u16, u16)) -> Option<Target> {
         return Some(Target::Button(i));
     }
     tables.map_area.contains(x, y).then_some(Target::Map)
+}
+
+/// Fills `area` with the box colour and frames it one pixel inside its edges, as slots
+/// `0x51a` and `0x52a` do (the bottom and right edges are outside).
+fn fill_and_frame(fb: &mut Framebuffer, area: maproom::Rect, frame: u8) {
+    let (x, y) = (i32::from(area.left), i32::from(area.top));
+    let w = u32::from(area.right.saturating_sub(area.left));
+    let h = u32::from(area.bottom.saturating_sub(area.top));
+    fb.fill_rect(Rect::new(x, y, w, h), BOX_FILL);
+    if w == 0 || h == 0 {
+        return;
+    }
+    for edge in [
+        Rect::new(x, y, w, 1),
+        Rect::new(x, y + h as i32 - 1, w, 1),
+        Rect::new(x, y, 1, h),
+        Rect::new(x + w as i32 - 1, y, 1, h),
+    ] {
+        fb.fill_rect(edge, frame);
+    }
+}
+
+/// Where the hover label goes for a box, its scenario's `state` and a word of `len`
+/// characters (`ui_place_map_tooltip`): 4 pixels a character plus 3 wide, 9 high; its
+/// bottom 3 rows above the box (at the box's top for states above 6); centred on the
+/// box, at least at `x` 10 and ending by 285, or 265 from row 120 down.
+fn label_area(b: MapBox, state: u16, len: usize) -> maproom::Rect {
+    let width = (4 * len as i32 + 3).min(i32::from(u16::MAX));
+    let bottom = i32::from(b.top) - if state > 6 { 0 } else { 3 };
+    let top = bottom - 9;
+    let left = (i32::from(b.left) + 5 - width / 2).max(10);
+    let limit = if top as u16 >= 120 { 265 } else { 285 };
+    // The original compares the right limit unsigned.
+    let left = if (left as u16) < (limit - width) as u16 {
+        left
+    } else {
+        limit - width
+    };
+    maproom::Rect {
+        top: top as u16,
+        left: left as u16,
+        bottom: bottom as u16,
+        right: (left + width) as u16,
+    }
 }
 
 /// The tables' index for `state`: 0, 2, ..., 12 map to 0..=6.
@@ -463,6 +627,10 @@ pub mod tests {
             sprites: sprites(20),
             name_font: fonts[0].clone(),
             info_font: fonts[2].clone(),
+            hover_font: fonts[1].clone(),
+            rules: crate::campaign::tests::rules(),
+            developer: true,
+            editor: false,
             review: crate::review::tests::tables(),
             review_font: fonts[0].clone(),
         }
@@ -670,6 +838,58 @@ pub mod tests {
     }
 
     #[test]
+    fn the_hover_label_sits_above_its_box_within_its_limits() {
+        let at = |top, left| MapBox {
+            top,
+            left,
+            bottom: top + 9,
+            right: left + 9,
+        };
+        let area = |b, state, len| {
+            let r = label_area(b, state, len);
+            (r.top, r.left, r.bottom, r.right)
+        };
+        // Five characters: 23 wide, centred, its bottom 3 rows above the box.
+        assert_eq!(area(at(100, 100), 0, 5), (88, 94, 97, 117));
+        // Above 6, at the box's top.
+        assert_eq!(area(at(100, 100), 8, 5), (91, 94, 100, 117));
+        // At least at 10; ending by 285, or by 265 from row 120 down.
+        assert_eq!(area(at(100, 2), 0, 5).1, 10);
+        assert_eq!(area(at(100, 300), 0, 5).1, 262);
+        assert_eq!(area(at(140, 300), 0, 5).1, 242);
+    }
+
+    #[test]
+    fn hover_label_score_and_campaign_won_box_are_drawn() {
+        let mut assets = test_assets();
+        assets.rules.hover_words[0] = b"AA".to_vec();
+        let mut campaign = test_campaign();
+        campaign.score = 1234;
+        let mut state = MapState::default();
+        // Over the first box with no button held.
+        state.mouse_move((25, 25), &assets, &campaign);
+        assert!(state.take_dirty());
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        state.draw(&mut fb, &assets, &campaign, "");
+        // The label: 11 wide, rows 8..17 and columns 20..31, framed and filled.
+        let (top, left) = (8, 20);
+        assert_eq!(fb.get(left, top), Some(HOVER_FRAME));
+        assert_eq!(fb.get(left + 1, top + 1), Some(BOX_FILL));
+        assert_eq!(fb.get(left + 10, top + 8), Some(HOVER_FRAME));
+        // Off the boxes it goes.
+        state.mouse_move((150, 150), &assets, &campaign);
+        assert!(state.take_dirty() && state.hover.is_none());
+        // The campaign won: the box, filled and framed.
+        campaign.won = true;
+        state.draw(&mut fb, &assets, &campaign, "");
+        let b = assets.rules.won_box;
+        let (x, y) = (usize::from(b.left), usize::from(b.top));
+        assert_eq!(fb.get(x, y), Some(TEXT_COLOUR));
+        assert_eq!(fb.get(x + 1, y + 1), Some(BOX_FILL));
+        assert_eq!(fb.get(usize::from(b.right), y), Some(0));
+    }
+
+    #[test]
     fn record_n_loads_its_numbered_scenario() {
         assert_eq!(scenario_file(0), "scen00a.usg");
         assert_eq!(scenario_file(12), "scen12a.usg");
@@ -701,6 +921,15 @@ pub mod tests {
                 state.step(1, &campaign);
                 state.draw(&mut fb, &assets, &campaign, "ABCDEFGH");
             }
+        }
+        // Every hover label, and the campaign-won box with nothing selected.
+        campaign.won = true;
+        state.set_selection(None);
+        for scenario in campaign.table.scenarios.clone() {
+            let b = scenario.map_box;
+            state.mouse_move((b.left, b.top), &assets, &campaign);
+            assert!(state.hover.is_some());
+            state.draw(&mut fb, &assets, &campaign, "");
         }
         for button in &assets.tables.buttons {
             let at = (button.area.left, button.area.top);

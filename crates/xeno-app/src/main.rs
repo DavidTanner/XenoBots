@@ -3,6 +3,7 @@
 //! drop and steps through the front end's screens and the cutscenes after a mission
 //! (the mission itself is still a placeholder), or with `--view` one asset.
 
+mod campaign;
 mod clock;
 mod drop;
 mod game_dir;

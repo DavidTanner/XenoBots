@@ -250,8 +250,9 @@ cutscene (`Screens::take_cutscene`), which switches to the 320x240 mode with the
 restarted, plays it as its routine does, then goes back to mode 13h with the clock
 restarted and the map room fading in from black. The lose picture follows the robot
 console opened last in the mission (reset to the humanoid's when a mission starts), as
-`DS:0x6012` does. The win caption's numbers are 0 (the port's missions do not count
-kills or losses yet, T-046), so its points are 0. Without music the counter starts at
+`DS:0x6012` does. The win caption's numbers come from the campaign's won routine
+(T-046): the port's missions do not count kills or losses yet, so they are 0 and the
+points are the bonus alone (1000 in the stock game). Without music the counter starts at
 0 with the cutscene (`TRIUMPH`: one retrace later, where `BIGWIN3` would start). One
 difference: the 15 ticks the routines wait after leaving the mode are waited before
 it, still in the 320x240 mode (the screen is black either way). `--screen won`, `lost` and `triumph` play one alone, then the map room; Ctrl+W,
