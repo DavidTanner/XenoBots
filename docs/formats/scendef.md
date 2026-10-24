@@ -46,10 +46,11 @@ The game keeps per-scenario progress in the loaded table itself (T-042,
 
 | `state` | Meaning |
 |---|---|
-| 0, 2, 4, 6 | Open, at alert level 1 to 4. After each won scenario, open records may rise by 2 (at most to 6), more likely the higher their `unlock_level` above the lowest open one |
-| 8 | Locked: `unlock_level` is above the progress. Set when the campaign is checked, and back to 0 once the progress reaches it |
+| 0, 2, 4, 6 | Open, at alert level 1 to 4. After each won scenario, open records may rise by 2 (not past 6), more likely the closer their `unlock_level` is to the lowest open one (T-046) |
+| 8 | Locked: `unlock_level` is above the progress. Set when the campaign is checked (even over a won record), and back to 0 once the progress reaches it |
 | 0xa | Won. Never selectable again |
 | 0xc | In play: a mission of it was started and not won (lost, or left with no result) |
+| 0xe and up | Not meant to happen, but reachable: a record at 0xc is not spared by the alert rise after another scenario is won, so it can go to 0xe (and on by 2). The three tables are then read past their end; playing it sets 0xc again (T-046) |
 
 The map room picks each box's sprite from a 7-entry table indexed by `state`
 (`DS:0x5f5c`), and its hover and alert words from two more. A scenario can be selected
@@ -97,8 +98,8 @@ letter (`ui_map_room_play_selected`, `1000:739c`, confirmed in T-042; see also
 
 - Settled in T-042 (`docs/screens.md`, "The map room"): the `state` values, the
   progress, the looks.
-- Whether a mission's end applies the same rules as the map room's developer keys,
-  and whether a record at 0xc can be raised to 0xe (T-046).
+- Settled in T-046: a mission's end applies the same rules as the developer keys (it
+  calls the same routines), and a record at 0xc can be raised to 0xe.
 
 ## Parser
 

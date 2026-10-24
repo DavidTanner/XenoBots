@@ -5,6 +5,7 @@
 //! `docs/formats/` for what is known about each one.
 
 pub mod ban;
+pub mod campaign;
 pub mod dsounds;
 pub mod ending;
 mod error;
