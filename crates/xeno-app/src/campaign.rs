@@ -182,6 +182,7 @@ pub(crate) mod tests {
             max_progress: 16,
             alert_chances: vec![0x8000, 0x3000, 0x1000, 0],
             hover_words: Default::default(),
+            alert_damage: [0, 50, 100, 150, 0, 0, 0],
             won_box: Rect {
                 top: 60,
                 left: 90,

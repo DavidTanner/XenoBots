@@ -920,6 +920,9 @@ impl Screens {
                         campaign.table.scenarios[i].state
                     );
                     self.mission = MissionState::new(file, scenario, campaign.take_random());
+                    let state = campaign.table.scenarios[i].state;
+                    let damage = rules.alert_damage.get(usize::from(state / 2));
+                    self.mission.apply_alert(damage.copied().unwrap_or(0));
                     campaign.loaded = Some(i);
                 } else {
                     log::info!("map room: scenario {i} is loaded; the mission resumes");

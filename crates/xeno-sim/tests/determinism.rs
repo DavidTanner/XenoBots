@@ -4,7 +4,7 @@
 use proptest::prelude::*;
 use xeno_formats::usg::{ObjectKind, Side};
 use xeno_sim::input::{InputEvent, InputLog, MouseButton, ScanCode};
-use xeno_sim::{Entity, EntityId, Fixed, Position, Sim};
+use xeno_sim::{Damage, Entity, EntityId, Fixed, Position, Sim};
 
 fn button() -> impl Strategy<Value = MouseButton> {
     prop_oneof![
@@ -54,27 +54,40 @@ fn entities() -> impl Strategy<Value = Vec<(u16, Entity)>> {
         any::<u16>()
     ];
     let side = prop_oneof![Just(Side::Human), Just(Side::Alien)];
-    prop::collection::vec((0u16..240, kind, side, any::<i32>(), any::<i32>()), 0..20).prop_map(
-        |objects| {
-            objects
-                .into_iter()
-                .map(|(slot, kind, side, x, y)| {
-                    let position = Position {
-                        x: Fixed(x),
-                        y: Fixed(y),
-                    };
-                    (
-                        slot,
-                        Entity {
-                            kind: ObjectKind::from(kind),
-                            side,
-                            position,
-                        },
-                    )
-                })
-                .collect()
-        },
+    prop::collection::vec(
+        (
+            0u16..240,
+            kind,
+            side,
+            any::<i32>(),
+            any::<i32>(),
+            any::<u16>(),
+            any::<u16>(),
+        ),
+        0..20,
     )
+    .prop_map(|objects| {
+        objects
+            .into_iter()
+            .map(|(slot, kind, side, x, y, heading, taken)| {
+                let position = Position {
+                    x: Fixed(x),
+                    y: Fixed(y),
+                };
+                (
+                    slot,
+                    Entity {
+                        kind: ObjectKind::from(kind),
+                        side,
+                        position,
+                        heading,
+                        radius: 0xa00,
+                        damage: Damage::Taken(taken),
+                    },
+                )
+            })
+            .collect()
+    })
 }
 
 fn run(seed: u32, objects: &[(u16, Entity)], log: &InputLog, retraces: u64) -> Sim {

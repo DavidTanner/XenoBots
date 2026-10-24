@@ -1,13 +1,13 @@
 //! The world: the mission's objects by their slot in the original's object table.
 //!
 //! The shape follows a `.usg` file's `DCBS` objects (`docs/formats/usg.md`): a slot, a
-//! kind, a side and a 16.16 position, so [`World::from_scenario`] copies them field for
-//! field. There is no map grid and no world edge: the files have no grid, and the
+//! kind, a side, a 16.16 position, a heading, a radius and the damage taken, so
+//! [`World::from_scenario`] copies them field for field. There is no map grid and no world edge: the files have no grid, and the
 //! world's size and edges are open until T-059, so positions are not limited here.
 
 use std::collections::BTreeMap;
 
-use xeno_formats::usg::{ObjectKind, Scenario, Side};
+use xeno_formats::usg::{Body, Object, ObjectKind, Scenario, Side};
 
 use crate::hash::{StateHash, StateHasher};
 use crate::orders::OrderBook;
@@ -46,6 +46,71 @@ pub struct Entity {
     pub kind: ObjectKind,
     pub side: Side,
     pub position: Position,
+    /// +0x10: 65,536 to a turn.
+    pub heading: u16,
+    /// +0x14: 8.8 fixed point.
+    pub radius: u16,
+    pub damage: Damage,
+}
+
+/// What an object has taken (`docs/formats/usg.md`, "How robots take damage").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Damage {
+    /// A robot has no hit points: hits wear its components down.
+    Robot(Components),
+    /// A base (destroyed at 300) or a relay (removed at 20): the damage so far.
+    Taken(u16),
+    /// Obstacles take none, and objects without a known layout have none recorded.
+    #[default]
+    None,
+}
+
+/// A robot's components (`usg::Robot`): two percentages and the damage bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Components {
+    /// +0x24, +0x4e: 0 to 100.
+    pub helm: u8,
+    pub power: u8,
+    /// +0xdc: weapons damaged.
+    pub weapons: u8,
+    /// +0xec bit 0: the targeting computer is damaged.
+    pub targeting: bool,
+    /// +0xf6: cameras, map, radar and sensors damaged, weapons destroyed.
+    pub systems: u8,
+}
+
+impl Damage {
+    /// The damage recorded in `object`'s layout.
+    pub fn of(object: &Object) -> Damage {
+        match &object.body {
+            Body::Robot(r) => Damage::Robot(Components {
+                helm: r.helm,
+                power: r.power,
+                weapons: r.weapons,
+                targeting: r.targeting & 1 != 0,
+                systems: r.systems,
+            }),
+            Body::Base(b) => Damage::Taken(b.damage),
+            Body::Relay(r) => Damage::Taken(u16::from(r.damage)),
+            Body::Other(_) => Damage::None,
+        }
+    }
+}
+
+impl StateHash for Damage {
+    fn state_hash(&self, h: &mut StateHasher) {
+        match *self {
+            Damage::Robot(c) => {
+                h.u8(0);
+                h.bytes(&[c.helm, c.power, c.weapons, u8::from(c.targeting), c.systems]);
+            }
+            Damage::Taken(n) => {
+                h.u8(1);
+                h.u16(n);
+            }
+            Damage::None => h.u8(2),
+        }
+    }
 }
 
 /// A side as a hashed byte.
@@ -102,7 +167,8 @@ impl Census {
 
 impl World {
     /// The objects of `scenario` (its `DCBS` chunk), each in its slot with its kind,
-    /// side and position, and the robots' orders as the file sets them (robots without
+    /// side, position, heading, radius and damage, and the robots' orders as loading
+    /// sets them (robots without
     /// the stock layout have none; no stock robot lacks it). If two objects share a
     /// slot, the later one is kept; no stock file has that.
     /// A file with no `DCBS` chunk gives an empty world. The objects' other bytes are
@@ -120,6 +186,9 @@ impl World {
                         x: Fixed(o.x),
                         y: Fixed(o.y),
                     },
+                    heading: o.heading,
+                    radius: o.radius,
+                    damage: Damage::of(o),
                 };
                 (EntityId(o.slot), entity)
             })
@@ -127,6 +196,28 @@ impl World {
         World {
             entities,
             orders: OrderBook::from_scenario(scenario),
+        }
+    }
+
+    /// Playing a campaign scenario that was not loaded (`sim_apply_scenario_alert`):
+    /// `damage`, the alert level's from the user's `xeno.exe`
+    /// (`xeno_formats::campaign::Campaign::alert_damage`), is added to the player's
+    /// base, the human base in the lowest slot (the stock files have one). Returns
+    /// whether there was one to damage.
+    pub fn apply_alert(&mut self, damage: u16) -> bool {
+        let base = self
+            .entities
+            .values_mut()
+            .find(|e| e.kind == ObjectKind::Base && e.side == Side::Human);
+        match base {
+            Some(Entity {
+                damage: Damage::Taken(taken),
+                ..
+            }) => {
+                *taken = taken.wrapping_add(damage);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -180,6 +271,9 @@ impl StateHash for World {
             h.u8(side_code(e.side));
             h.i32(e.position.x.0);
             h.i32(e.position.y.0);
+            h.u16(e.heading);
+            h.u16(e.radius);
+            e.damage.state_hash(h);
         }
         self.orders.state_hash(h);
     }
@@ -197,6 +291,9 @@ mod tests {
                 x: Fixed::from_int(x),
                 y: Fixed::from_int(y),
             },
+            heading: 0,
+            radius: 0xa00,
+            damage: Damage::None,
         }
     }
 
@@ -225,6 +322,14 @@ mod tests {
         b.get_mut(EntityId(7)).unwrap().position.x.0 -= 1;
         b.get_mut(EntityId(2)).unwrap().side = Side::Alien;
         assert_ne!(hash(&a), hash(&b));
+        b.get_mut(EntityId(2)).unwrap().side = Side::Human;
+        assert_eq!(hash(&a), hash(&b));
+        // So do a turn and damage.
+        b.get_mut(EntityId(7)).unwrap().heading = 1;
+        assert_ne!(hash(&a), hash(&b));
+        b.get_mut(EntityId(7)).unwrap().heading = 0;
+        b.get_mut(EntityId(7)).unwrap().damage = Damage::Taken(1);
+        assert_ne!(hash(&a), hash(&b));
         assert_eq!(a.remove(EntityId(2)).map(|e| e.side), Some(Side::Human));
         assert_eq!((a.len(), a.get(EntityId(2))), (2, None));
     }
@@ -250,6 +355,22 @@ mod tests {
         assert_eq!((scout.kind, scout.side), (ObjectKind::Scout, Side::Alien));
         assert_eq!(scout.position.x, Fixed::from_int(107));
         assert_eq!(scout.position.y, Fixed::from_int(130));
+        // Headings, radii and damage come from each kind's layout.
+        assert_eq!(scout.heading, 0x7000);
+        assert_eq!(scout.radius, scenario.objects.as_ref().unwrap()[4].radius);
+        let Damage::Robot(parts) = scout.damage else {
+            panic!("{:?}", scout.damage)
+        };
+        assert_eq!((parts.helm, parts.power), (90, 80));
+        assert_eq!(world.get(EntityId(0)).unwrap().damage, Damage::Taken(20));
+        assert_eq!(world.get(EntityId(3)).unwrap().damage, Damage::Taken(3));
+        // The alert damages the player's base and nothing else.
+        let mut alerted = world.clone();
+        assert!(alerted.apply_alert(50));
+        assert_eq!(alerted.get(EntityId(0)).unwrap().damage, Damage::Taken(70));
+        alerted.insert(EntityId(0), world.get(EntityId(0)).unwrap().clone());
+        assert_eq!(alerted, world);
+        assert!(!World::default().apply_alert(50));
         let human = Census {
             humanoids: 1,
             scorpions: 1,

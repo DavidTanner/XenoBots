@@ -39,8 +39,8 @@ impl Orders {
         }
     }
 
-    /// A robot object's orders (+0x2e, +0x30 and bit 7 of +0x23), if it is a robot
-    /// with the stock layout.
+    /// A robot object's orders as saved (+0x2e, +0x30 and bit 7 of +0x23), if it is a
+    /// robot with the stock layout.
     pub fn of(object: &Object) -> Option<Orders> {
         let robot = object.robot()?;
         Some(Orders {
@@ -74,18 +74,24 @@ pub struct OrderBook {
 }
 
 impl OrderBook {
-    /// The robots of `scenario` with their orders as the file sets them. Robots without
-    /// the stock layout are left out.
+    /// The robots of `scenario` with their orders as loading leaves them: the saved
+    /// program given and manual switch, and the program given running (the loader
+    /// gives each robot its program anew, `docs/formats/usg.md`, "Loading"). Robots
+    /// without the stock layout are left out.
     pub fn from_scenario(scenario: &Scenario) -> OrderBook {
         let robots = scenario
             .objects
             .iter()
             .flatten()
             .filter_map(|o| {
+                let saved = Orders::of(o)?;
                 let robot = Robot {
                     kind: RobotKind::of(o.kind)?,
                     side: o.side(),
-                    orders: Orders::of(o)?,
+                    orders: Orders {
+                        program: saved.ordered,
+                        ..saved
+                    },
                 };
                 Some((o.slot, robot))
             })
@@ -188,6 +194,16 @@ mod tests {
                 manual: true
             }
         );
+        // A robot saved running a state starts on the program it was given.
+        let mut running = scenario.clone();
+        let objects = running.objects.as_mut().unwrap();
+        let usg::Body::Robot(r) = &mut objects[1].body else {
+            panic!("slot 2 is a robot")
+        };
+        r.program_running = 24;
+        assert_eq!(Orders::of(&objects[1]).unwrap().program, 24);
+        let loaded = OrderBook::from_scenario(&running);
+        assert_eq!(loaded.get(2).unwrap().orders, book.get(2).unwrap().orders);
         // Choosing a program hands the robot back to it.
         let change = book.select_next(2, &programs).unwrap();
         assert_eq!(change.after, Orders::given(2));

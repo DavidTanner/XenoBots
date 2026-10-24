@@ -391,6 +391,16 @@ impl Mission {
         matches!(self.run, Run::Running(_))
     }
 
+    /// The alert's damage to the player's base, at the start of a campaign scenario
+    /// (`sim_apply_scenario_alert`); a parked mission changes nothing.
+    pub fn apply_alert(&mut self, damage: u16) {
+        if let Run::Running(sim) = &mut self.run
+            && !sim.world.apply_alert(damage)
+        {
+            log::warn!("mission: no human base takes the alert's {damage} damage");
+        }
+    }
+
     pub fn world(&self) -> &World {
         match &self.run {
             Run::Running(sim) => &sim.world,
@@ -1066,6 +1076,21 @@ pub mod tests {
     ) -> Option<Request> {
         m.mouse_down(button, Some(at), assets);
         m.mouse_up(button, Some(at), assets)
+    }
+
+    #[test]
+    fn the_alert_damages_the_player_s_base_while_running() {
+        let assets = test_assets();
+        let mut campaign = crate::maproom::tests::test_campaign();
+        let (file, scenario) = assets.sample(None).unwrap();
+        let mut m = Mission::new(file, scenario, campaign.take_random());
+        // The fixture's human base (slot 0) has taken 20.
+        m.apply_alert(30);
+        let damage = |m: &Mission| m.world().get(xeno_sim::EntityId(0)).unwrap().damage;
+        assert_eq!(damage(&m), xeno_sim::Damage::Taken(50));
+        m.park(&mut campaign);
+        m.apply_alert(30);
+        assert_eq!(damage(&m), xeno_sim::Damage::Taken(50));
     }
 
     #[test]

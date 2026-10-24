@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051)
+# The simulation (T-050, T-051, T-058)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -42,25 +42,38 @@ tested headless in CI. It depends only on `xeno-formats`.
   own: they are in its `Sim`'s world, and it changes them only through the sim.
 - **`World`** holds the mission's objects, by `EntityId` (the object's slot in the
   original's 240-entry object table). An `Entity` is a kind and side
-  (`xeno_formats::usg::{ObjectKind, Side}`) and a `Position` of two 16.16 `Fixed`
-  numbers, the fields of a `.usg` `DCBS` object. It also holds the `OrderBook`.
+  (`xeno_formats::usg::{ObjectKind, Side}`), a `Position` of two 16.16 `Fixed`
+  numbers, a heading (65,536 to a turn), a radius (8.8) and its `Damage`: a robot's
+  `Components` (helm and power percentages, the weapon, targeting and system damage
+  bits), the damage a base or relay has taken, or none (obstacles take none). These
+  are fields of a `.usg` `DCBS` object (`docs/formats/usg.md`, "Object fields"), all
+  in the state hash. It also holds the `OrderBook`.
   `World::census(side)` counts one side's objects by kind.
 
 ## Loading a scenario
 
-`World::from_scenario(&usg::Scenario)` (T-051) copies each `DCBS` object field for
-field: its slot as the `EntityId`, its kind, its side (bit 3 of +0x16) and its x and y
-as `Fixed`. The orders come from the same objects (`OrderBook::from_scenario`). Rules
-for files the stock install does not have:
+`World::from_scenario(&usg::Scenario)` (T-051, T-058) copies each `DCBS` object
+field for field: its slot as the `EntityId`, its kind, its side (bit 3 of +0x16), its
+x and y as `Fixed`, its heading and radius, and the damage its kind's layout records.
+The orders come from the same objects (`OrderBook::from_scenario`), as loading leaves
+them: the original gives every robot its program (+0x2e) anew, so each robot runs the
+program it was given, whatever the file saved as running; the manual bit is kept
+(`usg.md`, "Loading"). Rules for files the stock install does not have:
 
-- An object too short to reach +0x16 has no side and is left out, as the orders leave
-  out robots too short to hold them.
+- An object shorter than 0x18 bytes is refused by the parser. A robot without the
+  stock 0x172-byte layout has no orders and no recorded damage.
 - Two objects in one slot: the later one is kept.
 - No `DCBS` chunk: an empty world.
 
-The bytes past +0x0c are not copied; they stay in the `usg::Scenario`, which
-`xeno-app` keeps for the whole run (`mission::Assets::scenarios`). T-058 names them,
-and the fields the sim needs then go into `Entity`.
+The other named bytes stay in the `usg::Scenario`, which `xeno-app` keeps for the
+whole run (`mission::Assets::scenarios`), until a rule needs them.
+
+**The alert.** Playing a campaign scenario that is not the loaded one adds the alert
+level's damage to the player's base (`sim_apply_scenario_alert`): `World::apply_alert`
+adds it to the human base's damage, and `xeno-app` passes the value for the record's
+state before play, read from the user's `xeno.exe`
+(`xeno_formats::campaign::Campaign::alert_damage`). Training missions and a resumed
+mission take none.
 
 **Units.** A unit is a robot: a humanoid, scorpion or scout. Those are the objects in
 a side's unit list, which the consoles' Tab and the unit-name button step through

@@ -37,6 +37,15 @@ Campaign {
             72,
         ],
     ],
+    alert_damage: [
+        0,
+        5,
+        10,
+        15,
+        0,
+        0,
+        0,
+    ],
     won_box: Rect {
         top: 60,
         left: 90,

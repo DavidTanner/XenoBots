@@ -184,7 +184,7 @@ The flags at +0x16 (`usg::flag`):
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
 | 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
-| 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged |
+| 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged. Bit 2 is set in stock robots; the other bits are not traced |
 | 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
 | 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
 
@@ -300,5 +300,7 @@ objects, both path tables, briefing and background, and keeps any other chunks.
 and relays of the stock sizes). `xeno_sim::orders::Orders::of` reads a robot's orders
 (T-043).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
-positions, the terrain features, one line per object, both sides' paths and the
-briefing's first line.
+positions, the terrain features, one line per object (with its heading, radius, flags
+and its kind's orders and damage), both sides' paths and the briefing's first line.
+`xeno_sim::World::from_scenario` copies the heading, radius and damage into each
+`Entity` (`docs/sim.md`).
