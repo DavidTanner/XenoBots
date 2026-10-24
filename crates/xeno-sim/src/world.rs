@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use xeno_formats::usg::{ObjectKind, Side};
 
 use crate::hash::{StateHash, StateHasher};
+use crate::orders::OrderBook;
 
 /// A 16.16 fixed-point number, as the original keeps positions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,11 +48,21 @@ pub struct Entity {
     pub position: Position,
 }
 
-/// Every object, in slot order. A `BTreeMap`, so iteration (and so the hash and any
-/// rule that walks the objects) never depends on insertion order or a hasher's seed.
+/// A side as a hashed byte.
+pub(crate) fn side_code(side: Side) -> u8 {
+    match side {
+        Side::Human => 0,
+        Side::Alien => 1,
+    }
+}
+
+/// Every object, in slot order, and the robots' orders. A `BTreeMap`, so iteration
+/// (and so the hash and any rule that walks the objects) never depends on insertion
+/// order or a hasher's seed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct World {
     entities: BTreeMap<EntityId, Entity>,
+    pub orders: OrderBook,
 }
 
 impl World {
@@ -92,13 +103,11 @@ impl StateHash for World {
         for (id, e) in self.iter() {
             h.u16(id.0);
             h.u16(e.kind.into());
-            h.u8(match e.side {
-                Side::Human => 0,
-                Side::Alien => 1,
-            });
+            h.u8(side_code(e.side));
             h.i32(e.position.x.0);
             h.i32(e.position.y.0);
         }
+        self.orders.state_hash(h);
     }
 }
 

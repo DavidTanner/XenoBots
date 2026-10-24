@@ -873,7 +873,7 @@ the map room without a cutscene, as in the original.
   is logged and does nothing when chosen, as the original's failed load does) and goes
   to the mission; the map room's play loads `scenNNa.usg` the same way.
 - **Mission views** (`crates/xeno-app/src/mission.rs`, T-043): a mission holds the
-  loaded file, the robots' orders (`xeno_formats::orders::OrderBook`, from the file's
+  loaded file, the robots' orders (`xeno_sim::orders::OrderBook`, T-050, from the file's
   `DCBS` objects) and the views' state, for the whole mission, so orders persist across
   views. It starts on the situation room. The widget sets, key tables, sprite buttons,
   roster rows, program names and panel styles are the user's; what a key does is

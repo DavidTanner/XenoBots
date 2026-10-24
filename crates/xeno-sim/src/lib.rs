@@ -5,10 +5,13 @@
 
 pub mod hash;
 pub mod input;
+pub mod orders;
 pub mod random;
+pub mod rate;
 pub mod world;
 
 pub use random::Random;
+pub use rate::Rate;
 pub use world::{Entity, EntityId, Fixed, Position, World};
 
 use hash::{StateHash, StateHasher};

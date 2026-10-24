@@ -8,16 +8,14 @@
 //!
 //! The program table is game data (the names are game text), so [`Programs`] is read
 //! from the user's own `xeno.exe` at run time, from the instructions that use it after
-//! checking their bytes. [`OrderBook`] is the orders of every robot of a scenario: plain
-//! data, deterministic, with no I/O, ready for the simulation (T-050) to take over.
-
-use std::collections::BTreeMap;
+//! checking their bytes. The orders themselves are mission state, kept by the sim
+//! (`xeno_sim::orders::OrderBook`, T-050).
 
 use crate::FormatError;
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::sequence;
-use crate::usg::{Object, ObjectKind, Scenario, Side};
+use crate::usg::ObjectKind;
 
 /// Load-image offsets of the instructions read, and the bytes before each operand:
 /// `mov bx, [bx + table]` in `order_find_program_name` (`1000:47d9`), its `cmp al,
@@ -38,13 +36,6 @@ pub const NOT_OFFERED: u8 = 0x80;
 const MAX_HEADER: usize = 64;
 const MAX_NAME: usize = 32;
 const MAX_PROGRAMS: usize = 64;
-
-/// In-memory object offsets: the program given, the program running and the manual
-/// switch (bit 7).
-pub const ORDERED_OFFSET: usize = 0x2e;
-pub const PROGRAM_OFFSET: usize = 0x30;
-pub const MODE_OFFSET: usize = 0x23;
-pub const MANUAL: u8 = 0x80;
 
 /// The robot kinds, which index the kind masks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -138,130 +129,6 @@ impl Programs {
     }
 }
 
-/// A robot's orders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Orders {
-    /// The program it was given (+0x2e).
-    pub ordered: u8,
-    /// The program it runs (+0x30): the one given, or a state it entered by itself.
-    /// The console shows this one, and the next and previous programs are counted from
-    /// it.
-    pub program: u8,
-    /// Its pilot drives it; the program waits.
-    pub manual: bool,
-}
-
-impl Orders {
-    /// Program `program`, just given, in automatic.
-    pub fn given(program: u8) -> Orders {
-        Orders {
-            ordered: program,
-            program,
-            manual: false,
-        }
-    }
-
-    /// A robot object's orders (+0x2e, +0x30 and bit 7 of +0x23), if the object is
-    /// that big.
-    pub fn of(object: &Object) -> Option<Orders> {
-        Some(Orders {
-            ordered: object.byte_at(ORDERED_OFFSET)?,
-            program: object.byte_at(PROGRAM_OFFSET)?,
-            manual: object.byte_at(MODE_OFFSET)? & MANUAL != 0,
-        })
-    }
-}
-
-/// A robot in an [`OrderBook`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Robot {
-    pub kind: RobotKind,
-    pub side: Side,
-    pub orders: Orders,
-}
-
-/// An order changed: which robot, and its orders before and after.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Change {
-    pub slot: u16,
-    pub before: Orders,
-    pub after: Orders,
-}
-
-/// The orders of every robot in a mission, by object slot.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct OrderBook {
-    robots: BTreeMap<u16, Robot>,
-}
-
-impl OrderBook {
-    /// The robots of `scenario` with their orders as the file sets them. Objects too
-    /// small to hold orders are left out.
-    pub fn from_scenario(scenario: &Scenario) -> OrderBook {
-        let robots = scenario
-            .objects
-            .iter()
-            .flatten()
-            .filter_map(|o| {
-                let robot = Robot {
-                    kind: RobotKind::of(o.kind)?,
-                    side: o.side()?,
-                    orders: Orders::of(o)?,
-                };
-                Some((o.slot, robot))
-            })
-            .collect();
-        OrderBook { robots }
-    }
-
-    pub fn get(&self, slot: u16) -> Option<&Robot> {
-        self.robots.get(&slot)
-    }
-
-    /// The robots of `side`, by slot.
-    pub fn side(&self, side: Side) -> impl Iterator<Item = (u16, &Robot)> {
-        self.robots
-            .iter()
-            .filter(move |(_, r)| r.side == side)
-            .map(|(&slot, r)| (slot, r))
-    }
-
-    fn change(&mut self, slot: u16, f: impl FnOnce(&Robot) -> Option<Orders>) -> Option<Change> {
-        let robot = self.robots.get_mut(&slot)?;
-        let before = robot.orders;
-        let after = f(robot)?;
-        robot.orders = after;
-        (after != before).then_some(Change {
-            slot,
-            before,
-            after,
-        })
-    }
-
-    /// The next program offered to the robot; choosing a program also hands the robot
-    /// back to it (`ui_program_panel_on_mouse`, F4), and gives it both as the program
-    /// given and the one running (`order_set_program`).
-    pub fn select_next(&mut self, slot: u16, programs: &Programs) -> Option<Change> {
-        self.change(slot, |r| {
-            let program = programs.next(r.kind, r.orders.program)?;
-            Some(Orders::given(program))
-        })
-    }
-
-    /// The previous program offered to the robot, as [`OrderBook::select_next`].
-    pub fn select_previous(&mut self, slot: u16, programs: &Programs) -> Option<Change> {
-        self.change(slot, |r| {
-            let program = programs.previous(r.kind, r.orders.program)?;
-            Some(Orders::given(program))
-        })
-    }
-
-    /// Hands the robot to its pilot or back to its program (F3, F2).
-    pub fn set_manual(&mut self, slot: u16, manual: bool) -> Option<Change> {
-        self.change(slot, |r| Some(Orders { manual, ..r.orders }))
-    }
-}
-
 fn invalid(offset: usize, reason: impl Into<String>) -> FormatError {
     FormatError::Invalid {
         offset: offset as u64,
@@ -342,7 +209,7 @@ pub fn read(exe: &Unpacked) -> Result<Programs, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{synthetic_mission_usg, synthetic_programs};
+    use crate::fixtures::synthetic_programs;
 
     const DS: usize = 0x20000;
 
@@ -399,36 +266,6 @@ mod tests {
         assert!(read_image(&synthetic()[..0x5000], DS).is_err());
     }
 
-    #[test]
-    fn orders_are_set_and_kept_per_robot() {
-        let programs = read_image(&synthetic(), DS).unwrap();
-        let scenario = crate::usg::parse(&synthetic_mission_usg()).unwrap();
-        let mut book = OrderBook::from_scenario(&scenario);
-        // Slots 2 (humanoid, program 1, manual), 5 (scorpion, program 2) and 7 (scout,
-        // alien); the base and the relay are not robots.
-        let slots: Vec<_> = book.side(Side::Human).map(|(s, _)| s).collect();
-        assert_eq!(slots, [2, 5]);
-        assert_eq!(
-            book.get(2).unwrap().orders,
-            Orders {
-                ordered: 1,
-                program: 1,
-                manual: true
-            }
-        );
-        // Choosing a program hands the robot back to it.
-        let change = book.select_next(2, &programs).unwrap();
-        assert_eq!(change.after, Orders::given(2));
-        assert_eq!(book.select_next(5, &programs).unwrap().after.program, 3);
-        assert_eq!(book.select_previous(5, &programs).unwrap().after.program, 2);
-        assert!(book.set_manual(5, true).unwrap().after.manual);
-        assert_eq!(book.set_manual(5, true), None, "no change, no report");
-        // Other robots keep theirs; unknown slots change nothing.
-        assert_eq!(book.get(7).unwrap().orders.program, 2);
-        assert_eq!(book.select_next(99, &programs), None);
-        assert_eq!(book.get(2).unwrap().orders.program, 2);
-    }
-
     /// Reads the program table from the user's `xeno.exe`, checking only its shape.
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
@@ -450,16 +287,5 @@ mod tests {
         assert_eq!(count(RobotKind::Humanoid), 10);
         assert_eq!(count(RobotKind::Scout), 10);
         assert_eq!(count(RobotKind::Scorpion), 13);
-        // Every stock robot runs a program in the table.
-        for name in ["htrain.usg", "scen00a.usg"] {
-            let scenario = crate::usg::parse(&std::fs::read(dir.join(name)).unwrap()).unwrap();
-            let book = OrderBook::from_scenario(&scenario);
-            assert!(book.side(Side::Human).next().is_some(), "{name}");
-            for side in [Side::Human, Side::Alien] {
-                for (_, robot) in book.side(side) {
-                    assert!(programs.get(robot.orders.program).is_some(), "{name}");
-                }
-            }
-        }
     }
 }

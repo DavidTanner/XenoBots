@@ -2,7 +2,7 @@
 
 How `xeno-app` keeps the original's timing and turns the host's input into the game's.
 The code is `crates/xeno-app/src/clock.rs`, `translate.rs` and `window.rs`, and
-`crates/xeno-sim/src/input.rs` (T-050).
+`crates/xeno-sim/src/rate.rs` and `input.rs` (T-050).
 
 ## The clock
 
@@ -126,5 +126,5 @@ else sees winit.
 
 The input types (`ScanCode`, `InputEvent`, `Keys`, `Mouse`, `InputLog`) moved to
 `xeno-sim` (T-050, `docs/sim.md`), since the sim is driven by retraces and replays
-input logs. The clock's `Rate` follows them; the stepping, pacing and winit
+input logs, and so did the clock's `Rate`; the stepping, pacing and winit
 translation stay in `xeno-app`.
