@@ -3,7 +3,9 @@
 //! the objects (robots, bases, relays, obstacles), each side's paths, the briefing text
 //! and the sky picture. There is no map grid. See `docs/formats/usg.md`.
 
-use binrw::{BinRead, binrw};
+use std::fmt;
+
+use binrw::{BinRead, BinWrite, binrw};
 
 use crate::FormatError;
 
@@ -106,16 +108,76 @@ pub enum Side {
     Alien,
 }
 
+/// Bytes whose meaning is not known yet, kept as read. Debug output shows them as one
+/// hex string, so snapshots of the 0x172-byte objects stay readable.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Unknown<const N: usize>(pub [u8; N]);
+
+impl<const N: usize> BinRead for Unknown<N> {
+    type Args<'a> = ();
+
+    fn read_options<R: std::io::Read + std::io::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        (): Self::Args<'_>,
+    ) -> binrw::BinResult<Self> {
+        <[u8; N]>::read_options(reader, endian, ()).map(Self)
+    }
+}
+
+impl<const N: usize> BinWrite for Unknown<N> {
+    type Args<'a> = ();
+
+    fn write_options<W: std::io::Write + std::io::Seek>(
+        &self,
+        writer: &mut W,
+        endian: binrw::Endian,
+        (): Self::Args<'_>,
+    ) -> binrw::BinResult<()> {
+        self.0.write_options(writer, endian, ())
+    }
+}
+
+impl<const N: usize> fmt::Debug for Unknown<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|b| write!(f, "{b:02x}"))
+    }
+}
+
+/// The bits of an object's flags byte (+0x16), as `xeno.exe` uses them.
+pub mod flag {
+    /// Gone: destroyed or removed. A destroyed base keeps its slot while the mission's
+    /// end runs; other objects leave the object table.
+    pub const GONE: u8 = 0x01;
+    /// A robot may take the object as its target. Robots, bases and relays.
+    pub const TARGETABLE: u8 = 0x02;
+    /// The scanners list the object. Robots and bases.
+    pub const SCANNED: u8 = 0x04;
+    /// The side: clear for human, set for alien.
+    pub const ALIEN: u8 = 0x08;
+    /// Relays only: picks the relay's colour in the 3D view, and the base's network
+    /// check looks for it. Probably "linked"; not traced further.
+    pub const RELAY_LINKED: u8 = 0x10;
+    /// A unit (the robots): the loader adds it to its side's unit list and restarts
+    /// its program.
+    pub const UNIT: u8 = 0x20;
+    /// In the field: shots and contact checks only see objects with this bit. A robot
+    /// loses it inside its base and gets it back when launched. Robots, bases,
+    /// obstacles and set-up relays.
+    pub const IN_FIELD: u8 = 0x40;
+}
+
 /// One `DCBS` record: an object as the game keeps it in memory, behind a short header
 /// that says where it goes. Offsets in field docs are in the in-memory object, which
-/// starts with the kind.
+/// starts with the kind. The first 0x18 bytes are the same for every kind; the rest is
+/// the kind's [`Body`].
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Object {
-    /// Size of the object in memory. 0x172 for robots and bases, 0x34 for relays and
-    /// obstacles in every stock file.
-    #[br(assert(size as usize >= Object::FIXED_SIZE, "object of {size} bytes"))]
+    /// Size of the object in memory. [`Object::BIG`] for robots and bases,
+    /// [`Object::SMALL`] for relays and obstacles in every stock file.
+    #[br(assert(usize::from(size) >= Object::HEADER_SIZE, "object of {size} bytes"))]
     pub size: u16,
     /// Index in the game's object table (240 entries).
     #[br(assert((slot as usize) < Object::SLOTS, "object slot {slot}"))]
@@ -134,40 +196,197 @@ pub struct Object {
     pub x: i32,
     /// +0x08.
     pub y: i32,
-    /// +0x0c to the end of the object, kept as is.
-    #[br(count = size as usize - Object::FIXED_SIZE)]
-    pub data: Vec<u8>,
+    /// +0x0c: height, 16.16, the third coordinate. Zero in every stock object; a base's
+    /// is cleared at load, and the line-of-sight code lifts it by a height per kind.
+    pub z: i32,
+    /// +0x10: heading, 65,536 to a turn. The 3D view draws the model's facing from it
+    /// (`docs/formats/mxx.md`); a robot turns it towards [`Robot::target_heading`].
+    pub heading: u16,
+    /// +0x12: set per kind when an object is made (8.8: humanoid 10, scorpion 10.5,
+    /// scout 12.5; a relay's from a table by its state). Meaning unknown.
+    pub unknown_12: u16,
+    /// +0x14: radius, 8.8 fixed point, set per kind when an object is made. Contact
+    /// checks subtract both objects' radii from their distance.
+    pub radius: u16,
+    /// +0x16: the [`flag`] bits.
+    pub flags: u8,
+    /// +0x17: more state bits; the scanners skip an object with bit 0 set, and a
+    /// robot's targeting sets bit 6. Not traced.
+    pub unknown_17: u8,
+    /// +0x18 to the end.
+    #[br(args(u16::from(kind), size))]
+    pub body: Body,
 }
 
 impl Object {
-    /// In-memory bytes before `data` (kind, pool index, x, y).
-    pub const FIXED_SIZE: usize = 12;
+    /// In-memory bytes before [`Object::body`].
+    pub const HEADER_SIZE: usize = 0x18;
+    /// The big pool's object size (robots and bases).
+    pub const BIG: u16 = 0x172;
+    /// The small pool's object size (relays, obstacles, shots and the like).
+    pub const SMALL: u16 = 0x34;
     /// Entries in the game's object table.
     pub const SLOTS: usize = 240;
-    /// In-memory offset of the flags byte. Bit 3 is the side; the game also keeps
-    /// bit 0 (removed) and others here.
-    pub const FLAGS_OFFSET: usize = 0x16;
-
-    /// The byte at in-memory offset `offset`, if the object is that big.
-    pub fn byte_at(&self, offset: usize) -> Option<u8> {
-        let i = offset.checked_sub(Self::FIXED_SIZE)?;
-        self.data.get(i).copied()
-    }
-
-    pub fn flags(&self) -> Option<u8> {
-        self.byte_at(Self::FLAGS_OFFSET)
-    }
 
     /// Bit 3 of the flags: the scenario editor writes 0 for human, 8 for alien.
-    pub fn side(&self) -> Option<Side> {
-        self.flags().map(|f| {
-            if f & 0x08 == 0 {
-                Side::Human
-            } else {
-                Side::Alien
-            }
-        })
+    pub fn side(&self) -> Side {
+        if self.flags & flag::ALIEN == 0 {
+            Side::Human
+        } else {
+            Side::Alien
+        }
     }
+
+    pub fn robot(&self) -> Option<&Robot> {
+        match &self.body {
+            Body::Robot(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn base(&self) -> Option<&Base> {
+        match &self.body {
+            Body::Base(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn relay(&self) -> Option<&Relay> {
+        match &self.body {
+            Body::Relay(r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
+/// An object's bytes from +0x18, by kind. A kind whose layout is not known, or an
+/// object of an unexpected size, is kept as bytes.
+#[binrw]
+#[brw(little)]
+#[br(import(kind: u16, size: u16))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Body {
+    #[br(pre_assert(kind <= 2 && size == Object::BIG))]
+    Robot(Robot),
+    #[br(pre_assert(kind == 3 && size == Object::BIG))]
+    Base(Base),
+    #[br(pre_assert(kind == 4 && size == Object::SMALL))]
+    Relay(Relay),
+    /// Obstacles (whose only known fields are in the header), other kinds and sizes.
+    Other(#[br(count = usize::from(size) - Object::HEADER_SIZE)] Vec<u8>),
+}
+
+/// A humanoid's, scorpion's or scout's bytes from +0x18 (0x172-byte objects). The
+/// loader keeps them all, except that it restarts the program given (`program_given`)
+/// and drops `target`.
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Robot {
+    /// +0x18: +0x1a counts the robot's ticks in twos and +0x1b is a state number,
+    /// each picking a routine from a table.
+    pub unknown_18: Unknown<6>,
+    /// +0x1e: velocity, added to `x` every tick (1/65536ths).
+    pub velocity_x: i16,
+    /// +0x20: added to `y` every tick.
+    pub velocity_y: i16,
+    pub unknown_22: u8,
+    /// +0x23: [`Robot::MANUAL`], [`Robot::RECALL`]; bits 4 and 5 turn the target
+    /// heading one way or the other every tick (the pilot's turn keys).
+    pub mode: u8,
+    /// +0x24: the helm, 0 to 100 (100 in stock files); hits lower it.
+    pub helm: u8,
+    pub unknown_25: u8,
+    /// +0x26: speed; every 16 ticks it steps by one towards `target_speed`.
+    pub speed: i16,
+    /// +0x28: the speed asked for.
+    pub target_speed: i16,
+    /// +0x2a: the heading asked for; every tick `heading` turns towards it by at most
+    /// 0x5b (a scorpion's step). The editor sets both to the same value.
+    pub target_heading: u16,
+    pub unknown_2c: Unknown<2>,
+    /// +0x2e: the program given, a number in `xeno.exe`'s program table.
+    pub program_given: u8,
+    pub unknown_2f: u8,
+    /// +0x30: the program running: the one given, or a state the script entered.
+    pub program_running: u8,
+    /// +0x31, +0x33: the script's timing (+0x31 is 10 when a program starts).
+    pub unknown_31: Unknown<3>,
+    /// +0x34: the script pointer, saved as `0xa000` + its offset from the program
+    /// table.
+    pub script: u16,
+    /// +0x36: event bits (the message panel's), +0x38: the script's start phase.
+    pub unknown_36: Unknown<0x18>,
+    /// +0x4e: power systems, 0 to 100; hits lower it.
+    pub power: u8,
+    pub unknown_4f: Unknown<0x8d>,
+    /// +0xdc: weapons damaged, bits 0 to 2 (the kind's first, second and third
+    /// weapon). A second hit on a damaged weapon destroys it ([`Robot::systems`]).
+    pub weapons: u8,
+    pub unknown_dd: Unknown<9>,
+    /// +0xe6: the robot's target, saved as its object slot (0xffff: none). The loader
+    /// clears it.
+    pub target: u16,
+    pub unknown_e8: Unknown<4>,
+    /// +0xec: bit 0, the targeting computer is damaged.
+    pub targeting: u8,
+    pub unknown_ed: Unknown<9>,
+    /// +0xf6: systems damaged or destroyed: bits 0 visual camera, 1 thermal camera,
+    /// 2 map, 3 radar, 4 EMI sensors, 6 and 7 the first and second weapon destroyed.
+    pub systems: u8,
+    /// +0xf7 on, including the console's widget state (+0x10c humanoid, +0x10d scout,
+    /// +0x127 scorpion).
+    pub unknown_f7: Unknown<0x7b>,
+}
+
+impl Robot {
+    /// [`Robot::mode`]: the pilot drives; the program waits.
+    pub const MANUAL: u8 = 0x80;
+    /// [`Robot::mode`]: the situation room recalled the robot; its next tick gives it
+    /// program 4 and clears the bit.
+    pub const RECALL: u8 = 0x08;
+}
+
+/// A base's bytes from +0x18 (0x172-byte objects). The loader clears the height and
+/// the words at +0x42..=+0x4b, and makes the base its side's command object.
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Base {
+    pub unknown_18: Unknown<0x13>,
+    /// +0x2b: the side's robots lost this mission.
+    pub losses: u8,
+    /// +0x2c: enemy robots destroyed this mission.
+    pub kills: u8,
+    pub unknown_2d: u8,
+    /// +0x2e: damage taken. At 300 the base is destroyed ([`flag::GONE`]). Playing a
+    /// campaign scenario adds 0, 50, 100 or 150 to the player's by its alert level.
+    pub damage: u16,
+    /// +0x30: once destroyed, the step of the mission's end; at 0x24 the mission ends,
+    /// won if this is the alien base.
+    pub end_step: u16,
+    pub unknown_32: Unknown<2>,
+    /// +0x34: how much of the briefing the orders view has typed.
+    pub typed: u16,
+    pub unknown_36: u8,
+    /// +0x37: the situation room's main view mode (0, 2, 4, 6, 8: O, S, M, R, C).
+    pub view_mode: u8,
+    pub unknown_38: Unknown<0x85>,
+    /// +0xbd: the situation room's widget state.
+    pub view_state: Unknown<0x43>,
+    pub unknown_100: Unknown<0x72>,
+}
+
+/// A relay's bytes from +0x18 (0x34-byte objects).
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relay {
+    /// +0x18: the relay's set-up state (+0x1f, +0x20) and four words at +0x25, +0x29,
+    /// +0x2d and +0x31 a new relay sets to 0xffff. Not traced.
+    pub unknown_18: Unknown<0x1b>,
+    /// +0x33: damage taken; at 20 the relay is removed.
+    pub damage: u8,
 }
 
 /// A waypoint, 16.16 fixed point like object positions.
@@ -528,10 +747,13 @@ mod tests {
         let objects = s.objects.as_ref().unwrap();
         assert_eq!(objects.len(), 2);
         assert_eq!(objects[0].kind, ObjectKind::Humanoid);
-        assert_eq!(objects[0].side(), Some(Side::Human));
+        assert_eq!(objects[0].side(), Side::Human);
         assert_eq!(fixed_to_f64(objects[0].x), 95.5);
         assert_eq!(objects[1].kind, ObjectKind::Relay);
-        assert_eq!(objects[1].side(), Some(Side::Alien));
+        assert_eq!(objects[1].side(), Side::Alien);
+        // 0x18-byte objects have no room for a kind's layout.
+        assert_eq!(objects[1].body, Body::Other(Vec::new()));
+        assert_eq!(objects[1].relay(), None);
 
         let terrain = s.terrain.as_ref().unwrap();
         assert_eq!(terrain.features.len(), 2);
@@ -565,6 +787,42 @@ mod tests {
         s.human_paths = None;
         insta::assert_debug_snapshot!(s);
         insta::assert_debug_snapshot!(paths.used());
+    }
+
+    #[test]
+    fn stock_sized_objects_get_their_kind_s_layout() {
+        use crate::fixtures::synthetic_mission_usg;
+        let s = parse(&synthetic_mission_usg()).unwrap();
+        let objects = s.objects.unwrap();
+        let base = objects[0].base().unwrap();
+        assert_eq!((base.damage, base.view_mode), (20, 0));
+        let humanoid = &objects[1];
+        assert_eq!(humanoid.heading, 0x2000);
+        assert_ne!(humanoid.flags & flag::UNIT, 0);
+        let robot = humanoid.robot().unwrap();
+        assert_eq!((robot.program_given, robot.program_running), (1, 1));
+        assert_eq!((robot.helm, robot.power), (90, 80));
+        assert_ne!(robot.mode & Robot::MANUAL, 0);
+        assert_eq!(objects[2].relay().unwrap().damage, 3);
+        let scout = &objects[4];
+        assert_eq!((scout.side(), scout.heading), (Side::Alien, 0x7000));
+        assert!(scout.base().is_none() && scout.robot().is_some());
+        // A robot kind in a small object, or an unknown kind, is kept as bytes.
+        let mut small = humanoid.clone();
+        small.size = Object::SMALL;
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        small.body = Body::Other(vec![7; usize::from(Object::SMALL) - Object::HEADER_SIZE]);
+        small.write(&mut bytes).unwrap();
+        let back = Object::read(&mut std::io::Cursor::new(bytes.into_inner())).unwrap();
+        assert_eq!(back, small);
+    }
+
+    #[test]
+    fn stock_sized_object_snapshot() {
+        use crate::fixtures::synthetic_mission_usg;
+        let objects = parse(&synthetic_mission_usg()).unwrap().objects.unwrap();
+        // The base, the humanoid and the relay.
+        insta::assert_debug_snapshot!(&objects[..3]);
     }
 
     #[test]
@@ -688,17 +946,39 @@ mod tests {
             for side in [Side::Human, Side::Alien] {
                 let bases = objects
                     .iter()
-                    .filter(|o| o.kind == ObjectKind::Base && o.side() == Some(side))
+                    .filter(|o| o.kind == ObjectKind::Base && o.side() == side)
                     .count();
                 assert_eq!(bases, 1, "{name}: {side:?} bases");
             }
             for o in objects {
                 let want = match o.kind {
-                    ObjectKind::Relay | ObjectKind::Obstacle => 0x34,
+                    ObjectKind::Relay | ObjectKind::Obstacle => Object::SMALL,
                     ObjectKind::Other(k) => panic!("{name}: object kind {k}"),
-                    _ => 0x172,
+                    _ => Object::BIG,
                 };
-                assert_eq!(o.size, want, "{name}: {:?}", o.kind);
+                let at = format!("{name}: slot {} {:?}", o.slot, o.kind);
+                assert_eq!(o.size, want, "{at}");
+                // Every object is present, and only robots are units (the loader
+                // registers those and nothing else).
+                assert_eq!(o.flags & flag::GONE, 0, "{at}");
+                let robot = matches!(
+                    o.kind,
+                    ObjectKind::Humanoid | ObjectKind::Scorpion | ObjectKind::Scout
+                );
+                assert_eq!(o.flags & flag::UNIT != 0, robot, "{at}");
+                // Each kind with a layout gets it; the rest stay bytes.
+                match (&o.body, o.kind) {
+                    (Body::Robot(r), _) => {
+                        assert!(robot, "{at}");
+                        // Percentages, and a script pointer in its saved form.
+                        assert!(r.helm <= 100 && r.power <= 100, "{at}");
+                        assert_eq!(r.script & 0xf800, 0xa000, "{at}");
+                    }
+                    (Body::Base(b), ObjectKind::Base) => assert!(b.damage < 300, "{at}"),
+                    (Body::Relay(r), ObjectKind::Relay) => assert!(r.damage < 20, "{at}"),
+                    (Body::Other(_), ObjectKind::Obstacle) => {}
+                    (body, kind) => panic!("{at}: {kind:?} read as {body:?}"),
+                }
             }
             assert!(s.background_name().unwrap().ends_with(".BIN"), "{name}");
             assert!(!s.briefing_lines().is_empty(), "{name}");

@@ -745,9 +745,8 @@ fn usg_details(bytes: &[u8]) -> Details {
     .unwrap();
     for o in objects {
         let side = match o.side() {
-            Some(Side::Human) => "human",
-            Some(Side::Alien) => "alien",
-            None => "?",
+            Side::Human => "human",
+            Side::Alien => "alien",
         };
         writeln!(
             out,

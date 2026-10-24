@@ -327,8 +327,9 @@ menu's value), so a training mission changes nothing.
   objects and counts kept); otherwise its `scenNNa.usg` is loaded (a failure forgets the
   loaded scenario and plays nothing), `sim_apply_scenario_alert` (`1000:68a0`) adds a
   value from the table `DS:0x5a3f` by the record's `state` **before** it becomes 12 to a
-  field of the mission's command object (`[DS:0x568e] + 0x2e`), so a higher alert makes
-  the mission harder in some way (T-058), and `sim_reset_mission_counts`
+  field of the mission's command object (`[DS:0x568e] + 0x2e`): 0, 50, 100 or 150 damage
+  to the player's base, which is destroyed at 300 (T-058, `usg.md`), and
+  `sim_reset_mission_counts`
   (`1000:68ae`) zeroes its kills and losses and sets the situation room's view mode to
   0. Then the game counts as loaded (`DS:0x6005`, so N and Q save) and action 0 runs.
 - **Developer keys**: `=` raises the progress by one unless it is 16 (`1000:74ee`); `-`
@@ -574,8 +575,9 @@ robot viewed:
 
 In the stock `.usg` files nearly every robot, of either side, is saved with +0x23 bit
 7 set (one human robot in `scen06a` is not); the human robots are given program 9 (or
-1 in `scen08a`), the alien ones 8 or, for scorpions, 13. Whether the object-loaded hook
-(`1000:7c84`, not traced) changes the manual bit when a mission starts is open. The
+1 in `scen08a`), the alien ones 8 or, for scorpions, 13. Loading keeps the manual bit,
+but gives every robot its program (+0x2e) anew, so +0x30 is the given program when a
+mission starts (T-058, `usg.md`, "Loading"). The
 paths of `APTH`/`HPTH` are each side's missions for the computer (`usg.md`); no view
 sets them.
 
@@ -954,8 +956,7 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   `1000:424b`, `5c25`, `5c50` and `7cf9` (not traced).
 - The situation room's panels, spinners and remaining keys, the consoles'
   instruments, and the keys that drive and fight (T-056).
-- Whether the object-loaded hook changes a robot's manual bit, and what +0x2e is used
-  for once a state replaces +0x30 (T-053, T-058).
+- What +0x2e is used for once a state replaces +0x30 during a mission (T-053).
 - What `DS:0x5ef2` is (cleared by the won routine and the `-` key), and where the
   campaign's calendar (`DS:0x7d4a`, `0x7d4b`) is shown (T-056).
 - Whether a picture loader always reads the file: the map room's draw handler skips
@@ -1027,6 +1028,17 @@ created), `ui_map_room_open_training` (`1000:6ff8`, created), `ui_map_room_play_
 in `mgavideo.dvr` `gfx_alloc_rect_save` (0x0cf7, slot `0x50a`), `gfx_save_rect`
 (0x0d17, `0x50e`), `gfx_restore_rect` (0x0d99, `0x512`), `gfx_fill_rect` (0x0e6e,
 `0x51a`) and `gfx_frame_rect` (0x0fb8, `0x52a`), all created. All `confirmed`, all saved.
+
+T-058 named, in `xeno.exe`: `scen_on_object_loaded` (`1000:7c6b`),
+`scen_on_old_layout_object_loaded` (`1000:7c84`), `scen_unpack_all_objects`
+(`1000:f109`), `scen_set_up_side_base` (`1000:626d`), `order_pack_script_pointer`
+(`1000:4826`), `order_unpack_script_pointer` (`1000:4833`), `sim_init_base`
+(`1000:6209`), `sim_init_new_object` (`1000:f812`), `sim_add_unit_to_side_list`
+(`1fe6:6e42`), `sim_destroy_robot` (`1000:de51`), and created `sim_damage_object`
+(`1000:f84d`), `sim_damage_humanoid` (`1000:af51`), `sim_damage_scorpion`
+(`1000:94a0`), `sim_damage_scout` (`1000:c68a`), `sim_damage_base` (`1000:62b7`) and
+`sim_damage_relay` (`1000:cfba`); details in `docs/formats/usg.md`. All `confirmed`, all
+saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,

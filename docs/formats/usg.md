@@ -6,7 +6,7 @@
 byte. The chunk layout, and most of what each chunk is, comes from `xeno.exe`'s loader
 and its chunk handlers. The object kinds and sides come from the game's built-in
 scenario editor (below). Inside the objects, terrain records and path headers, most
-bytes are still unknown (T-058, T-059).
+bytes are still unknown (T-059, T-107; the objects' layout is in "Object fields").
 
 ## Files
 
@@ -105,24 +105,115 @@ object (at most 40, from `DS:0xa8cc`) or a 0x34-byte one (at most 200, from `DS:
 by a flag per kind. It writes the kind and the number it allocated into the object's
 first two words. The reader then overwrites everything from +0x02 with the file.
 
-Object fields known so far (offsets in the object, as in memory):
+#### Loading (T-058)
+
+For a version 0x80 file, the reader keeps every byte of an object as the file has it,
+then (`scen_on_object_loaded`, `1000:7c6b`):
+
+- An object with flag bit 5 (a unit: the robots) has its script pointer turned back
+  into an address and is added to its side's **unit list**, 38 entries kept by the
+  side's base (`sim_add_unit_to_side_list`, `1fe6:6e42`), in file order. The list
+  follows whichever base was loaded last for that side, so a base must come before
+  its robots (it does in every stock file).
+- A base (kind 3) becomes its side's command object (`DS:0x568e` human, `DS:0x5690`
+  alien; `scen_set_up_side_base`, `1000:626d`). Its height and the words at
+  +0x42..=+0x4b are cleared.
+
+After the last object, `scen_unpack_all_objects` (`1000:f109`) calls each kind's
+"unpack" routine (table `DS:0xe83e`; the matching "pack" table at `DS:0xe81c` runs
+before a save). For a robot it turns the script pointer into an address **again**: the
+value is no longer in its saved form, so the robot is given its program anew
+(`order_set_program` with +0x2e). So at load every robot runs the program it was given
+(+0x30 = +0x2e), from its start, whatever the file saved as running. It also drops the
+robot's target (+0xe6) and the reference count it held on it. The manual bit is kept.
+The other kinds' routines do nothing.
+
+Files with another version take a different path (`scen_on_old_layout_object_loaded`,
+`1000:7c84`): only 0x16 bytes are read and the rest of the object is set up as the
+editor does for a new one (`sim_init_new_object`, `1000:f812`, and the kind's routine
+in `DS:0xe73f`).
+
+#### Object fields
+
+Offsets in the object, as in memory. `xeno_formats::usg::Object` names the first 0x18
+bytes, and `Body` the rest by kind (`Robot`, `Base`, `Relay`; anything else stays
+bytes). Unnamed bytes are kept as `unknown_XX` fields.
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`) |
+| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play and not traced (shots and explosions, presumably); removing an object can turn it into kind 15 |
 | 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved. Some stock files repeat a number |
 | 0x04 | 4 | `x` | Position, 16.16 |
 | 0x08 | 4 | `y` | |
-| 0x0c | 4 | | Zero in every stock object. Possibly the third coordinate (the debug labels include `LOC-Z`) |
-| 0x16 | 1 | flags | Bit 3 is the side: the editor writes 0 for human and 8 for alien. The game also uses bit 0 (removed), 0x20 and others |
-| 0x23 | 1 | mode (robots) | Bit 7: manual, the pilot drives (T-043, `docs/screens.md`, "Orders"); bit 3: recalled |
-| 0x2e | 1 | program given (robots) | A number in `xeno.exe`'s program table (T-043) |
-| 0x30 | 1 | program running (robots) | That program, or a state the script entered by itself |
-| 0x31, 0x33, 0x34, 0x38 | | the script's state (robots) | +0x34 is the script pointer, saved as `0xa000` + its offset from the program table |
-| 0x34, 0x37 | 2, 1 | situation room (bases) | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
-| 0xbd | 0x43 | view state (bases) | The situation room's widget state (T-043) |
-| 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | view state (robots) | The humanoid, scorpion and scout console's widget state (T-043) |
-| rest | | `data` | Unknown (T-058). The editor writes one value to both +0x10 and +0x2a for robots (a heading?) |
+| 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object. The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
+| 0x10 | 2 | `heading` | 65,536 to a turn. The editor's arrow keys step it by 0xb6 (a degree). The 3D view's render node copies it (`mxx.md`) |
+| 0x12 | 2 | `unknown_12` | Set per kind when an object is made (8.8: humanoid 10, scorpion 10.5, scout 12.5; a relay's from a table by its state). Not traced |
+| 0x14 | 2 | `radius` | 8.8. Set per kind when an object is made: base 35, scorpion 18, humanoid and scout 10, obstacle 13, relay 5. Contact checks take both radii off the distance; the render node keeps the whole part |
+| 0x16 | 1 | `flags` | Bits below |
+| 0x17 | 1 | `unknown_17` | More state bits: the scanners skip an object with bit 0; a robot's targeting sets bit 6. Not traced |
+
+The flags at +0x16 (`usg::flag`):
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 0 (0x01) | `GONE` | Destroyed or removed. Clear in every stock object |
+| 1 (0x02) | `TARGETABLE` | A robot may take the object as its target. Robots, bases, relays |
+| 2 (0x04) | `SCANNED` | The scanners list it. Robots and bases |
+| 3 (0x08) | `ALIEN` | The side: the editor writes 0 for human, 8 for alien |
+| 4 (0x10) | `RELAY_LINKED` | Relays: picks the relay's colour in the 3D view; a base's network check looks for it. The name is a guess |
+| 5 (0x20) | `UNIT` | A robot: registered in its side's unit list at load. Set on every stock robot and on nothing else |
+| 6 (0x40) | `IN_FIELD` | Shots and contact checks only see objects with it. A robot loses it inside its base and gets it back when launched. Robots, bases, obstacles and set-up relays |
+| 7 (0x80) | | Not seen used |
+
+**Robots** (0x172 bytes, `usg::Robot`):
+
+| Offset | Size | Field | Meaning |
+|---|---|---|---|
+| 0x1a, 0x1b | 1, 1 | | A tick counter stepping by 2, and a state number; each picks a routine from a table. Not traced |
+| 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths) |
+| 0x23 | 1 | `mode` | Bit 7: manual, the pilot drives (T-043, `docs/screens.md`, "Orders"); bit 3: recalled (the scorpion's next tick gives it program 4 and clears the bit); bits 4 and 5 turn the target heading by 0x40 one way or the other every tick (the pilot's turn keys) |
+| 0x24 | 1 | `helm` | 0 to 100; a hit can take 0 to 7 off |
+| 0x26 | 2 | `speed` | Every 16 ticks it steps by one towards `target_speed` (limited by a value at +0x118). Units not traced |
+| 0x28 | 2 | `target_speed` | |
+| 0x2a | 2 | `target_heading` | Every tick `heading` turns towards it by at most 0x5b (the scorpion's step; the others not read). The editor writes the same value here and at +0x10 |
+| 0x2e | 1 | `program_given` | A number in `xeno.exe`'s program table (T-043) |
+| 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
+| 0x31, 0x33, 0x38 | | | The script's timing (T-043) |
+| 0x34 | 2 | `script` | The script pointer, saved as `0xa000` + its offset from the program table |
+| 0x36 | | | Event bits, which the message panel reports |
+| 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
+| 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile) |
+| 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
+| 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged |
+| 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
+| 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
+
+**How robots take damage** (`sim_damage_object`, `1000:f84d`, calls the kind's routine
+in the table at `DS:0xe783` with the damage in `AL`): a robot hit for more than 80 is
+destroyed at once (`sim_destroy_robot`, `1000:de51`). Otherwise each point of damage
+picks one of the kind's components by chance from a table (`DS:0x6856` humanoid,
+`0x659a` scorpion, `0x6c06` scout; three-byte entries of a chance out of 256 and a
+routine) and damages it: the helm or the power percentage drops, or a bit above is
+set (a second hit on a damaged weapon destroys it). The message panel reports each.
+Robots have no hit points: a robot hit for 80 or less survives.
+
+**Bases** (0x172 bytes, `usg::Base`):
+
+| Offset | Size | Field | Meaning |
+|---|---|---|---|
+| 0x2b | 1 | `losses` | The side's robots lost this mission (T-045) |
+| 0x2c | 1 | `kills` | Enemy robots destroyed this mission |
+| 0x2e | 2 | `damage` | Damage taken (`sim_damage_base`, `1000:62b7`). At 300 the base is destroyed (`GONE`) and the other side is told; below that its own side is told, at most once every 480 counts of `DS:0x374`. Playing a campaign scenario adds 0, 50, 100 or 150 to the player's base by the record's alert level (`sim_apply_scenario_alert`, table `DS:0x5a3f`) |
+| 0x30 | 2 | `end_step` | Once the base is destroyed, the mission's end steps it; at 0x24 the mission ends, won if the alien base was destroyed (`sim_end_mission_with_result`, T-046) |
+| 0x34, 0x37 | 2, 1 | `typed`, `view_mode` | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
+| 0x4d | 2 | | The side's unit list, set at load |
+| 0xbd | 0x43 | `view_state` | The situation room's widget state (T-043) |
+
+**Relays** (0x34 bytes, `usg::Relay`): +0x33 `damage`, at 20 the relay is removed
+(`sim_damage_relay`, `1000:cfba`). +0x1f and +0x20 are its set-up state, and a new
+relay sets the words at +0x25, +0x29, +0x2d and +0x31 to 0xffff; not traced.
+**Obstacles** (0x34 bytes) have no damage routine, so shots do not harm them; nothing
+past +0x18 is known.
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
 sit on whole-number positions in chains near their own side's base.
@@ -194,8 +285,9 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 
 ## Open questions
 
-- The object bytes after +0x0c: heading, damage, and the rest of the 0x172-byte robot
-  layout (T-058). The orders and the views' state blocks are placed (T-043).
+- The object bytes still unnamed: +0x12 and +0x17, most of a robot's 0x172 bytes
+  (sensors, weapons, the script's working bytes), the relay's set-up state and links,
+  and anything in an obstacle past +0x18 (T-107).
 - The world's size and edges, and the terrain record fields not listed above. Also how
   `point_count` and the rest of the path header are used (T-059).
 - Whether `pool_index` matters once loaded, given that stock files repeat some.
@@ -204,7 +296,9 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 
 `xeno_formats::usg` (T-020): `parse` returns a `Scenario` with the header, terrain,
 objects, both path tables, briefing and background, and keeps any other chunks.
-`xeno_sim::orders::Orders::of` reads a robot's orders (T-043).
+`Object` names the common header and `Body` each kind's layout (T-058; robots, bases
+and relays of the stock sizes). `xeno_sim::orders::Orders::of` reads a robot's orders
+(T-043).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
 positions, the terrain features, one line per object, both sides' paths and the
 briefing's first line.
