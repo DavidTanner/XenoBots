@@ -258,7 +258,7 @@ routine by the node's type byte (table at `DS:0x3994`):
 | 0x22, 0x26 | `gfx_draw_model_on_screen` | A model at a fixed point of the view, scale from the node; its facing is the node's heading itself (heading 0 shows facing 0) |
 
 Which objects use which type, and the frame numbers they hold, are the simulation's
-business (T-051, T-056). A render node holds, among others, the object number (+0x02),
+business (T-051, T-100). A render node holds, among others, the object number (+0x02),
 the type (+0x04), the model number (+0x05), the heading (+0x08, 65,536 to a turn),
 the position (+0x0a), the distance from the camera (+0x16, 16.16) and, from +0x1e,
 one frame number per animation.
@@ -307,6 +307,29 @@ from slot `0x574`, the anchor from `0x578` and the scale from `0x584`):
 - Unlike the sprite blitters (`b@n.md`), the image is clipped to the 3D view's
   rectangle rather than dropped when it does not fit.
 
+Details confirmed in `mgavideo.dvr` (T-056):
+
+- The scale slot keeps the last scale and rebuilds the table only when it changes.
+  The counts are bytes: the fill value is the high byte of `s + 0xff` in 16 bits, so
+  scales above 0xff00 would wrap to 0. The game never asks for one; the port does not
+  reproduce the wrap.
+- The image's rectangle on screen runs from the anchor plus the start of unit `x` (and
+  `y`) to the end of unit `x + width - 1` (and `y + height - 1`), summed straight
+  through the table. Units outside -128..127 would read past the table's 256 bytes;
+  every part of a stock model stays inside it (`x >= -96`, `x + width <= 98`,
+  `y >= -43`, `y + height <= 66`), and the port draws nothing there.
+- The clip rectangle (slot `0x574`: a row-address table, and top, left, bottom and right
+  words) includes its left and top edges and excludes its right and bottom ones. The
+  image's rectangle is cut to it first; a unit cut part way keeps its visible columns
+  or rows.
+- Each drawn row stops at the rectangle's right edge, which is what limits a row to
+  the image's width.
+- There are three row routines, picked in this order: mirrored (any scale), enlarged
+  (`s` above 256) and shrunk (`s` up to 256, every count 0 or 1). They follow the same
+  rule; a row whose count is 0 is skipped, and a larger one is drawn that many times.
+  A mirrored image is drawn right to left from the rectangle's right edge, reading the
+  table backwards from unit `x + width - 1`.
+
 **Palette.** Models carry none and are drawn with whatever palette is current. In a
 mission that is the cockpit screen's (`humancon`, `scorpcon` or `scoutcon`, shown with
 its own palette, `m@l.md`). The model pixels use indices 1, 5 to 12, 49 to 63 and 128
@@ -316,7 +339,7 @@ to 254, and the three cockpits agree on all of them except 253 and 254, which on
 ## Open questions
 
 None about loading, drawing or facing direction. Which render type and frame numbers
-each object gets belongs to the simulation and renderer (T-051, T-056).
+each object gets belongs to the simulation and renderer (T-051, T-100).
 
 ## In the executables
 
@@ -363,4 +386,11 @@ frames. `xeno-tool dump` writes each frame of each facing as a PNG with a transp
 background (`<model>_f<facing>_a<animation>_<frame>.png`; colour 0 is left
 transparent, as in the game), reading the model's `.m00` from the same directory for
 bit-14 parts, and each `.m00` image on its own. It draws each animation's frames
-separately; combining them by `depth` is for the renderer (T-056).
+separately; combining them by `depth` is for the renderer.
+
+## Drawing in the port
+
+`xeno_render::ModelScale` is the repeat table and `Framebuffer::blit_model_image` the
+image blit of slot `0x58c`, with a `ModelTarget` holding the clip rectangle, the
+anchor and the scale. `Framebuffer::draw_model_frames` composes one frame of each
+animation by `depth`, as above (T-056).
