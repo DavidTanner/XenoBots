@@ -1,4 +1,4 @@
-# The simulation (T-050)
+# The simulation (T-050, T-051)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -8,6 +8,12 @@ tested headless in CI. It depends only on `xeno-formats`.
 - **`Sim`** is the whole state: the retraces run, the random word, the held keys and
   mouse, and the `World`. `Sim::new(seed)` starts an empty world;
   `Sim::with_random(random)` starts one that carries on a random word already in use.
+  `Sim::load(scenario, random)` starts a mission: the world from a `.usg` scenario
+  (below, "Loading a scenario") and the run's random word.
+- **`Sim::park()`** stops a mission for now and returns a `Parked` and the random word;
+  `Parked::resume(random)` gives the word back and returns the `Sim`. A parked mission
+  has no word, so it cannot tick or draw. **`Sim::end()`** ends a mission and returns
+  the word. See "The run's random word".
 - **`Sim::tick(events)`** runs one retrace with the input that arrived for it
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
@@ -38,16 +44,52 @@ tested headless in CI. It depends only on `xeno-formats`.
 - **`World`** holds the mission's objects, by `EntityId` (the object's slot in the
   original's 240-entry object table). An `Entity` is a kind and side
   (`xeno_formats::usg::{ObjectKind, Side}`) and a `Position` of two 16.16 `Fixed`
-  numbers, the fields of a `.usg` `DCBS` object, so T-051 can fill it from
-  `usg::Object` field for field. It also holds the `OrderBook`.
+  numbers, the fields of a `.usg` `DCBS` object. It also holds the `OrderBook`.
+  `World::census(side)` counts one side's objects by kind.
 
-## The run's seed
+## Loading a scenario
+
+`World::from_scenario(&usg::Scenario)` (T-051) copies each `DCBS` object field for
+field: its slot as the `EntityId`, its kind, its side (bit 3 of +0x16) and its x and y
+as `Fixed`. The orders come from the same objects (`OrderBook::from_scenario`). Rules
+for files the stock install does not have:
+
+- An object too short to reach +0x16 has no side and is left out, as the orders leave
+  out robots too short to hold them.
+- Two objects in one slot: the later one is kept.
+- No `DCBS` chunk: an empty world.
+
+The bytes past +0x0c are not copied; they stay in the `usg::Scenario`, which
+`xeno-app` keeps for the whole run (`mission::Assets::scenarios`). T-058 names them,
+and the fields the sim needs then go into `Entity`.
+
+**Units.** A unit is a robot: a humanoid, scorpion or scout. Those are the objects in
+a side's unit list, which the consoles' Tab and the unit-name button step through
+(`docs/screens.md`, "Switching views"), and the ones with orders. Bases, relays and
+obstacles are not units. `Census::units()` counts the robots; the census also counts
+bases, relays, obstacles and unnamed kinds. For `scen00a` the player has 5 units (3
+humanoids, a scorpion and a scout), and the alien side 10.
+
+The test `real_assets_every_scenario_loads_with_its_units` loads every stock scenario
+and checks: every object is loaded, one per slot; each side's count of each kind is
+the parser's; each side has one base (`docs/formats/usg.md`); every unit has orders;
+a side has at most 38 units (its unit list); and the robots and bases fit the
+40-object pool, the relays and obstacles the 200-object one (`usg.md`, `DCBS`).
+
+## The run's random word
 
 `xeno-app --seed N` sets the seed. Without it the seed comes from the system clock, as
 the original's comes from the timer, and it is logged at start-up so a run can be
-repeated. The original has one random word for the whole run. The port's campaign
-holds it today (the alert rises and the calendar); a mission's `Sim` should take it
-over with `Sim::with_random` and hand it back, rather than start a second one.
+repeated.
+
+The original has one random word for the whole run (`DS:0x1bf6`), which the campaign
+(the alert rises and the calendar) and the mission both draw from. The port moves it
+instead of copying it, so there is never a second one:
+
+- A mission takes the word with `Sim::load` (a new mission) or `Parked::resume` (the
+  loaded scenario played again).
+- It gives it back with `Sim::end` (won or lost) or `Sim::park` (no result: the
+  original keeps the mission's objects, and the map room's play resumes it).
 
 ## Determinism rules
 
