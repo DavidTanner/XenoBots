@@ -4,7 +4,7 @@
 use proptest::prelude::*;
 use xeno_formats::usg::{ObjectKind, Side};
 use xeno_sim::input::{InputEvent, InputLog, MouseButton, ScanCode};
-use xeno_sim::{Damage, Entity, EntityId, Fixed, Position, Sim};
+use xeno_sim::{Damage, Entity, EntityId, Fixed, Position, Sim, State};
 
 fn button() -> impl Strategy<Value = MouseButton> {
     prop_oneof![
@@ -83,6 +83,7 @@ fn entities() -> impl Strategy<Value = Vec<(u16, Entity)>> {
                         heading,
                         radius: 0xa00,
                         damage: Damage::Taken(taken),
+                        state: State::None,
                     },
                 )
             })

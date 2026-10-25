@@ -128,19 +128,42 @@ pub struct Path {
     pub points: Vec<Position>,
 }
 
-/// Both sides' paths, in slot order (a robot's +0x2c names its path by slot).
+/// One side's path table: every slot, in use or not, and how many are in use (the
+/// first `count`). A robot's +0x2c names a slot whether or not it is in use, and the
+/// original reads whatever the file left there (`docs/sim.md`, "Movement").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PathTable {
+    pub count: usize,
+    pub slots: Vec<Path>,
+}
+
+impl PathTable {
+    /// The paths in use.
+    pub fn used(&self) -> &[Path] {
+        &self.slots[..self.count.min(self.slots.len())]
+    }
+
+    /// Slot `slot`, or none past the table (a missing chunk has none).
+    pub fn slot(&self, slot: usize) -> Option<&Path> {
+        self.slots.get(slot)
+    }
+}
+
+/// Both sides' path tables (a robot's +0x2c names its path by slot).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Paths {
-    pub human: Vec<Path>,
-    pub alien: Vec<Path>,
+    pub human: PathTable,
+    pub alien: PathTable,
 }
 
 impl Paths {
-    /// The paths in use of `scenario`'s `HPTH` and `APTH`; none for a missing chunk.
+    /// `scenario`'s `HPTH` and `APTH` tables; none for a missing chunk.
     pub fn from_scenario(scenario: &Scenario) -> Paths {
-        let side = |table: &Option<usg::PathTable>| -> Vec<Path> {
-            let used = table.iter().flat_map(|t| t.used());
-            used.map(|p| Path {
+        let side = |table: &Option<usg::PathTable>| -> PathTable {
+            let Some(t) = table else {
+                return PathTable::default();
+            };
+            let slots = t.paths.iter().map(|p| Path {
                 mission: p.mission,
                 weight: p.weight,
                 points: p
@@ -151,8 +174,11 @@ impl Paths {
                         y: Fixed(w.y),
                     })
                     .collect(),
-            })
-            .collect()
+            });
+            PathTable {
+                count: usize::from(t.count),
+                slots: slots.collect(),
+            }
         };
         Paths {
             human: side(&scenario.human_paths),
@@ -160,21 +186,27 @@ impl Paths {
         }
     }
 
-    pub fn side(&self, side: Side) -> &[Path] {
+    pub fn table(&self, side: Side) -> &PathTable {
         match side {
             Side::Human => &self.human,
             Side::Alien => &self.alien,
         }
+    }
+
+    /// The paths `side` has in use.
+    pub fn side(&self, side: Side) -> &[Path] {
+        self.table(side).used()
     }
 }
 
 impl StateHash for Paths {
     fn state_hash(&self, h: &mut StateHasher) {
         for side in [Side::Human, Side::Alien] {
-            let paths = self.side(side);
+            let table = self.table(side);
             h.u8(side_code(side));
-            h.u64(paths.len() as u64);
-            for p in paths {
+            h.u64(table.count as u64);
+            h.u64(table.slots.len() as u64);
+            for p in &table.slots {
                 h.u8(p.mission);
                 h.u8(p.weight);
                 h.u64(p.points.len() as u64);
@@ -270,6 +302,6 @@ mod tests {
             ..plain
         };
         assert_eq!(Terrain::from_scenario(&bare), Terrain::default());
-        assert!(Paths::from_scenario(&bare).alien.is_empty());
+        assert!(Paths::from_scenario(&bare).alien.slots.is_empty());
     }
 }

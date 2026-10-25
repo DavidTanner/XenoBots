@@ -28,14 +28,14 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
     TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, lzexe, map, mgavideo};
+use xeno_formats::{editor, lzexe, map, mgavideo, motion};
 use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{Parked, Random, Sim, World};
 
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
-use crate::input::MouseButton;
+use crate::input::{InputEvent, MouseButton};
 use crate::maproom::{Campaign, scenario_file};
 use crate::screens::View;
 
@@ -109,6 +109,8 @@ pub struct Assets {
     pub views: MissionViews,
     pub training: TrainingMenu,
     pub programs: Programs,
+    /// The movement tables the mission's sim moves robots by.
+    pub motion: motion::Motion,
     /// By font id.
     pub fonts: BTreeMap<u16, Font>,
     /// `msprite1`, from `views.situation_bank`.
@@ -144,6 +146,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
     let views = views::read(&exe).map_err(|e| no("mission views", e))?;
     let training = views::read_training(&exe).map_err(|e| no("training menu", e))?;
     let programs = orders::read(&exe).map_err(|e| no("program table", e))?;
+    let motion = motion::read(&exe).map_err(|e| no("movement tables", e))?;
     let sprites = ban::parse_sprites(&read("msprite1.b@n")?)
         .map_err(|e| format!("msprite1.b@n: {e}"))?
         .sprites;
@@ -185,6 +188,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         views,
         training,
         programs,
+        motion,
         fonts,
         sprites,
         scenarios,
@@ -343,9 +347,15 @@ pub struct Mission {
 
 impl Mission {
     /// A mission on `scenario`, starting in the situation room, its sim drawing from
-    /// `random`, the run's random word (from [`Campaign::take_random`]).
-    pub fn new(file: String, scenario: &Scenario, random: Random) -> Mission {
-        let sim = Sim::load(scenario, random);
+    /// `random`, the run's random word (from [`Campaign::take_random`]), its robots
+    /// moving by `motion`.
+    pub fn new(
+        file: String,
+        scenario: &Scenario,
+        random: Random,
+        motion: &motion::Motion,
+    ) -> Mission {
+        let sim = Sim::load(scenario, random, motion.clone());
         log_census(&file, &sim.world);
         let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
@@ -591,6 +601,28 @@ impl Mission {
         {
             self.typed += 1;
             self.dirty = true;
+        }
+    }
+
+    /// One retrace of the mission's world with that retrace's input, if it runs (a
+    /// parked mission waits). What it did goes to the log.
+    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) {
+        let Run::Running(sim) = &mut self.run else {
+            return;
+        };
+        for event in sim.tick(events) {
+            log::debug!("mission: retrace {}: {event:?}", sim.retrace());
+        }
+        if sim.retrace().is_multiple_of(700) {
+            let moving = sim.world.iter().filter(
+                |(_, e)| matches!(e.state, xeno_sim::State::Robot(m) if m.velocity != (0, 0)),
+            );
+            log::debug!(
+                "mission: retrace {}, {} robots moving, state hash {:016x}",
+                sim.retrace(),
+                moving.count(),
+                sim.state_hash()
+            );
         }
     }
 
@@ -1146,12 +1178,19 @@ pub mod tests {
             editor: None,
             editor_unlocked: false,
             save_dir: PathBuf::new(),
+            motion: motion::Motion {
+                sine: vec![0; motion::SINE_ENTRIES],
+                turn_step: [0x5b; 3],
+                weak_drive: 0x28,
+                scorpion_speeds: vec![[0; motion::SPEED_ENTRIES]],
+                mission_programs: [[0; 3]; motion::MISSIONS],
+            },
         }
     }
 
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
-        Mission::new(file, scenario, Random::seeded(1))
+        Mission::new(file, scenario, Random::seeded(1), &assets.motion)
     }
 
     /// With unlock word 9 the editor's keys act in the situation room; its terrain
@@ -1213,7 +1252,7 @@ pub mod tests {
         let assets = test_assets();
         let mut campaign = crate::maproom::tests::test_campaign();
         let (file, scenario) = assets.sample(None).unwrap();
-        let mut m = Mission::new(file, scenario, campaign.take_random());
+        let mut m = Mission::new(file, scenario, campaign.take_random(), &assets.motion);
         // The fixture's human base (slot 0) has taken 20.
         m.apply_alert(30);
         let damage = |m: &Mission| m.world().get(xeno_sim::EntityId(0)).unwrap().damage;
@@ -1292,7 +1331,7 @@ pub mod tests {
         let assets = test_assets();
         let mut campaign = crate::maproom::tests::test_campaign();
         let (file, scenario) = assets.sample(None).unwrap();
-        let mut m = Mission::new(file, scenario, campaign.take_random());
+        let mut m = Mission::new(file, scenario, campaign.take_random(), &assets.motion);
         assert!(m.is_running() && !campaign.has_random());
         // The sim's world is the scenario's.
         assert_eq!(m.world().len(), 5);
@@ -1431,7 +1470,7 @@ pub mod tests {
         let area = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area).unwrap();
         assert_eq!(assets.scenarios.len(), 17);
         for (name, scenario) in &assets.scenarios {
-            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1));
+            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
             m.mode = ORDERS_MODE;
             while m.typed < m.orders_end() {
                 m.retrace();

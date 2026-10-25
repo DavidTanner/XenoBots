@@ -5,6 +5,7 @@
 mod dump;
 mod inspect;
 mod palette;
+mod simulate;
 mod summary;
 mod wav;
 
@@ -56,6 +57,30 @@ enum Command {
         #[arg(long)]
         palette: Option<PathBuf>,
     },
+    /// Run a scenario in the sim with no window and print where its robots are
+    /// (`docs/sim.md`, "Movement"). The movement tables come from `xeno.exe` beside the
+    /// scenario unless `--exe` names it. No script runs yet (T-053), so robots move
+    /// only when `--drive` gives them a speed and heading.
+    Simulate {
+        /// The `.usg` scenario.
+        scenario: PathBuf,
+        /// Retraces to run (70 a second in the original's mode 13h).
+        #[arg(long, default_value_t = 700)]
+        ticks: u64,
+        /// Print the robots every this many ticks (0: only at the start).
+        #[arg(long, default_value_t = 70)]
+        every: u64,
+        /// The unpacked or packed `xeno.exe` to read the movement tables from.
+        #[arg(long)]
+        exe: Option<PathBuf>,
+        /// The random word's seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u32,
+        /// Drive a robot: `SLOT:SPEED:HEADING` (speed asked for, heading asked for in
+        /// 65,536ths of a turn; numbers decimal or `0x` hex). Repeatable.
+        #[arg(long, value_parser = simulate::parse_drive)]
+        drive: Vec<simulate::Drive>,
+    },
     /// Print a file's 256-colour palette, one colour per line. Finds it by extension
     /// (pcx, vcl, m@l), or reads it raw from `--offset`.
     Palette {
@@ -98,6 +123,25 @@ fn main() -> anyhow::Result<ExitCode> {
             for path in dump::dump(&file, &bytes, &out, palette.as_ref())? {
                 println!("wrote {}", path.display());
             }
+        }
+        Command::Simulate {
+            scenario,
+            ticks,
+            every,
+            exe,
+            seed,
+            drive,
+        } => {
+            let bytes = std::fs::read(&scenario)
+                .with_context(|| format!("cannot read {}", scenario.display()))?;
+            let parsed = xeno_formats::usg::parse(&bytes)
+                .with_context(|| format!("{} is not a scenario", scenario.display()))?;
+            let exe = exe.unwrap_or_else(|| scenario.with_file_name("xeno.exe"));
+            let tables = simulate::tables(&exe)?;
+            print!(
+                "{}",
+                simulate::run(&parsed, tables, seed, ticks, every, &drive)?
+            );
         }
         Command::Palette {
             file,

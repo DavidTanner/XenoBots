@@ -1242,6 +1242,32 @@ pub fn synthetic_endings(image: &mut [u8], ds: usize) -> Vec<usize> {
     ]
 }
 
+/// Writes made-up movement tables (`crate::motion`) into a load image whose data
+/// segment starts at `ds` and string segment at `strings`: a sine table of `i * 0x100`
+/// at `DS:0x9000`, turn steps 0x5b, a weak drive at 0x28, one speed table (the speed
+/// itself) at `strings + 0x800`, and every mission's programs 8, 13, 8 at `DS:0x9300`.
+pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
+    use crate::motion::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(SINE_NEXT.0, &op(SINE_NEXT.1, 0x9002));
+    put(SINE_AT.0, &op(SINE_AT.1, 0x9000));
+    for i in 0..SINE_ENTRIES {
+        put(ds + 0x9000 + 2 * i, &((i as u16) << 8).to_le_bytes());
+    }
+    for at in TURN_AT {
+        put(at, &op(&[0xbb], 0x5b));
+    }
+    put(WEAK_DRIVE.0, &[WEAK_DRIVE.1, &[0x28]].concat());
+    put(SPEEDS_SEGMENT.0, SPEEDS_SEGMENT.1);
+    put(SPEEDS_AT.0, &op(SPEEDS_AT.1, 0x800));
+    put(strings + 0x800, &0x802u16.to_le_bytes());
+    let identity: Vec<u8> = (0..SPEED_ENTRIES as u8).collect();
+    put(strings + 0x802, &identity);
+    put(PROGRAMS_AT.0, &op(PROGRAMS_AT.1, 0x9300));
+    put(ds + 0x9300, &[8, 13, 8].repeat(MISSIONS));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

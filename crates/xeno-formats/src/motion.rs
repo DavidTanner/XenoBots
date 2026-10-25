@@ -12,20 +12,20 @@ use crate::{FormatError, sequence};
 
 /// `mov cx, ss:[bx + table + 2]` and `mov bx, ss:[bx + table]` in
 /// `sim_sine_magnitude` (`1000:05e6`): a value and the next one to interpolate to.
-const SINE_NEXT: (usize, &[u8]) = (0x060c, &[0x36, 0x8b, 0x8f]);
-const SINE_AT: (usize, &[u8]) = (0x0611, &[0x36, 0x8b, 0x9f]);
+pub(crate) const SINE_NEXT: (usize, &[u8]) = (0x060c, &[0x36, 0x8b, 0x8f]);
+pub(crate) const SINE_AT: (usize, &[u8]) = (0x0611, &[0x36, 0x8b, 0x9f]);
 /// `mov bx, step` in `sim_steer_humanoid`, `sim_steer_scorpion` and
 /// `sim_steer_scout`, by kind.
-const TURN_AT: [usize; 3] = [0xac85, 0x93d3, 0xc554];
+pub(crate) const TURN_AT: [usize; 3] = [0xac85, 0x93d3, 0xc554];
 /// `cmp byte [di + 0x51], level` in `sim_limit_speed_by_drive_and_helm`.
-const WEAK_DRIVE: (usize, &[u8]) = (0xd3b8, &[0x80, 0x7d, 0x51]);
+pub(crate) const WEAK_DRIVE: (usize, &[u8]) = (0xd3b8, &[0x80, 0x7d, 0x51]);
 /// `mov es, [0x60]` then `mov bx, es:[bx + table]` in `sim_map_scorpion_speed`
 /// (`1000:d3f8`): the speed tables' offsets, in the string segment.
-const SPEEDS_SEGMENT: (usize, &[u8]) = (0xd3f8, &[0x8e, 0x06, 0x60, 0x00]);
-const SPEEDS_AT: (usize, &[u8]) = (0xd400, &[0x26, 0x8b, 0x9f]);
+pub(crate) const SPEEDS_SEGMENT: (usize, &[u8]) = (0xd3f8, &[0x8e, 0x06, 0x60, 0x00]);
+pub(crate) const SPEEDS_AT: (usize, &[u8]) = (0xd400, &[0x26, 0x8b, 0x9f]);
 /// `mov al, [bx + table]` in mission 0's program routine (`1000:ec68`, through
 /// `order_start_path_mission_program`): three bytes a mission, by kind.
-const PROGRAMS_AT: (usize, &[u8]) = (0xec6a, &[0x8a, 0x87]);
+pub(crate) const PROGRAMS_AT: (usize, &[u8]) = (0xec6a, &[0x8a, 0x87]);
 
 /// Entries in the sine table: a quarter turn in 256 steps, and the one after it.
 pub const SINE_ENTRIES: usize = 257;

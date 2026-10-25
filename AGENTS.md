@@ -204,6 +204,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset vie
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries
 cargo run -p xeno-tool -- inspect --all ./gameFiles
+cargo run -p xeno-tool -- simulate ./gameFiles/scen00a.usg --ticks 700 --drive 3:63:0x4000  # robots' positions, no window
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check

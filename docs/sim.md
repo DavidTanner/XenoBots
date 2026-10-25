@@ -8,8 +8,10 @@ tested headless in CI. It depends only on `xeno-formats`.
 - **`Sim`** is the whole state: the retraces run, the random word, the held keys and
   mouse, and the `World`. `Sim::new(seed)` starts an empty world;
   `Sim::with_random(random)` starts one that carries on a random word already in use.
-  `Sim::load(scenario, random)` starts a mission: the world from a `.usg` scenario
-  (below, "Loading a scenario") and the run's random word.
+  `Sim::load(scenario, random, tables)` starts a mission: the world from a `.usg`
+  scenario (below, "Loading a scenario"), the run's random word and the movement
+  tables read from the user's `xeno.exe` (`xeno_formats::motion`); `with_tables` adds
+  them to a sim made otherwise. Without tables nothing moves.
 - **`Sim::park()`** stops a mission for now and returns a `Parked` and the random word;
   `Parked::resume(random)` gives the word back and returns the `Sim`. A parked mission
   has no word, so it cannot tick or draw. **`Sim::end()`** ends a mission and returns
@@ -17,8 +19,9 @@ tested headless in CI. It depends only on `xeno-formats`.
 - **`Sim::tick(events)`** runs one retrace with the input that arrived for it
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
-  `InputLog`. For now a tick only counts the retrace and tracks held keys and
-  buttons; the rules come with T-052 on.
+  `InputLog`. A tick counts the retrace, tracks held keys and buttons (nothing acts on
+  them yet: the cockpit keys are T-105) and runs every object's tick
+  (`motion::tick`, below, "Movement"); it returns the `motion::Event`s it made.
 - **`Sim::state_hash()`** is a 64-bit hash of everything in the state.
 - **`input`**: `ScanCode`, `InputEvent`, `Keys`, `Mouse` and `InputLog`, moved from
   `xeno-app` (`docs/game-loop.md`, "Input"). `xeno-app` still names them
@@ -197,6 +200,36 @@ head for it (the commands at `DS:0x7d14`), and steer towards the destination wit
 bearing routine (`sim_get_bearing`, `1000:0735`, an arctangent through a table at
 `DS:0x20ba`); both are T-053's.
 
+### The port (T-052)
+
+`xeno_sim::motion` does the above. `World` keeps each robot's movement fields in
+`Entity::state` (`State::Robot(Movement)`: +0x1a, the velocity, +0x23 without bit 7,
+the speeds, the target heading, +0x2c, +0x2d, +0x32, the destination, +0x51, +0x10b,
++0x10c and +0x118) and each base's +0x41 (`State::Base`), all hashed; `World::units`
+holds each side's unit list in file order and `World::bases` each side's command
+object, both filled at load. `motion::tick` runs the objects in slot order: robots
+move (`move_robot`), and the alien base's path phase runs at its count's phase 2.
+Its events are `HillHit` (the 0-point hit, for T-054), `PathTaken` and `Program`
+(the mission's program given through `OrderBook::start_program`, which also sets the
+program bit, kept as `Orders::manual` until T-111).
+
+What T-053's scripts will call: `set_destination`, `head_for_path_point`,
+`advance_path_point`, `assign_random_path` and `join_nearest_path_point`, and they set
+`Movement::target_heading` and `target_speed` (the bearing to the destination needs
+`sim_get_bearing`, not ported). Left out until their tasks: the recall (bit 3), the
+script, the bounce routines' console gear (T-104/T-105), the scout's height at +0x1c
+(T-101), the path census (`sim_count_units_on_paths`) and the base's other phases.
+Where the original reads past a table (a scorpion speed table or entry past the
+last, a path slot over 7, a mission over 6) the port takes the last entry or does
+nothing; `advance_path_point` gives up after 16 tries where the original would loop
+forever. None of these happen in the stock files.
+
+`xeno-app` ticks the mission's sim once a retrace on every mission view, with that
+retrace's input, and logs the events (debug level). `xeno-tool simulate <file.usg>
+[--ticks N] [--every K] [--drive SLOT:SPEED:HEADING]` runs one with no window and
+prints the robots' positions; `--drive` gives a robot a speed and heading to follow, as
+no script drives them yet.
+
 ## Loading a scenario
 
 `World::from_scenario(&usg::Scenario)` (T-051, T-058) copies each `DCBS` object
@@ -283,8 +316,8 @@ seed, one more key press or one more retrace gives another hash.
 ## Not settled
 
 - **The world has no size and no edges** (T-059, `usg.md`, "The world"): the original
-  limits no position, so the sim does not either. Movement (T-052) should add
-  velocities with wrapping 32-bit adds, as the original does; stock scenarios stay
-  near (128, 128) and never come near the ends of the 16.16 range.
+  limits no position, so the sim does not either. Movement (T-052) adds velocities with
+  wrapping 32-bit adds, as the original does; stock scenarios stay near (128, 128) and
+  never come near the ends of the 16.16 range.
 - What the original keeps per object beyond kind, side and position is mostly
   unknown (T-058); entities grow as those fields are named.

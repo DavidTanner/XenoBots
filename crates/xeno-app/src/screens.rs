@@ -557,6 +557,7 @@ impl Screens {
         events: impl IntoIterator<Item = &'a InputEvent>,
         fb: &mut Framebuffer,
     ) {
+        let events: Vec<&InputEvent> = events.into_iter().collect();
         // A picture whose load showed the busy pointer last retrace is drawn now, and
         // the arrow comes back, as each loader ends (T-049). A view opens with the
         // pointer outside its corner.
@@ -581,7 +582,7 @@ impl Screens {
             self.dac.release_anims();
             self.dac.start_anim(login::CURSOR_RECORD, 0);
         }
-        for event in events {
+        for &event in &events {
             if self.next.is_none() && self.loading.is_none() && !self.quit {
                 match (*event, self.screen) {
                     (InputEvent::Text(c), Login) => self.entry.typed(c),
@@ -683,6 +684,11 @@ impl Screens {
         if self.screen == Mission(View::SitRoom) && self.next.is_none() {
             self.mission.retrace();
         }
+        // The mission's world runs once a retrace on every mission view, with that
+        // retrace's input (`docs/sim.md`, "Movement").
+        if matches!(self.screen, Mission(_)) && self.next.is_none() {
+            self.mission.tick(events.iter().copied());
+        }
         if matches!(self.screen, Mission(_))
             && self.next.is_none()
             && self.loading.is_none()
@@ -722,11 +728,11 @@ impl Screens {
                 let file = mission::file_name(name);
                 match self.mission_assets.scenarios.get(&file) {
                     Some(scenario) => {
-                        log::info!(
-                            "training menu: {file} loaded; the mission itself cannot run yet (T-052 on)"
-                        );
+                        log::info!("training menu: {file} loaded");
                         let campaign = campaign_mut(&mut self.player, &mut self.guest);
-                        self.mission = MissionState::new(file, scenario, campaign.take_random());
+                        let motion = &self.mission_assets.motion;
+                        self.mission =
+                            MissionState::new(file, scenario, campaign.take_random(), motion);
                         self.act(Play(true));
                     }
                     None => log::warn!("training menu: {file} could not be loaded"),
@@ -921,10 +927,12 @@ impl Screens {
                         return;
                     };
                     log::info!(
-                        "map room: playing scenario {i}, {file} at state {}; the mission itself cannot run yet (T-052 on)",
+                        "map room: playing scenario {i}, {file} at state {}",
                         campaign.table.scenarios[i].state
                     );
-                    self.mission = MissionState::new(file, scenario, campaign.take_random());
+                    let motion = &self.mission_assets.motion;
+                    self.mission =
+                        MissionState::new(file, scenario, campaign.take_random(), motion);
                     let state = campaign.table.scenarios[i].state;
                     let damage = rules.alert_damage.get(usize::from(state / 2));
                     self.mission.apply_alert(damage.copied().unwrap_or(0));
@@ -1125,7 +1133,7 @@ fn sample_mission(
         log::warn!("mission: no training mission has a robot for {view:?}; no robots shown");
         return (MissionState::empty(), Mission(View::SitRoom));
     };
-    let mut mission = MissionState::new(file, scenario, campaign.take_random());
+    let mut mission = MissionState::new(file, scenario, campaign.take_random(), &assets.motion);
     let robot = kind.and_then(|k| {
         mission
             .book()
