@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-058)
+# The simulation (T-050, T-051, T-058, T-059)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -48,13 +48,25 @@ tested headless in CI. It depends only on `xeno-formats`.
   bits), the damage a base or relay has taken, or none (obstacles take none). These
   are fields of a `.usg` `DCBS` object (`docs/formats/usg.md`, "Object fields"), all
   in the state hash. It also holds the `OrderBook`.
-  `World::census(side)` counts one side's objects by kind.
+  `World::census(side)` counts one side's objects by kind. The world also holds the
+  `terrain` and both sides' `paths` (below), also in the hash.
+- **`terrain`** (T-059): `Terrain` is the `MAPP` records in file order as `Feature`s
+  (kind, 16.16 centre and `z`, 8.8 radius, diagonal and height). `approx_distance` is
+  the original's `max + min/2` distance, saturating to 0x7fff.7fff on overflow;
+  `Feature::contains` drops the distance's low byte and compares it with the radius;
+  `Terrain::hill_at` is the robots' test (hills only, the first that contains the
+  point), `ground_height` the height it gives (the hill's `z + height`, else 0) and
+  `below_ground` the shots' test (any kind). `Paths` holds each side's paths in use
+  in slot order: mission, pick weight and points (`docs/formats/usg.md`, "How paths
+  are used").
 
 ## Loading a scenario
 
 `World::from_scenario(&usg::Scenario)` (T-051, T-058) copies each `DCBS` object
 field for field: its slot as the `EntityId`, its kind, its side (bit 3 of +0x16), its
-x and y as `Fixed`, its heading and radius, and the damage its kind's layout records.
+x and y as `Fixed`, its heading and radius, and the damage its kind's layout records;
+and `Terrain::from_scenario`, `Paths::from_scenario` take the `MAPP` records and the
+`APTH`/`HPTH` paths in use (none for a missing chunk).
 The orders come from the same objects (`OrderBook::from_scenario`), as loading leaves
 them: the original gives every robot its program (+0x2e) anew, so each robot runs the
 program it was given, whatever the file saved as running; the manual bit is kept
@@ -133,9 +145,9 @@ seed, one more key press or one more retrace gives another hash.
 
 ## Not settled
 
-- **The world's size and edges.** The `.usg` files have no map grid, and the world's
-  extent and what happens at its edge are open until T-059. The sim invents neither:
-  there is no grid, and positions are not limited. Movement (T-052) and the mission
-  render (T-056) need T-059.
+- **The world has no size and no edges** (T-059, `usg.md`, "The world"): the original
+  limits no position, so the sim does not either. Movement (T-052) should add
+  velocities with wrapping 32-bit adds, as the original does; stock scenarios stay
+  near (128, 128) and never come near the ends of the 16.16 range.
 - What the original keeps per object beyond kind, side and position is mostly
   unknown (T-058); entities grow as those fields are named.

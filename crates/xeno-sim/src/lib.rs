@@ -8,6 +8,7 @@ pub mod input;
 pub mod orders;
 pub mod random;
 pub mod rate;
+pub mod terrain;
 pub mod world;
 
 pub use random::Random;

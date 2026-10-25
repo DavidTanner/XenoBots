@@ -416,4 +416,6 @@ and relays of the stock sizes). `TerrainFeature` names every field of a terrain 
 positions, the terrain features, one line per object (with its heading, radius, flags
 and its kind's orders and damage), both sides' paths and the briefing's first line.
 `xeno_sim::World::from_scenario` copies the heading, radius and damage into each
-`Entity` (`docs/sim.md`).
+`Entity`, and the terrain and paths into `xeno_sim::terrain` (`docs/sim.md`). The
+terrain lines show each record's kind, position, sizes and shape program, the path
+lines each path's weight, mix and counts.

@@ -2,8 +2,9 @@
 //!
 //! The shape follows a `.usg` file's `DCBS` objects (`docs/formats/usg.md`): a slot, a
 //! kind, a side, a 16.16 position, a heading, a radius and the damage taken, so
-//! [`World::from_scenario`] copies them field for field. There is no map grid and no world edge: the files have no grid, and the
-//! world's size and edges are open until T-059, so positions are not limited here.
+//! [`World::from_scenario`] copies them field for field, with the terrain and the paths
+//! ([`crate::terrain`]). There is no map grid and no world edge: the original has
+//! neither, so positions are never limited (`docs/formats/usg.md`, "The world").
 
 use std::collections::BTreeMap;
 
@@ -11,6 +12,7 @@ use xeno_formats::usg::{Body, Object, ObjectKind, Scenario, Side};
 
 use crate::hash::{StateHash, StateHasher};
 use crate::orders::OrderBook;
+use crate::terrain::{Paths, Terrain};
 
 /// A 16.16 fixed-point number, as the original keeps positions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -121,13 +123,16 @@ pub(crate) fn side_code(side: Side) -> u8 {
     }
 }
 
-/// Every object, in slot order, and the robots' orders. A `BTreeMap`, so iteration
+/// Every object, in slot order, the robots' orders, the terrain and both sides' paths.
+/// A `BTreeMap`, so iteration
 /// (and so the hash and any rule that walks the objects) never depends on insertion
 /// order or a hasher's seed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct World {
     entities: BTreeMap<EntityId, Entity>,
     pub orders: OrderBook,
+    pub terrain: Terrain,
+    pub paths: Paths,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -167,8 +172,8 @@ impl Census {
 
 impl World {
     /// The objects of `scenario` (its `DCBS` chunk), each in its slot with its kind,
-    /// side, position, heading, radius and damage, and the robots' orders as loading
-    /// sets them (robots without
+    /// side, position, heading, radius and damage, the robots' orders as loading sets
+    /// them, the terrain (`MAPP`) and the paths (`APTH`, `HPTH`) (robots without
     /// the stock layout have none; no stock robot lacks it). If two objects share a
     /// slot, the later one is kept; no stock file has that.
     /// A file with no `DCBS` chunk gives an empty world. The objects' other bytes are
@@ -196,6 +201,8 @@ impl World {
         World {
             entities,
             orders: OrderBook::from_scenario(scenario),
+            terrain: Terrain::from_scenario(scenario),
+            paths: Paths::from_scenario(scenario),
         }
     }
 
@@ -276,6 +283,8 @@ impl StateHash for World {
             e.damage.state_hash(h);
         }
         self.orders.state_hash(h);
+        self.terrain.state_hash(h);
+        self.paths.state_hash(h);
     }
 }
 
@@ -384,6 +393,15 @@ mod tests {
         // The robots' orders come with them, and only the robots have orders.
         assert_eq!(world.orders, OrderBook::from_scenario(&scenario));
         assert_eq!(world.orders.side(Side::Human).count(), 2);
+        // So do the terrain and the paths, both in the hash.
+        assert_eq!(world.terrain, Terrain::from_scenario(&scenario));
+        assert_eq!(world.paths, Paths::from_scenario(&scenario));
+        let mut moved = world.clone();
+        moved.terrain.features[0].height += 1;
+        assert_ne!(hash(&moved), hash(&world));
+        let mut moved = world.clone();
+        moved.paths.alien[0].points[0].x.0 += 1;
+        assert_ne!(hash(&moved), hash(&world));
         // Fractions are kept: the plain fixture's humanoid is at (95.5, 136.25).
         let plain = xeno_formats::usg::parse(&xeno_formats::fixtures::synthetic_usg()).unwrap();
         let world = World::from_scenario(&plain);
@@ -450,6 +468,13 @@ mod tests {
                 units += census.units();
                 big += census.units() + census.bases;
                 small += census.relays + census.obstacles;
+            }
+            // No object starts inside a hill, and every path in use has points.
+            for (_, e) in world.iter() {
+                assert!(world.terrain.hill_at(e.position).is_none(), "{name}");
+            }
+            for side in [Side::Human, Side::Alien] {
+                assert!(world.paths.side(side).iter().all(|p| !p.points.is_empty()));
             }
             // The 0x172-byte pool holds 40 objects, the 0x34-byte one 200.
             assert!(big <= 40 && small <= 200, "{name}");
