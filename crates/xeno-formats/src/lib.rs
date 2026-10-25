@@ -21,6 +21,7 @@ pub mod mal;
 pub mod map;
 pub mod maproom;
 pub mod mgavideo;
+pub mod motion;
 pub mod ms3;
 pub mod mxx;
 pub mod orders;

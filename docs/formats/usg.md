@@ -235,27 +235,31 @@ The flags at +0x16 (`usg::flag`):
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x1a, 0x1b | 1, 1 | | A tick counter stepping by 2, and a state number; each picks a routine from a table. Not traced |
-| 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths) |
-| 0x23 | 1 | `mode` | Bit 7: manual, the pilot drives (T-043, `docs/screens.md`, "Orders"); bit 3: recalled (the scorpion's next tick gives it program 4 and clears the bit); bits 4 and 5 turn the target heading by 0x40 one way or the other every tick (the pilot's turn keys) |
+| 0x1a, 0x1b | 1, 1 | `tick`, `state` | A tick counter stepping by 2 (kept to 0..=0x1e for scorpions and scouts), and a state number; each picks a routine from the kind's table every tick. A scorpion steps its speed when the counter's low four bits are 0 (T-052, `docs/sim.md`, "Movement"). The state's routines are not traced |
+| 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths). Worked out from the heading and speed only when either changes: `speed * sin(heading)`, `speed * cos(heading)` |
+| 0x23 | 1 | `mode` | Bit 7: named manual by T-043, but set when the **program** drives (T-052: the script steps every tick only with it; starting a program sets it, the drive keys clear it; T-111); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 0: the alien base gives it no path |
 | 0x24 | 1 | `helm` | 0 to 100; a hit can take 0 to 7 off |
-| 0x26 | 2 | `speed` | Every 16 ticks it steps by one towards `target_speed` (limited by a value at +0x118). Units not traced |
+| 0x26 | 2 | `speed` | Steps by one towards `target_speed`, limited by the drive, the helm and (scorpions) a speed table: every tick, or every 8 ticks for a scorpion. In 1/65,536ths of a unit a tick |
 | 0x28 | 2 | `target_speed` | |
-| 0x2a | 2 | `target_heading` | Every tick `heading` turns towards it by at most 0x5b (the scorpion's step; the others not read). The editor writes the same value here and at +0x10 |
+| 0x2a | 2 | `target_heading` | Every tick `heading` turns towards it by at most the kind's step (read from `xeno.exe`; the same for the three kinds). The editor writes the same value here and at +0x10 |
 | 0x2c | 1 | `path` | The robot's path: slot and flags ("How paths are used") |
 | 0x2d | 1 | `path_point` | The point it heads for; 0xff its base |
 | 0x2e | 1 | `program_given` | A number in `xeno.exe`'s program table (T-043) |
 | 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
 | 0x31, 0x33, 0x38 | | | The script's timing (T-043) |
+| 0x32 | 1 | `goal` | What the robot heads for: 0x22 the point at `destination` (set with it), bit 0 an object (slot or pointer at +0x3a, a reference held), 0 nothing |
 | 0x34 | 2 | `script` | The script pointer, saved as `0xa000` + its offset from the program table |
 | 0x36 | | | Event bits, which the message panel reports |
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
+| 0x51 | 1 | `drive` | 0xff in nearly every stock robot. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed. A guessed name; +0x4f and +0x50 are reset to 0xff with it |
 | 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
 | 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged. Bit 2 is set in stock robots; the other bits are not traced |
 | 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
+| 0x10b, 0x10c | 1, 1 | `stance`, `stance_target` | A scout's stance and the one it is rising or sinking to (0x30 standing; it moves only standing); a humanoid's speed gear (+0x10b, an index into its cockpit's speeds, updated when it hits a hill) |
 | 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
+| 0x118 | 1 | `speed_table` | A scorpion's speed goes through `xeno.exe`'s speed table `speed_table / 2` (0x0c, the last, in stock scorpions; other kinds hold other values and do not use it) |
 
 **How robots take damage** (`sim_damage_object`, `1000:f84d`, calls the kind's routine
 in the table at `DS:0xe783` with the damage in `AL`): a robot hit for more than 80 is
@@ -275,6 +279,7 @@ Robots have no hit points: a robot hit for 80 or less survives.
 | 0x2e | 2 | `damage` | Damage taken (`sim_damage_base`, `1000:62b7`). At 300 the base is destroyed (`GONE`) and the other side is told; below that its own side is told, at most once every 480 counts of `DS:0x374`. Playing a campaign scenario adds 0, 50, 100 or 150 to the player's base by the record's alert level (`sim_apply_scenario_alert`, table `DS:0x5a3f`) |
 | 0x30 | 2 | `end_step` | Once the base is destroyed, the mission's end steps it; at 0x24 the mission ends, won if the alien base was destroyed (`sim_end_mission_with_result`, T-046) |
 | 0x34, 0x37 | 2, 1 | `typed`, `view_mode` | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
+| 0x41 | 1 | `tick` | Steps by one every tick; its low four bits pick the tick's routine (`DS:0x5aea`): at 2 the alien base hands out paths (T-052, `docs/sim.md`, "Movement") |
 | 0x4d | 2 | | The side's unit list, set at load |
 | 0xbd | 0x43 | `view_state` | The situation room's widget state (T-043) |
 
@@ -346,6 +351,13 @@ bit 6 the next point asked for, bit 7 on a path), +0x2d the point it heads for.
 
 The script's path commands (which set bits 4 and 6 or step back a point, table
 `DS:0x7d14`) are part of the orders (T-053).
+
+T-052 read the rest (`docs/sim.md`, "Movement", "Paths"): only the alien base walks
+robots along paths, every 16 ticks; the slot pointer lists are fixed (slot `i` is the
+`i`th 140-byte slot, in use or not); the end-of-path and return routines, and a
+picked path's program, follow the mission of the **alien** table's slot whatever the
+robot's side; and a humanoid or scout that takes a new path at its base heads for
+that path's point 2.
 
 ### `ORDR`: briefing
 

@@ -565,6 +565,13 @@ robot viewed:
   (`order_switch_to_manual`, `1000:d42c`), each only if it changes something; both
   post an event to the robot (+0x36 bits from `DS:0x1c56`: events 0xa and 0xb, which
   the message panel reports).
+- **T-052 found the two names the wrong way round**: `1000:d42c` *sets* +0x23 bit 7,
+  and the script steps every tick only with that bit, recalling a robot and giving it
+  a path's program call `1000:d42c`, and the cockpit's drive keys call `1000:d446`
+  (which clears it) before they steer. So bit 7 is "the program drives", `1000:d42c`
+  is `order_switch_to_automatic` and `1000:d446` `order_switch_to_manual` (renamed in
+  Ghidra); which F key does which, and the panel's colours, follow from that and are
+  left to T-111 to check and fix here and in the port.
 - **Drawn**: the panel filled with the kind's fill colour (slot `0x51a`), then the
   program's name, transparent, in the kind's font, one row below the top and the
   kind's x offset in from the left, in the kind's text colour if the pilot drives
@@ -1183,6 +1190,24 @@ T-059 named, in `xeno.exe`: `sim_approx_distance_to_point` (`1000:08f7`),
 `sim_join_nearest_path_point` (`1000:eb66`), `sim_assign_paths_to_idle_units`
 (`1000:ea3a`) and `sim_count_units_on_paths` (`1fe6:8326`); details in
 `docs/formats/usg.md`. All `confirmed`, all saved.
+
+T-052 named, in `xeno.exe`: `sim_move_humanoid` (`1000:ac29`), `sim_move_scorpion`
+(`1000:9377`), `sim_move_scout` (`1000:c4f5`), `sim_steer_humanoid` (`1000:ac7a`),
+`sim_steer_scorpion` (`1000:93c8`), `sim_steer_scout` (`1000:c549`),
+`sim_step_humanoid_speed` (`1000:aca2`), `sim_step_scorpion_speed` (`1000:93f0`),
+`sim_step_scout_speed` (`1000:c571`), `sim_step_scout_stance` (`1000:c5a3`),
+`sim_limit_speed_by_drive_and_helm` (`1000:d3b2`), `sim_map_scorpion_speed`
+(`1000:d3f8`), `sim_update_robot_velocity` (`1000:d41c`), `sim_scale_by_heading`
+(`1000:03ad`), `sim_sine_magnitude` (`1000:05e6`), `sim_cosine_magnitude`
+(`1000:05e1`), `sim_tick_all_objects` (`1000:f631`), `sim_on_robot_hit_hill`
+(`1000:d45c`), `sim_run_path_return_routine` (`1000:ec22`), and created
+`sim_tick_humanoid` (`1000:abe0`), `sim_tick_scorpion` (`1000:930a`), `sim_tick_scout`
+(`1000:c485`), `sim_tick_base` (`1000:6300`), `sim_run_alien_base_path_phase`
+(`1000:ea0e`), `sim_advance_units_asking_next_point` (`1000:ea69`; a 1-byte body, as
+Ghidra holds an older instruction inside its first one), `sim_turn_round_on_path`
+(`1000:ecb4`) and `sim_take_new_random_path` (`1000:ecbd`); and swapped
+`order_switch_to_manual` and `order_switch_to_automatic` (above, "Orders"). Details in
+`docs/sim.md`, "Movement". All `confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
