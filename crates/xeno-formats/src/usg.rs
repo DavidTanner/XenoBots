@@ -283,9 +283,14 @@ pub enum Body {
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Robot {
-    /// +0x18: +0x1a counts the robot's ticks in twos and +0x1b is a state number,
-    /// each picking a routine from a table.
-    pub unknown_18: Unknown<6>,
+    pub unknown_18: Unknown<2>,
+    /// +0x1a: counts the robot's ticks in twos; each value picks a routine from the
+    /// kind's table, and a scorpion steps its speed when the low four bits are 0
+    /// (`docs/sim.md`, "Movement").
+    pub tick: u8,
+    /// +0x1b: a state number, picking another routine each tick. Not traced.
+    pub state: u8,
+    pub unknown_1c: Unknown<2>,
     /// +0x1e: velocity, added to `x` every tick (1/65536ths).
     pub velocity_x: i16,
     /// +0x20: added to `y` every tick.
@@ -297,12 +302,14 @@ pub struct Robot {
     /// +0x24: the helm, 0 to 100 (100 in stock files); hits lower it.
     pub helm: u8,
     pub unknown_25: u8,
-    /// +0x26: speed; every 16 ticks it steps by one towards `target_speed`.
+    /// +0x26: speed; it steps by one towards `target_speed` (limited by the drive,
+    /// the helm and, for a scorpion, [`Robot::speed_table`]) every tick, or every 8
+    /// ticks for a scorpion (`docs/sim.md`, "Movement").
     pub speed: i16,
     /// +0x28: the speed asked for.
     pub target_speed: i16,
     /// +0x2a: the heading asked for; every tick `heading` turns towards it by at most
-    /// 0x5b (a scorpion's step). The editor sets both to the same value.
+    /// the kind's turn step. The editor sets both to the same value.
     pub target_heading: u16,
     /// +0x2c: the robot's path: the slot in its side's [`PathTable`] (bits 0 to 3),
     /// [`Robot::PATH_BACKWARDS`], [`Robot::PATH_NEXT`] and [`Robot::ON_PATH`]; bit 4
@@ -316,8 +323,13 @@ pub struct Robot {
     pub unknown_2f: u8,
     /// +0x30: the program running: the one given, or a state the script entered.
     pub program_running: u8,
-    /// +0x31, +0x33: the script's timing (+0x31 is 10 when a program starts).
-    pub unknown_31: Unknown<3>,
+    /// +0x31: the script's timing (10 when a program starts).
+    pub unknown_31: u8,
+    /// +0x32: what the robot heads for: 0x22 the point at `destination`; bit 0 an
+    /// object (its slot at +0x3a); 0 nothing.
+    pub goal: u8,
+    /// +0x33: more of the script's timing.
+    pub unknown_33: u8,
     /// +0x34: the script pointer, saved as `0xa000` + its offset from the program
     /// table.
     pub script: u16,
@@ -328,7 +340,12 @@ pub struct Robot {
     pub unknown_44: Unknown<0xa>,
     /// +0x4e: power systems, 0 to 100; hits lower it.
     pub power: u8,
-    pub unknown_4f: Unknown<0x8d>,
+    pub unknown_4f: Unknown<2>,
+    /// +0x51: the drive, 0 to 0xff (0xff in nearly every stock robot): at 0 the robot cannot
+    /// move, at or under a threshold in `xeno.exe` it goes at half speed. The name is
+    /// a guess from that use.
+    pub drive: u8,
+    pub unknown_52: Unknown<0x8a>,
     /// +0xdc: weapons damaged, bits 0 to 2 (the kind's first, second and third
     /// weapon). A second hit on a damaged weapon destroys it ([`Robot::systems`]).
     pub weapons: u8,
@@ -343,13 +360,24 @@ pub struct Robot {
     /// +0xf6: systems damaged or destroyed: bits 0 visual camera, 1 thermal camera,
     /// 2 map, 3 radar, 4 EMI sensors, 6 and 7 the first and second weapon destroyed.
     pub systems: u8,
-    /// +0xf7 on, including the console's widget state (+0x10c humanoid, +0x10d scout,
-    /// +0x127 scorpion).
-    pub unknown_f7: Unknown<0x7b>,
+    pub unknown_f7: Unknown<0x14>,
+    /// +0x10b: a scout's stance (0x30 standing; it moves only standing) and a
+    /// humanoid's speed gear (an index into its cockpit's speeds).
+    pub stance: u8,
+    /// +0x10c: the stance a scout is rising or sinking to; the humanoid console's
+    /// widget state starts here (+0x10c humanoid, +0x10d scout, +0x127 scorpion).
+    pub stance_target: u8,
+    pub unknown_10d: Unknown<0x0b>,
+    /// +0x118: which of `xeno.exe`'s speed tables a scorpion's speed goes through.
+    pub speed_table: u8,
+    pub unknown_119: Unknown<0x59>,
 }
 
 impl Robot {
-    /// [`Robot::mode`]: the pilot drives; the program waits.
+    /// [`Robot::mode`]: named from T-043 as "the pilot drives; the program waits",
+    /// but T-052 found the reverse: the script steps every tick only with it set, and
+    /// starting a program sets it while the drive keys clear it (`docs/sim.md`,
+    /// "Movement"). T-111 renames it.
     pub const MANUAL: u8 = 0x80;
     /// [`Robot::mode`]: the situation room recalled the robot; its next tick gives it
     /// program 4 and clears the bit.
@@ -386,7 +414,11 @@ pub struct Base {
     pub unknown_36: u8,
     /// +0x37: the situation room's main view mode (0, 2, 4, 6, 8: O, S, M, R, C).
     pub view_mode: u8,
-    pub unknown_38: Unknown<0x85>,
+    pub unknown_38: Unknown<9>,
+    /// +0x41: counts the base's ticks; its low four bits pick the tick's routine
+    /// (the alien base gives idle robots paths when they are 2).
+    pub tick: u8,
+    pub unknown_42: Unknown<0x7b>,
     /// +0xbd: the situation room's widget state.
     pub view_state: Unknown<0x43>,
     pub unknown_100: Unknown<0x72>,
