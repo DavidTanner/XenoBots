@@ -770,6 +770,106 @@ fn parse_objects(data: &[u8], data_at: usize) -> Result<Vec<Object>, FormatError
     Ok(objects)
 }
 
+/// The size of the `BGND` chunk the game writes: its 64-byte sky name buffer.
+pub const BACKGROUND_SIZE: usize = 64;
+/// The `MAPP` chunk is the whole terrain buffer, which the game allocates in 16-byte
+/// paragraphs.
+pub const TERRAIN_PARAGRAPH: usize = 16;
+
+/// The bytes of a `MAPP` chunk as the game writes its terrain buffer
+/// (`scen_write_mapp`): the records, the 0 end word and the padding, filled with
+/// zeros to a whole paragraph. No records and no padding is an empty chunk (no
+/// buffer).
+pub fn terrain_bytes(terrain: &Terrain) -> Vec<u8> {
+    if terrain.features.is_empty() && terrain.padding.is_empty() {
+        return Vec::new();
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    for feature in &terrain.features {
+        feature.write(&mut out).expect("writing to memory");
+    }
+    let mut out = out.into_inner();
+    out.extend([0, 0]);
+    out.extend(&terrain.padding);
+    out.resize(out.len().next_multiple_of(TERRAIN_PARAGRAPH), 0);
+    out
+}
+
+fn chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) -> Result<(), FormatError> {
+    let size = u16::try_from(data.len()).map_err(|_| {
+        let name = String::from_utf8_lossy(tag);
+        invalid(out.len(), format!("{name:?} chunk of {} bytes", data.len()))
+    })?;
+    out.extend(tag);
+    out.extend(size.to_le_bytes());
+    out.extend(data);
+    Ok(())
+}
+
+fn binary(value: &impl for<'a> BinWrite<Args<'a> = ()>) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    value.write_le(&mut out).expect("writing to memory");
+    out.into_inner()
+}
+
+/// Encodes `scenario` as the game's scenario writer does (`file_write_scenario`,
+/// `1000:efde`, behind the situation room's Ctrl+Alt+P): `SHDR`, `MAPP`, `DCBS`,
+/// `APTH`, `HPTH`, `ORDR`, `BGND`, `TERM`, every one always. A save game
+/// (`file_write_save_game`) writes an `SDEF` chunk after `SHDR`; one in
+/// [`Scenario::other_chunks`] is written there. Other unknown chunks are dropped,
+/// as the game never writes any.
+///
+/// - The objects go in slot order, the order the game walks its object table.
+/// - `ORDR` is the briefing up to and including its first NUL (one is added if it
+///   has none).
+/// - `BGND` is the 64-byte sky name buffer: the name, then NULs.
+/// - A chunk the scenario lacks is written as the game's empty state: no terrain, no
+///   objects, path tables of zeros, an empty briefing and a sky name of NULs.
+pub fn write(scenario: &Scenario) -> Result<Vec<u8>, FormatError> {
+    let mut out = Vec::new();
+    chunk(&mut out, b"SHDR", &binary(&scenario.header))?;
+    for sdef in scenario.other_chunks.iter().filter(|c| &c.tag == b"SDEF") {
+        chunk(&mut out, b"SDEF", &sdef.data)?;
+    }
+    let terrain = scenario.terrain.as_ref().map(terrain_bytes);
+    chunk(&mut out, b"MAPP", &terrain.unwrap_or_default())?;
+
+    let mut objects: Vec<&Object> = scenario.objects.iter().flatten().collect();
+    objects.sort_by_key(|o| o.slot);
+    let count = u16::try_from(objects.len())
+        .map_err(|_| invalid(out.len(), format!("{} objects", objects.len())))?;
+    let mut dcbs = count.to_le_bytes().to_vec();
+    for object in objects {
+        dcbs.extend(binary(object));
+    }
+    chunk(&mut out, b"DCBS", &dcbs)?;
+
+    for (tag, table) in [
+        (b"APTH", &scenario.alien_paths),
+        (b"HPTH", &scenario.human_paths),
+    ] {
+        let bytes = table
+            .as_ref()
+            .map_or_else(|| vec![0; PathTable::SIZE], binary);
+        chunk(&mut out, tag, &bytes)?;
+    }
+
+    let briefing = scenario.briefing.as_deref().unwrap_or_default();
+    let end = briefing
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(briefing.len());
+    let mut ordr = briefing[..end].to_vec();
+    ordr.push(0);
+    chunk(&mut out, b"ORDR", &ordr)?;
+
+    let mut bgnd = scenario.background.clone().unwrap_or_default();
+    bgnd.resize(BACKGROUND_SIZE, 0);
+    chunk(&mut out, b"BGND", &bgnd)?;
+    chunk(&mut out, b"TERM", &[])?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -972,6 +1072,85 @@ mod tests {
             parse(&synthetic_usg_from(&bad_slot)),
             Err(FormatError::Binrw(_))
         ));
+    }
+
+    #[test]
+    fn a_written_scenario_reads_back() {
+        let mut s = parse(&synthetic_usg()).unwrap();
+        // The game's terrain buffer is whole paragraphs: the synthetic chunk's 56 bytes
+        // are written as 64, the padding filled with zeros.
+        let terrain = s.terrain.as_mut().unwrap();
+        assert_eq!(terrain_bytes(terrain).len(), 64);
+        terrain.padding.extend([0; 8]);
+        assert_eq!(parse(&write(&s).unwrap()).unwrap(), s);
+        // Objects go in slot order whatever order they are given in.
+        s.objects.as_mut().unwrap().reverse();
+        let back = parse(&write(&s).unwrap()).unwrap();
+        let slots: Vec<u16> = back.objects.unwrap().iter().map(|o| o.slot).collect();
+        assert!(slots.is_sorted() && slots.len() == 2, "{slots:?}");
+    }
+
+    #[test]
+    fn the_writer_adds_what_the_game_always_writes() {
+        let mut chunks = synthetic_usg_chunks();
+        chunks.retain(|(tag, _)| matches!(tag, b"SHDR" | b"TERM"));
+        chunks.insert(1, (*b"XTRA", vec![9]));
+        chunks.insert(1, (*b"SDEF", vec![1, 2, 3]));
+        let s = parse(&synthetic_usg_from(&chunks)).unwrap();
+        let bytes = write(&s).unwrap();
+        let tags: Vec<&[u8]> = {
+            let mut at = 0;
+            let mut tags = Vec::new();
+            while at < bytes.len() {
+                tags.push(&bytes[at..at + 4]);
+                at += 6 + usize::from(u16::from_le_bytes([bytes[at + 4], bytes[at + 5]]));
+            }
+            tags
+        };
+        let want: [&[u8]; 9] = [
+            b"SHDR", b"SDEF", b"MAPP", b"DCBS", b"APTH", b"HPTH", b"ORDR", b"BGND", b"TERM",
+        ];
+        assert_eq!(tags, want);
+        let back = parse(&bytes).unwrap();
+        assert_eq!(back.objects, Some(Vec::new()));
+        assert_eq!(back.terrain.unwrap().features, []);
+        assert_eq!(back.human_paths.unwrap().count, 0);
+        assert_eq!(back.briefing.as_deref(), Some(&[0][..]));
+        assert_eq!(back.background, Some(vec![0; BACKGROUND_SIZE]));
+        assert_eq!(back.other_chunks.len(), 1, "XTRA is dropped");
+
+        // The briefing ends at its first NUL; the terrain fills a paragraph.
+        let mut s = parse(&synthetic_usg()).unwrap();
+        s.briefing = Some(b"GO\0LEFT".to_vec());
+        let terrain = s.terrain.as_mut().unwrap();
+        terrain.padding.clear();
+        let back = parse(&write(&s).unwrap()).unwrap();
+        assert_eq!(back.briefing.as_deref(), Some(&b"GO\0"[..]));
+        let size = 2 * 24 + 2;
+        let padding = back.terrain.unwrap().padding;
+        assert_eq!(
+            (padding.len(), padding.iter().all(|&b| b == 0)),
+            (64 - size, true)
+        );
+    }
+
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_usg_round_trip() {
+        let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+            return;
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir);
+        let mut names: Vec<String> = (0..13).map(|n| format!("scen{n:02}a.usg")).collect();
+        names.extend(["ctrain", "htrain", "ntrain", "strain"].map(|n| format!("{n}.usg")));
+        for name in names {
+            let bytes = std::fs::read(dir.join(&name)).unwrap();
+            let s = parse(&bytes).unwrap();
+            // Written as the game writes it, every stock file comes back byte for byte.
+            assert!(write(&s).unwrap() == bytes, "{name}");
+        }
     }
 
     #[test]

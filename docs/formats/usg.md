@@ -375,20 +375,57 @@ Ends the file.
 
 ## The scenario editor
 
-`xeno.exe` has a scenario editor behind a debug word (`DS:0x5bc1` must hold a magic
-value). Its key table at `DS:0x5bc3` maps keys to handlers: one key per object kind
-(`H`, `N`, `S`, `B`, `R`, `O`, and `P` for paths), `T` to toggle the side, and more.
-Its status line (`1000:6940`) shows the kind, the side (`HUMAN`/`ALIEN`) and the
-current path's fields. That is where the names above come from. `DS:0xe6a7` holds its
-object labels (`SIZE`, `LOC-X`, `LOC-Y`, `LOC-Z`, `#DCBS`, ...).
+`xeno.exe`'s scenario editor works in a running mission's situation room once unlock
+word 9 matches (`DS:0x5bc1` = 0xab65): its key table at `DS:0x5bc3` picks a kind (`H`,
+`N`, `S`, `B`, `R`, `O`, and `P` for paths, all with Ctrl), the side (Ctrl+T), a
+heading, and edits the paths; Ctrl and a left press on the map places the kind. Its
+status goes to the debug screen. That is where the names above come from. Details in
+`docs/screens.md`, "The scenario editor (T-048)".
+
+## Writing (T-048)
+
+The situation room's Ctrl+Alt+P (no unlock needed) saves the running mission through
+`file_write_scenario` (`1000:efde`), which creates the file and writes, in this order
+and always all of them:
+
+1. `SHDR` (`scen_write_shdr`): 16 bytes from a template at `DS:0x7ea8`: version 0x80,
+   the game clock as it is (`DS:0x7d46`, day and month included), 0xa0, and six zero
+   bytes nothing writes.
+2. `MAPP` (`scen_write_mapp`): the **whole terrain buffer**, whose size the memory
+   block gives in paragraphs (`1fe6:1c7b`), so the chunk is a multiple of 16 bytes:
+   the records, the 0 word and whatever lies after it in the block. With no buffer,
+   an empty chunk. A buffer read from a `.usg` has the chunk's own size; one loaded
+   from a `.map` (the terrain editor's Apply) is the file rounded up to a paragraph,
+   with leftover memory after the end word.
+3. `DCBS` (`scen_write_dcbs`): `scen_pack_all_objects` first runs each kind's pack
+   routine (`DS:0xe81c`; a robot's script pointer to its saved form, its target to a
+   slot), then the count and the objects **in slot order** (the object table
+   `DS:0xe2c4`, empty slots skipped): each record's size is 0x172 or 0x34 by the
+   kind's flag (`DS:0xe7c7` bit 0), its slot and reference count come from the table
+   (`sim_find_object_slot`), and the object follows from its kind word. Then
+   `scen_unpack_all_objects` turns everything back.
+4. `APTH`, `HPTH` (`scen_write_apth`, `scen_write_hpth`): each table's 1122 bytes as
+   they are, slots past the count and points past `point_count` included.
+5. `ORDR` (`scen_write_ordr`): the briefing buffer up to and including its first NUL.
+6. `BGND` (`scen_write_bgnd`): the 64-byte sky name buffer (`DS:0x4c90`): the
+   default name the video driver gives for `BACKLAND.BIN`'s file id with the
+   scenario's base name written over its first 8 characters, then NULs.
+7. `TERM`.
+
+The save game (`file_write_save_game`, `1000:f01b`) is the same with `SDEF` after
+`SHDR`. `xeno_formats::usg::write` writes a `Scenario` this way (an `SDEF` among
+`other_chunks` goes after `SHDR`, other unknown chunks are dropped, a missing chunk is
+written as the game's empty state), and **every stock `.usg` comes back byte for
+byte** (`real_assets_usg_round_trip`): stock objects are in slot order, every `MAPP`
+is whole paragraphs and every `ORDR` ends at its NUL.
 
 ## Save files
 
 Found in T-024. Progress is saved to `<NAME>.LOG`, where `NAME` is the login name, up
 to eight characters, space-padded into the template at `DS:0x613b` (`1000:7912`). At
 login `1000:70ec` loads it through the chunk reader, or `scendef.bin` if there is
-none. `1000:f01b` saves the same chunks as the scenario writer (`1000:efde`) with
-`SDEF` after `SHDR`. `state.rst` is not a save file (`rst.md`).
+none. `1000:f01b` saves the same chunks as the scenario writer (`1000:efde`, above)
+with `SDEF` after `SHDR`. `state.rst` is not a save file (`rst.md`).
 
 `SDEF` (written by `1000:7666`, read by `1000:76ab` only while loading a save, a flag
 at `DS:0x7ea1`) holds 30 bytes of state from `DS:0x5f97` (+0x00 the selected
@@ -412,6 +449,7 @@ and relays of the stock sizes). `TerrainFeature` names every field of a terrain 
 `Path` the path header, and `Robot` the path and destination fields (T-059).
 `xeno_sim::orders::Orders::of` reads a robot's orders
 (T-043).
+`write` encodes a `Scenario` as the game's writer does (T-048, "Writing" above).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
 positions, the terrain features, one line per object (with its heading, radius, flags
 and its kind's orders and damage), both sides' paths and the briefing's first line.

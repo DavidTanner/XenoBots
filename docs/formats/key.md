@@ -85,7 +85,8 @@ pairs), both listed in `docs/screens.md`; the **robot consoles'** at `DS:0x6b07`
 (humanoid, 33 pairs), `DS:0x676a` (scorpion, 38) and `DS:0x6efa` (scout, 40); the
 **situation room's** at `DS:0x5b20` (32 pairs; T-043, `docs/screens.md`, "The mission's
 views"); and the scenario editor's table at `DS:0x5bc3`
-(`ui_dispatch_editor_key`). The mission views' keys that choose views and orders are
+(`ui_dispatch_editor_key`, 31 pairs, in the situation room; T-048, `docs/screens.md`).
+`mapdvr.dvr` has its own (22 pairs at its data offset `0x186`). The mission views' keys that choose views and orders are
 decoded (T-043); the rest of their handlers (weapons, mines and buoys, the camera) are
 work for the mission (T-056). The
 port's input layer already delivers these keys as scan codes with the modifiers held
@@ -119,7 +120,7 @@ match. The words land in flag words:
 | 2 | `DS:0x1aba` | equal to 0xd0ca (`1fe6:3674`, the event reader) | A screenshot key (Shift with code 0x37, the keypad `*` / Print Screen key), Ctrl+Alt+F11 (a toggle) and Ctrl+Alt+F12 (a timing benchmark that runs while F12 is held, `1fe6:3900`) |
 | 6 | `DS:0x616` | not 0x5981 | When equal, `mgavideo.dvr` keeps its plain palette upload rather than the `rep outsb` one (`dvr-protocol.md`) |
 | 8 | `DS:0x1598` | equal to 0xba17 | Ctrl+P in the cockpit: sets some of the robot's values to full (not decoded further). In the map room (T-042): `=` and `-` move the progress, Ctrl+W wins the selected scenario and Ctrl+L loses the loaded one (`docs/screens.md`); `xeno_formats::campaign` reads the value from the user's `xeno.exe` |
-| 9 | `DS:0x5bc1` | equal to 0xab65 (`ui_dispatch_editor_key`) | The scenario editor's Ctrl keys, including the terrain editor; Alt+F1 in the map room opens the editor (`ui_map_room_open_editor`, `1000:6bcf`; value read by `xeno_formats::campaign`) |
+| 9 | `DS:0x5bc1` | equal to 0xab65 (`ui_dispatch_editor_key`) | The scenario editor's keys in the situation room, including the terrain editor (Ctrl+M) and placing on the map (`docs/screens.md`, "The scenario editor (T-048)"); Alt+F1 in the map room only toggles an unused flag (`ui_editor_key_toggle_flag`, `1000:6bcf`; value read by `xeno_formats::campaign`) |
 | 15 | `DS:0x618` | equal to 0xe263 (`mgavideo.dvr`'s stub at slot `0x1558`) | Screenshots to `CAMERA00.LBM` |
 | 1, 3, 4, 5, 7, 10 to 14 | `DS:0x15a4`, `0x16f6`, `0x1676`, `0x16f8`, `0x1596`, `0x159a`–`0x15a2` | not traced | |
 
