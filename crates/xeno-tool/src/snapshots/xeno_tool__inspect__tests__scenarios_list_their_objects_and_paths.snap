@@ -6,12 +6,12 @@ usg:       starts 07:29:37 tick 20, day 0 month 3 (date not applied)
 usg:       sky SKY_A.BIN
 usg:       no map grid; objects span x 95.50..138.00, y 136.25..138.00
 usg:       2 terrain feature(s)
-usg:         hill at 120.00, -2.00  radius 9.39
-usg:         block at 22834.05, 25547.88  radius 60.84
+usg:         hill at 120.00, -2.00, z 3.13  radius 9.39, diagonal 6.26, height 3.13  shape [14, 00]
+usg:         block at 22834.05, 25547.88, z -3011.60  radius 60.84, diagonal 4.30, height 42.01  shape [b1, ba]
 usg:       2 object(s): slot, kind, side, x, y, references, heading (degrees), radius, flags; then by kind
 usg:         0  humanoid   human  95.50, 136.25  refs 0  236.6  101.95  0x66  0 bytes
 usg:         1  relay      alien  138.00, 138.00  refs 1  64.6  236.40  0x5a  0 bytes
 usg:       1 alien path(s)
-usg:         RECON      123,138 96,136
+usg:         RECON      weight 1, mix [0, 3, 7] tenths, 7 on it [3, 1, 3]: 123,138 96,136
 usg:       0 human path(s)
 usg:       briefing, 3 line(s): ATTACK THE BASE.

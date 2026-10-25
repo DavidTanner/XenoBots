@@ -731,12 +731,17 @@ fn usg_details(bytes: &[u8]) -> Details {
                 usg::TerrainFeature::BLOCK => "block".to_string(),
                 k => format!("kind {k:#04x}"),
             };
+            let size = |n: u16| f64::from(n) / 256.0;
             writeln!(
                 out,
-                "usg:         {kind} at {:.2}, {:.2}  radius {:.2}",
+                "usg:         {kind} at {:.2}, {:.2}, z {:.2}  radius {:.2}, diagonal {:.2}, height {:.2}  shape {:02x?}",
                 f(t.x),
                 f(t.y),
-                f64::from(t.radius) / 256.0
+                f(t.z),
+                size(t.radius),
+                size(t.diagonal),
+                size(t.height),
+                t.shape
             )
             .unwrap();
         }
@@ -796,7 +801,16 @@ fn usg_details(bytes: &[u8]) -> Details {
                 .iter()
                 .map(|w| format!("{:.0},{:.0}", f(w.x), f(w.y)))
                 .collect();
-            writeln!(out, "usg:         {mission:<10} {}", points.join(" ")).unwrap();
+            writeln!(
+                out,
+                "usg:         {mission:<10} weight {}, mix {:?} tenths, {} on it {:?}: {}",
+                p.weight,
+                p.mix,
+                p.on_path,
+                p.on_path_by_kind,
+                points.join(" ")
+            )
+            .unwrap();
         }
     }
     let briefing = s.briefing_lines();
