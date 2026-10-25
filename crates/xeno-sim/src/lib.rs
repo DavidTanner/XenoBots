@@ -56,14 +56,6 @@ impl Sim {
         }
     }
 
-    /// Objects move by `tables` (`xeno_formats::motion`, from the user's `xeno.exe`).
-    pub fn with_tables(self, tables: Tables) -> Sim {
-        Sim {
-            tables: Some(tables),
-            ..self
-        }
-    }
-
     /// A mission on `scenario` ([`World::from_scenario`]), drawing from the run's
     /// random word. The original has one word for the whole run, so the mission takes
     /// the campaign's and gives it back with [`Sim::park`] or [`Sim::end`]. Its objects
@@ -71,7 +63,8 @@ impl Sim {
     pub fn load(scenario: &Scenario, random: Random, tables: Tables) -> Sim {
         Sim {
             world: World::from_scenario(scenario),
-            ..Sim::with_random(random).with_tables(tables)
+            tables: Some(tables),
+            ..Sim::with_random(random)
         }
     }
 

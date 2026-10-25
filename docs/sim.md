@@ -10,8 +10,7 @@ tested headless in CI. It depends only on `xeno-formats`.
   `Sim::with_random(random)` starts one that carries on a random word already in use.
   `Sim::load(scenario, random, tables)` starts a mission: the world from a `.usg`
   scenario (below, "Loading a scenario"), the run's random word and the movement
-  tables read from the user's `xeno.exe` (`xeno_formats::motion`); `with_tables` adds
-  them to a sim made otherwise. Without tables nothing moves.
+  tables read from the user's `xeno.exe` (`xeno_formats::motion`). Without tables nothing moves.
 - **`Sim::park()`** stops a mission for now and returns a `Parked` and the random word;
   `Parked::resume(random)` gives the word back and returns the `Sim`. A parked mission
   has no word, so it cannot tick or draw. **`Sim::end()`** ends a mission and returns

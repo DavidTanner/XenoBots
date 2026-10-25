@@ -58,8 +58,8 @@ enum Command {
         palette: Option<PathBuf>,
     },
     /// Run a scenario in the sim with no window and print where its robots are
-    /// (`docs/sim.md`, "Movement"). The movement tables come from `xeno.exe` beside the
-    /// scenario unless `--exe` names it. No script runs yet (T-053), so robots move
+    /// (`docs/sim.md`, "Movement"). The movement tables come from the `xeno.exe` beside
+    /// the scenario. No script runs yet (T-053), so robots move
     /// only when `--drive` gives them a speed and heading.
     Simulate {
         /// The `.usg` scenario.
@@ -70,9 +70,6 @@ enum Command {
         /// Print the robots every this many ticks (0: only at the start).
         #[arg(long, default_value_t = 70)]
         every: u64,
-        /// The unpacked or packed `xeno.exe` to read the movement tables from.
-        #[arg(long)]
-        exe: Option<PathBuf>,
         /// The random word's seed.
         #[arg(long, default_value_t = 1)]
         seed: u32,
@@ -128,7 +125,6 @@ fn main() -> anyhow::Result<ExitCode> {
             scenario,
             ticks,
             every,
-            exe,
             seed,
             drive,
         } => {
@@ -136,8 +132,7 @@ fn main() -> anyhow::Result<ExitCode> {
                 .with_context(|| format!("cannot read {}", scenario.display()))?;
             let parsed = xeno_formats::usg::parse(&bytes)
                 .with_context(|| format!("{} is not a scenario", scenario.display()))?;
-            let exe = exe.unwrap_or_else(|| scenario.with_file_name("xeno.exe"));
-            let tables = simulate::tables(&exe)?;
+            let tables = simulate::tables(&scenario.with_file_name("xeno.exe"))?;
             print!(
                 "{}",
                 simulate::run(&parsed, tables, seed, ticks, every, &drive)?

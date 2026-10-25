@@ -613,17 +613,6 @@ impl Mission {
         for event in sim.tick(events) {
             log::debug!("mission: retrace {}: {event:?}", sim.retrace());
         }
-        if sim.retrace().is_multiple_of(700) {
-            let moving = sim.world.iter().filter(
-                |(_, e)| matches!(e.state, xeno_sim::State::Robot(m) if m.velocity != (0, 0)),
-            );
-            log::debug!(
-                "mission: retrace {}, {} robots moving, state hash {:016x}",
-                sim.retrace(),
-                moving.count(),
-                sim.state_hash()
-            );
-        }
     }
 
     /// The key word `word` went down in the view shown.
