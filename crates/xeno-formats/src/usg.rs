@@ -304,7 +304,13 @@ pub struct Robot {
     /// +0x2a: the heading asked for; every tick `heading` turns towards it by at most
     /// 0x5b (a scorpion's step). The editor sets both to the same value.
     pub target_heading: u16,
-    pub unknown_2c: Unknown<2>,
+    /// +0x2c: the robot's path: the slot in its side's [`PathTable`] (bits 0 to 3),
+    /// [`Robot::PATH_BACKWARDS`], [`Robot::PATH_NEXT`] and [`Robot::ON_PATH`]; bit 4
+    /// is set by one of the script's path commands (not traced).
+    pub path: u8,
+    /// +0x2d: the point of the path the robot is heading for; 0xff is its own base,
+    /// before the first point.
+    pub path_point: u8,
     /// +0x2e: the program given, a number in `xeno.exe`'s program table.
     pub program_given: u8,
     pub unknown_2f: u8,
@@ -316,7 +322,10 @@ pub struct Robot {
     /// table.
     pub script: u16,
     /// +0x36: event bits (the message panel's), +0x38: the script's start phase.
-    pub unknown_36: Unknown<0x18>,
+    pub unknown_36: Unknown<6>,
+    /// +0x3c: where the robot is heading, 16.16; a path point or its base.
+    pub destination: Point,
+    pub unknown_44: Unknown<0xa>,
     /// +0x4e: power systems, 0 to 100; hits lower it.
     pub power: u8,
     pub unknown_4f: Unknown<0x8d>,
@@ -345,6 +354,12 @@ impl Robot {
     /// [`Robot::mode`]: the situation room recalled the robot; its next tick gives it
     /// program 4 and clears the bit.
     pub const RECALL: u8 = 0x08;
+    /// [`Robot::path`]: walking the path from its last point back to its first.
+    pub const PATH_BACKWARDS: u8 = 0x20;
+    /// [`Robot::path`]: the script asked for the next point.
+    pub const PATH_NEXT: u8 = 0x40;
+    /// [`Robot::path`]: the robot has a path.
+    pub const ON_PATH: u8 = 0x80;
 }
 
 /// A base's bytes from +0x18 (0x172-byte objects). The loader clears the height and
@@ -398,19 +413,32 @@ pub struct Point {
     pub y: i32,
 }
 
-/// One path slot of a [`PathTable`].
+/// One path slot of a [`PathTable`]: points a robot walks, from its base out and
+/// back. See `docs/formats/usg.md`, "How paths are used".
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Path {
-    /// How many of `points` the path uses. Not traced in the code, but in every stock
-    /// path whose later points are empty it is the number of points before them.
+    /// How many of `points` the path uses. The editor adds a point at the end and
+    /// removes the last; a path with none is skipped.
     pub point_count: u8,
-    /// What the path is for; see [`Path::mission_name`].
+    /// What the path is for; see [`Path::mission_name`]. It picks the program a robot
+    /// sent along the path runs.
     pub mission: u8,
-    /// The game's debug display prints +0x04 as a number, +0x05..=+0x07 as tenths
-    /// (0 to 100 %) and +0x08..=+0x0b as numbers. Meaning unknown.
-    pub unknown_02: [u8; 10],
+    /// +0x02: zero in every stock path; no code read reads it.
+    pub unknown_02: [u8; 2],
+    /// +0x04: how often the alien base picks this path for an idle robot: each path
+    /// gets `weight + 1` chances. Set from the mission's default by the editor.
+    pub weight: u8,
+    /// +0x05: the share of humanoids, scorpions and scouts the mission wants, in
+    /// tenths (the defaults add up to 10). Set by the editor; only its display reads
+    /// them.
+    pub mix: [u8; 3],
+    /// +0x08: the alien robots on the path, then +0x09 those of each kind (humanoid,
+    /// scorpion, scout), counted by the game during play; stock files keep the counts
+    /// from when they were saved, and human paths are never counted.
+    pub on_path: u8,
+    pub on_path_by_kind: [u8; 3],
     /// Slots past `point_count` often hold leftovers from editing.
     pub points: [Point; Path::MAX_POINTS],
 }
@@ -462,52 +490,62 @@ impl PathTable {
     }
 }
 
-/// One `MAPP` record.
+/// One `MAPP` record: a piece of terrain drawn by one of `xeno.exe`'s shape programs,
+/// placed at a point. See `docs/formats/usg.md`, "`MAPP`: terrain features".
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerrainFeature {
-    /// Size of the record, including this field.
-    #[br(assert(size >= 4, "terrain record of {size} bytes"))]
+    /// Size of the record, including this field. 24 in every stock record.
+    #[br(assert(usize::from(size) >= TerrainFeature::HEADER_SIZE, "terrain record of {size} bytes"))]
     pub size: u16,
-    /// [`TerrainFeature::CIRCLE`] or 0x12 in stock files.
+    /// [`TerrainFeature::HILL`], [`TerrainFeature::BLOCK`] or
+    /// [`TerrainFeature::OPEN_HILL`]. The robots' hill test and the ground height test
+    /// this byte; the 3D view and the maps go by [`TerrainFeature::shape`] instead.
     pub kind: u8,
-    /// 0x10 with kind 0x14, 0x08 with kind 0x12.
-    pub unknown_03: u8,
-    /// +0x04 to the end of the record.
-    #[br(count = size - 4)]
-    pub data: Vec<u8>,
+    /// +0x03: how many points the shape program works with (4 bytes of stack each):
+    /// 16 for a hill, 8 for a block.
+    pub point_slots: u8,
+    /// +0x04: the centre, 16.16.
+    pub x: i32,
+    /// +0x08.
+    pub y: i32,
+    /// +0x0c: the height the shape is drawn from, 16.16.
+    pub z: i32,
+    /// +0x10: 8.8. A hill's radius: robots and the ground test it, and the shape's
+    /// ring has its points this far out on the axes. A block's half width.
+    pub radius: u16,
+    /// +0x12: 8.8. A hill's ring points on the diagonals lie this far out on both
+    /// axes (the editor writes two thirds of the radius). A block's half depth.
+    pub diagonal: u16,
+    /// +0x14: 8.8. A hill's height above `z`: inside the radius the ground is at
+    /// `z + height`. A block's half height.
+    pub height: u16,
+    /// +0x16 to the end: the drawing program, op bytes ended by 0. Every stock record
+    /// holds its `kind` (the op that runs the built-in shape) and the 0.
+    #[br(count = usize::from(size) - TerrainFeature::HEADER_SIZE)]
+    pub shape: Vec<u8>,
 }
 
 impl TerrainFeature {
-    /// A round feature the ground-height code tests points against: a centre at +0x04
-    /// and +0x08 (16.16) and a radius at +0x10 (8.8). What else it holds (a height at
-    /// +0x0c?) is unknown.
-    pub const CIRCLE: u8 = 0x14;
+    /// Bytes before [`TerrainFeature::shape`].
+    pub const HEADER_SIZE: usize = 0x16;
+    /// A box (`mapdvr.dvr` writes one, far outside the world, to close every save).
+    /// Only shots hit it; robots ignore it.
+    pub const BLOCK: u8 = 0x12;
+    /// A hill: an octagonal mound that robots cannot enter and shots hit.
+    pub const HILL: u8 = 0x14;
+    /// Shots hit it, but robots drive through it. Drawn, in the 3D view and on the
+    /// maps, by its shape program like any record (`default.map`'s one, the only one,
+    /// runs the hill's). The map editor turns it into a hill.
+    pub const OPEN_HILL: u8 = 0x16;
 
-    /// The bytes at record offset `offset`.
-    fn bytes<const N: usize>(&self, offset: usize) -> Option<[u8; N]> {
-        let i = offset.checked_sub(4)?;
-        self.data.get(i..i + N)?.try_into().ok()
-    }
-
-    /// The centre of a [`TerrainFeature::CIRCLE`], 16.16.
-    pub fn centre(&self) -> Option<Point> {
-        if self.kind != Self::CIRCLE {
-            return None;
+    /// The centre, 16.16.
+    pub fn centre(&self) -> Point {
+        Point {
+            x: self.x,
+            y: self.y,
         }
-        Some(Point {
-            x: i32::from_le_bytes(self.bytes(0x04)?),
-            y: i32::from_le_bytes(self.bytes(0x08)?),
-        })
-    }
-
-    /// The radius of a [`TerrainFeature::CIRCLE`], 8.8 fixed point.
-    pub fn radius(&self) -> Option<u16> {
-        if self.kind != Self::CIRCLE {
-            return None;
-        }
-        Some(u16::from_le_bytes(self.bytes(0x10)?))
     }
 }
 
@@ -758,21 +796,31 @@ mod tests {
         let terrain = s.terrain.as_ref().unwrap();
         assert_eq!(terrain.features.len(), 2);
         let hill = &terrain.features[0];
+        assert_eq!((hill.kind, hill.point_slots), (TerrainFeature::HILL, 0x10));
         assert_eq!(
             hill.centre(),
-            Some(Point {
+            Point {
                 x: 120 << 16,
                 y: -(2 << 16)
-            })
+            }
         );
-        assert_eq!(hill.radius(), Some(0x0965));
-        assert_eq!(terrain.features[1].centre(), None);
+        assert_eq!(hill.z, 0x3_2100);
+        assert_eq!(
+            (hill.radius, hill.diagonal, hill.height),
+            (0x965, 0x643, 0x321)
+        );
+        assert_eq!(hill.shape, [TerrainFeature::HILL, 0]);
+        let block = &terrain.features[1];
+        assert_eq!((block.kind, block.shape.len()), (TerrainFeature::BLOCK, 2));
         assert_eq!(terrain.padding.len(), 6);
 
         let alien = s.alien_paths.as_ref().unwrap().used();
         assert_eq!(alien.len(), 1);
-        assert_eq!(alien[0].mission_name(), Some("RECON"));
-        assert_eq!(alien[0].waypoints().len(), 2);
+        let recon = &alien[0];
+        assert_eq!(recon.mission_name(), Some("RECON"));
+        assert_eq!(recon.waypoints().len(), 2);
+        assert_eq!((recon.weight, recon.mix), (1, [0, 3, 7]));
+        assert_eq!((recon.on_path, recon.on_path_by_kind), (7, [3, 1, 3]));
         assert!(s.human_paths.as_ref().unwrap().used().is_empty());
 
         assert_eq!(s.briefing_lines(), ["ATTACK THE BASE.", "", "GOOD LUCK."]);
@@ -978,6 +1026,33 @@ mod tests {
                     (Body::Relay(r), ObjectKind::Relay) => assert!(r.damage < 20, "{at}"),
                     (Body::Other(_), ObjectKind::Obstacle) => {}
                     (body, kind) => panic!("{at}: {kind:?} read as {body:?}"),
+                }
+            }
+            // Hills as the map editor writes them, then its closing block.
+            let features = &s.terrain.as_ref().unwrap().features;
+            for (i, t) in features.iter().enumerate() {
+                let at = format!("{name}: terrain {i}");
+                assert_eq!((t.size, t.shape.as_slice()), (24, &[t.kind, 0][..]), "{at}");
+                let last = i + 1 == features.len();
+                let want = if last {
+                    (TerrainFeature::BLOCK, 8)
+                } else {
+                    (TerrainFeature::HILL, 0x10)
+                };
+                assert_eq!((t.kind, t.point_slots), want, "{at}");
+                if !last {
+                    assert!(t.radius > t.diagonal && t.diagonal > t.height, "{at}");
+                }
+            }
+            // Every used path has points and the editor's header for its mission;
+            // the counts per kind add up.
+            for table in [&s.alien_paths, &s.human_paths] {
+                for p in table.as_ref().unwrap().used() {
+                    let at = format!("{name}: {:?}", p.mission_name());
+                    assert!(p.point_count > 0, "{at}");
+                    assert_eq!(p.unknown_02, [0, 0], "{at}");
+                    assert_eq!(p.mix.iter().sum::<u8>(), 10, "{at}");
+                    assert_eq!(p.on_path_by_kind.iter().sum::<u8>(), p.on_path, "{at}");
                 }
             }
             assert!(s.background_name().unwrap().ends_with(".BIN"), "{name}");

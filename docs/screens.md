@@ -1040,6 +1040,19 @@ T-058 named, in `xeno.exe`: `scen_on_object_loaded` (`1000:7c6b`),
 `sim_damage_relay` (`1000:cfba`); details in `docs/formats/usg.md`. All `confirmed`, all
 saved.
 
+T-059 named, in `xeno.exe`: `sim_approx_distance_to_point` (`1000:08f7`),
+`gfx_draw_terrain_shape` (`1000:1b03`), `scen_reset_path_tables` (`1000:e9e0`),
+`sim_head_for_path_point` (`1000:eb05`), `order_start_path_mission_program`
+(`1000:ec4d`), `sim_set_robot_destination` (`1000:46f3`), `sim_run_path_end_routine`
+(`1000:ec18`), and created `sim_set_height_to_ground` (`1000:436c`),
+`sim_test_below_ground` (`1000:43d6`), `sim_test_point_in_hill` (`1000:4446`),
+`gfx_emit_terrain_render_node` (`1000:41c0`), `gfx_draw_hill_outline_on_map`
+(`1000:39fb`), `sim_check_robot_against_hills` (`1000:d50f`),
+`sim_assign_random_path` (`1000:ea98`), `sim_advance_path_point` (`1000:eae4`),
+`sim_join_nearest_path_point` (`1000:eb66`), `sim_assign_paths_to_idle_units`
+(`1000:ea3a`) and `sim_count_units_on_paths` (`1fe6:8326`); details in
+`docs/formats/usg.md`. All `confirmed`, all saved.
+
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
 `ui_name_entry_cancel`) and the text services; the list is in

@@ -9,11 +9,15 @@ expression: paths.used()
         unknown_02: [
             0,
             0,
-            1,
+        ],
+        weight: 1,
+        mix: [
             0,
             3,
             7,
-            7,
+        ],
+        on_path: 7,
+        on_path_by_kind: [
             3,
             1,
             3,

@@ -282,7 +282,7 @@ pub fn synthetic_scendef(scenarios: &[SyntheticScenario]) -> Vec<u8> {
 
 /// The chunks of a small made-up `.usg` scenario, in the stock order, for
 /// [`synthetic_usg_from`]: a start clock of 07:29:37 tick 20, day 0, month 3; a round
-/// terrain feature and a kind-0x12 record; a human humanoid at (95.5, 136.25) and an
+/// hill and a block (kinds 0x14 and 0x12); a human humanoid at (95.5, 136.25) and an
 /// alien relay (both 0x18 bytes, not the stock 0x172 and 0x34, to keep snapshots
 /// short); one alien RECON path of two points and no human paths; a three-line
 /// briefing; and the sky `SKY_A   .BIN`.

@@ -5,8 +5,9 @@
 **Layout confirmed** (T-020). `xeno_formats::usg` reads all 17 stock files to their last
 byte. The chunk layout, and most of what each chunk is, comes from `xeno.exe`'s loader
 and its chunk handlers. The object kinds and sides come from the game's built-in
-scenario editor (below). Inside the objects, terrain records and path headers, most
-bytes are still unknown (T-059, T-107; the objects' layout is in "Object fields").
+scenario editor (below). The world, the terrain records and the paths are settled
+(T-059); some object bytes are still unknown (T-107; the objects' layout is in
+"Object fields").
 
 ## Files
 
@@ -44,9 +45,23 @@ tag, data after `TERM`, and a missing `TERM`. It keeps unknown chunks in
 `Scenario::other_chunks`.
 
 All values are little-endian. Positions are signed 16.16 fixed point: the high word is
-the whole part. The stock files place objects between about 76 and 175 in x and 112
-and 163 in y. The world's bounds have not been traced (T-059). There is **no map grid**
-in the file.
+the whole part. There is **no map grid** in the file.
+
+### The world (T-059)
+
+The world is an open plane with **no size and no edges**. Nothing in `xeno.exe`
+limits or wraps a position: a robot's tick adds its velocity to x and y as 32-bit
+numbers and then only tests the hills (below); no code compares a position with a
+bound; the situation room's map scrolls by half a unit a step with no limit; and the
+3D view and the maps work relative to the viewer. Only the 32-bit
+values themselves end, at about ±32,768 units, far beyond anything stock files use.
+The distance routine (`sim_approx_distance_to_point`, `1000:08f7`, and its entry
+`1000:08ec` for two points) is `max(|dx|, |dy|) + min(|dx|, |dy|) / 2`, 16.16, and
+gives 0x7fff.7fff when a difference overflows.
+
+Scenarios are built around the map editor's origin, (128, 128) (`map.md`): stock
+objects lie between about 76 and 175 in x and 112 and 163 in y, hills and path points
+in about the same area. Height (z) is 0 on open ground.
 
 ### `SHDR` (16 bytes): header and start clock
 
@@ -72,21 +87,72 @@ each starting with its own u16 size. A size of 0 ends the list. The rest of the 
 is padding up to a whole 16-byte paragraph, and in stock files it holds leftover bytes.
 Three files (`scen00a`, `scen04a`, `htrain`) have an empty chunk.
 
+A record (`xeno_formats::usg::TerrainFeature`; the parser refuses one shorter than
+0x16 bytes):
+
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0x00 | 2 | `size` | Of the record, this field included. 24 in every stock record |
-| 0x02 | 1 | `kind` | 0x14 (a circle) or 0x12 |
-| 0x03 | 1 | `unknown_03` | 0x10 with kind 0x14, 0x08 with kind 0x12 |
-| 0x04 | size - 4 | `data` | Kept as is |
+| 0x02 | 1 | `kind` | 0x14 hill, 0x16 open hill or 0x12 block (below) |
+| 0x03 | 1 | `point_slots` | 0x10 for a hill, 8 for a block (below) |
+| 0x04 | 4 | `x` | Centre, 16.16 |
+| 0x08 | 4 | `y` | |
+| 0x0c | 4 | `z` | The height the shape is drawn from, 16.16 |
+| 0x10 | 2 | `radius` | 8.8. A hill's radius; a block's half width |
+| 0x12 | 2 | `diagonal` | 8.8. A hill's ring points on the diagonals; a block's half depth |
+| 0x14 | 2 | `height` | 8.8. A hill's height above `z`; a block's half height |
+| 0x16 | size - 0x16 | `shape` | The drawing program: op bytes ended by 0 |
 
-For **kind 0x14**, the ground-height code (`1000:436c`, `1000:43d9`) takes the
-distance from a point to (+0x04, +0x08) (16.16) and compares it with +0x10 (8.8). Inside
-that radius it works out a height from +0x0c (16.16) and +0x14. These records are
-probably hills or craters. +0x12 and +0x16 are unknown, and +0x10, +0x12 and +0x14
-have about a 3:2:1 ratio in every record.
+`point_slots` is the number of 4-byte point slots the drawing code reserves on the
+stack for the shape: 16 for a hill, 8 for a block.
 
-**Kind 0x12**: every file that has terrain ends with one record of this kind, the same
-in all of them. Its position words look like a sentinel, not a place. Not traced.
+**Kinds.** Each kind is also one of the ops of the shape programs (below). The robots'
+hill test and the ground height test the kind byte; the 3D view and the maps go by the
+record's `shape`, whose first op is the kind in every stock record:
+
+- **0x14, hill.** An octagonal mound. A robot's tick (`sim_check_robot_against_hills`,
+  `1000:d50f`, after the move; humanoid, scorpion and scout ticks all call it) tests
+  whether the robot's centre is inside a hill's radius (`sim_test_point_in_hill`,
+  `1000:4446`): if so its speed is negated, its target speed set to 0, a routine
+  from its kind's table at `DS:0x7209` runs and it takes a hit of 0 points; otherwise its height is set
+  to the ground's (`sim_set_height_to_ground`, `1000:436c`), which is 0 there. So
+  hills are walls to robots, and robots stay at height 0. The maps outline a hill as
+  an octagon with points at the radius on the axes and two thirds of it on both axes
+  at the diagonals (`gfx_draw_hill_outline_on_map`, `1000:39fb`, which tests the
+  shape's first op).
+- **0x16, open hill.** Shots hit it, but robots drive through it. Op 0x16 runs the
+  hill program too. Only `default.map` has one, and its `shape` is the hill's (0x14),
+  so it looks like a hill in the 3D view and on the maps. The map editor reads it as a
+  hill and saves it as one.
+- **0x12, block.** A box of half width +0x10, half depth +0x12 and half height +0x14
+  about (x, y, z). The map editor ends every save with a tiny one at the most negative
+  position (`map.md`), so every scenario with terrain has one at about (-32640,
+  -32640), where nothing ever sees it. Of the tests below, only the shots' sees it.
+
+**The ground.** A point is inside a feature when the distance above, from the centre,
+is less than +0x10 (the distance shifted to 8.8). The tests take the first record that
+contains the point:
+
+- `sim_set_height_to_ground` (hills only): inside, z = +0x0c + +0x14; outside every
+  hill, z = 0.
+- `sim_test_below_ground` (`1000:43d6`, every kind): whether a point is below the
+  ground: inside a feature, below +0x0c + +0x14; elsewhere, below 0. The shots' ticks
+  (`1000:e1ee` and the falling shot's `1000:e2f2`) end a shot there. So to a shot a
+  feature is a cylinder of its radius up to that height.
+
+**Drawing.** Each record becomes a render node of type 8 (`gfx_emit_terrain_render_node`,
+`1000:41c0`, keeps the record's position and a pointer to it) and is drawn by
+`gfx_draw_terrain_shape` (`1000:1b03`). That reads +0x10, +0x12 and +0x14 and runs
+the record's `shape` from +0x16: each byte is an op, an even index into the handler
+table at `DS:0x2988`, until a 0. Op 0x12 runs the built-in box program and ops 0x14
+and 0x16 the built-in hill program, both in a table of shape programs in `xeno.exe`
+(segment `3b53`); the other ops make points from the three sizes, take midpoints and
+quarter points of projected points, and fill triangles and quads in a colour. Every
+stock `.usg` record's `shape` is its kind and the 0. The hill program puts eight points on a
+ring at height z - +0x14 (at the radius on the axes and at (±+0x12, ±+0x12) on the
+diagonals) and one at the centre at z, and fills the facets between them in colours
+57 to 61. With the editor's values (z and +0x14 both a third of the radius) the ring
+lies on the ground. The exact facets and colours are for the 3D view (T-101).
 
 ### `DCBS`: objects
 
@@ -176,11 +242,14 @@ The flags at +0x16 (`usg::flag`):
 | 0x26 | 2 | `speed` | Every 16 ticks it steps by one towards `target_speed` (limited by a value at +0x118). Units not traced |
 | 0x28 | 2 | `target_speed` | |
 | 0x2a | 2 | `target_heading` | Every tick `heading` turns towards it by at most 0x5b (the scorpion's step; the others not read). The editor writes the same value here and at +0x10 |
+| 0x2c | 1 | `path` | The robot's path: slot and flags ("How paths are used") |
+| 0x2d | 1 | `path_point` | The point it heads for; 0xff its base |
 | 0x2e | 1 | `program_given` | A number in `xeno.exe`'s program table (T-043) |
 | 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
 | 0x31, 0x33, 0x38 | | | The script's timing (T-043) |
 | 0x34 | 2 | `script` | The script pointer, saved as `0xa000` + its offset from the program table |
 | 0x36 | | | Event bits, which the message panel reports |
+| 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
 | 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
@@ -226,13 +295,57 @@ then 8 path slots of 140 bytes:
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x00 | 1 | `point_count` | In every stock path whose later points are empty, this is the number of points before them. Not traced in code |
-| 0x01 | 1 | `mission` | The debug display names it from `DS:0x5cf5`: `NET DENSE`, `NET SPARSE`, `MAINTAIN`, `RECON`, `PATROL`, `SKIRMISH`, `WATCH`, `----------`. Stock files use 0, 3 and 4 |
-| 0x02 | 10 | `unknown_02` | The debug display prints +0x04 as a number, +0x05..+0x07 as tenths (0 to 100 %) and +0x08..+0x0b as numbers. +0x04..+0x07 go with `mission` in stock files |
+| 0x00 | 1 | `point_count` | The points in use. The editor's add-point key writes the point under the pointer at `points[point_count]` and counts it (at most 16); its remove key drops the last. A path with none is skipped |
+| 0x01 | 1 | `mission` | The editor names it from `DS:0x5cf5`: `NET DENSE`, `NET SPARSE`, `MAINTAIN`, `RECON`, `PATROL`, `SKIRMISH`, `WATCH` (it cycles 0 to 6; 7 is `----------`). Stock files use 0, 3 and 4 |
+| 0x02 | 2 | `unknown_02` | Zero in every stock path. Nothing in the code read reads or writes it |
+| 0x04 | 1 | `weight` | How often the alien base picks the path (below) |
+| 0x05 | 3 | `mix` | Humanoids, scorpions and scouts the mission wants, in tenths; the editor shows them as percentages (table `DS:0x7d35`). Only the editor's display reads them |
+| 0x08 | 1 | `on_path` | Alien robots on the path |
+| 0x09 | 3 | `on_path_by_kind` | Of those, humanoids, scorpions and scouts |
 | 0x0c | 128 | `points` | 16 points of x, y (16.16) |
+
+Making a path, or changing its mission, sets +0x04..+0x07 from the mission's defaults
+(four bytes a mission at `DS:0x7cf8`), and every stock path has its mission's. The
+counts at +0x08..+0x0b are worked out during play, for the alien paths only
+(`sim_count_units_on_paths`, `1fe6:8326`: cleared, then one for each robot in the
+alien base's unit list that has a path); stock files keep what they were when saved.
 
 Slots past the count, and points past `point_count`, often hold leftovers from the
 editor. Human paths are empty in the training files and in `scen00a` and `scen04a`.
+
+#### How paths are used (T-059)
+
+`scen_reset_path_tables` (`1000:e9e0`) empties both tables and makes the slot pointer
+lists (`DS:0x7c3c` alien, `0x7c4c` human). A robot keeps its path in two bytes
+(`usg::Robot`): +0x2c holds the slot (bits 0 to 3) and flags (bit 5 walking back,
+bit 6 the next point asked for, bit 7 on a path), +0x2d the point it heads for.
+
+- **Picking a path** (`sim_assign_random_path`, `1000:ea98`). Only the alien base does
+  this (`sim_assign_paths_to_idle_units`, `1000:ea3a`, runs for a base with the
+  alien bit): for each robot in its unit list without a path (and without +0x23
+  bit 0), it lists each path in use `weight + 1` times, draws the random word's low
+  byte modulo the list's length, gives the robot that path from point 0, heads it
+  there, and starts the path's mission program (`order_start_path_mission_program`,
+  `1000:ec4d`): a program number by mission and robot kind from `DS:0x7d20` (three
+  bytes a mission: humanoid, scorpion, scout; humanoids and scouts get 8 on every
+  mission, scorpions 13, 12, 16 on the first three and 13 on the rest).
+- **Heading for a point** (`sim_head_for_path_point`, `1000:eb05`). The robot's side
+  picks the table. A path with no points fails. Point 0xff is the robot's own base.
+  A point at or past `point_count` runs the end-of-path routine (by kind and mission,
+  `DS:0x7c92`): every one turns the robot round (bit 5 flips, bit 6 set). Point 0xfe
+  (past the base, coming back) runs another (`DS:0x7cb4`): humanoids and scouts pick
+  a new path, scorpions turn round. Otherwise the point's x and y become the robot's
+  destination (+0x3c, `sim_set_robot_destination`, `1000:46f3`) and bit 7 is set.
+- **Next point** (`sim_advance_path_point`, `1000:eae4`): when the script has asked for
+  the next point (bit 6), the point number steps forward, or back with bit 5, and the
+  robot heads for it. So a robot walks from its base along the points, back to point
+  0, to its base, and then (if not a scorpion) along a new path.
+- **Joining a path** (`sim_join_nearest_path_point`, `1000:eb66`, reached through a
+  table): the robot takes the nearest point of any of its side's paths, or its base
+  if that is nearer; only points less than 256 units away count.
+
+The script's path commands (which set bits 4 and 6 or step back a point, table
+`DS:0x7d14`) are part of the orders (T-053).
 
 ### `ORDR`: briefing
 
@@ -288,8 +401,6 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 - The object bytes still unnamed: +0x12 and +0x17, most of a robot's 0x172 bytes
   (sensors, weapons, the script's working bytes), the relay's set-up state and links,
   and anything in an obstacle past +0x18 (T-107).
-- The world's size and edges, and the terrain record fields not listed above. Also how
-  `point_count` and the rest of the path header are used (T-059).
 - Whether `pool_index` matters once loaded, given that stock files repeat some.
 
 ## Parser
@@ -297,7 +408,9 @@ paragraphs, with each scenario's `state` (`scendef.md`).
 `xeno_formats::usg` (T-020): `parse` returns a `Scenario` with the header, terrain,
 objects, both path tables, briefing and background, and keeps any other chunks.
 `Object` names the common header and `Body` each kind's layout (T-058; robots, bases
-and relays of the stock sizes). `xeno_sim::orders::Orders::of` reads a robot's orders
+and relays of the stock sizes). `TerrainFeature` names every field of a terrain record,
+`Path` the path header, and `Robot` the path and destination fields (T-059).
+`xeno_sim::orders::Orders::of` reads a robot's orders
 (T-043).
 `xeno-tool inspect <file>.usg` prints the clock, the sky, the extent of the object
 positions, the terrain features, one line per object (with its heading, radius, flags

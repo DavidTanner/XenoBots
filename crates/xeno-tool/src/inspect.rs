@@ -725,16 +725,19 @@ fn usg_details(bytes: &[u8]) -> Details {
         )
         .unwrap();
         for t in &terrain.features {
-            match (t.centre(), t.radius()) {
-                (Some(p), Some(r)) => writeln!(
-                    out,
-                    "usg:         circle at {:.2}, {:.2}  radius {:.2}",
-                    f(p.x),
-                    f(p.y),
-                    f64::from(r) / 256.0
-                ),
-                _ => writeln!(out, "usg:         kind {:#04x}, {} bytes", t.kind, t.size),
-            }
+            let kind = match t.kind {
+                usg::TerrainFeature::HILL => "hill".to_string(),
+                usg::TerrainFeature::OPEN_HILL => "open hill".to_string(),
+                usg::TerrainFeature::BLOCK => "block".to_string(),
+                k => format!("kind {k:#04x}"),
+            };
+            writeln!(
+                out,
+                "usg:         {kind} at {:.2}, {:.2}  radius {:.2}",
+                f(t.x),
+                f(t.y),
+                f64::from(t.radius) / 256.0
+            )
             .unwrap();
         }
     }
@@ -1005,13 +1008,19 @@ mod tests {
 
     #[test]
     fn maps_and_rst_files_are_summarised() {
-        let map = [4, 0, 0x14, 0x10, 4, 0, 0x12, 0x08, 0, 0];
+        // Two records with no shape program, then the end marker.
+        let mut map = Vec::new();
+        for (kind, slots) in [(0x14, 0x10), (0x12, 0x08)] {
+            map.extend([0x16, 0, kind, slots]);
+            map.extend([0; 0x12]);
+        }
+        map.extend([0, 0]);
         let out = report(Path::new("DEFAULT.MAP"), &map);
         assert!(
             out.contains("map:       editor terrain, record kinds [0x14, 0x12]\n"),
             "{out}"
         );
-        let out = report(Path::new("backup.map"), &map[..8]);
+        let out = report(Path::new("backup.map"), &map[..0x2c]);
         assert!(out.contains("map:       cannot parse: "), "{out}");
 
         let out = report(Path::new("STATE.RST"), b"1 2\r\n[A]\r\nx\r\n\x1a");
