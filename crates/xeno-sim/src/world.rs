@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use xeno_formats::usg::{Body, Object, ObjectKind, Scenario, Side};
+use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, Side};
 
 use crate::hash::{StateHash, StateHasher};
 use crate::orders::OrderBook;
@@ -53,6 +53,119 @@ pub struct Entity {
     /// +0x14: 8.8 fixed point.
     pub radius: u16,
     pub damage: Damage,
+    /// What moves it: a robot's [`Movement`], a base's tick.
+    pub state: State,
+}
+
+/// The per-tick state of an object (`docs/sim.md`, "Movement").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum State {
+    Robot(Movement),
+    /// A base: +0x41, its tick count.
+    Base {
+        tick: u8,
+    },
+    /// Relays, obstacles and objects without a known layout do nothing yet.
+    #[default]
+    None,
+}
+
+/// A robot's movement fields (`usg::Robot`; `docs/formats/usg.md`, "Object fields").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Movement {
+    /// +0x1a: the tick counter, stepping by 2.
+    pub tick: u8,
+    /// +0x1e, +0x20: added to x and y every tick, in 1/65,536ths.
+    pub velocity: (i16, i16),
+    /// +0x23 without bit 7 (the program bit, kept in the [`OrderBook`]): bit 0 no
+    /// path from the alien base, bit 3 recalled, bits 4 and 5 the turn keys.
+    pub mode: u8,
+    /// +0x26, +0x28: the speed and the speed asked for.
+    pub speed: i16,
+    pub target_speed: i16,
+    /// +0x2a: the heading asked for.
+    pub target_heading: u16,
+    /// +0x2c: the path's slot (bits 0 to 3) and [`Movement::BACKWARDS`],
+    /// [`Movement::NEXT`], [`Movement::ON_PATH`]; +0x2d the point it heads for.
+    pub path: u8,
+    pub path_point: u8,
+    /// +0x32: what it heads for (0x22 the destination).
+    pub goal: u8,
+    /// +0x3c: where it heads.
+    pub destination: Position,
+    /// +0x51: the drive.
+    pub drive: u8,
+    /// +0x10b, +0x10c: a scout's stance and the one it moves to.
+    pub stance: u8,
+    pub stance_target: u8,
+    /// +0x118: a scorpion's speed table.
+    pub speed_table: u8,
+}
+
+impl Movement {
+    pub const BACKWARDS: u8 = usg::Robot::PATH_BACKWARDS;
+    pub const NEXT: u8 = usg::Robot::PATH_NEXT;
+    pub const ON_PATH: u8 = usg::Robot::ON_PATH;
+    /// [`Movement::goal`]: heading for [`Movement::destination`].
+    pub const GOAL_POINT: u8 = 0x22;
+
+    fn of(r: &usg::Robot) -> Movement {
+        Movement {
+            tick: r.tick,
+            velocity: (r.velocity_x, r.velocity_y),
+            mode: r.mode & !usg::Robot::MANUAL,
+            speed: r.speed,
+            target_speed: r.target_speed,
+            target_heading: r.target_heading,
+            path: r.path,
+            path_point: r.path_point,
+            goal: r.goal,
+            destination: Position {
+                x: Fixed(r.destination.x),
+                y: Fixed(r.destination.y),
+            },
+            drive: r.drive,
+            stance: r.stance,
+            stance_target: r.stance_target,
+            speed_table: r.speed_table,
+        }
+    }
+}
+
+impl State {
+    /// The movement state `object`'s layout records.
+    pub fn of(object: &Object) -> State {
+        match &object.body {
+            Body::Robot(r) => State::Robot(Movement::of(r)),
+            Body::Base(b) => State::Base { tick: b.tick },
+            _ => State::None,
+        }
+    }
+}
+
+impl StateHash for State {
+    fn state_hash(&self, h: &mut StateHasher) {
+        match *self {
+            State::Robot(m) => {
+                h.u8(0);
+                h.bytes(&[m.tick, m.mode]);
+                h.u16(m.velocity.0 as u16);
+                h.u16(m.velocity.1 as u16);
+                h.u16(m.speed as u16);
+                h.u16(m.target_speed as u16);
+                h.u16(m.target_heading);
+                h.bytes(&[m.path, m.path_point, m.goal]);
+                h.i32(m.destination.x.0);
+                h.i32(m.destination.y.0);
+                h.bytes(&[m.drive, m.stance, m.stance_target, m.speed_table]);
+            }
+            State::Base { tick } => {
+                h.u8(1);
+                h.u8(tick);
+            }
+            State::None => h.u8(2),
+        }
+    }
 }
 
 /// What an object has taken (`docs/formats/usg.md`, "How robots take damage").
@@ -133,6 +246,11 @@ pub struct World {
     pub orders: OrderBook,
     pub terrain: Terrain,
     pub paths: Paths,
+    /// Each side's unit list (the base's +0x4d), human then alien: its robots in the
+    /// file's order, at most [`World::UNIT_LIST`].
+    pub units: [Vec<EntityId>; 2],
+    /// Each side's command object (`DS:0x568e`, `0x5690`): the last base loaded for it.
+    pub bases: [Option<EntityId>; 2],
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -194,16 +312,43 @@ impl World {
                     heading: o.heading,
                     radius: o.radius,
                     damage: Damage::of(o),
+                    state: State::of(o),
                 };
                 (EntityId(o.slot), entity)
             })
             .collect();
+        // The loader adds each robot to its side's list and makes each base its side's
+        // command object, in file order (`scen_on_object_loaded`).
+        let (mut units, mut bases) = (<[Vec<EntityId>; 2]>::default(), [None; 2]);
+        for o in scenario.objects.iter().flatten() {
+            let side = usize::from(side_code(o.side()));
+            if o.kind == ObjectKind::Base {
+                bases[side] = Some(EntityId(o.slot));
+            } else if o.flags & usg::flag::UNIT != 0 && units[side].len() < World::UNIT_LIST {
+                units[side].push(EntityId(o.slot));
+            }
+        }
         World {
             entities,
             orders: OrderBook::from_scenario(scenario),
             terrain: Terrain::from_scenario(scenario),
             paths: Paths::from_scenario(scenario),
+            units,
+            bases,
         }
+    }
+
+    /// The most robots a side's unit list holds.
+    pub const UNIT_LIST: usize = 38;
+
+    /// `side`'s unit list.
+    pub fn units(&self, side: Side) -> &[EntityId] {
+        &self.units[usize::from(side_code(side))]
+    }
+
+    /// `side`'s command object.
+    pub fn base(&self, side: Side) -> Option<EntityId> {
+        self.bases[usize::from(side_code(side))]
     }
 
     /// Playing a campaign scenario that was not loaded (`sim_apply_scenario_alert`):
@@ -255,6 +400,12 @@ impl World {
         self.entities.get_mut(&id)
     }
 
+    /// Object `id`, to change, and the terrain it moves over.
+    pub(crate) fn entity_and_terrain(&mut self, id: EntityId) -> Option<(&mut Entity, &Terrain)> {
+        let entity = self.entities.get_mut(&id)?;
+        Some((entity, &self.terrain))
+    }
+
     /// The objects in slot order.
     pub fn iter(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
         self.entities.iter().map(|(&id, e)| (id, e))
@@ -281,10 +432,16 @@ impl StateHash for World {
             h.u16(e.heading);
             h.u16(e.radius);
             e.damage.state_hash(h);
+            e.state.state_hash(h);
         }
         self.orders.state_hash(h);
         self.terrain.state_hash(h);
         self.paths.state_hash(h);
+        for (units, base) in self.units.iter().zip(self.bases) {
+            h.u64(units.len() as u64);
+            units.iter().for_each(|id| h.u16(id.0));
+            h.u16(base.map_or(0xffff, |id| id.0));
+        }
     }
 }
 
@@ -303,6 +460,7 @@ mod tests {
             heading: 0,
             radius: 0xa00,
             damage: Damage::None,
+            state: State::None,
         }
     }
 
@@ -400,7 +558,7 @@ mod tests {
         moved.terrain.features[0].height += 1;
         assert_ne!(hash(&moved), hash(&world));
         let mut moved = world.clone();
-        moved.paths.alien[0].points[0].x.0 += 1;
+        moved.paths.alien.slots[0].points[0].x.0 += 1;
         assert_ne!(hash(&moved), hash(&world));
         // Fractions are kept: the plain fixture's humanoid is at (95.5, 136.25).
         let plain = xeno_formats::usg::parse(&xeno_formats::fixtures::synthetic_usg()).unwrap();

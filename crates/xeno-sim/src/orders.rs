@@ -141,6 +141,19 @@ impl OrderBook {
         })
     }
 
+    /// The robot is given `program` and its program drives
+    /// (`order_set_program`, then `order_switch_to_automatic`): a path's mission does
+    /// this. [`Orders::manual`] is +0x23 bit 7, which T-052 found means the program
+    /// drives, so it is set here (T-111 renames it).
+    pub fn start_program(&mut self, slot: u16, program: u8) -> Option<Change> {
+        self.change(slot, |_| {
+            Some(Orders {
+                manual: true,
+                ..Orders::given(program)
+            })
+        })
+    }
+
     /// Hands the robot to its pilot or back to its program (F3, F2).
     pub fn set_manual(&mut self, slot: u16, manual: bool) -> Option<Change> {
         self.change(slot, |r| Some(Orders { manual, ..r.orders }))

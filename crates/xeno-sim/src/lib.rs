@@ -5,6 +5,7 @@
 
 pub mod hash;
 pub mod input;
+pub mod motion;
 pub mod orders;
 pub mod random;
 pub mod rate;
@@ -13,10 +14,13 @@ pub mod world;
 
 pub use random::Random;
 pub use rate::Rate;
-pub use world::{Census, Components, Damage, Entity, EntityId, Fixed, Position, World};
+pub use world::{
+    Census, Components, Damage, Entity, EntityId, Fixed, Movement, Position, State, World,
+};
 
 use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};
+use motion::{Event, Tables};
 use xeno_formats::usg::Scenario;
 
 /// The simulation's whole state.
@@ -28,6 +32,9 @@ pub struct Sim {
     keys: Keys,
     mouse: Mouse,
     pub world: World,
+    /// The movement tables from the user's `xeno.exe`; without them nothing moves
+    /// (an empty world, or a test of the input alone).
+    tables: Option<Tables>,
 }
 
 impl Sim {
@@ -45,15 +52,18 @@ impl Sim {
             keys: Keys::default(),
             mouse: Mouse::default(),
             world: World::default(),
+            tables: None,
         }
     }
 
     /// A mission on `scenario` ([`World::from_scenario`]), drawing from the run's
     /// random word. The original has one word for the whole run, so the mission takes
-    /// the campaign's and gives it back with [`Sim::park`] or [`Sim::end`].
-    pub fn load(scenario: &Scenario, random: Random) -> Sim {
+    /// the campaign's and gives it back with [`Sim::park`] or [`Sim::end`]. Its objects
+    /// move by `tables`.
+    pub fn load(scenario: &Scenario, random: Random, tables: Tables) -> Sim {
         Sim {
             world: World::from_scenario(scenario),
+            tables: Some(tables),
             ..Sim::with_random(random)
         }
     }
@@ -68,12 +78,14 @@ impl Sim {
             keys,
             mouse,
             world,
+            tables,
         } = self;
         let parked = Parked {
             retrace,
             keys,
             mouse,
             world,
+            tables,
         };
         (parked, random)
     }
@@ -99,20 +111,25 @@ impl Sim {
         &self.mouse
     }
 
-    /// One retrace with the input that arrived for it. For now it only counts the
-    /// retrace and tracks held keys and buttons; the rules come with T-051 on.
-    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) {
+    /// One retrace with the input that arrived for it: the held keys and buttons are
+    /// tracked (nothing acts on them yet), then every object ticks in slot order
+    /// (`docs/sim.md`, "Movement"). Returns what the tick did.
+    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Vec<Event> {
         self.retrace += 1;
         for event in events {
             self.keys.apply(event);
             self.mouse.apply(event);
+        }
+        match &self.tables {
+            Some(tables) => motion::tick(&mut self.world, tables, &mut self.random),
+            None => Vec::new(),
         }
     }
 
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
     pub fn run(&mut self, log: &InputLog, retrace: u64) {
         while self.retrace < retrace {
-            self.tick(log.events_at(self.retrace + 1));
+            _ = self.tick(log.events_at(self.retrace + 1));
         }
     }
 
@@ -136,6 +153,7 @@ pub struct Parked {
     keys: Keys,
     mouse: Mouse,
     pub world: World,
+    tables: Option<Tables>,
 }
 
 impl Parked {
@@ -146,6 +164,7 @@ impl Parked {
             keys,
             mouse,
             world,
+            tables,
         } = self;
         Sim {
             retrace,
@@ -153,6 +172,7 @@ impl Parked {
             keys,
             mouse,
             world,
+            tables,
         }
     }
 }
@@ -226,7 +246,7 @@ mod tests {
         // The campaign draws, then lends its word to the mission, which draws more.
         let mut campaign = Random::seeded(9);
         campaign.word();
-        let mut sim = Sim::load(&scenario, campaign);
+        let mut sim = Sim::load(&scenario, campaign, motion::synthetic_tables());
         assert_eq!(sim.world.len(), 5);
         assert_eq!(sim.world, World::from_scenario(&scenario));
         sim.tick(&[InputEvent::MouseMove { x: 1, y: 2 }]);
