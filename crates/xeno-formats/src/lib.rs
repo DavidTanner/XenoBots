@@ -7,6 +7,7 @@
 pub mod ban;
 pub mod campaign;
 pub mod dsounds;
+pub mod editor;
 pub mod ending;
 mod error;
 pub mod farewell;

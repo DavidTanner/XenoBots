@@ -17,6 +17,7 @@
 //! chosen by the original handler it calls.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::font::Font;
@@ -27,11 +28,12 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
     TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{lzexe, mgavideo};
+use xeno_formats::{editor, lzexe, map, mgavideo};
 use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{Parked, Random, Sim, World};
 
+use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
 use crate::input::MouseButton;
 use crate::maproom::{Campaign, scenario_file};
@@ -52,6 +54,8 @@ mod handler {
     pub const VIEW_SELECTED: u16 = 0x6852;
     pub const NEXT_SELECTED: u16 = 0x67e8;
     pub const PREVIOUS_SELECTED: u16 = 0x680c;
+    /// Situation room: Ctrl+Alt+P, save the mission as a `.usg` (no unlock needed).
+    pub const SAVE: u16 = 0xefd5;
     /// Situation room: the main view's modes, by key (O, S, M, R, C), and the mode each
     /// sets (`ui_sitroom_set_view_mode`).
     pub const MODES: [(u16, u8); 5] = [
@@ -112,7 +116,19 @@ pub struct Assets {
     /// Every training and campaign scenario, by lower-case file name; files that are
     /// missing or do not parse are left out (and logged).
     pub scenarios: BTreeMap<String, Scenario>,
+    /// The scenario editor's tables (T-048), if the user's `xeno.exe` has them where
+    /// the port reads them.
+    pub editor: Option<editor::Editor>,
+    /// Whether the user's `XENO.KEY` gives unlock word 9 (the editor's keys).
+    pub editor_unlocked: bool,
+    /// Where Ctrl+Alt+P and the editor save (`--save-dir`, else the game directory).
+    pub save_dir: PathBuf,
 }
+
+/// The names the port saves under until it has the original's file dialogs (T-110):
+/// the scenario (Ctrl+Alt+P), and the terrain editor's leave file.
+pub const SAVED_SCENARIO: &str = "EDITED.USG";
+pub const SAVED_TERRAIN: &str = "BACKUP.MAP";
 
 /// Reads the views, the training menu and the programs from the user's `xeno.exe`,
 /// `msprite1.b@n`, the fonts from `mgavideo.dvr`, and the scenarios named by the
@@ -162,6 +178,9 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             Err(e) => log::warn!("mission: {e}"),
         }
     }
+    let editor = editor::read(&exe)
+        .inspect_err(|e| log::warn!("xeno.exe: no scenario editor tables this port can read: {e}"))
+        .ok();
     Ok(Assets {
         views,
         training,
@@ -169,6 +188,9 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         fonts,
         sprites,
         scenarios,
+        editor,
+        editor_unlocked: false,
+        save_dir: files.dir().path.clone(),
     })
 }
 
@@ -312,6 +334,11 @@ pub struct Mission {
     typed: usize,
     capture: Option<(Target, MouseButton)>,
     dirty: bool,
+    /// The scenario as loaded, which the editor's keys change and Ctrl+Alt+P saves
+    /// (the sim does not run yet, so it is the mission's state; T-057 for saving the
+    /// running sim).
+    scenario: Option<Scenario>,
+    editor: Editor,
 }
 
 impl Mission {
@@ -322,6 +349,7 @@ impl Mission {
         log_census(&file, &sim.world);
         let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
+        mission.scenario = Some(scenario.clone());
         // The mission starts in the mode saved in the player's base.
         let base = scenario
             .objects
@@ -360,6 +388,8 @@ impl Mission {
             typed: 0,
             capture: None,
             dirty: true,
+            scenario: None,
+            editor: Editor::default(),
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
@@ -566,6 +596,14 @@ impl Mission {
 
     /// The key word `word` went down in the view shown.
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
+        // The situation room's editor widget comes before its key table.
+        if let (Viewed::Base, true, Some(tables)) =
+            (self.viewed, assets.editor_unlocked, &assets.editor)
+            && let Some(&(_, handler)) = tables.keys.iter().find(|&&(w, _)| w == word)
+        {
+            self.editor_key(handler, tables, &assets.save_dir);
+            return None;
+        }
         let view = self.view();
         let handler = assets
             .tables(view)
@@ -593,6 +631,10 @@ impl Mission {
                 self.view_robot(next).map(Request::Show)
             }
             (Viewed::Base, handler::END) => (word == ALT_Q).then_some(Request::End),
+            (Viewed::Base, handler::SAVE) => {
+                self.save_scenario(&assets.save_dir.join(SAVED_SCENARIO));
+                None
+            }
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
                 let mode = handler::MODES.iter().find(|&&(m, _)| m == h)?.1;
@@ -621,6 +663,47 @@ impl Mission {
                 );
                 None
             }
+        }
+    }
+
+    /// Runs an editor key on the mission's scenario, logs the editor's status, and
+    /// saves the terrain if the key asks.
+    fn editor_key(&mut self, handler: u16, tables: &editor::Editor, dir: &Path) {
+        let Some(scenario) = &mut self.scenario else {
+            log::debug!("editor: no scenario loaded");
+            return;
+        };
+        if self.editor.key(handler, scenario, tables) == Effect::SaveTerrain {
+            let world = scenario.terrain.as_ref().map(|t| t.features.as_slice());
+            let saved = map::editor_save(world.unwrap_or_default());
+            let path = dir.join(SAVED_TERRAIN);
+            match std::fs::write(&path, map::write(&saved)) {
+                Ok(()) => log::info!(
+                    "editor: the terrain editor needs the 3D view (T-109); left at once, \
+                     {} circles saved to {}",
+                    saved.features.len() - 1,
+                    path.display()
+                ),
+                Err(e) => log::warn!("editor: cannot write {}: {e}", path.display()),
+            }
+        }
+        for row in self.editor.status(scenario, tables) {
+            log::info!("editor: {row}");
+        }
+    }
+
+    /// Ctrl+Alt+P: writes the mission's scenario as the original's writer does.
+    fn save_scenario(&self, path: &Path) {
+        let Some(scenario) = &self.scenario else {
+            log::info!("mission: nothing loaded to save");
+            return;
+        };
+        let written = usg::write(scenario)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
+        match written {
+            Ok(()) => log::info!("mission: saved the scenario to {}", path.display()),
+            Err(e) => log::warn!("mission: cannot save {}: {e}", path.display()),
         }
     }
 
@@ -1060,12 +1143,59 @@ pub mod tests {
                 .chain((0..13).map(scenario_file))
                 .map(|name| (name, scenario.clone()))
                 .collect(),
+            editor: None,
+            editor_unlocked: false,
+            save_dir: PathBuf::new(),
         }
     }
 
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
         Mission::new(file, scenario, Random::seeded(1))
+    }
+
+    /// With unlock word 9 the editor's keys act in the situation room; its terrain
+    /// key and Ctrl+Alt+P's save write files the parsers read back.
+    #[test]
+    fn the_editor_s_keys_change_and_save_the_scenario() {
+        let dir = std::env::temp_dir().join(format!("xeno-editor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut assets = test_assets();
+        let tables = |keys| editor::Editor {
+            keys,
+            kind_names: vec![None; editor::KINDS],
+            side_names: [b"H".to_vec(), b"A".to_vec()],
+            show_names: [b"N".to_vec(), b"Y".to_vec()],
+            mission_names: vec![b"M".to_vec(); 8],
+            mission_defaults: vec![[0; 4]; 7],
+            mix_percent: vec![0; 11],
+            status: b"T:\r".to_vec(),
+        };
+        // Ctrl+Alt+R removes the relays; Ctrl+M saves the terrain.
+        let (remove, terrain) = ((0x3013, 0x6ac8), (0x1032, 0x448c));
+        assets.editor = Some(tables(vec![remove, terrain]));
+        assets.save_dir = dir.clone();
+        let mut m = mission(&assets);
+        let relays = |m: &Mission| {
+            let objects = m.scenario.as_ref().unwrap().objects.iter().flatten();
+            objects.filter(|o| o.kind == usg::ObjectKind::Relay).count()
+        };
+        assert!(relays(&m) > 0);
+        m.key(remove.0, &assets);
+        assert!(relays(&m) > 0, "locked: nothing happens");
+        assets.editor_unlocked = true;
+        m.key(remove.0, &assets);
+        assert_eq!(relays(&m), 0);
+        m.key(terrain.0, &assets);
+        let saved = map::parse(&std::fs::read(dir.join(SAVED_TERRAIN)).unwrap()).unwrap();
+        assert_eq!(saved.features.last(), Some(&map::closing_block()));
+        m.save_scenario(&dir.join(SAVED_SCENARIO));
+        // It reads back as saved (the terrain filled to a paragraph, as the game's).
+        let bytes = std::fs::read(dir.join(SAVED_SCENARIO)).unwrap();
+        let back = usg::parse(&bytes).unwrap();
+        assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
+        assert_eq!(usg::write(&back).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn click(

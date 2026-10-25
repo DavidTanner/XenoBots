@@ -6,6 +6,7 @@
 mod campaign;
 mod clock;
 mod drop;
+mod editor;
 mod game_dir;
 mod intro;
 mod keymap;
@@ -40,6 +41,12 @@ struct Cli {
     /// ./gameFiles.
     #[arg(long, value_name = "PATH")]
     game_dir: Option<PathBuf>,
+
+    /// Where the situation room's Ctrl+Alt+P (`EDITED.USG`) and the scenario editor's
+    /// terrain key (`BACKUP.MAP`) save. Defaults to the game directory, as the
+    /// original saves in its own.
+    #[arg(long, value_name = "PATH")]
+    save_dir: Option<PathBuf>,
 
     /// Only check the game directory, then exit without opening a window.
     #[arg(long)]
@@ -222,9 +229,14 @@ fn main() -> ExitCode {
         _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
         Some(start) => match screens::load(&files).and_then(|p| {
             let login = login::load(&files, seed)?;
-            let missions = mission::load(&files, login.campaign.scenarios.len())?;
+            let mut missions = mission::load(&files, login.campaign.scenarios.len())?;
             let endings = intro::load_endings(&files)?;
-            Ok((p, login, maproom::load(&files)?, missions, endings))
+            let map = maproom::load(&files)?;
+            missions.editor_unlocked = map.editor;
+            if let Some(dir) = &cli.save_dir {
+                missions.save_dir = dir.clone();
+            }
+            Ok((p, login, map, missions, endings))
         }) {
             Ok((pictures, login, map, missions, endings)) => {
                 let mut screens = screens::Screens::new(pictures, login, map, missions, start);

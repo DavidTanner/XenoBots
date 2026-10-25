@@ -198,6 +198,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone
 cargo run -p xeno-app -- --game-dir ./gameFiles --screen map-room  # start at a screen (docs/screens.md); --screen test-card for the test card
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word's seed (logged at start-up; the clock's otherwise)
+cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where Ctrl+Alt+P (EDITED.USG) and the editor's Ctrl+M (BACKUP.MAP) save; the game dir otherwise
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README): sprite banks, skies, screens, pictures, models
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
