@@ -24,18 +24,33 @@ Positions (+0x04 x, +0x08 y, 16.16) are **relative to the editor's map origin**
 adds the origin to +0x04, +0x08 and +0x0c of every record, and saving subtracts it
 from x and y. The `.usg` files' closing record is the editor's, moved by the origin.
 
-The editor's save routine (driver offset `0x0711`, after the MZ header) writes:
+The editor's save routine (`file_write_map`, driver offset `0x0711`, after the MZ
+header) creates the file (`file_create_map`) and writes (T-048, exactly):
 
-1. A hill (kind 0x14, 16 point slots) for each circle placed, from a template in
-   the driver's data: the centre, the radius `r` (8.8) at +0x10, then `2r/3` at
-   +0x12, `r/3` at +0x14, and `r/3` as 16.16 at +0x0c, and the shape program 0x14, 0.
-   That is the 3:2:1 ratio seen in `.usg` records.
-2. A closing block (kind 0x12, 8 point slots, shape 0x12, 0) from a second template:
-   at the most negative 16.16 position, a fraction of a unit in size. It is
-   `backup.map`'s only record, and with the origin added it is the last `MAPP` record
-   of every `.usg`. It closes the list but nothing needs it: every list ends at its 0
-   word anyway.
-3. The 0 end word.
+1. For each circle, in the editor's order (`file_write_map_circles`, `0x078c`), a hill
+   from the template at driver data `0x18` (size 24, kind 0x14, 16 point slots, shape
+   program 0x14, 0): +0x04/+0x08 the centre less the origin (32-bit), +0x10 the
+   radius `r` (8.8), +0x12 `d = r * 0xaaaa >> 16` (two thirds, rounded down), +0x14
+   `h = d >> 1`, and +0x0c `h` as 16.16 (`h << 8`). That is the 3:2:1 ratio seen in
+   `.usg` records.
+2. A closing block (the template at driver data `0x30`, written as it is): kind 0x12,
+   8 point slots, x and y 0x8000_0000 (the most negative 16.16 position), z 0x2d00,
+   +0x10 5, +0x12 0x14, +0x14 0x2d, shape 0x12, 0. It is `backup.map`'s only record,
+   and with the origin added it is the last `MAPP` record of every `.usg`. It closes
+   the list but nothing needs it: every list ends at its 0 word anyway.
+3. The 0 end word (2 bytes).
+
+The circles come from the terrain on entry (`scen_import_terrain_circles`, `0x080d`):
+each record of kind 0x14 or 0x16, in order, becomes a circle of its centre and its
++0x10 radius (`scen_import_terrain_circle`, `0x0631`); everything else is dropped. A
+circle drawn with the mouse gets the distance from its centre as its radius.
+
+`xeno_formats::map::write` writes records and the end word, `to_world` adds the
+origin as loading does, and `editor_save` gives what the editor writes for a world
+terrain it imported and did not change. Both stock `.map` files round-trip byte for
+byte, `backup.map` is `editor_save` of no terrain, and **every stock `.usg`'s terrain
+is exactly `editor_save` of itself, loaded back** (`real_assets_maps_round_trip`): all
+of them were made with this editor.
 
 What each field means to the game is in `usg.md`, "`MAPP`: terrain features".
 
@@ -49,24 +64,27 @@ saving turns an open hill into a hill and drops the blocks.
 
 Only the editor touches `.map` files:
 
-- **Load** (key handler `0x066f`) gets a name from host slot `0x2fe`, the host's
+- **Load** (Alt+L, `ui_load_map`, `0x066f`) gets a name from host slot `0x2fe`, the host's
   file-open dialog (`docs/re/dvr-protocol.md`). Host slot `0x1506` (`xeno.exe` `1fe6:6a97`) then reads the file into the
   `MAPP` buffer (`DS:0x150e`) and adds the origin.
-- **Save** (`0x0705`) gets a name from host slot `0x302`, the host's
+- **Save** (Alt+S, `ui_save_map_with_dialog`, `0x0705`) gets a name from host slot `0x302`, the host's
   "SAVE GAME" file dialog. A path at `0x06dc`, which
   nothing in the driver calls directly, offers `DEFAULT.MAP`.
-- **Apply** (`0x06b5`) writes `BACKUP.MAP`, loads it as above and deletes it.
-  **Leave** (`0x06cf`) writes `BACKUP.MAP` and keeps it.
+- **Apply** (Alt+E, `0x06b5`) writes `BACKUP.MAP`, loads it as above and deletes it.
+  **Leave** (Alt+Q, `0x06cf`) writes `BACKUP.MAP` and keeps it, leaving the terrain
+  as it was.
 
 The game needs neither file to start or play, so neither is in
 `xeno_formats::files::EXPECTED_FILES`.
 
 ## Open questions
 
-- Whether a retail build can reach the scenario editor, whose key table (`DS:0x5bd8`)
-  opens this one (`1000:448c`).
+- None about the layout. The terrain editor itself (a 3D editor in the mission's view)
+  is described in `docs/screens.md`, "The scenario editor (T-048)"; a retail build
+  reaches it with unlock word 9 (Ctrl+M in the situation room).
 
 ## Parser
 
-`xeno_formats::map` (T-024): `parse` returns a `usg::Terrain`. `xeno-tool inspect`
+`xeno_formats::map` (T-024): `parse` returns a `usg::Terrain`; `write`, `to_world`,
+`editor_save` and `closing_block` (T-048) as above. `xeno-tool inspect`
 lists the record kinds.

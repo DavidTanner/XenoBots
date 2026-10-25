@@ -49,7 +49,7 @@ pairs). The details are below, "The map room (T-042)"; the keys and buttons:
 | `=`, `-` | | Developer keys, only with unlock word 8 (`key.md`): progress up (`ui_map_room_raise_progress`, `1000:74e5`, to at most 16) or down (`ui_map_room_lower_progress`, `1000:7504`, to 0), then the campaign check |
 | Ctrl+W, Ctrl+L | | Developer keys, the same word (`ui_map_room_dev_key_won`, `1000:752d`, and `_lost`, `75f3`): the selected scenario won, or the loaded one lost, by the same routines as a mission's end (below, "Campaign rules") |
 | Ctrl+Space | | Run the mission at once (`ui_map_room_play_loaded`, `1000:73fa`, action 0), with no check and no load: whatever is loaded, the selection set to 12 |
-| Alt+F1 | | The scenario editor, only with unlock word 9 (`ui_map_room_open_editor`, `1000:6bcf`) |
+| Alt+F1 | | Only with unlock word 9: toggles a flag nothing reads and prints `ON` or `OFF` on the debug screen (`ui_editor_key_toggle_flag`, `1000:6bcf`; below, "The scenario editor (T-048)"). It does **not** open an editor |
 
 The ids index the button handler table (`DS:0x5f48`) and sprite table (`DS:0x5f52`).
 ESC is in no map room table.
@@ -335,8 +335,8 @@ menu's value), so a training mission changes nothing.
 - **Developer keys**: `=` raises the progress by one unless it is 16 (`1000:74ee`); `-`
   lowers it unless it is 0; both run the check, so `-` can lock won records and `=`
   then reopens them at 0. Ctrl+W wins the selected scenario and Ctrl+L loses the loaded
-  one, as above, outside any mission and with no cutscene. Alt+F1 opens the scenario
-  editor (`1000:4856`).
+  one, as above, outside any mission and with no cutscene. Alt+F1 only toggles an
+  unused flag (`dbg_toggle_unused_editor_flag`, `1000:4856`; T-048).
 
 `xeno_formats::campaign` reads the bonus, the open limit, the progress cap, the chances,
 the two unlock values, the hover words, the campaign-won box and message and the two
@@ -723,6 +723,121 @@ LF down one line (font 4's 6 rows). There is **no wrapping and no paging**: the 
 texts have 4 to 15 lines of at most 46 characters, which fit the view. No key acts on
 the text except the mode keys, which start it again (O) or replace it.
 
+### The scenario editor (T-048)
+
+From a Ghidra pass over the editor's key table and handlers, its status display, the
+scenario writer and `mapdvr.dvr`. There is **no editor screen**: with unlock word 9
+(`DS:0x5bc1` = 0xab65, `key.md`) the editor's keys simply work in the **situation
+room** of a running mission, on the mission's own objects and paths, and the
+scenario is saved from there. The situation room's widget set (`0x3822`) has a widget
+of type `0x14a` whose key handler is `ui_dispatch_editor_key` (`1000:6a8d`); no console
+and no front-end screen has one. It compares the event's whole key word (presses only:
+a release has bit 7 set) with the 31 pairs at `DS:0x5bc3`, runs the match, redraws the
+status and calls `1000:0270` (the beep).
+
+**Alt+F1.** The map room's Alt+F1 and the editor's both run `ui_editor_key_toggle_flag`
+(`1000:6bcf`), which with word 9 toggles `DS:0x4db4` and prints `ON` or `OFF` on the
+debug screen (`dbg_toggle_unused_editor_flag`, `1000:4856`). Nothing in `xeno.exe`,
+`mgavideo.dvr` or `sounddvr.dvr` reads `DS:0x4db4`, so the key does nothing visible: the
+editor needs no opening.
+
+**The status display** goes to the **monochrome debug screen** only (the host's word
+slots `0x22a`–`0x256`, which `dbg_init_mono_monitor` installs only with unlock word 0 and
+a monochrome adapter; otherwise they do nothing), so a stock set-up never shows it.
+At start-up `ui_reset_editor_state` (`1000:690d`) clears the kind, side and path and
+prints a template (`DS:0x5d7d`: the title `CONSTRUCTION SET`, then four rows from row
+20 of an 80-column text screen) that `ui_draw_editor_status` (`1000:6940`) fills in:
+
+| Row | Left | Middle | Right |
+|---|---|---|---|
+| 20 | `TYPE:` the kind's name (`DS:0x5c56` by kind, `DS:0x5c54` for the path: `PATH `, `HUMAN`, `SCORP`, `SCOUT`, `BASE `, `RELAY`, `OBST.`) | `PATHS:` the side's path count | `PRIOR.:` the path's weight; `T#:` its robots |
+| 21 | `SIDE:` `HUMAN` or `ALIEN` (`DS:0x5ca4`) | `PATH #:` the current path | `H-MIX%:` the mix's humanoids as a percentage (table `DS:0x7d35`); `H#:` humanoids on it |
+| 22 | `HEAD:` the heading in degrees (`1000:0320`) | `POINTS:` its point count | `N-MIX%`, `N#:` scorpions |
+| 23 | `PSHOW:` the path display, `OFF` or `ON ` (`DS:0x5c48`) | the path's mission name (`DS:0x5cf5`) | `S-MIX%`, `S#:` scouts |
+
+The path fields always show the **alien** table (its count `DS:0x7372` and slot list
+`DS:0x7c3c`), whichever side is picked, and only while it has a path; the keys act on
+the picked side's table (`DS:0x5cd1`). The state
+is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` heading,
+`0x5c45` current path, `0x5c47` path display (0 or 2).
+
+**The keys** (`DS:0x5bc3`, all with Ctrl):
+
+| Key | Handler | Effect |
+|---|---|---|
+| Ctrl+H, N, S, B, R, O, P | `1000:6ad8`..`6b08` | Pick the kind to place: humanoid 0, scorpion 1, scout 2, base 3, relay 4, obstacle 16, path -1 |
+| Ctrl+T | `1000:6b02` | Toggle the side |
+| Ctrl+Left, Ctrl+Right | `1000:6bb3`, `6bba` | Heading for new robots down or up by 0xb6 (a degree) |
+| Ctrl+Up, Ctrl+Down | `1000:6bc1`, `6bc8` | Heading 0 or 0x8000 |
+| Ctrl+Ins | `1000:6b0f` | New path for the side (at most 8): it becomes the current one, with no points, mission 0 and that mission's weight and mix (four bytes a mission at `DS:0x7cf8`, `1000:6ce3`) |
+| Ctrl+Del | `1000:6b31` | Remove the current path: the count drops by one and the paths after it move down a slot; if it was the last, the previous one becomes current |
+| Ctrl+PgUp, Ctrl+PgDn | `1000:6b75`, `6b84` | Next or previous path, within the count |
+| Ctrl+Space | `1000:6b90` | The current path's next mission (0 to 6, wrapping), with its weight and mix |
+| Ctrl+Backspace | `1000:6ba6` | Drop the current path's last point |
+| Ctrl+Z | `1000:6bdc` | Toggle the path display on the maps (`DS:0x5c47`; T-059) |
+| Ctrl+E | `1000:6be2` | Toggle `DS:0x6ffa`, which makes the scanner code (`1000:f976`) skip its check that an alien object has been detected (+0x17 bit 2): shows every alien object |
+| Ctrl+D | `1000:6ab7` | Destroy the robot whose pointer is at base +0x3c (`sim_destroy_robot`; not traced further: the roster's selection is +0x3e) |
+| Ctrl+C | `1000:6901` | Clear the base's seven message slots (`1fe6:6b2e`, as `sim_init_base` does) |
+| Ctrl+Alt+R | `1000:6ac8` | Remove every relay (`1000:f60f` with kind 4) |
+| Ctrl+M | `ui_run_map_editor` (`1000:448c`) | The terrain editor (`mapdvr.dvr`, below) |
+| Ctrl+Alt+O | `1000:6d67` | Open-file dialog, then read up to 800 bytes of the chosen text file into the briefing buffer (`38fa:04ed`) and switch the main view to the orders (mode 0). An unused string at `DS:0x5d61` names a developer's `ORDERS1.TXT` |
+| Ctrl+Alt+B | `1000:6dc3` | Open-file dialog, then the chosen file's base name becomes the sky (`scen_set_sky_name`) and is loaded |
+| Ctrl+Alt+arrows | `1000:6dde`..`6df0` | Scroll the situation room's map by half a unit (base +0x4f x, +0x53 y; `1fe6:7243`..`727a`) |
+| Alt+F1 | `1000:6bcf` | As above |
+
+**Placing** (`ui_editor_place_at_pointer`, `1000:6be8`): the situation room's main
+view, in **mode 4 (the map)**, calls it on a left press with Ctrl held (`1000:5781`).
+The pointer becomes a world position through the map's scale and scroll
+(`ui_map_pointer_to_world`, `1000:3fd3`: the view's centre, `DS:0x4d24` scale, the
+map's origin at `DS:0x1466`). By kind: a robot is allocated (`sim_alloc_object`, side
+bit 0 or 8 from `DS:0x5ca2`), set up as new (`sim_init_new_object`), placed there with
+heading and target heading from `DS:0x5c43`, and added to its side's unit list; an
+obstacle is allocated, given radius 13 and `IN_FIELD` (`1000:e9c3`) and placed; a
+**base** is not made: the side's base moves there; a relay is placed only where the
+relay checks allow (`1000:d15b`, then its set-up `1000:cc2a`, `cca8`; not traced); the
+path kind appends the point to the current path (at most 16). So placing needs the
+map view (T-103).
+
+**Saving.** The situation room's own key table (`DS:0x5b20`) has **Ctrl+Alt+P**, with
+**no unlock check**: `ui_save_scenario_with_dialog` (`1000:efd5`) opens the "SAVE GAME"
+file dialog (`ui_call_save_file_dialog`, `1000:fb78`, host slot `0x302`) and writes the
+running mission with the scenario writer (`file_write_scenario`, `1000:efde`; layout in
+`usg.md`, "Writing"). So any player can save a mission as a `.usg`. The matching load
+(`ui_load_scenario_with_dialog`, `1000:eeec`: open dialog, then the chunk reader) has no
+caller in either code segment or in the data below `DS:0x6e4d`. The same table's
+Ctrl+Alt+S toggles bit 6 of `DS:0x62ec` and Ctrl+Alt+F toggles `DS:0x5ba0` (not traced).
+
+**The terrain editor** (`mapdvr.dvr`, `docs/formats/map.md`): `ui_run_map_editor`
+loads the driver into block `DS:0x150a`, calls its enter slot `0x14f4`
+(`ui_enter_map_editor`, `0x006e`), runs a widget loop until the driver sets the quit
+flag `DS:0x5a`, then calls the leave slot `0x14f8` (`ui_exit_map_editor`, `0x011a`) and
+frees it. It is a **3D editor**: entering copies the map origin as its camera, sets
+up a 200 by 320 view and pointer shape 7, and imports the terrain's hills as circles
+(at most 341). Slot `0x1500` (`gfx_emit_map_editor_render_nodes`, `0x01c9`) adds the
+circles (the selected one highlighted, node type 0x0e12, the others 0x0c12), a marker
+and the circle being dragged to the 3D view's render list. The mouse makes a circle:
+a press on the view (widget 0x11) takes the ground point under the pointer (host
+slot `0x152c`), the drag sizes it (distance by slot `0x1504`), the release adds it.
+Its keys (`ui_map_editor_on_key`, `0x032a`, table at driver data `0x186`):
+
+| Key | Effect |
+|---|---|
+| Arrows | Move the camera a unit |
+| Z, X | Zoom in, out (`0x130`/`0x131`) |
+| Ctrl+arrows | Move the selected circle a unit |
+| Ctrl+Z, Ctrl+X | Its radius up or down a unit |
+| Ctrl+`,`, Ctrl+`.` | Previous, next circle |
+| Space | The next pointer shape (a debug key) |
+| Alt+L | Load a `.map` (open dialog, `ui_load_map`) |
+| Alt+S | Save a `.map` (save dialog, `ui_save_map_with_dialog`) |
+| Alt+N | Clear the circles; Alt+I import them again from the terrain |
+| Alt+E | Apply: write `BACKUP.MAP`, load it as the terrain, delete it |
+| Alt+Q | Leave: write `BACKUP.MAP` (kept) and quit; the terrain is not changed |
+| Shift+`*` | Screenshot (slot `0x1558`) |
+
+Its status (camera, pointer and selected circle) also goes to the debug screen, under
+`MAP EDITOR`. It needs the 3D view's projection (T-101).
+
 ### Which parts need the running simulation (T-056)
 
 The 3D views, scanners and map (the colour-255, 254 and 253 regions), the message
@@ -1020,7 +1135,8 @@ T-046 named, in `xeno.exe`: `sim_end_mission_with_result` (`1000:68c1`, created)
 created), `ui_map_room_lower_progress` (`1000:7504`, created),
 `ui_map_room_select_first` (`1000:745b`), `ui_map_room_run_mission` (`1000:6f9e`,
 created), `ui_map_room_open_training` (`1000:6ff8`, created), `ui_map_room_play_loaded`
-(`1000:73fa`, created), `ui_map_room_open_editor` (`1000:6bcf`, created),
+(`1000:73fa`, created), `ui_map_room_open_editor` (`1000:6bcf`, created; renamed
+`ui_editor_key_toggle_flag` in T-048),
 `sim_apply_scenario_alert` (`1000:68a0`), `sim_reset_mission_counts` (`1000:68ae`),
 `sim_random_word` (`1000:0283`), `sim_random_below` (`1000:772a`),
 `scen_advance_campaign_day` (`1000:7732`), `sim_seed_random_from_timer` (`1fe6:42e8`),
@@ -1066,3 +1182,22 @@ created `ui_load_scorpion_console_picture` (`1000:7fb3`),
 (`1000:b473`), `ui_sitroom_corner_on_mouse` (`1000:5c30`) and
 `ui_console_corner_on_mouse` (`1000:7cbf`); in `mgavideo.dvr` the pointer routines
 listed in `docs/re/dvr-protocol.md`. All `confirmed`, all saved.
+
+T-048 named, in `xeno.exe`: `file_write_scenario` (`1000:efde`), `scen_write_shdr`
+(`1000:f05b`), `scen_write_mapp` (`1000:f32e`), `scen_write_dcbs` (`1000:f09a`),
+`scen_count_dcbs_size` (`1000:f255`), `scen_pack_all_objects` (`1000:f0f4`),
+`scen_write_apth` (`1000:f11e`), `scen_write_hpth` (`1000:f12d`), `scen_write_ordr`
+(`1000:f2da`), `scen_write_bgnd` (`1000:f3b3`), `scen_write_term` (`1000:f13c`),
+`sim_find_object_slot` (`1000:f656`), `ui_call_open_file_dialog` (`1000:fb6e`),
+`ui_call_save_file_dialog` (`1000:fb78`), `ui_map_pointer_to_world` (`1000:3fd3`),
+`ui_editor_get_current_path` (`1000:6d06`), `dbg_toggle_unused_editor_flag`
+(`1000:4856`), `ui_reset_editor_state` (`1000:690d`), `dbg_print_number_at`
+(`1000:6a79`), renamed `ui_map_room_open_editor` to `ui_editor_key_toggle_flag`
+(`1000:6bcf`), and created `ui_save_scenario_with_dialog` (`1000:efd5`),
+`ui_load_scenario_with_dialog` (`1000:eeec`) and `ui_editor_place_at_pointer`
+(`1000:6be8`); in `mapdvr.dvr` `ui_save_map_with_dialog` (`0x0705`),
+`file_write_map_circles` (`0x078c`), `scen_import_terrain_circle` (`0x0631`),
+`mem_reset_circle_buffer` (`0x0839`), `file_create_map` (`0x074e`), and created
+`ui_enter_map_editor` (`0x006e`), `ui_exit_map_editor` (`0x011a`),
+`gfx_emit_map_editor_render_nodes` (`0x01c9`) and `ui_map_editor_on_key` (`0x032a`).
+All `confirmed`, all saved.

@@ -25,7 +25,7 @@ const KERNEL: usize = 0xfe60;
 /// Load-image offsets of the instructions read, and the bytes before each operand.
 /// `cmp word [0x1598], imm` in `ui_map_room_dev_key_won` (unlock word 8).
 pub(crate) const DEVELOPER_UNLOCK: (usize, &[u8]) = (0x752d, &[0x81, 0x3e, 0x98, 0x15]);
-/// `cmp word [0x5bc1], imm` in `ui_map_room_open_editor` (unlock word 9).
+/// `cmp word [0x5bc1], imm` in `ui_editor_key_toggle_flag` (unlock word 9).
 pub(crate) const EDITOR_UNLOCK: (usize, &[u8]) = (0x6bcf, &[0x81, 0x3e, 0xc1, 0x5b]);
 /// `add word [0x6014], imm` in `scen_win_selected_scenario`.
 pub(crate) const WIN_BONUS: (usize, &[u8]) = (0x757d, &[0x81, 0x06, 0x14, 0x60]);
