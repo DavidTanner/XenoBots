@@ -85,7 +85,7 @@ enum Action {
     /// The map room's Ctrl+Space: run the mission with no check and no load.
     PlayLoaded,
     /// The developer keys (unlock word 8): progress up and down, the selected
-    /// scenario won, the loaded one lost; and Alt+F1 (unlock word 9), the editor.
+    /// scenario won, the loaded one lost; and Alt+F1 (unlock word 9), an unused flag.
     ProgressUp,
     ProgressDown,
     DevWin,
@@ -120,7 +120,7 @@ const LOGIN_KEYS: &[(KeyWord, Action)] = &[(ESC, Quit)];
 /// The map room's own keys (`DS:0x60bf`): P, Enter or Space play, T training, R
 /// review, N log in again, Q or Alt+Q quit; Right, Down and Tab the next scenario,
 /// Alt+Tab, Left and Up the previous; `=`, `-`, Ctrl+W, Ctrl+L the developer keys,
-/// Ctrl+Space run the loaded mission, Alt+F1 the editor. Not ESC.
+/// Ctrl+Space run the loaded mission, Alt+F1 the editor's flag. Not ESC.
 const MAP_ROOM_KEYS: &[(KeyWord, Action)] = &[
     (key(0x13), Go(Review)),
     (ENTER, Play(false)),
@@ -897,8 +897,13 @@ impl Screens {
                 return;
             }
             (MapRoom, Editor) => {
+                // `ui_editor_key_toggle_flag`: a flag nothing reads; the editor's keys
+                // work in a mission's situation room (T-048).
                 if self.map_assets.editor {
-                    log::info!("map room: the scenario editor is not in the port yet (T-048)");
+                    log::info!(
+                        "map room: Alt+F1 toggles a flag nothing reads; the editor's keys \
+                         work in a mission's situation room"
+                    );
                 }
                 return;
             }

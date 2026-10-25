@@ -488,6 +488,12 @@ impl PathTable {
     pub fn used(&self) -> &[Path] {
         &self.paths[..usize::from(self.count)]
     }
+
+    /// A table with no paths and every slot zero.
+    pub fn empty() -> PathTable {
+        PathTable::read_le(&mut std::io::Cursor::new([0u8; PathTable::SIZE]))
+            .expect("a zeroed table reads")
+    }
 }
 
 /// One `MAPP` record: a piece of terrain drawn by one of `xeno.exe`'s shape programs,

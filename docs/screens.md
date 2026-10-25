@@ -954,8 +954,8 @@ the map room without a cutscene, as in the original.
   the campaign-won flag. The training menu sets the result to 3 and clears the
   selection and the loaded scenario. The developer keys (`=`, `-`, Ctrl+W, Ctrl+L in
   the map room) work only when the user's `XENO.KEY` gives unlock word 8 the value the
-  user's `xeno.exe` checks; Alt+F1 with word 9 logs that the editor is not ported
-  (T-048). Ctrl+Space runs the mission again with no check. The hover label follows
+  user's `xeno.exe` checks; Alt+F1 with word 9 logs that it toggles a flag nothing
+  reads (T-048). Ctrl+Space runs the mission again with no check. The hover label follows
   the pointer over the boxes (none while a button is held, cleared off the boxes and
   by a release that selects nothing), placed, filled, framed and typed as described
   above in the user's font 2; the campaign-won box and message, and the prompt with
@@ -1039,6 +1039,21 @@ the map room without a cutscene, as in the original.
   when the map room plays a scenario); the win caption shows the numbers the won
   routine returns (T-046): 0 kills, 0 losses and the bonus as points until the
   mission counts them.
+- **The scenario editor** (T-048, `crates/xeno-app/src/editor.rs`): with the user's
+  `XENO.KEY` giving unlock word 9, the editor's keys, read from the user's `xeno.exe`
+  (`xeno_formats::editor`), act in the situation room before its own keys, on a copy
+  of the scenario the mission loaded: the kind, side and heading, the paths (new,
+  remove, next and previous, mission with its defaults, drop the last point), the path
+  display, Ctrl+E's flag and Ctrl+Alt+R (remove the relays). After each key the status
+  rows are logged, built from the user's template and names as the original prints them
+  on its debug screen. Ctrl+M runs the terrain editor as if left at once (Alt+Q): it
+  writes `BACKUP.MAP` with `map::editor_save` and changes nothing. Ctrl+Alt+P (no
+  unlock, as in the original) writes the scenario with `usg::write` as `EDITED.USG`, a
+  fixed name until the file dialogs (T-110). Both go to `--save-dir`, by default the
+  game directory, where the original writes them. Not done: placing on the map,
+  Ctrl+D, the map scroll (T-108), the terrain editor itself (T-109), Ctrl+Alt+O and B
+  (T-110), Ctrl+C (T-103). The edits change the scenario copy, not the sim's world
+  (which does not run yet).
 - **Not modelled**: the save file, the review's turning robots (T-047) and the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
