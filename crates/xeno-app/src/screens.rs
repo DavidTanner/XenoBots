@@ -1021,7 +1021,11 @@ impl Screens {
             let written = match self.mission.scenario() {
                 Some(scenario) => save::write(&player.campaign, selection, scenario)
                     .map_err(|e| e.to_string())
-                    .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string())),
+                    .and_then(|bytes| {
+                        std::fs::create_dir_all(&self.login.save_dir)
+                            .and_then(|()| std::fs::write(&path, bytes))
+                            .map_err(|e| e.to_string())
+                    }),
                 None => Err("no scenario loaded".into()),
             };
             match written {
