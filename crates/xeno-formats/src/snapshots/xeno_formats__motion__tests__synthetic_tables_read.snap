@@ -1096,4 +1096,82 @@ Motion {
             39542,
         ],
     },
+    damage: Damage {
+        robots: [
+            RobotDamage {
+                destroy_over: 80,
+                parts: [
+                    (
+                        128,
+                        Wear {
+                            offset: 36,
+                            mask: 7,
+                        },
+                    ),
+                    (
+                        255,
+                        Bits(
+                            [
+                                (
+                                    220,
+                                    1,
+                                ),
+                                (
+                                    246,
+                                    64,
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            },
+            RobotDamage {
+                destroy_over: 80,
+                parts: [
+                    (
+                        64,
+                        Nothing,
+                    ),
+                    (
+                        192,
+                        Wear {
+                            offset: 78,
+                            mask: 15,
+                        },
+                    ),
+                ],
+            },
+            RobotDamage {
+                destroy_over: 80,
+                parts: [
+                    (
+                        16,
+                        Nothing,
+                    ),
+                    (
+                        255,
+                        Wear {
+                            offset: 78,
+                            mask: 15,
+                        },
+                    ),
+                ],
+            },
+        ],
+        base_destroyed: 300,
+        relay_removed: 20,
+        explosion_kind: 13,
+        robot_explosion: Explosion {
+            first: 0,
+            last: 9,
+            ticks: 10,
+            heading: 320,
+        },
+        relay_explosion: Explosion {
+            first: 0,
+            last: 9,
+            ticks: 8,
+            heading: 256,
+        },
+    },
 }

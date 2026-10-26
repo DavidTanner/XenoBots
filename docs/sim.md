@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-058, T-059)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-058, T-059)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -413,6 +413,119 @@ area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
 paths and the human robots on ENGAGE halt at the weapons check (T-054), and an alien
 scorpion on DENSE NET halts at once (T-113).
+
+## Damage (T-054)
+
+A T-090 pass on `xeno.exe` read the damage routines, the destruction of robots and
+relays, the explosions they leave and, as a survey for T-114, the humanoid's weapons
+and two shot kinds. The tables are read from the user's `xeno.exe` by
+`xeno_formats::damage` (`Motion::damage`).
+
+**A hit** (`sim_damage_object`, `1000:f84d`) takes the object in `SI` (copied to `DI`)
+and the points in `AL` (`AH` is 1 from the callers seen, and unused), and calls the
+routine for its kind from the table at `DS:0xe783`: humanoid, scorpion, scout, base,
+relay; every other kind (shots, explosions, obstacles) has a bare `ret`. Callers:
+the hill bounce (0 points, `docs/sim.md`, "Movement"), a shot's direct hit
+(`sim_damage_shot_target`, `1000:e954`, the shot's damage at its +0x22) and the blast
+(`sim_damage_objects_in_radius`, `1000:e8eb`), both T-114.
+
+**Robots** (`sim_damage_humanoid` `1000:af51`, `sim_damage_scorpion` `1000:94a0`,
+`sim_damage_scout` `1000:c68a`, the same code with the kind's table):
+
+1. If the robot is the one on view (`DS:0x62f1`), the screen flashes (`DS:0x64c` and
+   +0xf8 set to 20; +0xf8 counts down each tick).
+2. 0 points: nothing more. Over the kind's threshold (80 in each kind): the robot is
+   destroyed (below) and nothing more, no event.
+3. Otherwise, once for each point: a random word is drawn; its high byte picks an
+   entry of the kind's chance table (`DS:0x6856` humanoid, `0x659a` scorpion,
+   `0x6c06` scout; three bytes an entry, a chance and a routine): the chances are
+   added up in a byte, and the first entry where the sum carries, or reaches the high
+   byte or more, is taken. The last stock entry is 255, so one always is. The entry's
+   component routine runs.
+4. Event 7 (hit) is posted to the robot's script, also for 0 points, and a sound
+   plays (0x2a).
+
+The component routines come in three shapes, and `xeno_formats::damage::Part`
+decodes each by its instructions: **wear**, a second random word's low byte masked
+(7 for the helm at +0x24, 15 for the power at +0x4e) comes off the byte, stopping at
+0; **bits**, the first clear bit of a list is set (a weapon at +0xdc damaged, or if it
+already was, destroyed at +0xf6 bit 6 or 7; the targeting computer at +0xec bit 0;
+the cameras, map, radar at +0xf6 bits 0 to 3; the scorpion's relay deployer at +0xfd
+bit 7; the scout's weapons have no second bit); **nothing** (the last entry of each
+table, 255, which takes the rest of the chance). Each part that changes something
+shows a message in the robot's message panel (T-104). There are no hit points: a
+robot hit for 80 or less always survives, worn down.
+
+**Destroying a robot** (`sim_destroy_robot`, `1000:de51`; also the developer key
+Ctrl+D):
+
+1. An object it was heading for is dropped (`sim_drop_object_goal`).
+2. Its side's base counts a loss (+0x2b) and the other side's base a kill (+0x2c)
+   (`sim_count_kill_and_loss`, `1fe6:6af6`; the `WIN` caption's numbers).
+3. Its call sign's slot is freed (`DS:0x72c5` by +0xdb).
+4. An explosion is made where it stood (`sim_spawn_explosion`, below), and a sound
+   plays (4).
+5. It is taken out of its side's unit list, the rest moving up in order
+   (`sim_remove_unit_from_list`, `1fe6:6e71`), the roster is marked for a redraw and,
+   if it was the roster's selection, another is picked; if it was on view, the view
+   changes (`1000:7ee7`).
+6. Its slot is freed (`sim_free_object_slot`, `1000:f5cd`): the object's +0x16 bit 0
+   (`GONE`) is set, the slot's pointer cleared, its reference count and its pool's
+   count lowered. A slot is reused only once its reference count is 0 (references
+   are taken by robots that target the object, T-112).
+
+**Bases** (`sim_damage_base`, `1000:62b7`): a base already destroyed (+0x16 bit 0)
+takes nothing. Otherwise the points are added to +0x2e; at 300 or more the base sets
++0x16 bit 0 and the other side is told (a message), and the mission's end runs from
+the base's +0x30 (T-055); below that its own side is told at most once every 480
+counts of `DS:0x374`. A base is never removed.
+
+**Relays** (`sim_damage_relay`, `1000:cfba`): the points are added to the byte at
++0x33; when that carries or reaches 20, an explosion is made and the slot freed. No
+kill or loss is counted.
+
+**Explosions** are objects of kind 13 (`sim_spawn_explosion`, `1000:e67b`): a slot is
+taken (`sim_alloc_object_slot`, `1000:f4b1`: the lowest of the 240 slots with no
+pointer and no references; the object comes from the small pool of 200, and if that
+is full there is no explosion) and filled from a five-byte template
+(`sim_init_explosion_from_template`, `1000:e79a`): the first frame (+0x18), the last
+(+0x1a), the ticks a frame (+0x1b, and the countdown +0x1c), and a heading (+0x10);
++0x19 keeps the template's address's low byte, the radius is 8 and the position
+(x, y and z) is the destroyed object's. A robot leaves frames 0 to 9 at 10 ticks
+each, a relay 0 to 9 at 8. Its tick (`sim_tick_explosion`, `1000:e7e3`) counts +0x1c
+down; at 0 it reloads it and steps the frame, and after the last frame frees its
+slot. The 3D view draws it with the `explode` models (T-100). The base's end (T-055)
+and shots (T-114) make explosions from other templates.
+
+The new slot can be above or below the slot ticking: `sim_tick_all_objects` walks the
+slots in order, so an explosion in a higher slot ticks in the same pass and one in a
+lower slot from the next.
+
+### Weapons and shots (survey for T-114)
+
+Read only far enough to scope T-114. A humanoid's weapon step
+(`sim_step_humanoid_weapons`, `1000:b08a`) runs at tick phases 1 and 9 of +0x1a (every
+8 ticks): it counts down two timers (+0xdf, +0xe1, clearing +0x17 bits 1 and 0 at
+0) and the weapons' cool-downs (+0x108, +0x109); takes a fire request (+0xdc bit 7,
+set by the scripts' opcode 0x7d) for the selected weapon (+0xdd, set by opcodes 0x7b
+and 0x7c) when it is not damaged (setting +0x103 or +0x104, presumably the arm's
+animation, which later sets +0xdc bit 5 or 6); and fires a weapon whose bit is set,
+whose cool-down is 0 and with +0xec bit 2: with no target (+0xe6) a message; it needs
+energy (+0x50, 10 or 22 taken when +0xfd bit 0 is set) and makes a shot of kind 7 or 8
+at an offset by the heading's octant, with a sound, and a cool-down of 12 or 50 steps.
+A shot of kind 6 (`1000:e2c8`) falls (its vertical speed drops by 3 a tick), lives
++0x20 ticks, explodes on the ground (`sim_test_below_ground`) or on hitting an object
+(`sim_find_shot_hit`, `1000:e8ac`: the first object with +0x16 bit 6 within its
+radius, and a side check) and then damages it by +0x22. A shot of kind 7
+(`1000:e3ca`) turns towards its target by at most 0x2d8 every 8 ticks. The weapon
+opcodes: 0x78 sets the carry unless a weapon is usable (present, enough drive, ...),
+0x79 and 0x7a push a weapon's state word, 0x7b and 0x7c select a weapon, 0x7d fires
+(by kind, through tables at `1000:d0e3`, `d107`, `d12b`, `d13c`). Scorpions and scouts
+have their own routines, not read.
+
+### The port (T-054)
+
+Not yet: part 2 of T-054 ports the damage, destruction and explosions.
 
 ## Loading a scenario
 

@@ -556,5 +556,6 @@ pub(crate) fn synthetic_tables() -> Tables {
             [-43, -42, -71],
         ],
         scripts: crate::script::tests::scripts(&[0x0a]),
+        damage: xeno_formats::fixtures::synthetic_damage_tables(),
     }
 }

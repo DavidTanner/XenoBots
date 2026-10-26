@@ -5,6 +5,7 @@
 //! table is found through an instruction that uses it, after checking that
 //! instruction's bytes.
 
+use crate::damage::{self, Damage};
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
@@ -69,6 +70,8 @@ pub struct Motion {
     pub script_speeds: [[i16; 3]; 5],
     /// The robots' scripts (`xeno_formats::script`).
     pub scripts: Scripts,
+    /// What damage does (`xeno_formats::damage`).
+    pub damage: Damage,
 }
 
 fn bytes(image: &[u8], at: usize, n: usize) -> Result<&[u8], FormatError> {
@@ -152,6 +155,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         atan,
         script_speeds,
         scripts: script::read_image(image, ds)?,
+        damage: damage::read_image(image, ds)?,
     })
 }
 
@@ -220,6 +224,7 @@ mod tests {
             image[DS + 0x400 + i] = i as u8;
         }
         crate::fixtures::synthetic_scripts(&mut image, DS);
+        crate::fixtures::synthetic_damage(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(

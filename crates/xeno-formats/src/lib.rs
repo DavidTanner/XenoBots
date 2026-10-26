@@ -6,6 +6,7 @@
 
 pub mod ban;
 pub mod campaign;
+pub mod damage;
 pub mod dsounds;
 pub mod editor;
 pub mod ending;

@@ -1270,10 +1270,60 @@ pub fn synthetic_endings(image: &mut [u8], ds: usize) -> Vec<usize> {
     ]
 }
 
+/// Writes made-up damage tables (`crate::damage`) into a load image whose data segment
+/// starts at `ds`: every kind destroyed over 0x50; chance tables at `DS:0x9b00` (the
+/// humanoid's: 0x80 wear the helm by 7, then 0xff the weapon bit 0 or else systems
+/// bit 0x40), `0x9b10` (the scorpion's: 0x40 nothing, 0xc0 wear the power by 0xf) and
+/// `0x9b20` (the scout's: 0x10 nothing, 0xff wear the power); component routines at 0x8000 to 0x8050;
+/// a base destroyed at 300, a relay at 20, explosions of kind 13 from templates at
+/// `DS:0x9b40` (frames 0 to 9, 10 ticks each) and `0x9b45` (8 ticks each).
+pub fn synthetic_damage(image: &mut [u8], ds: usize) {
+    use crate::damage::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(0x8000, &[0xc3]);
+    put(0x8010, &[0xe8, 0, 0, 0x24, 7, 0x28, 0x45, 0x24]);
+    put(0x8020, &[0xe8, 0, 0, 0x24, 0xf, 0x28, 0x45, 0x4e]);
+    let bit = |offset: u16, bit: u8| {
+        let [lo, hi] = offset.to_le_bytes();
+        [0xf6, 0x85, lo, hi, bit, 0x75, 9, 0x80, 0x8d, lo, hi, bit]
+    };
+    put(0x8030, &bit(0xdc, 1));
+    put(0x8040, &bit(0xf6, 0x40));
+    put(0x8050, &[0xc3]);
+    let tables: [&[(u8, u16)]; 3] = [
+        &[(0x80, 0x8010), (0xff, 0x8030)],
+        &[(0x40, 0x8000), (0xc0, 0x8020)],
+        &[(0x10, 0x8000), (0xff, 0x8020)],
+    ];
+    for (kind, table) in tables.into_iter().enumerate() {
+        let at = 0x9b00 + 0x10 * kind as u16;
+        put(THRESHOLD_AT[kind], &[0x3c, 0x50, 0x77]);
+        put(TABLE_AT[kind], &op(&[0xbb], at));
+        for (i, &(chance, routine)) in table.iter().enumerate() {
+            put(ds + usize::from(at) + 3 * i, &op(&[chance], routine));
+        }
+    }
+    put(BASE_AT.0, &op(BASE_AT.1, 300));
+    put(RELAY_AT.0, &[RELAY_AT.1, &[20]].concat());
+    put(EXPLOSION_KIND_AT, &op(&[0xb8], 13));
+    put(ROBOT_EXPLOSION_AT, &op(&[0xb8], 0x9b40));
+    put(RELAY_EXPLOSION_AT, &op(&[0xb8], 0x9b45));
+    put(ds + 0x9b40, &[0, 9, 10, 0x40, 1, 0, 9, 8, 0, 1]);
+}
+
+/// The tables [`synthetic_damage`] writes, read back.
+pub fn synthetic_damage_tables() -> crate::damage::Damage {
+    let mut image = vec![0; 0x1_9c00];
+    synthetic_damage(&mut image, 0x1_0000);
+    crate::damage::read_image(&image, 0x1_0000).expect("synthetic damage tables")
+}
+
 /// Writes made-up movement tables (`crate::motion`) into a load image whose data
 /// segment starts at `ds` and string segment at `strings`: a sine table of `i * 0x100`
 /// at `DS:0x9000`, turn steps 0x5b, a weak drive at 0x28, one speed table (the speed
-/// itself) at `strings + 0x800`, and every mission's programs 8, 13, 8 at `DS:0x9300`.
+/// itself) at `strings + 0x800`, every mission's programs 8, 13, 8 at `DS:0x9300`,
+/// and the damage tables of [`synthetic_damage`].
 pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     use crate::motion::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1309,6 +1359,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
         );
         put(routine, &op(&[0xc7, 0x45, 0x28], 10 * (i as u16 + 1)));
     }
+    synthetic_damage(image, ds);
 }
 
 #[cfg(test)]
