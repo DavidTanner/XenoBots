@@ -62,12 +62,14 @@ pub struct Entity {
 pub enum State {
     Robot(Movement),
     /// A base: +0x41, its tick count; +0x2c and +0x2b, the enemy robots it has
-    /// destroyed and its own side's lost; +0x16 bit 0, destroyed.
+    /// destroyed and its own side's lost; +0x16 bit 0, destroyed; +0x30, the step of
+    /// its end script once destroyed (`docs/sim.md`, "The mission's end").
     Base {
         tick: u8,
         kills: u8,
         losses: u8,
         destroyed: bool,
+        end_step: u16,
     },
     /// An explosion (`docs/sim.md`, "Damage"): its frame (+0x18) up to the last
     /// (+0x1a), the ticks a frame (+0x1b) and the ticks left of this one (+0x1c).
@@ -178,6 +180,7 @@ impl State {
                 kills: b.kills,
                 losses: b.losses,
                 destroyed: object.flags & usg::flag::GONE != 0,
+                end_step: b.end_step,
             },
             _ => State::None,
         }
@@ -211,9 +214,11 @@ impl StateHash for State {
                 kills,
                 losses,
                 destroyed,
+                end_step,
             } => {
                 h.u8(1);
                 h.bytes(&[tick, kills, losses, u8::from(destroyed)]);
+                h.u16(end_step);
             }
             State::Explosion {
                 frame,

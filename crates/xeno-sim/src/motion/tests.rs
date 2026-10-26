@@ -50,6 +50,7 @@ pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
             kills: 0,
             losses: 0,
             destroyed: false,
+            end_step: 0,
         },
     }
 }

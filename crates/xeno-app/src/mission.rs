@@ -605,13 +605,49 @@ impl Mission {
     }
 
     /// One retrace of the mission's world with that retrace's input, if it runs (a
-    /// parked mission waits). What it did goes to the log.
-    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) {
+    /// parked mission waits). What it did goes to the log. `Some(won)` once a
+    /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
+    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Option<bool> {
+        let Run::Running(sim) = &mut self.run else {
+            return None;
+        };
+        let mut over = None;
+        for event in sim.tick(events) {
+            log::debug!("mission: retrace {}: {event:?}", sim.retrace());
+            if let xeno_sim::motion::Event::MissionOver { won } = event {
+                over = Some(won);
+            }
+        }
+        over
+    }
+
+    /// The port's stand-in for shots (T-114): `side`'s base takes hits until it is
+    /// destroyed, so the mission's end runs.
+    pub fn destroy_base(&mut self, side: Side) {
         let Run::Running(sim) = &mut self.run else {
             return;
         };
-        for event in sim.tick(events) {
-            log::debug!("mission: retrace {}: {event:?}", sim.retrace());
+        let Some(base) = sim.world.base(side) else {
+            return;
+        };
+        while let Some(xeno_sim::State::Base {
+            destroyed: false, ..
+        }) = sim.world.get(base).map(|e| e.state)
+        {
+            sim.hit(base, u8::MAX);
+        }
+        log::info!("mission: the {side:?} base is destroyed");
+    }
+
+    /// The robots the player's side destroyed and lost (its base's +0x2c and +0x2b).
+    pub fn kills_and_losses(&self) -> (u8, u8) {
+        let world = self.world();
+        match world.base(Side::Human).and_then(|b| world.get(b)) {
+            Some(e) => match e.state {
+                xeno_sim::State::Base { kills, losses, .. } => (kills, losses),
+                _ => (0, 0),
+            },
+            None => (0, 0),
         }
     }
 
@@ -1126,7 +1162,7 @@ pub mod tests {
 
     /// The synthetic views and programs of `xeno_formats::fixtures`, the synthetic
     /// fonts, 80 raw 2x2 sprites (every pixel its number + 1), and the synthetic
-    /// mission as `atrain.usg`, the training menu's mission, and as every campaign
+    /// mission with an alien base added as `atrain.usg`, the training menu's mission, and as every campaign
     /// scenario.
     pub fn test_assets() -> Assets {
         use xeno_formats::ban::SpriteHeader;
@@ -1150,7 +1186,16 @@ pub mod tests {
                 trailing_empty_span: false,
             })
             .collect();
-        let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+        // An alien base in slot 1, so either side's base can be destroyed, and both
+        // with their end scripts at the start, as in stock files.
+        let objects = scenario.objects.as_mut().unwrap();
+        if let usg::Body::Base(b) = &mut objects[0].body {
+            b.end_step = 0;
+        }
+        let mut alien = objects[0].clone();
+        (alien.slot, alien.flags) = (1, alien.flags | usg::flag::ALIEN);
+        objects.insert(1, alien);
         Assets {
             views: views::read_image(&image, DS, &relocated).unwrap(),
             training: views::read_training_image(&image, DS, &relocated).unwrap(),
@@ -1244,6 +1289,29 @@ pub mod tests {
         m.mouse_up(button, Some(at), assets)
     }
 
+    /// The player's base counts the robots each side lost, and a destroyed base ends
+    /// the mission after its end script: won for the alien base.
+    #[test]
+    fn a_destroyed_base_ends_the_mission_with_the_player_s_counts() {
+        let assets = test_assets();
+        for (side, won) in [(Side::Alien, true), (Side::Human, false)] {
+            let mut m = mission(&assets);
+            let (kills, losses) = m.kills_and_losses();
+            if let Run::Running(sim) = &mut m.run {
+                sim.hit(xeno_sim::EntityId(2), 81);
+                sim.hit(xeno_sim::EntityId(7), 81);
+            }
+            assert_eq!(m.kills_and_losses(), (kills + 1, losses + 1));
+            assert_eq!((0..600).find_map(|_| m.tick([])), None);
+            m.destroy_base(side);
+            let ended = (1..=33 * 16).find_map(|t| m.tick([]).map(|w| (t, w)));
+            assert!(
+                ended.is_some_and(|(t, w)| t > 32 * 16 && w == won),
+                "{ended:?}"
+            );
+        }
+    }
+
     #[test]
     fn the_alert_damages_the_player_s_base_while_running() {
         let assets = test_assets();
@@ -1331,7 +1399,7 @@ pub mod tests {
         let mut m = Mission::new(file, scenario, campaign.take_random(), &assets.motion);
         assert!(m.is_running() && !campaign.has_random());
         // The sim's world is the scenario's.
-        assert_eq!(m.world().len(), 5);
+        assert_eq!(m.world().len(), 6);
         assert_eq!(m.world().census(Side::Human).units(), 2);
         // Parked, the word is back as it was; the orders stay but cannot change.
         m.park(&mut campaign);

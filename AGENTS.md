@@ -206,6 +206,7 @@ cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists t
 cargo run -p xeno-tool -- inspect --all ./gameFiles
 cargo run -p xeno-tool -- simulate ./gameFiles/scen00a.usg --ticks 21000 --every 7000  # robots' positions as their scripts drive them, no window (--drive SLOT:SPEED:HEADING starts one)
 cargo run -p xeno-tool -- simulate ./gameFiles/scen00a.usg --ticks 120 --every 0 --hit 10:3:81  # hit slot 3 for 81 points before tick 10: "tick 10: 3 destroyed"
+cargo run -p xeno-tool -- simulate ./gameFiles/ntrain.usg --ticks 2000 --every 0 --hit 1:1:255 --hit 1:1:45  # destroy the alien base (slot 1): "tick 520: mission won", and the run stops
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check

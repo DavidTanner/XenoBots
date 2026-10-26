@@ -1,7 +1,8 @@
 //! `xeno-tool simulate`: runs a scenario in the sim with no window and prints where
 //! its robots are (`docs/sim.md`, "Movement", "Orders"). The robots' scripts drive
 //! them; `--drive` gives one a speed and heading to start with (its script may change
-//! them), and `--hit` hits an object (`docs/sim.md`, "Damage").
+//! them), and `--hit` hits an object (`docs/sim.md`, "Damage"). It stops when the
+//! mission is over (a base destroyed, "The mission's end").
 
 use std::fmt::Write;
 
@@ -122,8 +123,16 @@ pub fn run(
         let hit: Vec<_> = due
             .flat_map(|h| sim.hit(EntityId(h.slot), h.points))
             .collect();
-        for event in hit.into_iter().chain(sim.tick(&[])) {
+        let events: Vec<_> = hit.into_iter().chain(sim.tick(&[])).collect();
+        for &event in &events {
             let _ = writeln!(out, "tick {}: {}", sim.retrace(), describe(event));
+        }
+        // The original's mission loop stops here (the quit flag).
+        if events
+            .iter()
+            .any(|e| matches!(e, Event::MissionOver { .. }))
+        {
+            break;
         }
         if every != 0 && sim.retrace().is_multiple_of(every) {
             let _ = write!(out, "tick {}\n{}", sim.retrace(), robots(&sim));
@@ -139,6 +148,8 @@ fn describe(event: Event) -> String {
         Event::Destroyed(id) => format!("{} destroyed", id.0),
         Event::PathTaken { robot, slot } => format!("{} took path {slot}", robot.0),
         Event::Program(c) => format!("{} runs program {}", c.slot, c.after.program),
+        Event::MissionOver { won: true } => "mission won".into(),
+        Event::MissionOver { won: false } => "mission lost".into(),
     }
 }
 

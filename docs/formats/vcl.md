@@ -267,9 +267,6 @@ aborted: `PRESENTS` is held until counter 7,640.
   `NEXT_STEPS.md` lists what to check, with the checklist in `video-modes.md`).
 - The descriptor flags the loader sets (`0x22`), and what slot `0x590` (offset 0xb8d)
   does beyond selecting the glyph routine.
-- Whether the mission's end calls `scen_score_mission_result` before the win cutscene
-  as the developer keys do, and what writes the command object's +0x2b and +0x2c
-  (T-046, T-055).
 
 ## Parser
 

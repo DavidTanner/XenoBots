@@ -229,6 +229,84 @@ fn an_explosion_steps_its_frames_and_goes_after_the_last() {
     assert!(world.is_empty());
 }
 
+#[test]
+fn a_destroyed_base_ends_the_mission_after_its_end_script() {
+    let tables = synthetic_tables();
+    for (slot, won) in [(1, true), (0, false)] {
+        let mut world = world();
+        let mut random = Random::seeded(1);
+        let base_at = world.get(EntityId(slot)).unwrap().position;
+        let radii = |w: &World| -> Vec<(u16, Position)> {
+            w.iter()
+                .filter(|(_, e)| matches!(e.state, State::Explosion { .. }))
+                .map(|(_, e)| (e.radius, e.position))
+                .collect()
+        };
+        // Standing, the base never ends the mission.
+        let mut over = Vec::new();
+        for _ in 0..600 {
+            over.extend(crate::motion::tick(&mut world, &tables, &mut random));
+        }
+        assert!(!over.contains(&Event::MissionOver { won }));
+        assert!(radii(&world).is_empty());
+        // Destroyed, it steps every 16 ticks (at phase 15): a scattered explosion each
+        // step up to 19, a big one at 20 (on to 24), then quiet steps up to 0x24.
+        hit_for(&mut world, slot, 255, &mut random);
+        hit_for(&mut world, slot, 45, &mut random);
+        let tick = |w: &World| match w.get(EntityId(slot)).unwrap().state {
+            State::Base { tick, end_step, .. } => (tick, end_step),
+            _ => panic!(),
+        };
+        let mut runs = 0;
+        loop {
+            let events = crate::motion::tick(&mut world, &tables, &mut random);
+            let (t, step) = tick(&world);
+            if t & 0xf != 0xf {
+                assert!(
+                    events
+                        .iter()
+                        .all(|e| !matches!(e, Event::MissionOver { .. }))
+                );
+                continue;
+            }
+            runs += 1;
+            // The template by step: synthetic template `i` shows each frame `i + 1`
+            // ticks; the new explosion is on its first or (ticking in the same pass,
+            // one tick a frame) second frame, older ones further on.
+            let template = match runs {
+                1..=4 => 0,
+                5..=8 => 1,
+                9..=12 => 2,
+                13..=20 => 3,
+                21 => 4,
+                _ => 5,
+            };
+            let new = world.iter().any(|(_, e)| {
+                matches!(e.state, State::Explosion { frame: 0..=1, ticks, .. } if ticks == template + 1)
+            });
+            assert_eq!(new, template < 5, "run {runs}");
+            if runs <= 20 {
+                for (r, p) in radii(&world) {
+                    assert_eq!(r, 0x2800);
+                    assert!((p.x.0 - base_at.x.0).abs() <= 0x2000);
+                    assert!((p.y.0 - base_at.y.0).abs() <= 0x2000);
+                }
+            }
+            if runs == 21 {
+                assert_eq!(step, 24);
+                assert!(radii(&world).contains(&(0x4000, base_at)));
+            }
+            if runs < 33 {
+                assert!(!events.contains(&Event::MissionOver { won }));
+                continue;
+            }
+            assert_eq!(step, 0x24);
+            assert!(events.contains(&Event::MissionOver { won }));
+            break;
+        }
+    }
+}
+
 /// On stock data a hit of 80 wears a robot down and one of 81 destroys it, counted
 /// on both bases.
 #[test]
@@ -274,4 +352,29 @@ fn real_assets_a_stock_robot_is_worn_and_destroyed() {
             .iter()
             .any(|(_, e)| matches!(e.state, State::Explosion { .. }))
     );
+}
+
+/// On stock data `ntrain` is won when the alien base is destroyed and lost when the
+/// player's is, each after its end script (33 runs, 16 ticks apart).
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_ntrain_is_won_and_lost_by_a_base_destroyed() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("ntrain.usg")).unwrap()).unwrap();
+    for (side, won) in [(Side::Alien, true), (Side::Human, false)] {
+        let mut sim = crate::Sim::load(&scenario, Random::seeded(1), tables.clone());
+        let base = sim.world.base(side).unwrap();
+        sim.hit(base, 255);
+        assert_eq!(sim.hit(base, 45), [Event::Destroyed(base)]);
+        let ended = (1..=33 * 16).find(|_| sim.tick(&[]).contains(&Event::MissionOver { won }));
+        assert!(ended.is_some_and(|t| t > 32 * 16), "{side:?}: {ended:?}");
+    }
 }
