@@ -24,6 +24,16 @@ pub(crate) const ROBOT_EXPLOSION_AT: usize = 0xde5c;
 pub(crate) const RELAY_EXPLOSION_AT: usize = 0xcfc5;
 /// `mov ax, kind` in `sim_spawn_explosion`: the object kind it makes.
 pub(crate) const EXPLOSION_KIND_AT: usize = 0xe67d;
+/// `mov ax, template` in `sim_step_base_end_script`'s routines: the explosions of a
+/// destroyed base's end, steps 0 to 3, 4 to 7, 8 to 11, 12 to 19 and step 20.
+pub(crate) const END_EXPLOSIONS_AT: [usize; 5] = [0xe6b3, 0xe6c3, 0xe6d3, 0xe6e3, 0xe6f3];
+/// `mov word [si + 0x14], radius` for the small explosions
+/// (`sim_spawn_scattered_explosion`) and the big one.
+pub(crate) const END_RADII_AT: [usize; 2] = [0xe73b, 0xe6fc];
+const RADIUS_OP: &[u8] = &[0xc7, 0x44, 0x14];
+/// `cmp word [di + 0x30], step` in `sim_end_mission_with_result`: the step that ends
+/// the mission.
+pub(crate) const END_STEP_AT: (usize, &[u8]) = (0x68dd, &[0x83, 0x7d, 0x30]);
 
 /// The most entries a chance table has before its chances pass 255 (the stock
 /// tables have 10 and 12), and the most bits a component routine tries.
@@ -78,6 +88,19 @@ pub struct Damage {
     /// The explosions a destroyed robot and a removed relay leave.
     pub robot_explosion: Explosion,
     pub relay_explosion: Explosion,
+    /// The mission's end once a base is destroyed.
+    pub base_end: BaseEnd,
+}
+
+/// What a destroyed base's end script makes (`docs/sim.md`, "The mission's end").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseEnd {
+    /// The explosion of steps 0 to 3, 4 to 7, 8 to 11 and 12 to 19, then of step 20.
+    pub explosions: [Explosion; 5],
+    /// The radius (8.8) of the scattered explosions and of step 20's.
+    pub radii: [u16; 2],
+    /// The step at which the mission ends.
+    pub last_step: u8,
 }
 
 fn byte(image: &[u8], at: usize) -> Result<u8, FormatError> {
@@ -170,6 +193,22 @@ fn explosion(image: &[u8], ds: usize, at: usize) -> Result<Explosion, FormatErro
     })
 }
 
+fn base_end(image: &[u8], ds: usize) -> Result<BaseEnd, FormatError> {
+    let e = |i: usize| explosion(image, ds, END_EXPLOSIONS_AT[i]);
+    let last_step = match image.get(END_STEP_AT.0..END_STEP_AT.0 + 4) {
+        Some(b) if b[..3] == *END_STEP_AT.1 => b[3],
+        _ => return Err(invalid(END_STEP_AT.0, "not the end script's last step")),
+    };
+    Ok(BaseEnd {
+        explosions: [e(0)?, e(1)?, e(2)?, e(3)?, e(4)?],
+        radii: [
+            operand(image, END_RADII_AT[0], RADIUS_OP)?,
+            operand(image, END_RADII_AT[1], RADIUS_OP)?,
+        ],
+        last_step,
+    })
+}
+
 /// Reads the tables from a load image whose data segment starts at `ds`.
 pub fn read_image(image: &[u8], ds: usize) -> Result<Damage, FormatError> {
     let relay_removed = match image.get(RELAY_AT.0..RELAY_AT.0 + 4) {
@@ -187,6 +226,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Damage, FormatError> {
         explosion_kind: operand(image, EXPLOSION_KIND_AT, &[0xb8])?,
         robot_explosion: explosion(image, ds, ROBOT_EXPLOSION_AT)?,
         relay_explosion: explosion(image, ds, RELAY_EXPLOSION_AT)?,
+        base_end: base_end(image, ds)?,
     })
 }
 
@@ -222,6 +262,11 @@ mod tests {
         assert_eq!((damage.base_destroyed, damage.relay_removed), (300, 20));
         assert_eq!(damage.explosion_kind, 13);
         assert_eq!(damage.robot_explosion.last, 9);
+        let end = &damage.base_end;
+        assert_eq!(
+            (end.explosions[4].last, end.radii, end.last_step),
+            (5, [0x2800, 0x4000], 0x24)
+        );
         insta::assert_debug_snapshot!(damage);
     }
 
@@ -235,6 +280,9 @@ mod tests {
             RELAY_AT.0,
             ROBOT_EXPLOSION_AT,
             EXPLOSION_KIND_AT,
+            END_EXPLOSIONS_AT[3],
+            END_RADII_AT[1] + 2,
+            END_STEP_AT.0 + 1,
             // A component routine's `or` of another bit, and an unknown routine.
             0x803b,
             0x8020,
@@ -281,5 +329,13 @@ mod tests {
         assert_eq!((damage.base_destroyed, damage.relay_removed), (300, 20));
         let e = damage.robot_explosion;
         assert!(e.first < e.last && e.ticks > 0);
+        let end = &damage.base_end;
+        assert!(
+            end.explosions
+                .iter()
+                .all(|e| e.first < e.last && e.ticks > 0)
+        );
+        assert_eq!(end.last_step, 0x24);
+        assert!(end.radii[0] < end.radii[1]);
     }
 }

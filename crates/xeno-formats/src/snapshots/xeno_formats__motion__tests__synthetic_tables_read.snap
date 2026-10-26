@@ -1173,5 +1173,44 @@ Motion {
             ticks: 8,
             heading: 256,
         },
+        base_end: BaseEnd {
+            explosions: [
+                Explosion {
+                    first: 0,
+                    last: 1,
+                    ticks: 1,
+                    heading: 0,
+                },
+                Explosion {
+                    first: 0,
+                    last: 2,
+                    ticks: 2,
+                    heading: 0,
+                },
+                Explosion {
+                    first: 0,
+                    last: 3,
+                    ticks: 3,
+                    heading: 0,
+                },
+                Explosion {
+                    first: 0,
+                    last: 4,
+                    ticks: 4,
+                    heading: 0,
+                },
+                Explosion {
+                    first: 0,
+                    last: 5,
+                    ticks: 5,
+                    heading: 0,
+                },
+            ],
+            radii: [
+                10240,
+                16384,
+            ],
+            last_step: 36,
+        },
     },
 }

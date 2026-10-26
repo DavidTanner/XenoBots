@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-058, T-059)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -547,6 +547,85 @@ Shortcuts, each named in the code: the screen flash, the sounds and the messages
 change (T-103, T-104); a destroyed base's mission end (T-055); a freed slot is reused
 at once (the original waits for the robots targeting the object to let go, T-112);
 the explosion's height and +0x19 are not kept (T-100 draws it).
+
+## The mission's end (T-055)
+
+A T-090 pass on `xeno.exe` read how a mission ends, every writer of the quit flag
+`DS:0xe87e`, and the ticks of the structures. The values are read from the user's
+`xeno.exe` by `xeno_formats::damage` (`Damage::base_end`).
+
+**Only a destroyed base ends a mission with a result.** The base's tick
+(`sim_tick_base`, `1000:6300`) calls a routine by the low four bits of +0x41 from the
+table at `DS:0x5aea`, and entry 15 is `sim_end_mission_with_result` (`1000:68c1`). So
+once every 16 ticks each base runs it, destroyed or not; it does nothing unless the
+base's +0x16 bit 0 (`GONE`) is set, which only `sim_damage_base` sets (damage at 300
+or more, "Damage" above). Then:
+
+1. `sim_step_base_end_script` (`1000:e691`) takes +0x30 (the end step, 0 in every
+   stock file) and returns the next step, by a jump table of 9 entries at `1000:e69d`
+   indexed by `step / 4`:
+   - steps 0 to 19: a sound by the step (`snd_play_base_end_step_sound`, `1000:e708`,
+     the word at `DS:0x7342 + 2 * step`) and a **scattered explosion**
+     (`sim_spawn_scattered_explosion`, `1000:e714`): one from a template
+     (`sim_spawn_explosion`) at the base's position, then two random words move it
+     in x and y by `(word & 0x3fff) - 0x2000` (sign-extended, in 1/65,536ths: within
+     an eighth of a unit), and its radius (+0x14) is set to a value read from the
+     instruction (40.0 in the stock build); then a third random word lowers it
+     (`sim_lower_explosion_randomly`, `1000:e751`: `z -= word & 0x7ff`). The template
+     is one for steps 0 to 3, another for 4 to 7, 8 to 11, and 12 to 19. The step
+     goes up by one;
+   - step 20: the sound, a **big explosion** from a fifth template at the base's
+     position (no scatter), lowered the same way, its radius set from another
+     instruction (64.0); the step goes up by **four**, to 24;
+   - steps 24 to 35: the step goes up by one, nothing else.
+   The sounds play through `snd_play_sound_effect` (`1000:ee90`, slot `0x44c`); they
+   draw no random word.
+2. If the new step is 4 or 14, the base's +0x18 goes up by one (its look in the 3D
+   view: a damaged frame).
+3. Once the step is 0x24 or more (read from the `cmp` at `1000:68dd`): won
+   (`scen_win_selected_scenario`) if the base's +0x16 bit 3 is set (an **alien** base
+   destroyed), else lost (`scen_lose_loaded_scenario`); then the quit flag is set and
+   the mission loop stops.
+
+So a mission ends 33 runs, about 520 ticks (7.5 s at 70 Hz), after the base is
+destroyed, with 21 explosions on it. The step is never reset; the table's entries past
+the ninth are the code that follows it, which only a step of 0x24 or more read from a
+file, or a resumed mission whose end already ran, would reach.
+
+**No other result.** Nothing else sets a base's `GONE` bit or writes 1 or 2 to the
+result (T-046). There is no timer, no check of units left (a side with no robots goes
+on), and nothing specific to the training missions: their base is destroyed the same
+way. The training menu's result 3 makes the won and lost routines return at once, so
+a training mission's end changes nothing in the campaign; the quit flag is still set,
+the mission stops, and the training menu returns to the map room with no cutscene
+(`docs/screens.md`, "The training menu").
+
+**The other writers of the quit flag** end the mission with no result: `1000:5c25`
+the situation room's end button (a release on the sprite button that also flips the
+buttons' shared look +0x40), `1000:5c50` its corner (`ui_sitroom_corner_on_mouse`),
+`1000:7cf9` its key handler for Alt+Q (key word 0x2010). `1000:424b` is the last of a
+group of short routines at `1000:4224`-`42a9` stepped through `DS:0x38ea` (each adds 2
+to it) that pick random points on the 320x200 screen; it touches no object, so it is
+no win or loss; what runs it is not traced.
+
+**Structures.**
+- A **base** ticks as above: the path phase (T-052) and phase 15's end; the other
+  phases count each side's robots by kind and state for the situation room, take in
+  robots that come home (phase 9: within a short distance they leave the field),
+  run two counters fed by the situation room's sliders (11 and 12; not traced) and,
+  for the alien base, launch the robots inside it (13); a second routine by +0x2d
+  moves those three sliders (+0x39 to +0x3b).
+  None of these decide a result; the port keeps only the path phase and the end.
+- A **relay** (`sim_tick_relay`, `1000:ccd9`, created) counts +0x1e and every 16
+  ticks runs a routine by its state +0x1f (table `DS:0x6fc7`: states 0, 2, 4, 6, 8,
+  10): it is set up in stages (+0x20, 0 to 3; out of the field until up), joins the
+  net (+0x16 bit 4, its colour +0x1d by side) and can fold up again; its look and
+  height follow its stage. It never touches a base or the result: the relay net is
+  T-113's.
+- An **obstacle**'s tick (`1000:e9cd`) is a bare `ret`, and it takes no damage. It is
+  seen only by shots and by contact checks (both radii off the distance), through
+  `IN_FIELD`: the scripts' sensing (T-112) and shots (T-114). Movement never tests it
+  (T-052).
 
 ## Loading a scenario
 

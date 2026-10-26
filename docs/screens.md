@@ -278,10 +278,10 @@ and the mission's end: `sim_end_mission_with_result` (`1000:68c1`) runs, for an 
 through (`1000:e691`, a jump table by +0x30 / 4: messages); once +0x30 reaches 0x24 it
 calls `scen_win_selected_scenario` (`1000:7536`) if bit 3 of +0x16 is set, else
 `scen_lose_loaded_scenario` (`1000:75fc`), and sets the quit flag `DS:0xe87e`. These are
-the developer keys' handlers past their unlock check. Who calls `1000:68c1` and who sets
-those flags (presumably the player's base or command object) is not traced (T-055): no
-instruction names it, so it is reached through a table. Nothing else writes 1 or 2 to
-`DS:0x5fab`. Both routines first return at once if `DS:0x5fab` is 3 (the training
+the developer keys' handlers past their unlock check. It is entry 15 of the bases'
+phase table (`DS:0x5aea`), so each base runs it every 16 ticks; a base destroyed by
+damage (its `GONE` bit) steps the end script and its side bit picks the result (T-055,
+`docs/sim.md`, "The mission's end"). Nothing else writes 1 or 2 to `DS:0x5fab`. Both routines first return at once if `DS:0x5fab` is 3 (the training
 menu's value), so a training mission changes nothing.
 - **Won** (`scen_win_selected_scenario`): nothing without a selection (`DS:0x5ff5`).
   The selected record becomes 10; the selection clears (`DS:0x5f97`, `0x5ff5`);
@@ -1087,10 +1087,8 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   the orders' typing speed (T-044; check in DOSBox).
 - The review's 3D view: the render hook's node layout, the due check `1fe6:39c3`, the
   parts routines and the scripts' steps in ticks (T-047, with T-056).
-- What reaches `sim_end_mission_with_result` (`1000:68c1`, through a table) and sets
-  the object's flags +0x16 bits 0 and 3 and its end script +0x30, which decide when a
-  mission ends won or lost (T-055). The quit flag `DS:0xe87e` is also set at
-  `1000:424b`, `5c25`, `5c50` and `7cf9` (not traced).
+- What runs the step list at `DS:0x38ea` whose last routine sets the quit flag at
+  `1000:424b` (T-055 found it touches no object; `docs/sim.md`, "The mission's end").
 - The situation room's panels, spinners and remaining keys, the consoles'
   instruments, and the keys that drive and fight (T-056).
 - What +0x2e is used for once a state replaces +0x30 during a mission (T-053).
@@ -1217,6 +1215,13 @@ T-054 named, in `xeno.exe`: `sim_spawn_explosion` (`1000:e67b`),
 `sim_find_shot_hit` (`1000:e8ac`), `sim_damage_objects_in_radius` (`1000:e8eb`) and
 `sim_step_humanoid_weapons` (`1000:b08a`). Details in `docs/sim.md`, "Damage". All
 `confirmed`, all saved.
+
+T-055 named, in `xeno.exe`: `sim_step_base_end_script` (`1000:e691`),
+`sim_spawn_scattered_explosion` (`1000:e714`), `sim_lower_explosion_randomly`
+(`1000:e751`), `snd_play_base_end_step_sound` (`1000:e708`), `snd_play_sound_effect`
+(`1000:ee90`), and created `sim_tick_relay` (`1000:ccd9`; a 1-byte body, as Ghidra
+holds an older instruction inside it). Details in `docs/sim.md`, "The mission's end".
+All `confirmed`, all saved.
 
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
