@@ -822,6 +822,32 @@ fn usg_details(bytes: &[u8]) -> Details {
         )
         .unwrap();
     }
+    if let Some(save) = &s.save {
+        let states: Vec<String> = save
+            .scenarios()
+            .map(|t| {
+                t.scenarios
+                    .iter()
+                    .map(|r| format!("{:#x}", r.state))
+                    .collect()
+            })
+            .unwrap_or_default();
+        writeln!(
+            out,
+            "usg:       save: selected {:#x}, loaded {:#x}, progress {}, score {}, {} won, {} lost, {} kills, {} robots lost, result {:#x}, states [{}]",
+            save.selected,
+            save.loaded,
+            save.progress,
+            save.score,
+            save.wins,
+            save.losses,
+            save.kills,
+            save.robots_lost,
+            save.result,
+            states.join(", ")
+        )
+        .unwrap();
+    }
     for chunk in &s.other_chunks {
         let tag = String::from_utf8_lossy(&chunk.tag);
         writeln!(

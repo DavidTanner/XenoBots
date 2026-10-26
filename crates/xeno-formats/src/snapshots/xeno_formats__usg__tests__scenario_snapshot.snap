@@ -216,5 +216,6 @@ Scenario {
             0,
         ],
     ),
+    save: None,
     other_chunks: [],
 }
