@@ -528,5 +528,15 @@ pub(crate) fn synthetic_tables() -> Tables {
         mission_programs: std::array::from_fn::<_, MISSIONS, _>(|m| {
             std::array::from_fn(|k| (10 * m + k) as u8)
         }),
+        atan: (0..xeno_formats::motion::ATAN_ENTRIES)
+            .map(|i| ((i as f64 / 256.0).atan() / std::f64::consts::FRAC_PI_4 * 65536.0) as u16)
+            .collect(),
+        script_speeds: [
+            [95, 63, 113],
+            [56, 42, 85],
+            [28, 21, 39],
+            [-23, -21, -35],
+            [-43, -42, -71],
+        ],
     }
 }

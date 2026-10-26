@@ -26,6 +26,12 @@ pub(crate) const SPEEDS_AT: (usize, &[u8]) = (0xd400, &[0x26, 0x8b, 0x9f]);
 /// `mov al, [bx + table]` in mission 0's program routine (`1000:ec68`, through
 /// `order_start_path_mission_program`): three bytes a mission, by kind.
 pub(crate) const PROGRAMS_AT: (usize, &[u8]) = (0xec6a, &[0x8a, 0x87]);
+/// `mov ax, ss:[bx + table]` in `sim_get_bearing` (`1000:0735`) on the path the
+/// scripts take (through `sim_get_bearing_coarse`, `1000:04cc`): the arctangents.
+pub(crate) const ATAN_AT: (usize, &[u8]) = (0x0835, &[0x36, 0x8b, 0x87]);
+/// `jmp [bx + table]` for the script's opcodes 0x54 to 0x58: each a table of three
+/// routines, by kind, that set the speed asked for.
+pub(crate) const SPEED_OPS: [usize; 5] = [0xd08c, 0xd084, 0xd07c, 0xd06c, 0xd074];
 
 /// Entries in the sine table: a quarter turn in 256 steps, and the one after it.
 pub const SINE_ENTRIES: usize = 257;
@@ -34,6 +40,8 @@ pub const SINE_ENTRIES: usize = 257;
 pub const SPEED_ENTRIES: usize = 64;
 /// No more speed tables than this (the stock build has 7).
 const MAX_SPEED_TABLES: usize = 16;
+/// Entries in the arctangent table the scripts read.
+pub const ATAN_ENTRIES: usize = 256;
 /// The path missions (`docs/formats/usg.md`, "How paths are used").
 pub const MISSIONS: usize = 7;
 
@@ -53,6 +61,11 @@ pub struct Motion {
     /// The program a path's mission starts, by mission and kind (humanoid, scorpion,
     /// scout).
     pub mission_programs: [[u8; 3]; MISSIONS],
+    /// `atan(i / 256)`, 0x10000 to an eighth of a turn (`docs/sim.md`, "The
+    /// bearing").
+    pub atan: Vec<u16>,
+    /// The speed the script's opcodes 0x54 to 0x58 ask for, by opcode and kind.
+    pub script_speeds: [[i16; 3]; 5],
 }
 
 fn bytes(image: &[u8], at: usize, n: usize) -> Result<&[u8], FormatError> {
@@ -115,13 +128,44 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         kinds.copy_from_slice(&programs[3 * mission..3 * mission + 3]);
     }
 
+    let atan_at = ds + usize::from(op(ATAN_AT)?);
+    let atan = (0..ATAN_ENTRIES)
+        .map(|i| word(image, atan_at + 2 * i))
+        .collect::<Result<_, _>>()?;
+    let mut script_speeds = [[0; 3]; 5];
+    for (speeds, at) in script_speeds.iter_mut().zip(SPEED_OPS) {
+        let table = ds + usize::from(operand(image, at, &[0xff, 0xa7])?);
+        for (kind, speed) in speeds.iter_mut().enumerate() {
+            *speed = script_speed(image, ds, usize::from(word(image, table + 2 * kind)?))?;
+        }
+    }
+
     Ok(Motion {
         sine,
         turn_step,
         weak_drive,
         scorpion_speeds,
         mission_programs,
+        atan,
+        script_speeds,
     })
+}
+
+/// The speed a set-speed routine at `at` asks for: `mov word [di + 0x28], speed`,
+/// or `mov bl, gear` and a call to a routine that looks the gear up in a word table
+/// (`sim_set_humanoid_gear`: `mov [di + x], bl`, then `mov ax, [bx + table]`).
+fn script_speed(image: &[u8], ds: usize, at: usize) -> Result<i16, FormatError> {
+    match *bytes(image, at, 5)? {
+        [0xc7, 0x45, 0x28, lo, hi] => Ok(i16::from_le_bytes([lo, hi])),
+        [0xb3, gear, 0xe8, lo, hi] => {
+            let callee = (at as u16)
+                .wrapping_add(5)
+                .wrapping_add(u16::from_le_bytes([lo, hi]));
+            let table = operand(image, usize::from(callee) + 4, &[0x8b, 0x87])?;
+            Ok(word(image, ds + usize::from(table) + usize::from(gear))? as i16)
+        }
+        _ => Err(invalid(at, "not a set-speed routine")),
+    }
 }
 
 /// Reads the tables from an unpacked `xeno.exe`.
@@ -170,6 +214,54 @@ mod tests {
         for i in 0..3 * MISSIONS {
             image[DS + 0x400 + i] = i as u8;
         }
+        put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x08]);
+        for i in 0..ATAN_ENTRIES {
+            put(
+                &mut image,
+                DS + 0x800 + 2 * i,
+                &((i as u16) << 8).to_le_bytes(),
+            );
+        }
+        // Humanoids by gear (2 * op) through a table of gear * 5; scorpions and
+        // scouts by their own words.
+        put(
+            &mut image,
+            0x9100,
+            &[0x88, 0x9d, 0x0b, 0x01, 0x8b, 0x87, 0x40, 0x0a],
+        );
+        for gear in 0..10u16 {
+            put(
+                &mut image,
+                DS + 0xa40 + 2 * usize::from(gear),
+                &(gear * 5).to_le_bytes(),
+            );
+        }
+        for (i, at) in SPEED_OPS.into_iter().enumerate() {
+            let table = 0xa00 + 6 * i as u16;
+            put(
+                &mut image,
+                at,
+                &[&[0xff, 0xa7][..], &table.to_le_bytes()].concat(),
+            );
+            let routines = [0x9000, 0x9200, 0x9300].map(|r: u16| r + 8 * i as u16);
+            for (kind, routine) in routines.into_iter().enumerate() {
+                let r = usize::from(routine);
+                put(
+                    &mut image,
+                    DS + usize::from(table) + 2 * kind,
+                    &routine.to_le_bytes(),
+                );
+                if kind == 0 {
+                    let call = 0x9100u16.wrapping_sub(routine + 5);
+                    put(&mut image, r, &[0xb3, 2 * i as u8, 0xe8]);
+                    put(&mut image, r + 3, &call.to_le_bytes());
+                } else {
+                    let speed = (i as i16 + 1) * if kind == 1 { 7 } else { -3 };
+                    put(&mut image, r, &[0xc7, 0x45, 0x28]);
+                    put(&mut image, r + 3, &speed.to_le_bytes());
+                }
+            }
+        }
         image
     }
 
@@ -183,6 +275,8 @@ mod tests {
         assert_eq!(motion.scorpion_speeds.len(), 2);
         assert_eq!(motion.scorpion_speeds[1][63], 31);
         assert_eq!(motion.mission_programs[6], [18, 19, 20]);
+        assert_eq!(motion.atan[255], 0xff00);
+        assert_eq!(motion.script_speeds[4], [20, 35, -15]);
         insta::assert_debug_snapshot!(motion);
     }
 
@@ -197,6 +291,10 @@ mod tests {
             (SPEEDS_AT.0 + 1, 0x8a),
             (STRINGS + 0x200, 0x03),
             (PROGRAMS_AT.0, 0x8b),
+            (ATAN_AT.0, 0x8b),
+            (SPEED_OPS[2], 0xfe),
+            (0x9000, 0xb4),
+            (0x9104, 0x8a),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -228,5 +326,11 @@ mod tests {
             assert!(table.iter().enumerate().all(|(i, &s)| usize::from(s) <= i));
         }
         assert!(motion.mission_programs.iter().flatten().all(|&p| p < 31));
+        // A rising arctangent from 0 towards an eighth of a turn.
+        assert_eq!(motion.atan[0], 0);
+        assert!(motion.atan.windows(2).all(|w| w[0] < w[1]));
+        // Opcode 0x54 is each kind's top speed, 0x58 its fastest reverse.
+        assert!(motion.script_speeds[0].iter().all(|&s| s > 0));
+        assert!(motion.script_speeds[4].iter().all(|&s| s < 0));
     }
 }

@@ -31,6 +31,7 @@ pub mod pcx;
 pub mod review;
 pub mod rst;
 pub mod scendef;
+pub mod script;
 pub mod sequence;
 pub mod setup;
 pub mod usg;

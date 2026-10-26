@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-058, T-059)
+# The simulation (T-050, T-051, T-052, T-053, T-058, T-059)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -135,11 +135,13 @@ itself if the difference's high byte is 1; then plus the entry. A quarter turn e
 or a sum that carries, is 1.0: then the component is the speed itself, unmultiplied.
 The table's last entry (index 256) is 0, not 1.0, so between 255 and 256 the
 difference wraps to 1 and the carry gives 1.0. The cosine is the sine of
-`0x4000 - angle`. A speed of 63 moves a robot 63/65,536 of a unit a tick at most.
+`0x4000 - angle`. A speed of 63 moves a robot 63/65,536 of a unit a tick at most;
+that is the original's scale (T-053, "Orders", "The speed scale").
 
 **The program bit.** +0x23 bit 7, which T-043 named "manual", is set when the robot's
-program drives: the script interpreter (`1000:4899`) steps the script every tick only
-with it set (otherwise once every 64 ticks of `DS:0x62c6`); recalling a robot and
+program drives: the script interpreter (`order_step_script`, `1000:4899`) steps the
+script only with it set (otherwise it only runs event handlers, and once every 64 ticks
+of `DS:0x62c6` drops an object goal that is gone; T-053, "Orders"); recalling a robot and
 giving it a path's mission set it (`order_switch_to_automatic`, `1000:d42c`, posting
 event 0xa); and the cockpit's drive keys clear it first (`order_switch_to_manual`,
 `1000:d446`, event 0xb). Every stock robot is saved with it set. Both Ghidra names
@@ -196,8 +198,7 @@ code runs (`docs/formats/usg.md`, "How paths are used", has the overview):
 
 The scripts set +0x2c bit 6 (ask for the next point), bit 4, or step a point back and
 head for it (the commands at `DS:0x7d14`), and steer towards the destination with the
-bearing routine (`sim_get_bearing`, `1000:0735`, an arctangent through a table at
-`DS:0x20ba`); both are T-053's.
+bearing routine; see "Orders" below.
 
 ### The port (T-052)
 
@@ -228,6 +229,163 @@ retrace's input, and logs the events (debug level). `xeno-tool simulate <file.us
 [--ticks N] [--every K] [--drive SLOT:SPEED:HEADING]` runs one with no window and
 prints the robots' positions; `--drive` gives a robot a speed and heading to follow, as
 no script drives them yet.
+
+## Orders (T-053)
+
+A T-090 pass on `xeno.exe` read the script interpreter, every opcode's handler, the
+event dispatch, the bearing routine and the speed routines the scripts call. The
+scripts and the interpreter's tables are read from the user's `xeno.exe` by
+`xeno_formats::script` (`Scripts`) and `xeno_formats::motion` (`Motion::atan`,
+`Motion::script_speeds`).
+
+**Where they are.** The 31 programs (`docs/screens.md`, "Orders") are bytecode in the
+data segment, `DS:0x5034..0x5670`, which also holds two tables of event handlers. The
+opcode table at `DS:0x4dd4` has 136 entries of two words, a handler and a **time**; it
+ends where the program table (`DS:0x4ff4`) starts. A script is a run of opcodes, each
+followed by its operand: none, a byte, a word, a field offset and a byte, a field
+offset and a word, a header (0x0f) or a name (0x02). `xeno_formats::script::operand_kind`
+gives each opcode's.
+
+**A program's start.** `order_set_program` (`1000:476f`) writes the program to both
++0x2e and +0x30, points +0x34 at its script, clears the flags (+0x33), empties the
+stack (+0x31 = 10) and sets the wait (+0x38) from a global stagger counter
+(`DS:0x4db5`): the counter drops by 10 each start, and when that borrows or reaches 0
+it then gains 49 more (59 added and 10 taken again); it starts at 0, so the first robots started wait
+39, 29, 19, 9, 48, 38, ... ticks. Program numbers over 30 start program 30. The
+script's first opcode is the header (0x0f), which skips its items up to the byte after
+0x11; then 0x02 skips the flags byte and the name. So a program's first real opcode
+runs two steps after its wait.
+
+**The step** (`order_step_script`, `1000:4899`), called from each robot's move routine
+after the speed step and before the move (step 5 of "A robot's tick"):
+
+1. Nothing while the global pause byte `DS:0x4db4` is set (a developer key).
+2. If +0x33 bit 5 is set the script steps. Otherwise, if events wait (+0x36), the
+   highest one is dispatched (below) and the tick ends. Otherwise the script steps only
+   with the program bit (+0x23 bit 7); without it, only every 64th tick of `DS:0x62c6`
+   runs the object-goal check (step 4).
+3. Stepping: the wait (+0x38) drops by one; only when it was already 0 does an opcode
+   run. Before it, a stack pointer over 10 starts program 30 (`CORE DUMP`) and a script
+   pointer outside the script area starts program 29 (`BUS FAULT`), each setting +0x33
+   bit 5. The opcode is read, the wait set to its time, and its handler runs. So an
+   opcode of time `t` is followed by the next one `t + 1` ticks later; most have time 0
+   and the scripts run an opcode a tick.
+4. Then, if +0x32 bit 0 (an object goal) is set and the object is gone, the goal is
+   dropped.
+
+**Events.** `order_post_event` (`1000:4818`) sets bit `n` of +0x36 for event `n` (through
+a table of bits at `DS:0x1c56`, the identity). Posted so far: 5 by the hold order
+(opcode 0x6f), 7 by every hit (`sim_damage_humanoid` and the other kinds' damage
+routines; the hill bounce's 0-point hit too), 0xa and 0xb when the program or the pilot
+takes over. Dispatch pushes the script pointer (as its offset from the program table,
+with +0x33 bits 0, 5, 6, 7 in the word's top nibble), sets +0x33 bit 5 and the wait to
+0, and clears the event's bit. The handler is the running program's own, from its
+header's items (event, address), when the program drives; otherwise the program
+table's default for the event (`DS:0x5623`); while the pilot drives, the pilot table
+(`DS:0x55e4`). Both tables have 13 entries; most handlers only show a message and
+return. Return (opcode 0x06) restores the pointer and the flags, clearing bit 5 again.
+
+**The opcodes**, by number; times are the stock ones (in ticks):
+
+| Opcodes | What they do |
+|---|---|
+| 0x00, 0x01, 0x10, 0x11, 0x85 | Nothing (0x01 is a debugger break) |
+| 0x02 | Skip a flags byte, a length and that many bytes (the program's name) |
+| 0x03 | Restart the running program (`order_set_program` with +0x30, so it becomes the program given too), then wait 30 to 61 ticks at random |
+| 0x04 | Jump by a word, relative to the next opcode (time 1) |
+| 0x05, 0x06 | Call an address, pushing the return and the flags (wait 1); return, restoring both (time 1) |
+| 0x07 | Drop a return address (wait 1) |
+| 0x08, 0x09 | Call and return without the flags |
+| 0x0a | Halt: run itself again (time 255), until an event or a new program |
+| 0x0b, 0x0c | Set or clear the carry flag |
+| 0x0d, 0x0e | Set or clear +0x33 bit 5 (step every tick, hold events off) |
+| 0x0f | The header: skip its items up to 0x11 |
+| 0x12, 0x14, 0x16, 0x18 | Wait 1, 60, 3600, 255 ticks (by their times) |
+| 0x13, 0x15, 0x17 | Wait a byte's ticks, seconds (x 60) or minutes (x 3600, at most 0xffff) |
+| 0x19, 0x1a | Wait 240 to 495 or 30 to 157 ticks at random |
+| 0x1b, 0x1c, 0x1d | Flags from the random word: the carry is its top bit, or set one time in 4 or 8 |
+| 0x1e, 0x1f | Switch to automatic or manual (`order_switch_to_*`; time 1 for manual) |
+| 0x20, 0x21 | Jump by a word if the program drives, or if the pilot does |
+| 0x22, 0x23 | Enter a state: push +0x30 and set it to a byte; leave it: pop +0x30 (the console's program panel is redrawn) |
+| 0x24, 0x25, 0x28, 0x29 | Push a byte or word field of the robot; pop one into a field |
+| 0x26, 0x27 | Drop a byte or a word |
+| 0x2a to 0x41 | Add, subtract, compare, test, or, and: on a field (offset byte) or the top of the stack, byte or word, with a byte or word value, setting the flags |
+| 0x42 | Jump by a signed byte |
+| 0x43 to 0x4c | Jump by a signed byte if carry, no carry, below or equal, above, zero, not zero, sign, no sign, carry, no carry |
+| 0x4d, 0x4e | Set a byte or word field |
+| 0x4f, 0x50 | Turn: target heading = heading + a word; stop turning: target heading = heading |
+| 0x51, 0x52 | Speed up or slow down a gear: a humanoid's (+0x10b) or scout's (+0x109) gear by one through its gear table (`DS:0x68ec`, `0x6df8`), a scorpion's speed by 21 within -42..63; time 30 |
+| 0x53 | Stop: speed asked for 0, then the kind's bounce routine (the console's gear); time 30 |
+| 0x54 to 0x58 | Set a speed by kind: top, high, low, slow reverse, fast reverse (95, 56, 28, -23, -43 for a humanoid; 63, 42, 21, -21, -42 for a scorpion; 113, 85, 39, -35, -71 for a scout); time 30. `Motion::script_speeds` |
+| 0x59 to 0x5c | Jump by a word if the speed has reached the speed asked for, if the heading has reached the heading asked for, or if not (time 1) |
+| 0x5d | Compare the distance to the goal (8.8 units, 0xffff past 256) with a word |
+| 0x5e | Push that distance |
+| 0x5f | Steer to the goal: target heading = the bearing to it (no flags) |
+| 0x60, 0x61, 0x62 | Steer to the goal plus or minus a word; or zigzag: the target heading turned a random 90 to 180 degrees more towards the side the goal is on (-45 to +45 without a goal) |
+| 0x63 | Pick a target and steer to it (sensing) |
+| 0x64 | Turn by a random -90 to +90 degrees |
+| 0x65 | Stop turning and stop (time 60) |
+| 0x66 to 0x68, 0x6d, 0x6e | A point the script works out (`DS:0x4da4`): an object's position plus +0x3c as an offset; compare the distance to it; steer to it; push the distance; steer to it as goal 0x10 |
+| 0x69, 0x6a | Distance to, and steer to, the robot's own base |
+| 0x6b, 0x6c | Distance to, and steer to, the target (+0xe6) |
+| 0x6f | Hold here: drop an object goal, destination = position, goal 2, message, post event 5 |
+| 0x70 | Join the nearest path point (`sim_join_nearest_path_point`; time 60) |
+| 0x71 | Look for enemies (sensing, `1000:d757`; time 30) |
+| 0x72 | Carry if the targeting computer is damaged (time 15) |
+| 0x73 | Carry unless the target is a kind 3 object (a base) (time 30) |
+| 0x74, 0x75, 0x76 | Show a message (a word: the text's number) in the message panel, or other panels |
+| 0x77 | A path command, a byte (`order_run_path_command`, table `DS:0x7d14`): 4 ask for the next point (+0x2c bit 6), 8 set +0x2c bit 4, 10 step a point back and head for it; 0, 2 and 6 do nothing |
+| 0x78 to 0x7d | Weapons: their state as flags or pushed; fire (time 30) |
+| 0x7e to 0x83 | The relay net: walk a line of grid cells from the robot to its destination (state at +0x10a..+0x114), the cell as the point, whether a relay stands there, deploy one |
+| 0x84 | Test +0x32 with a byte |
+| 0x86, 0x87 | Debug counters |
+
+The flags are the x86 flags of the opcode's operation, kept in +0x33 (`order_save_script_flags`).
+
+**What the stock programs do.** The human robots are given ENGAGE (9): with the
+targeting computer or the weapons damaged it retreats (RETREATING, 25); otherwise it runs ENGAGING (24), which looks for
+an enemy, closes on it and fires, then stops and waits at random. The alien robots
+are given PATROL (8): while they head for a point (+0x32 bit 1), they set a speed,
+steer to the point and wait 5 seconds, until within 0x32 (0.2 units); then they stop,
+ask for the next point (path command 4) and recheck every 3600 ticks, so the alien
+base moves them on within 16 ticks and they set off again a minute later. Without a
+point PATROL shows a message and halts. HOLD POS (1) holds the point it was given or,
+without one, holds where it is. RET BASE (4) joins the nearest path point and walks
+the path backwards, a point at a time, to its base. Alien scorpions are given
+DENSE NET (13): they walk a line of grid cells to their point, apparently laying
+relays where none stand. Events turn
+patrols into fights: a hit (7) or event 1 runs ENGAGING. Event 9 (posted by nothing
+traced yet) runs AVOIDANCE: stop and wait, or back off turning 45 degrees, then drive
+on slowly.
+
+**The bearing** (`sim_get_bearing`, `1000:0735`): from the robot's position to the
+goal, as 32-bit differences. If x is negative, both are negated (half a turn); if y is
+then negative, it is negated and the two swapped (a quarter turn); the octant count is
+doubled. Then, if x >= y, the octant count goes up by one and the ratio is
+`(x - y) / (x + y)`, else `x / y` (y = 0 with x > 0 adds another octant, giving a
+quarter turn; both 0 give 0). Numerator and denominator are shifted left together
+until the denominator's top word has its top bit set, and the top word divides the
+numerator (one less, and 0xffff in the low word, when the numerator's top word is not
+smaller). The scripts call it through `sim_get_bearing_coarse` (`1000:04cc`), which
+takes `Motion::atan[ratio >> 8]` with no interpolation (otherwise the next entry is
+interpolated as the sine is); the angle is the octants and the table entry shifted
+right 3 together, rounded: `(octants << 13) | (atan >> 3)`, plus the last bit shifted
+out. Heading 0 is +y and a quarter turn +x, as for the velocity.
+
+**The speed scale.** Speeds asked for are small: the scripts' and the cockpit's speeds
+are at most 95 (humanoid), 63 (scorpion) and 113 (scout), and the velocity is
+`speed * sin(heading)` in 1/65,536ths of a unit a tick (T-052's port is right). So a
+humanoid at top speed covers 95 x 70 / 65,536, about 0.1 units a second: a 5-unit
+leg between path points takes about 50 seconds and the 40 units between the stock
+bases nearly 7 minutes. The scripts agree: they call a point reached at 0.2 units and
+recheck every 5 seconds (0.4 units at most). Objects' radii (+0x14, 10 for a robot)
+are not in position units (robots stand 3 units apart); hills' are.
+
+**Destinations on no path.** Stock alien robots are saved heading for points on no
+path in the file (scen00a's slot 3 for (142.7, 146.9)). PATROL just drives there: it
+reads +0x32 and +0x3c, not the path, then asks for the next point, and the alien
+base moves it to point 1 of its path. They look like points of an earlier edit of the
+paths.
 
 ## Loading a scenario
 

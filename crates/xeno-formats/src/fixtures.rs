@@ -934,6 +934,37 @@ pub fn synthetic_programs(image: &mut [u8], ds: usize) {
     }
 }
 
+/// Writes made-up scripts into `image` (`xeno_formats::script`): 136 opcodes at
+/// `DS:0x480` (each one's time its number, 60 for 0x14), the program table at
+/// `DS:0x6a0` with two programs, both event tables sending event 0 to `0x768`, and
+/// the script area `DS:0x740..0x780`. Program 0 has a header sending event 9 to
+/// `0x768`, its name, then waits a second, tests its distance and jumps back while
+/// far; program 1 is only a name and a halt; `0x768` returns.
+pub fn synthetic_scripts(image: &mut [u8], ds: usize) {
+    use crate::script::{END, HANDLERS, PILOT_EVENTS, PROGRAM_EVENTS, START, TIMES};
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(HANDLERS.0, &op(HANDLERS.1, 0x480));
+    put(TIMES.0, &op(TIMES.1, 0x482));
+    put(crate::orders::TABLE.0, &op(crate::orders::TABLE.1, 0x6a0));
+    for n in 0..0x88u16 {
+        let time = if n == 0x14 { 60 } else { n };
+        put(ds + 0x482 + 4 * usize::from(n), &time.to_le_bytes());
+    }
+    put(START.0, &op(START.1, 0x740));
+    put(END.0, &op(END.1, 0x780));
+    put(ds + 0x6a0, &[0x40, 0x07, 0x60, 0x07, 0xff, 0xff]);
+    put(PILOT_EVENTS.0, &op(PILOT_EVENTS.1, 0x700));
+    put(PROGRAM_EVENTS.0, &op(PROGRAM_EVENTS.1, 0x710));
+    put(ds + 0x700, &[0x68, 0x07, 0xff, 0xff]);
+    put(ds + 0x710, &[0x68, 0x07, 0xff, 0xff]);
+    put(
+        ds + 0x740,
+        b"\x0f\x09\x68\x07\x11\x02\x07\x04ZIG\0\x14\x5d\x32\x00\x43\xfb\x0a",
+    );
+    put(ds + 0x760, b"\x02\x87\x05NONE\0\x0a\x06");
+}
+
 /// A `.usg` scenario whose objects have the stock sizes (0x172 bytes, 0x34 for the
 /// relay): a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a
 /// human relay (slot 3), a human scorpion on program 2 (slot 5) and an alien scout on
@@ -1266,6 +1297,21 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     put(strings + 0x802, &identity);
     put(PROGRAMS_AT.0, &op(PROGRAMS_AT.1, 0x9300));
     put(ds + 0x9300, &[8, 13, 8].repeat(MISSIONS));
+    // An arctangent of `i * 0x100`, and every kind's script speeds by
+    // `mov word [di + 0x28], 10 * (op - 0x53)`.
+    put(ATAN_AT.0, &op(ATAN_AT.1, 0x9400));
+    for i in 0..ATAN_ENTRIES {
+        put(ds + 0x9400 + 2 * i, &((i as u16) << 8).to_le_bytes());
+    }
+    for (i, at) in SPEED_OPS.into_iter().enumerate() {
+        let (table, routine) = (0x9600 + 6 * i as u16, 0xb000 + 5 * i);
+        put(at, &op(&[0xff, 0xa7], table));
+        put(
+            ds + usize::from(table),
+            &(routine as u16).to_le_bytes().repeat(3),
+        );
+        put(routine, &op(&[0xc7, 0x45, 0x28], 10 * (i as u16 + 1)));
+    }
 }
 
 #[cfg(test)]
