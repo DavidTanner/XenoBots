@@ -151,10 +151,10 @@ fn an_opcode_waits_its_time_and_only_the_program_steps_the_script() {
 
 #[test]
 fn a_patrol_steers_to_its_point_and_asks_for_the_next_one_there() {
-    // PATROL's loop: within 0.2 units? Else high speed, steer, wait 5 s, again. There:
-    // stop and ask for the next point.
+    // A made-up loop in the shape of a patrol: near the point? Else high speed, steer,
+    // wait, again. There: stop and ask for the next point.
     let patrol = [
-        0x5d, 0x32, 0x00, 0x43, 0x06, 0x55, 0x5f, 0x15, 0x05, 0x42, 0xf5, 0x65, 0x77, 0x04, 0x0a,
+        0x5d, 0x40, 0x00, 0x43, 0x06, 0x55, 0x5f, 0x15, 0x02, 0x42, 0xf5, 0x65, 0x77, 0x04, 0x0a,
     ];
     let (mut world, tables) = setup(&patrol);
     set_program(&mut world, EntityId(1), 8, &tables, &mut Vec::new());
