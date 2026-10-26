@@ -5,21 +5,24 @@
 //! in the picture's black field, with an underscore cursor in colour 254 that
 //! `mgavideo.dvr`'s colour-animation record 23 blinks.
 //!
-//! Then the original loads `<NAME>.LOG` or starts a campaign from `scendef.bin`. Here
-//! a [`Player`] remembers the name, whether the save exists, and the campaign table
-//! from `scendef.bin`; reading the save is T-057. Nothing is ever written. The goodbye
-//! printed on exit is read from the user's `xeno.exe` ([`xeno_formats::farewell`]).
+//! Then the original loads `<NAME>.LOG` or starts a campaign from `scendef.bin`; so
+//! does [`Assets::player`] (`crate::save`). The goodbye printed on exit is read from
+//! the user's `xeno.exe` ([`xeno_formats::farewell`]).
 
+use std::path::PathBuf;
 use xeno_formats::farewell::{self, Farewell};
 use xeno_formats::font::Font;
 use xeno_formats::lzexe;
 use xeno_formats::mgavideo::{self, Pointer};
+
 use xeno_formats::scendef::{self, ScenarioTable};
+use xeno_formats::usg::Scenario;
 use xeno_render::{Framebuffer, TextCursor, TextMode};
 use xeno_sim::Random;
 
 use crate::game_dir::GameFiles;
 use crate::maproom::Campaign;
+use crate::save;
 use crate::screens::KeyWord;
 
 /// The longest name (the save file's 8.3 name).
@@ -47,8 +50,8 @@ pub struct Assets {
     pub font: Font,
     /// `mgavideo.dvr`'s colour-animation list, for the cursor's blink.
     pub anims: Vec<u8>,
-    /// The names (lower case, no extension) of the `.log` files in the game directory.
-    pub saves: Vec<String>,
+    /// Where the players' saves are: `--save-dir`, else the game directory.
+    pub save_dir: PathBuf,
     /// `scendef.bin`: a new campaign's table.
     pub campaign: ScenarioTable,
     /// The goodbye from `xeno.exe`, if this port can read it there.
@@ -62,7 +65,7 @@ pub struct Assets {
 }
 
 /// Reads the font, the colour records and the pointer from the user's `mgavideo.dvr`,
-/// the campaign from `scendef.bin`, which saves exist, and the goodbye from
+/// the campaign from `scendef.bin`, and the goodbye from
 /// `xeno.exe`. Only the goodbye may be missing: without it the game exits silently.
 /// The run's random word starts from `seed`.
 pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
@@ -76,11 +79,6 @@ pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
     let font = video.font(FONT).cloned().ok_or("mgavideo.dvr: no font 0")?;
     let campaign =
         scendef::parse(&read("scendef.bin")?).map_err(|e| format!("scendef.bin: {e}"))?;
-    let saves = files
-        .names()
-        .filter_map(|name| name.strip_suffix(".log"))
-        .map(str::to_string)
-        .collect();
     let farewell = read("xeno.exe")
         .and_then(|exe| lzexe::unpack(&exe).map_err(|e| format!("xeno.exe: {e}")))
         .and_then(|exe| farewell::read(&exe).map_err(|e| format!("xeno.exe: {e}")));
@@ -90,7 +88,7 @@ pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
     Ok(Assets {
         font,
         anims: video.anims,
-        saves,
+        save_dir: files.dir().path.clone(),
         campaign,
         farewell,
         pointers: video.pointers,
@@ -103,9 +101,6 @@ pub fn load(files: &GameFiles, seed: u32) -> Result<Assets, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Player {
     pub name: String,
-    /// Whether `<NAME>.LOG` exists. The original loads it; the port does not yet
-    /// (T-057) and starts a new campaign either way.
-    pub save_found: bool,
     /// The campaign: the scenario table with each scenario's `state`, the progress.
     pub campaign: Campaign,
     /// What the original leaves on the screen when the game exits, with the name in it.
@@ -178,28 +173,43 @@ impl NameEntry {
 }
 
 impl Assets {
-    /// The player who logged in as `name`: whether a save exists, and a new campaign
-    /// drawing from `random`, the run's random word, carried on from the last one.
-    pub fn player(&self, name: String, random: Random) -> Player {
-        let save_found = self.saves.contains(&name.to_lowercase());
-        if save_found {
-            log::info!(
-                "log-in: {name}.LOG exists; loading saves is not done yet (T-057), so a new campaign starts"
-            );
-        } else {
+    /// The player who logged in as `name` (`ui_login_and_load_save_game`): the campaign
+    /// from `<NAME>.LOG` if it reads, else a new one, drawing from `random`, the run's
+    /// random word, carried on from the last one. With a save, also the map room's
+    /// selection and the loaded scenario.
+    pub fn player(&self, name: String, random: Random) -> (Player, Option<Loaded>) {
+        let mut campaign = Campaign::new(self.campaign.clone(), random);
+        let loaded = save::find(&self.save_dir, &name).and_then(|path| {
+            let read = std::fs::read(&path).map_err(|e| e.to_string());
+            match read.and_then(|bytes| save::load(&bytes, &mut campaign)) {
+                Ok(loaded) => {
+                    log::info!("log-in: {name}, the save {} loaded", path.display());
+                    Some(loaded)
+                }
+                Err(e) => {
+                    log::warn!("log-in: {}: {e}; a new campaign", path.display());
+                    None
+                }
+            }
+        });
+        if loaded.is_none() {
             log::info!("log-in: {name}, a new campaign from scendef.bin");
         }
-        Player {
+        let player = Player {
             farewell: self.farewell.as_ref().map(|f| f.message(&name)),
             name,
-            save_found,
-            campaign: Campaign::new(self.campaign.clone(), random),
-        }
+            campaign,
+        };
+        (player, loaded)
     }
 }
 
+/// From a save: the map room's selection and the loaded scenario.
+pub type Loaded = (Option<usize>, Scenario);
+
 /// Synthetic assets for tests: the synthetic font 0, a list of 24 records whose last
-/// blinks colour 254 between black and white every 2 retraces, no saves but `old`,
+/// blinks colour 254 between black and white every 2 retraces, saves in a directory
+/// that does not exist,
 /// the map room's test campaign, a made-up goodbye and the synthetic pointer's two shapes, the first set up.
 #[cfg(test)]
 pub fn test_assets() -> Assets {
@@ -214,7 +224,7 @@ pub fn test_assets() -> Assets {
     Assets {
         font: fonts[0].clone(),
         anims: list(&records).bytes().to_vec(),
-        saves: vec!["old".into()],
+        save_dir: PathBuf::from("no saves here"),
         campaign: crate::maproom::tests::test_campaign().table,
         farewell: Some(Farewell {
             prefix: "SEE YOU, ".into(),
@@ -282,12 +292,36 @@ mod tests {
     }
 
     #[test]
-    fn a_player_knows_whether_a_save_exists() {
-        let assets = test_assets();
+    fn a_player_loads_a_save_or_starts_a_new_campaign() {
+        use xeno_formats::fixtures::synthetic_usg;
+        use xeno_formats::usg;
+
+        let dir = std::env::temp_dir().join(format!("xeno-login-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut assets = test_assets();
+        assets.save_dir = dir.clone();
         let random = || Random::seeded(assets.seed);
-        assert!(assets.player("OLD".into(), random()).save_found);
-        let player = assets.player("NEW".into(), random());
-        assert!(!player.save_found);
-        assert_eq!(player.farewell.as_deref(), Some("SEE YOU, NEW!"));
+        let (new, loaded) = assets.player("NEW".into(), random());
+        assert!(loaded.is_none() && !new.campaign.game_loaded);
+        assert_eq!(new.farewell.as_deref(), Some("SEE YOU, NEW!"));
+
+        let mut saved = new.campaign.clone();
+        (saved.progress, saved.score, saved.loaded) = (2, 700, Some(0));
+        saved.check();
+        let scenario = usg::parse(&synthetic_usg()).unwrap();
+        let bytes = save::write(&saved, Some(0), &scenario).unwrap();
+        std::fs::write(dir.join("OLD.LOG"), bytes).unwrap();
+        let (old, loaded) = assets.player("OLD".into(), random());
+        let (selection, _) = loaded.unwrap();
+        assert_eq!(selection, Some(0));
+        assert_eq!((old.campaign.progress, old.campaign.score), (2, 700));
+        assert!(old.campaign.game_loaded);
+
+        // A file that is not a save: a new campaign.
+        std::fs::write(dir.join("BAD.LOG"), synthetic_usg()).unwrap();
+        let (bad, loaded) = assets.player("BAD".into(), random());
+        assert!(loaded.is_none());
+        assert_eq!(bad.campaign, new.campaign);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

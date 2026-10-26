@@ -36,6 +36,7 @@ use crate::maproom::{self, Campaign, MapState, Request};
 use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
 use crate::pointer::{self, ARROW, BUSY, CORNER};
 use crate::review::{self, ReviewState};
+use crate::save;
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 use xeno_formats::ending::Numbers;
@@ -863,9 +864,19 @@ impl Screens {
             Outcome::Accepted(name) => {
                 // One random word for the run: the new campaign carries on the last one's.
                 let random = campaign_mut(&mut self.player, &mut self.guest).take_random();
-                self.player = Some(self.login.player(name, random));
+                let (mut player, loaded) = self.login.player(name, random);
                 // A new campaign: nothing selected (`scen_start_new_campaign`).
                 self.map = MapState::default();
+                if let Some((selection, scenario)) = loaded {
+                    // The save's scenario is the loaded one: playing it resumes it.
+                    let file = save::file_name(&player.name);
+                    let (random, motion) =
+                        (player.campaign.take_random(), &self.mission_assets.motion);
+                    self.mission = MissionState::new(file, &scenario, random, motion);
+                    self.mission.park(&mut player.campaign);
+                    self.map.set_selection(selection);
+                }
+                self.player = Some(player);
                 self.act(Go(MapRoom));
             }
             Outcome::Cancelled if self.player.is_some() => self.act(Go(MapRoom)),
@@ -954,6 +965,7 @@ impl Screens {
                     self.mission.resume(campaign);
                 }
                 campaign.run_mission(selection);
+                campaign.game_loaded = true;
                 self.scenario = Some(i);
                 self.console = 0;
             }
@@ -1001,11 +1013,25 @@ impl Screens {
             }
             _ => {}
         }
-        if let (MapRoom, Go(Login) | Quit, Some(player)) = (self.screen, action, &self.player) {
-            log::info!(
-                "{}.LOG would be saved here; saving is not done yet (T-057)",
-                player.name
-            );
+        // `ui_map_room_save_if_loaded`: N and Q save once a game is loaded.
+        if let (MapRoom, Go(Login) | Quit, Some(player)) = (self.screen, action, &self.player)
+            && player.campaign.game_loaded
+        {
+            let path = self.login.save_dir.join(save::file_name(&player.name));
+            let written = match self.mission.scenario() {
+                Some(scenario) => save::write(&player.campaign, selection, scenario)
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| {
+                        std::fs::create_dir_all(&self.login.save_dir)
+                            .and_then(|()| std::fs::write(&path, bytes))
+                            .map_err(|e| e.to_string())
+                    }),
+                None => Err("no scenario loaded".into()),
+            };
+            match written {
+                Ok(()) => log::info!("map room: saved {}", path.display()),
+                Err(e) => log::warn!("map room: cannot save {}: {e}", path.display()),
+            }
         }
         let next = match action {
             Go(screen) => screen,
@@ -1381,6 +1407,58 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn n_saves_a_played_campaign_and_the_log_in_loads_it() {
+        let dir = std::env::temp_dir().join(format!("xeno-screens-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let codes = [0x1c, 0x0f, 0x19, CTRL_W];
+        let log = presses(&codes);
+        let mut screens = new(Login);
+        screens.login.save_dir = dir.clone();
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for r in 1..=span(&codes) {
+            screens.retrace(log.events_at(r), &mut fb);
+            screens.take_cutscene();
+        }
+        assert_eq!(screens.screen(), MapRoom);
+        let path = dir.join("A.LOG");
+        // N saves (a scenario was played), as Q would.
+        screens.act(Go(Login));
+        let saved = screens.campaign().clone();
+        let bytes = std::fs::read(&path).unwrap();
+        let (player, loaded) = screens.login.player("A".into(), Random::seeded(9));
+        let (selection, scenario) = loaded.unwrap();
+        let c = &player.campaign;
+        assert_eq!(c.table, saved.table);
+        assert_eq!((c.score, c.wins, c.result, c.loaded), (1000, 1, 1, Some(0)));
+        assert_eq!((c.progress, c.day), (saved.progress, saved.day));
+        assert_eq!(selection, screens.map.selection());
+        assert_eq!(
+            scenario.objects,
+            screens.mission().scenario().unwrap().objects
+        );
+        assert_eq!(save::write(c, selection, &scenario).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_campaign_that_played_only_training_saves_nothing() {
+        let dir = std::env::temp_dir().join(format!("xeno-unsaved-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut screens = new(Login);
+        screens.login.save_dir = dir.clone();
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        let log = presses(&[0x1c]);
+        (1..=200).for_each(|r| screens.retrace(log.events_at(r), &mut fb));
+        // A training mission loads a scenario but no game (`DS:0x6005`).
+        screens.training_action(0);
+        assert_eq!(screens.mission().file, "atrain.usg");
+        screens.act(Quit);
+        assert!(screens.quit());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_second_log_in_carries_the_run_s_random_word_on() {
         let (mut screens, _) = run(&presses(&[0x1c]), Login, 200);
         assert_eq!(screens.screen(), MapRoom);
@@ -1573,7 +1651,8 @@ pub(crate) mod tests {
         }
         assert_eq!(screens.screen(), MapRoom);
         let player = screens.player.as_ref().unwrap();
-        assert_eq!((player.name.as_str(), player.save_found), ("AO1", false));
+        assert_eq!(player.name, "AO1");
+        assert!(!player.campaign.game_loaded);
         assert_eq!(screens.exit_message().unwrap(), "SEE YOU, AO1!");
     }
 
@@ -1890,8 +1969,11 @@ pub(crate) mod tests {
             .unwrap();
         let pictures = load(&files).unwrap();
         assert_eq!(pictures.len(), 8);
-        let login = login::load(&files, 1).unwrap();
+        let mut login = login::load(&files, 1).unwrap();
         assert_eq!(login.campaign.scenarios.len(), 13);
+        // Never write saves into the user's game directory.
+        login.save_dir = std::env::temp_dir().join(format!("xeno-real-{}", std::process::id()));
+        std::fs::create_dir_all(&login.save_dir).unwrap();
         let missions = mission::load(&files, login.campaign.scenarios.len()).unwrap();
         let map = maproom::load(&files).unwrap();
         Some(Screens::new(pictures, login, map, missions, start))
@@ -1938,6 +2020,16 @@ pub(crate) mod tests {
         assert!(blink.len() >= 2, "colour 254 never changed: {blink:?}");
         assert_eq!(screens.player.as_ref().unwrap().name, "A");
         assert_eq!(screens.screen(), Login);
+        // N saved the campaign with the loaded scenario, and it loads back.
+        let (player, loaded) = screens.login.player("A".into(), Random::seeded(1));
+        let (_, scenario) = loaded.expect("A.LOG was written");
+        assert_eq!(player.campaign.table, screens.campaign().table);
+        assert_eq!(player.campaign.loaded, Some(1));
+        assert_eq!(
+            scenario.objects,
+            screens.mission().scenario().unwrap().objects
+        );
+        std::fs::remove_dir_all(&screens.login.save_dir).unwrap();
     }
 
     /// Opens the review with the user's files, turns through every page with Tab and

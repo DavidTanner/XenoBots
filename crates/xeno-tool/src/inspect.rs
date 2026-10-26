@@ -106,7 +106,8 @@ fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
         "m@l" => mal_details(bytes),
         "vcl" => vcl_details(bytes),
         "m00" | "m08" | "m16" | "m32" => mxx_details(bytes),
-        "usg" => usg_details(bytes),
+        // A save, `<NAME>.LOG`, is a `.usg` with an `SDEF` chunk.
+        "usg" | "log" => usg_details(bytes),
         "fgd" | "kyl" => fgd_details(file, bytes),
         "ms3" => ms3_details(bytes),
         "map" => map_details(bytes),

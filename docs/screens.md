@@ -903,10 +903,8 @@ original.
   until its fade is over; the result is the same). Record 23 blinks colour 254 from the
   end of the fade in until the name is done, then stops where it stands. The field is
   drawn after each change, so there is no cursor before the first key, as we read the
-  original. A name logs in: the port remembers it, whether `<NAME>.LOG` is in the game
-  directory, and the campaign table from `scendef.bin`, and fades to the map room. It
-  does not read the save (T-057) and never writes one (the original saves on N and Q
-  from the map room; the port logs that it would). The original's goodbye, a thank-you line
+  original. A name logs in: the port loads `<NAME>.LOG` or starts a campaign from
+  `scendef.bin` (below, "Saves"), and fades to the map room. The original's goodbye, a thank-you line
   with the name in it, is printed when the window closes after a log-in. It is game
   text, so `xeno_formats::farewell` reads it from the user's `xeno.exe` (the three
   instructions above give its start, the name's place and the closing character); if
@@ -972,8 +970,8 @@ original.
   the boxes every time. The random word is the original's shift register
   (`xeno_sim::Random`, T-050), seeded from the run's seed (`--seed`, else the clock)
   instead of the timer; there is one for the run, which a mission's sim takes and gives
-  back and a second log-in carries on (T-051, `docs/sim.md`). The calendar's day advances but is not shown. Not done: the
-  save (T-057).
+  back and a second log-in carries on (T-051, `docs/sim.md`). The calendar's day advances but is not shown; a save
+  keeps it (below, "Saves").
 - **Map room tables** (T-042): `xeno_formats::maproom` reads the map room's tables
   from the user's `xeno.exe`, each from the instruction that uses it after checking
   its bytes, with segments only from relocated words: the widget set (map area, and
@@ -1062,7 +1060,13 @@ original.
   Ctrl+D, the map scroll (T-108), the terrain editor itself (T-109), Ctrl+Alt+O and B
   (T-110), Ctrl+C (T-103). The edits change the scenario copy, not the sim's world
   (which does not run yet).
-- **Not modelled**: the save file, the review's turning robots (T-047) and the music.
+- **Saves** (T-057): the log-in loads `<NAME>.LOG` from `--save-dir` (else the game
+  directory), any case, into the campaign, the map room's selection and the loaded
+  mission (parked, so playing the loaded scenario resumes it); a file that does not
+  read as a save starts a new campaign, logged. The map room's N and Q write it there
+  once a save was loaded or a scenario played (`xeno-app/src/save.rs`). The world
+  written is the loaded scenario as loaded, not the running sim's (T-116).
+- **Not modelled**: the review's turning robots (T-047) and the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
 
