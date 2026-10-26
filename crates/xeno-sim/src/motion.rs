@@ -29,6 +29,9 @@ pub enum Event {
     PathTaken { robot: EntityId, slot: u8 },
     /// A path's mission started a program.
     Program(Change),
+    /// A destroyed base's end script reached its last step: the mission is over, won
+    /// if the base was the alien one (`sim_end_mission_with_result`).
+    MissionOver { won: bool },
 }
 
 /// The sine of `angle` (65,536 to a turn) as `sim_sine_magnitude` works it out: the
@@ -479,7 +482,8 @@ fn alien_path_phase(
 }
 
 /// Every object's tick, in slot order (`sim_tick_all_objects`): robots move, bases
-/// count their ticks and the alien base walks its robots along paths.
+/// count their ticks, the alien base walks its robots along paths and a destroyed
+/// base steps the mission's end.
 pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Event> {
     let mut events = Vec::new();
     // Slot by slot, as `sim_tick_all_objects` walks the table: an object made in a
@@ -490,7 +494,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
         let Some(e) = world.get_mut(id) else {
             continue;
         };
-        let (mut path_phase, mut is_robot, mut gone) = (false, false, false);
+        let (mut path_phase, mut is_robot, mut gone, mut end) = (false, false, false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -500,9 +504,12 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 steer_and_speed(tables, e.kind, helm, &mut e.heading, m);
                 is_robot = true;
             }
-            State::Base { tick, .. } => {
+            State::Base {
+                tick, destroyed, ..
+            } => {
                 *tick = tick.wrapping_add(1);
                 path_phase = *tick & 0xf == 2 && e.side == Side::Alien;
+                end = *tick & 0xf == 0xf && *destroyed;
             }
             state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
             State::None => {}
@@ -522,6 +529,9 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
         }
         if path_phase {
             alien_path_phase(world, tables, random, &mut events);
+        }
+        if end {
+            crate::damage::step_base_end(world, id, tables, random, &mut events);
         }
     }
     events

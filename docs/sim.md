@@ -20,7 +20,9 @@ tested headless in CI. It depends only on `xeno-formats`.
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
   `InputLog`. A tick counts the retrace, tracks held keys and buttons (nothing acts on
   them yet: the cockpit keys are T-105) and runs every object's tick
-  (`motion::tick`, below, "Movement"); it returns the `motion::Event`s it made.
+  (`motion::tick`, below, "Movement"); it returns the `motion::Event`s it made,
+  `MissionOver` among them once a destroyed base's end is over ("The mission's
+  end").
 - **`Sim::state_hash()`** is a 64-bit hash of everything in the state.
 - **`input`**: `ScanCode`, `InputEvent`, `Keys`, `Mouse` and `InputLog`, moved from
   `xeno-app` (`docs/game-loop.md`, "Input"). `xeno-app` still names them
@@ -544,7 +546,7 @@ calls `hit` with 0 points, so it posts event 7. All of it is in the state hash.
 
 Shortcuts, each named in the code: the screen flash, the sounds and the messages
 (T-104, M5); the call sign's slot, the roster's redraw and selection and the view's
-change (T-103, T-104); a destroyed base's mission end (T-055); a freed slot is reused
+change (T-103, T-104); a freed slot is reused
 at once (the original waits for the robots targeting the object to let go, T-112);
 the explosion's height and +0x19 are not kept (T-100 draws it).
 
@@ -626,6 +628,26 @@ no win or loss; what runs it is not traced.
   seen only by shots and by contact checks (both radii off the distance), through
   `IN_FIELD`: the scripts' sensing (T-112) and shots (T-114). Movement never tests it
   (T-052).
+
+### The port (T-055)
+
+`damage::step_base_end` is one run of the end script with `Damage::base_end`:
+`motion::tick` calls it from a destroyed base's tick when the low four bits of its
+count are 15, and `State::Base` keeps the step (+0x30, loaded from the file, in the
+state hash). The explosions and the random words are the original's; at the last step
+it reports `motion::Event::MissionOver { won }` (won for the alien base), and again at
+each later run, as the step stays. `xeno-tool simulate` stops there. In `xeno-app`
+the mission's tick returns it, and the screens end the mission with that result
+through the campaign rules and the cutscenes, passing the player's base's kills and
+losses; a training mission goes back to the map room. Ctrl+W and Ctrl+L in a mission
+hit the alien or the player's base until it is destroyed (`Mission::destroy_base`,
+through `Sim::hit`), standing in for the shots (T-114).
+
+Shortcuts, each named in the code: the sounds (M5); the base's damaged look and the
+explosions' height (T-100); with the small objects' pool full the original moves
+whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
+or a resumed ended mission) stay where they are, where the original's table runs into
+code.
 
 ## Loading a scenario
 

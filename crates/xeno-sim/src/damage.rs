@@ -55,8 +55,7 @@ pub fn hit(
         (_, Damage::Taken(taken), State::Base { destroyed, .. }) => {
             if !*destroyed {
                 *taken = taken.wrapping_add(points.into());
-                // shortcut: the messages to each side are the consoles' (T-104); the
-                // mission's end the base's +0x30 then runs is T-055.
+                // shortcut: the messages to each side are the consoles' (T-104).
                 *destroyed = *taken >= d.base_destroyed;
                 if *destroyed {
                     events.push(Event::Destroyed(id));
@@ -146,16 +145,19 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
 /// lowest free slot; none if the slots or the small objects' pool are full.
 // shortcut: a freed slot is reused at once; the original waits for the robots that
 // target the object to let go of it (T-112).
-fn spawn_explosion(world: &mut World, at: Position, kind: u16, template: Explosion) {
+fn spawn_explosion(
+    world: &mut World,
+    at: Position,
+    kind: u16,
+    template: Explosion,
+) -> Option<EntityId> {
     let small = world
         .iter()
         .filter(|(_, e)| !matches!(e.kind, ObjectKind::Base) && RobotKind::of(e.kind).is_none())
         .count();
-    let Some(slot) = (0..SLOTS).find(|&s| world.get(EntityId(s)).is_none()) else {
-        return;
-    };
+    let slot = (0..SLOTS).find(|&s| world.get(EntityId(s)).is_none())?;
     if small >= SMALL_POOL {
-        return;
+        return None;
     }
     let explosion = Entity {
         kind: kind.into(),
@@ -172,6 +174,63 @@ fn spawn_explosion(world: &mut World, at: Position, kind: u16, template: Explosi
         },
     };
     world.insert(EntityId(slot), explosion);
+    Some(EntityId(slot))
+}
+
+/// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run
+/// every 16 ticks): explosions on it, and at the last step the mission is over, won
+/// if the base is the alien one (`docs/sim.md`, "The mission's end").
+// shortcut: the sounds (M5), the base's damaged look at steps 4 and 14 and the
+// explosions' height (T-100) are not kept.
+pub fn step_base_end(
+    world: &mut World,
+    id: EntityId,
+    tables: &Tables,
+    random: &mut Random,
+    events: &mut Vec<Event>,
+) {
+    let (d, end) = (&tables.damage, &tables.damage.base_end);
+    let Some(e) = world.get(id) else {
+        return;
+    };
+    let (at, won) = (e.position, e.side == Side::Alien);
+    let State::Base { end_step, .. } = e.state else {
+        return;
+    };
+    // `sim_step_base_end_script`'s jump table by `step / 4`.
+    let (template, radius, next) = match end_step >> 2 & 0xf {
+        n @ 0..=4 => (Some(n.min(3)), end.radii[0], end_step + 1),
+        5 => (Some(4), end.radii[1], end_step + 4),
+        6..=8 => (None, 0, end_step + 1),
+        // shortcut: past its ninth entry the original's table runs into code; only a
+        // step of 0x24 or more from a file or a resumed mission gets there.
+        _ => (None, 0, end_step),
+    };
+    if let Some(t) = template {
+        let explosion =
+            spawn_explosion(world, at, d.explosion_kind, end.explosions[usize::from(t)]);
+        // shortcut: when no explosion could be made the original moves whatever its
+        // allocator left in `SI`; the port moves nothing (the 200-object pool is full).
+        let mut scatter = || i32::from((random.word() & 0x3fff) as i16 - 0x2000);
+        let (dx, dy) = if t < 4 {
+            (scatter(), scatter())
+        } else {
+            (0, 0)
+        };
+        if let Some(x) = explosion.and_then(|x| world.get_mut(x)) {
+            x.position.x.0 = x.position.x.0.wrapping_add(dx);
+            x.position.y.0 = x.position.y.0.wrapping_add(dy);
+            x.radius = radius;
+        }
+        // Lowered by a random amount (`sim_lower_explosion_randomly`).
+        random.word();
+    }
+    if let Some(State::Base { end_step, .. }) = world.get_mut(id).map(|e| &mut e.state) {
+        *end_step = next;
+        if next >= end.last_step.into() {
+            events.push(Event::MissionOver { won });
+        }
+    }
 }
 
 /// An explosion's tick (`sim_tick_explosion`): the next frame every `ticks` ticks, and

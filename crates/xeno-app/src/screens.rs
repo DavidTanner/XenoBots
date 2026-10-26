@@ -39,6 +39,7 @@ use crate::review::{self, ReviewState};
 use crate::test_pattern;
 use crate::viewer::to_vga6;
 use xeno_formats::ending::Numbers;
+use xeno_formats::usg::Side;
 use xeno_formats::views::TrainingAction;
 use xeno_sim::orders::RobotKind;
 
@@ -81,6 +82,9 @@ enum Action {
     Next,
     Previous,
     End(Ending),
+    /// The port's stand-in for shots (T-114): the side's base is destroyed, and the
+    /// mission ends won or lost after its end script.
+    DestroyBase(Side),
     Quit,
     /// The map room's Ctrl+Space: run the mission with no check and no load.
     PlayLoaded,
@@ -149,12 +153,13 @@ const TRAINING_KEYS: &[(KeyWord, Action)] = &[];
 /// The review's keys are read from the user's `xeno.exe` (`DS:0x6244`, in
 /// `maproom::Assets::review`).
 const REVIEW_KEYS: &[(KeyWord, Action)] = &[];
-/// Placeholders until the sim exists: Ctrl+W, Ctrl+L and Ctrl+C end the mission won,
-/// lost or with the campaign won (no view's table binds them). The views' own keys are
+/// The port's own keys (no view's table binds them): Ctrl+W and Ctrl+L destroy the
+/// alien or the player's base, as shots will (T-114), so the mission ends won or lost
+/// after its end script; Ctrl+C ends it with the campaign won. The views' own keys are
 /// read from the user's `xeno.exe` (`mission`).
 const MISSION_KEYS: &[(KeyWord, Action)] = &[
-    (KeyWord(CTRL | 0x11), End(Ending::Won)),
-    (KeyWord(CTRL | 0x26), End(Ending::Lost)),
+    (KeyWord(CTRL | 0x11), DestroyBase(Side::Alien)),
+    (KeyWord(CTRL | 0x26), DestroyBase(Side::Human)),
     (KeyWord(CTRL | 0x2e), End(Ending::Triumph)),
 ];
 /// A cutscene's keys go to the player (`intro::Cutscene`): any key but P skips it.
@@ -197,7 +202,7 @@ impl Screen {
             Training => "Training menu: click or H/N/S/C train, ESC back",
             Review => "Review: Tab/Alt+Tab or the next button turn the page, ESC/Alt+Q back",
             Mission(View::SitRoom) => {
-                "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end; Ctrl+W/L/C won/lost/campaign"
+                "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end; Ctrl+W/L destroy alien/own base, Ctrl+C campaign"
             }
             Mission(View::Humanoid) => {
                 "Mission, humanoid console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
@@ -686,8 +691,11 @@ impl Screens {
         }
         // The mission's world runs once a retrace on every mission view, with that
         // retrace's input (`docs/sim.md`, "Movement").
-        if matches!(self.screen, Mission(_)) && self.next.is_none() {
-            self.mission.tick(events.iter().copied());
+        if matches!(self.screen, Mission(_))
+            && self.next.is_none()
+            && let Some(won) = self.mission.tick(events.iter().copied())
+        {
+            self.act(End(if won { Ending::Won } else { Ending::Lost }));
         }
         if matches!(self.screen, Mission(_))
             && self.next.is_none()
@@ -869,6 +877,10 @@ impl Screens {
         log::debug!("screens: {:?} on {:?}", action, self.screen);
         let selection = self.map.selection();
         let rules = &self.map_assets.rules;
+        if let DestroyBase(side) = action {
+            self.mission.destroy_base(side);
+            return;
+        }
         let campaign = campaign_mut(&mut self.player, &mut self.guest);
         // Every action but playing leaves the mission, whatever its result, or is taken
         // away from it: its sim is parked, so the run's random word is back with the
@@ -965,11 +977,12 @@ impl Screens {
             }
             (_, Play(true)) => self.scenario = None,
             (Mission(_), End(ending)) => {
-                // Until the sim counts them, a mission scores no kills or losses.
-                let base = self.endings.as_ref().map_or(0, |e| e.table.points(0, 0));
+                let (kills, losses) = self.mission.kills_and_losses();
+                let points = self.endings.as_ref();
                 let mission = Numbers {
-                    points: base,
-                    ..Numbers::default()
+                    kills,
+                    losses,
+                    points: points.map_or(0, |e| e.table.points(kills, losses)),
                 };
                 match ending {
                     Ending::Lost => _ = campaign.lose(mission),
@@ -1000,7 +1013,8 @@ impl Screens {
                 self.training = training;
                 Mission(View::SitRoom)
             }
-            Next | Previous | ProgressUp | ProgressDown | DevWin | DevLose | Editor => return,
+            Next | Previous | ProgressUp | ProgressDown | DevWin | DevLose | Editor
+            | DestroyBase(_) => return,
             PlayLoaded => {
                 self.training = false;
                 Mission(View::SitRoom)
@@ -1237,13 +1251,18 @@ pub(crate) mod tests {
         (screens, seen)
     }
 
+    /// The retraces after Ctrl+W or Ctrl+L destroys a base before the next key: the
+    /// base's end script (33 runs 16 retraces apart) and the fade out.
+    const END: u64 = 600;
+
     /// A log typing `A` at retrace 50, then pressing and releasing each code 100
-    /// retraces apart, from retrace 100.
+    /// retraces apart, from retrace 100, and [`END`] more after Ctrl+W and Ctrl+L.
     fn presses(codes: &[u16]) -> InputLog {
         let mut log = InputLog::default();
         log.record(50, [InputEvent::Text('A')]);
-        for (i, &code) in codes.iter().enumerate() {
-            let r = 100 * (i as u64 + 1);
+        let mut r = 0;
+        for &code in codes {
+            r += 100;
             if code & CTRL_KEY != 0 {
                 let code = code & 0xff;
                 log.record(r, [down(0x1d), down(code)]);
@@ -1252,12 +1271,24 @@ pub(crate) mod tests {
                 log.record(r, [down(code)]);
                 log.record(r + 1, [up(code)]);
             }
+            if [CTRL_W, CTRL_L].contains(&code) {
+                r += END;
+            }
         }
         log
     }
 
+    /// The retraces [`presses`] takes for `codes`, and 100 more.
+    fn span(codes: &[u16]) -> u64 {
+        let ends = codes
+            .iter()
+            .filter(|c| [CTRL_W, CTRL_L].contains(c))
+            .count();
+        100 * (codes.len() as u64 + 1) + END * ends as u64
+    }
+
     fn final_screen(codes: &[u16]) -> Screen {
-        let (_, seen) = run(&presses(codes), Login, 100 * (codes.len() as u64 + 1));
+        let (_, seen) = run(&presses(codes), Login, span(codes));
         *seen.last().unwrap()
     }
 
@@ -1292,10 +1323,11 @@ pub(crate) mod tests {
             (CTRL_L, Ending::Lost),
             (CTRL_C, Ending::Triumph),
         ] {
-            let (_, seen) = run(&presses(&[0x1c, 0x0f, 0x19, key]), Login, 500);
+            let codes = [0x1c, 0x0f, 0x19, key];
+            let (_, seen) = run(&presses(&codes), Login, span(&codes));
             let at = seen.iter().position(|&s| s == Cutscene(ending)).unwrap();
             assert_eq!(seen[at - 1], Mission(View::SitRoom));
-            assert_eq!(seen[499], MapRoom);
+            assert_eq!(seen.last(), Some(&MapRoom));
         }
         assert_eq!(
             final_screen(&[0x1c, 0x0f, 0x19, CTRL_L, 0x19]),
@@ -1313,16 +1345,22 @@ pub(crate) mod tests {
     fn a_mission_s_result_changes_the_campaign() {
         // Won: the scenario is won, the score has the bonus, the next one is selected,
         // and the WIN caption gets the points.
-        let (screens, _) = run(&presses(&[0x1c, 0x0f, 0x19, CTRL_W]), Login, 500);
+        let codes = [0x1c, 0x0f, 0x19, CTRL_W];
+        let (screens, _) = run(&presses(&codes), Login, span(&codes));
         let c = screens.campaign();
         assert_eq!(c.table.scenarios[0].state, maproom::WON);
         assert_eq!((c.result, c.score, c.wins, c.loaded), (1, 1000, 1, Some(0)));
         // The mission gave the run's random word back for the win to draw from.
         assert!(c.has_random() && !screens.mission().is_running());
         assert_eq!(screens.numbers.points, 1000);
+        // The caption's kills and losses are the player's base's.
+        let n = screens.numbers;
+        assert_eq!((n.kills, n.losses), screens.mission().kills_and_losses());
+        assert_ne!((n.kills, n.losses), (0, 0));
         assert_ne!(screens.map.selection(), Some(0));
         // Lost: in play, forgotten, no score.
-        let (screens, _) = run(&presses(&[0x1c, 0x0f, 0x19, CTRL_L]), Login, 500);
+        let codes = [0x1c, 0x0f, 0x19, CTRL_L];
+        let (screens, _) = run(&presses(&codes), Login, span(&codes));
         let c = screens.campaign();
         assert_eq!(c.table.scenarios[0].state, maproom::IN_PLAY);
         assert_eq!((c.result, c.score, c.losses, c.loaded), (2, 0, 1, None));
@@ -1494,13 +1532,13 @@ pub(crate) mod tests {
         let mut log = presses(&[0x1c, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x0f, CTRL_L, 0x13]);
         // A click outside the map area and the buttons does nothing.
         let left = crate::input::MouseButton::Left;
-        log.record(1050, [InputEvent::MouseMove { x: 1, y: 2 }]);
-        log.record(1051, [InputEvent::MouseDown { button: left }]);
-        log.record(1052, [InputEvent::MouseUp { button: left }]);
-        let (_, first) = run(&log, Login, 1100);
-        let (_, again) = run(&log.clone(), Login, 1100);
+        log.record(1650, [InputEvent::MouseMove { x: 1, y: 2 }]);
+        log.record(1651, [InputEvent::MouseDown { button: left }]);
+        log.record(1652, [InputEvent::MouseUp { button: left }]);
+        let (_, first) = run(&log, Login, 1700);
+        let (_, again) = run(&log.clone(), Login, 1700);
         assert_eq!(first, again);
-        assert_eq!(first[1099], Review);
+        assert_eq!(first[1699], Review);
         assert!(first.contains(&Mission(View::Scorpion)));
         assert!(first.contains(&Cutscene(Ending::Lost)));
     }
@@ -1586,7 +1624,7 @@ pub(crate) mod tests {
         let (screens, _) = run(
             &presses(&[0x1c, 0x0f, 0x19, CTRL_W, 0x14, 0x1e]),
             Login,
-            800,
+            1400,
         );
         assert_eq!(screens.scenario(), None);
         assert_eq!(screens.mission().file, "atrain.usg");
@@ -1665,7 +1703,7 @@ pub(crate) mod tests {
         // the next (a scorpion), ESC back to the situation room; Ctrl+L.
         let log = presses(&[0x1c, 0x0f, 0x19, 0x39, 0x0f, 0x01, CTRL_L]);
         let mut cutscene = None;
-        for r in 1..=800 {
+        for r in 1..=1400 {
             screens.retrace(log.events_at(r), &mut fb);
             if let Some(c) = screens.take_cutscene() {
                 cutscene = Some((r, c));
@@ -1677,7 +1715,8 @@ pub(crate) mod tests {
         // The scorpion's entry: `GONE` on `nlose.vcl`.
         assert_eq!(screens.console, 1);
         assert_eq!(cutscene.kind(), crate::intro::Kind::Ending);
-        assert!(at > 700 && at < 740, "{at}");
+        // The end script's 33 runs, 16 retraces apart, then the fade out.
+        assert!(at > 700 + 32 * 16 && at < 700 + 33 * 16 + 40, "{at}");
         assert!(play_cutscene(&mut cutscene) > 100);
         // Then the map room, from black, which fades in and takes keys again.
         screens.cutscene_over();
@@ -1875,7 +1914,7 @@ pub(crate) mod tests {
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut seen = vec![Login];
         let mut blink = Vec::new();
-        for r in 1..=100 * (codes.len() as u64 + 1) {
+        for r in 1..=span(&codes) {
             screens.retrace(log.events_at(r), &mut fb);
             // The cutscenes are not loaded here: each goes back to the map room.
             assert!(screens.take_cutscene().is_none());

@@ -874,12 +874,14 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Map room | `maproom.m@l`, the boxes, panels, buttons, hover label and campaign-won box (T-042, T-046) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. Ctrl+Space: run the mission again. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys. With the user's `XENO.KEY`: `=`, `-` progress, Ctrl+W won, Ctrl+L lost |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l`, the page's text panels, a placeholder for the robot (T-044) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
-| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); Ctrl+W won, Ctrl+L lost, Ctrl+C campaign won (placeholders) |
+| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); the port's Ctrl+W and Ctrl+L destroy the alien or the player's base (the mission then ends won or lost after its end script, T-055), Ctrl+C campaign won (a placeholder) |
 | Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
-Keys that only the port uses (the mission's endings) are placeholders until the
-mission runs (T-055). A training mission goes back to
-the map room without a cutscene, as in the original.
+Keys that only the port uses: Ctrl+W and Ctrl+L stand in for the shots that would
+destroy a base (T-114), Ctrl+C for the campaign's last win. A mission ends with a
+result when a destroyed base's end script is over (`docs/sim.md`, "The mission's
+end"). A training mission goes back to the map room without a cutscene, as in the
+original.
 
 - **Key words.** Each key going down is turned into the original's key word (Shift
   0x08, Ctrl 0x10, Alt 0x20 in the high byte, the set 1 code with `E0` dropped in the
@@ -953,10 +955,9 @@ the map room without a cutscene, as in the original.
   `maproom::Assets::rules`). Play loads the selection's `scenNNa.usg` only when it is
   not the loaded scenario (else the mission and its orders resume; a file that cannot
   be read forgets the loaded scenario and plays nothing), then sets the result to 0 and
-  the scenario to 12. A mission ended with Ctrl+W or Ctrl+L (the placeholders for the
-  mission's own end, T-055) runs the won or lost routine with 0 kills and 0 losses, so
-  a win scores the bonus alone (1000) and the `WIN` caption shows those numbers; the
-  cutscene is then chosen as `ui_map_room_run_mission` does (campaign won, lost, won,
+  the scenario to 12. A mission that ends won or lost (its sim's
+  `MissionOver`, T-055) runs the won or lost routine with the player's base's kills and
+  losses, which score the points and fill the `WIN` caption; the cutscene is then chosen as `ui_map_room_run_mission` does (campaign won, lost, won,
   else none). Ctrl+C, the port's stand-in for the last win, wins the scenario and sets
   the campaign-won flag. The training menu sets the result to 3 and clears the
   selection and the loaded scenario. The developer keys (`=`, `-`, Ctrl+W, Ctrl+L in

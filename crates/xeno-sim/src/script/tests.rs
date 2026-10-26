@@ -87,6 +87,7 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
                 kills: 0,
                 losses: 0,
                 destroyed: false,
+                end_step: 0,
             },
         },
     );

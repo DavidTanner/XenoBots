@@ -1,7 +1,7 @@
 //! The campaign's rules (T-046, `docs/screens.md`, "Campaign rules"): the check after
 //! every change, a scenario played, won or lost, the training menu, and the developer
-//! keys. A mission's end and the developer keys Ctrl+W and Ctrl+L share the won and
-//! lost routines, as in the original. The values (bonus, limits, chances) are the
+//! keys. A mission's end (a base destroyed) and the map room's developer keys Ctrl+W
+//! and Ctrl+L share the won and lost routines, as in the original. The values (bonus, limits, chances) are the
 //! user's, read by [`xeno_formats::campaign`].
 //!
 //! The alert rise and the calendar draw from the host's random word, the sim's
