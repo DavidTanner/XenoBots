@@ -208,16 +208,14 @@ the speeds, the target heading, +0x2c, +0x2d, +0x32, the destination, +0x51, +0x
 +0x10c and +0x118) and each base's +0x41 (`State::Base`), all hashed; `World::units`
 holds each side's unit list in file order and `World::bases` each side's command
 object, both filled at load. `motion::tick` runs the objects in slot order: robots
-move (`move_robot`), and the alien base's path phase runs at its count's phase 2.
-Its events are `HillHit` (the 0-point hit, for T-054), `PathTaken` and `Program`
-(the mission's program given through `OrderBook::start_program`, which also sets the
-program bit, kept as `Orders::manual` until T-111).
+move (`steer_and_speed`, the script, then `travel`), and the alien base's path phase
+runs at its count's phase 2. Its events are `HillHit` (the 0-point hit, for T-054),
+`PathTaken` and `Program` (orders changed: the mission's program given and the
+program bit set, kept as `Orders::manual` until T-111, or a script's state).
 
-What T-053's scripts will call: `set_destination`, `head_for_path_point`,
-`advance_path_point`, `assign_random_path` and `join_nearest_path_point`, and they set
-`Movement::target_heading` and `target_speed` (the bearing to the destination needs
-`sim_get_bearing`, not ported). Left out until their tasks: the recall (bit 3), the
-script, the bounce routines' console gear (T-104/T-105), the scout's height at +0x1c
+The scripts (T-053, below) call `head_for_path_point` and
+`join_nearest_path_point`. Left out until their tasks: the recall (bit 3), the
+bounce routines' console gear (T-104/T-105), the scout's height at +0x1c
 (T-101), the path census (`sim_count_units_on_paths`) and the base's other phases.
 Where the original reads past a table (a scorpion speed table or entry past the
 last, a path slot over 7, a mission over 6) the port takes the last entry or does
@@ -227,8 +225,8 @@ forever. None of these happen in the stock files.
 `xeno-app` ticks the mission's sim once a retrace on every mission view, with that
 retrace's input, and logs the events (debug level). `xeno-tool simulate <file.usg>
 [--ticks N] [--every K] [--drive SLOT:SPEED:HEADING]` runs one with no window and
-prints the robots' positions; `--drive` gives a robot a speed and heading to follow, as
-no script drives them yet.
+prints the robots' positions; `--drive` gives a robot a speed and heading to start
+with (its script may change them).
 
 ## Orders (T-053)
 
@@ -386,6 +384,35 @@ path in the file (scen00a's slot 3 for (142.7, 146.9)). PATROL just drives there
 reads +0x32 and +0x3c, not the path, then asks for the next point, and the alien
 base moves it to point 1 of its path. They look like points of an earlier edit of the
 paths.
+
+### The port (T-053)
+
+`xeno_sim::script` runs the scripts. `Movement::script` (`Script`) keeps +0x34, +0x38,
++0x31 and the stack, +0x33 and +0x36, and `World::stagger` the stagger, all hashed;
+the program running is the `OrderBook`'s. `Sim::load` starts every robot's program in
+the file's order (`script::start_all`), so their waits are staggered, keeping the
+events the file saved; `script::step` runs between the speed step and the move, as
+the original does; a path's mission starts its program through `script::set_program`
+and `script::switch` (`order_set_program`, `order_switch_to_automatic`, which posts
+event 0xa); `Sim::change_orders` does the same for the player's choices (the program
+panel, F2, F3). `script::bearing` is the coarse bearing. Ported: the flow, call and
+return, halt, flags, waits, random, switching, states, the stack and field opcodes
+(the fields the stock scripts touch: the kind, +0x23, the speeds, target heading,
+path, point and goal), the jumps, turning, the set-speed opcodes, the goal's distance
+and bearing (the destination and the robot's own base), zigzag, random turns, stop,
+hold here, joining the nearest path point, the targeting check and the path commands;
+events dispatch to the header's or the tables' handlers.
+
+Shortcuts, each named in the code: an opcode not ported (sensing and object goals,
+T-112; the gear steps 0x51 and 0x52, T-105; weapons, T-054; the relay net, T-113)
+**halts the script on itself**, so a robot keeps its speed and heading; messages do
+nothing (T-104); the hit's event 7 is not posted (T-054); the 64-tick object-goal
+check is skipped (no object goals yet); the gear bytes are not kept; field opcodes
+read 0 at other offsets; return addresses are pushed as offsets from the script
+area, not the program table; the stagger starts at 0 each mission.
+So in the stock missions the alien robots on PATROL drive point to point along their
+paths and the human robots on ENGAGE halt at the weapons check (T-054), and an alien
+scorpion on DENSE NET halts at once (T-113).
 
 ## Loading a scenario
 

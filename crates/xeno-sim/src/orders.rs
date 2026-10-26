@@ -99,6 +99,11 @@ impl OrderBook {
         OrderBook { robots }
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert(&mut self, slot: u16, robot: Robot) {
+        self.robots.insert(slot, robot);
+    }
+
     pub fn get(&self, slot: u16) -> Option<&Robot> {
         self.robots.get(&slot)
     }
@@ -141,15 +146,23 @@ impl OrderBook {
         })
     }
 
-    /// The robot is given `program` and its program drives
-    /// (`order_set_program`, then `order_switch_to_automatic`): a path's mission does
-    /// this. [`Orders::manual`] is +0x23 bit 7, which T-052 found means the program
-    /// drives, so it is set here (T-111 renames it).
-    pub fn start_program(&mut self, slot: u16, program: u8) -> Option<Change> {
-        self.change(slot, |_| {
+    /// The robot is given `program`, which runs (`order_set_program`; the script
+    /// starts with `xeno_sim::script::set_program`).
+    pub fn set_program(&mut self, slot: u16, program: u8) -> Option<Change> {
+        self.change(slot, |r| {
             Some(Orders {
-                manual: true,
+                manual: r.orders.manual,
                 ..Orders::given(program)
+            })
+        })
+    }
+
+    /// The robot's script enters (or leaves for) `state`: the program running only.
+    pub fn enter_state(&mut self, slot: u16, state: u8) -> Option<Change> {
+        self.change(slot, |r| {
+            Some(Orders {
+                program: state,
+                ..r.orders
             })
         })
     }
@@ -185,7 +198,7 @@ mod tests {
     const DS: usize = 0x20000;
 
     fn programs() -> Programs {
-        let mut image = vec![0u8; DS + 0x900];
+        let mut image = vec![0u8; DS + 0x9c00];
         synthetic_programs(&mut image, DS);
         xeno_formats::orders::read_image(&image, DS).unwrap()
     }

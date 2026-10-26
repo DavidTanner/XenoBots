@@ -1,0 +1,265 @@
+use super::*;
+use crate::motion::synthetic_tables;
+use crate::orders::{OrderBook, Orders, Robot};
+use crate::world::{Components, Damage, Entity, Fixed, State};
+use xeno_formats::script::Scripts;
+use xeno_formats::usg::{ObjectKind, Side};
+
+/// Made-up scripts: `bytes` at `0x100`, every program starting there, the stock
+/// opcode times and both event tables sending every event to the start too.
+pub(crate) fn scripts(bytes: &[u8]) -> Scripts {
+    let mut times = vec![0u16; 0x88];
+    for (ops, time) in [
+        (&[0x04, 0x06, 0x12, 0x1f, 0x59, 0x5a, 0x5b, 0x5c][..], 1),
+        (&[0x0a, 0x18], 255),
+        (&[0x14, 0x65, 0x70], 60),
+        (&[0x16], 3600),
+        (
+            &[0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x71, 0x73],
+            30,
+        ),
+        (&[0x72, 0x78], 15),
+    ] {
+        ops.iter().for_each(|&op| times[op] = time);
+    }
+    Scripts {
+        start: 0x100,
+        bytes: bytes.to_vec(),
+        programs: vec![0x100; 31],
+        times,
+        program_events: vec![0x100; 13],
+        pilot_events: vec![0x100; 13],
+    }
+}
+
+fn at(x: i16, y: i16) -> Position {
+    Position {
+        x: Fixed::from_int(x),
+        y: Fixed::from_int(y),
+    }
+}
+
+/// An alien humanoid (slot 1) at (10, 10) heading for (10, 20), its program driving,
+/// running `bytes` from the start with no wait; its base (slot 0) at (0, 0).
+fn setup(bytes: &[u8]) -> (World, Tables) {
+    let mut world = World::default();
+    let mut m = Movement {
+        drive: 0xff,
+        goal: Movement::GOAL_POINT,
+        destination: at(10, 20),
+        ..Movement::default()
+    };
+    m.script = Script {
+        pointer: 0x100,
+        sp: 10,
+        ..Script::default()
+    };
+    world.insert(
+        EntityId(1),
+        Entity {
+            kind: ObjectKind::Humanoid,
+            side: Side::Alien,
+            position: at(10, 10),
+            heading: 0,
+            radius: 0xa00,
+            damage: Damage::Robot(Components {
+                helm: 100,
+                power: 100,
+                weapons: 0,
+                targeting: false,
+                systems: 0,
+            }),
+            state: State::Robot(m),
+        },
+    );
+    world.insert(
+        EntityId(0),
+        Entity {
+            kind: ObjectKind::Base,
+            side: Side::Alien,
+            position: at(0, 0),
+            heading: 0,
+            radius: 0x2300,
+            damage: Damage::Taken(0),
+            state: State::Base { tick: 0 },
+        },
+    );
+    world.bases[1] = Some(EntityId(0));
+    let mut book = OrderBook::default();
+    book.insert(
+        1,
+        Robot {
+            kind: RobotKind::Humanoid,
+            side: Side::Alien,
+            orders: Orders {
+                manual: true,
+                ..Orders::given(8)
+            },
+        },
+    );
+    world.orders = book;
+    let tables = Tables {
+        scripts: scripts(bytes),
+        ..synthetic_tables()
+    };
+    (world, tables)
+}
+
+fn m(world: &World) -> Movement {
+    match world.get(EntityId(1)).unwrap().state {
+        State::Robot(m) => m,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn steps(world: &mut World, tables: &Tables, n: usize) -> Vec<Event> {
+    let (mut random, mut events) = (Random::seeded(1), Vec::new());
+    for _ in 0..n {
+        step(world, EntityId(1), tables, &mut random, &mut events);
+    }
+    events
+}
+
+#[test]
+fn programs_start_staggered() {
+    let mut world = World::default();
+    let waits: Vec<u16> = (0..7).map(|_| stagger(&mut world)).collect();
+    assert_eq!(waits, [39, 29, 19, 9, 48, 38, 28]);
+}
+
+#[test]
+fn an_opcode_waits_its_time_and_only_the_program_steps_the_script() {
+    // Stop turning (time 0), then set the high speed (time 30), then halt.
+    let (mut world, tables) = setup(&[0x50, 0x55, 0x0a]);
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.pointer, 0x101);
+    steps(&mut world, &tables, 1);
+    assert_eq!(
+        (m(&world).script.pointer, m(&world).target_speed),
+        (0x102, 56)
+    );
+    steps(&mut world, &tables, 30);
+    assert_eq!(m(&world).script.pointer, 0x102, "still waiting");
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.pointer, 0x102, "halted on itself");
+    // With the pilot driving, the script stands still.
+    let (mut world, tables) = setup(&[0x50, 0x55]);
+    world.orders.set_manual(1, false);
+    steps(&mut world, &tables, 5);
+    assert_eq!(m(&world).script.pointer, 0x100);
+}
+
+#[test]
+fn a_patrol_steers_to_its_point_and_asks_for_the_next_one_there() {
+    // PATROL's loop: within 0.2 units? Else high speed, steer, wait 5 s, again. There:
+    // stop and ask for the next point.
+    let patrol = [
+        0x5d, 0x32, 0x00, 0x43, 0x06, 0x55, 0x5f, 0x15, 0x05, 0x42, 0xf5, 0x65, 0x77, 0x04, 0x0a,
+    ];
+    let (mut world, tables) = setup(&patrol);
+    set_program(&mut world, EntityId(1), 8, &tables, &mut Vec::new());
+    assert_eq!(m(&world).script.wait, 39);
+    // The destination is due +y: heading 0. Make it due +x first.
+    movement(&mut world, EntityId(1)).unwrap().destination = at(20, 10);
+    steps(&mut world, &tables, 40 + 1 + 1 + 1 + 31);
+    let after = m(&world);
+    assert_eq!((after.target_speed, after.target_heading), (56, 0x4000));
+    // Arrived: the robot stops and asks for its next point.
+    world.get_mut(EntityId(1)).unwrap().position = at(20, 10);
+    steps(&mut world, &tables, 500);
+    let after = m(&world);
+    assert_eq!(after.target_speed, 0);
+    assert_ne!(after.path & Movement::NEXT, 0);
+}
+
+#[test]
+fn the_bearing_points_at_the_goal() {
+    let t = synthetic_tables();
+    let o = at(0, 0);
+    for ((x, y), expected) in [
+        ((0, 5), 0x0000),
+        ((5, 0), 0x4000),
+        ((0, -5), 0x8000),
+        ((-5, 0), 0xc000),
+        ((5, 5), 0x2000),
+        ((-3, 4), 0x0001),
+    ] {
+        let b = bearing(&t.atan, o, at(x, y));
+        let exact = (f64::from(x).atan2(f64::from(y)) / std::f64::consts::TAU * 65536.0)
+            .rem_euclid(65536.0);
+        assert!(
+            (f64::from(b) - exact).abs() < 64.0,
+            "{x}, {y}: {b:#x} {exact}"
+        );
+        if expected != 1 {
+            assert_eq!(b, expected, "{x}, {y}");
+        }
+    }
+    assert_eq!(bearing(&t.atan, o, o), 0);
+}
+
+#[test]
+fn an_event_runs_the_program_s_handler_and_returns() {
+    // A header sending event 5 to `0x109` (a return); then a test and a halt.
+    let (mut world, tables) = setup(&[0x0f, 0x05, 0x09, 0x01, 0x11, 0x0b, 0x0a, 0x00, 0x00, 0x06]);
+    steps(&mut world, &tables, 3);
+    assert_eq!(m(&world).script.pointer, 0x106, "halted with the carry set");
+    post(movement(&mut world, EntityId(1)).unwrap(), 5);
+    steps(&mut world, &tables, 1);
+    let s = m(&world).script;
+    assert_eq!(
+        (s.pointer, s.events, s.sp, s.flags & BUSY),
+        (0x109, 0, 8, BUSY)
+    );
+    steps(&mut world, &tables, 1);
+    let s = m(&world).script;
+    assert_eq!((s.pointer, s.sp, s.flags), (0x106, 10, CARRY));
+}
+
+#[test]
+fn the_program_taking_over_posts_its_event() {
+    let (mut world, tables) = setup(&[0x1f, 0x0a]);
+    let events = steps(&mut world, &tables, 1);
+    assert!(!world.orders.get(1).unwrap().orders.manual);
+    assert!(matches!(events[..], [Event::Program(_)]));
+    assert_eq!(m(&world).script.events, 1 << EVENT_PILOT);
+}
+
+/// The alien robots of `scen00a`, on PATROL (and a scorpion on DENSE NET, which halts
+/// at the relay net's opcodes, T-113), all but one move within a minute of game time,
+/// and some are still driving then.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_stock_robots_drive_to_their_points() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, Random::seeded(7), tables.clone());
+    let start: Vec<(EntityId, Position)> = sim
+        .world
+        .units(Side::Alien)
+        .iter()
+        .map(|&id| (id, sim.world.get(id).unwrap().position))
+        .collect();
+    for _ in 0..70 * 60 {
+        _ = sim.tick(&[]);
+    }
+    let moved = start
+        .iter()
+        .filter(|&&(id, p)| sim.world.get(id).unwrap().position != p)
+        .count();
+    // The scorpion's DENSE NET halts at the relay net (T-113).
+    assert!(moved >= start.len() - 1, "{moved} of {}", start.len());
+    let heading_out = start.iter().any(|&(id, _)| {
+        let (_, _, m) = robot(&sim.world, id).unwrap();
+        m.target_speed > 0
+    });
+    assert!(heading_out);
+}

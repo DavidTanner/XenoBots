@@ -9,6 +9,7 @@ pub mod motion;
 pub mod orders;
 pub mod random;
 pub mod rate;
+pub mod script;
 pub mod terrain;
 pub mod world;
 
@@ -21,6 +22,7 @@ pub use world::{
 use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};
 use motion::{Event, Tables};
+use orders::{Change, OrderBook};
 use xeno_formats::usg::Scenario;
 
 /// The simulation's whole state.
@@ -61,8 +63,10 @@ impl Sim {
     /// the campaign's and gives it back with [`Sim::park`] or [`Sim::end`]. Its objects
     /// move by `tables`.
     pub fn load(scenario: &Scenario, random: Random, tables: Tables) -> Sim {
+        let mut world = World::from_scenario(scenario);
+        script::start_all(&mut world, scenario, &tables);
         Sim {
-            world: World::from_scenario(scenario),
+            world,
             tables: Some(tables),
             ..Sim::with_random(random)
         }
@@ -124,6 +128,35 @@ impl Sim {
             Some(tables) => motion::tick(&mut self.world, tables, &mut self.random),
             None => Vec::new(),
         }
+    }
+
+    /// Changes a robot's orders as the player does: a new program starts its script
+    /// (`order_set_program`), and the program or the pilot taking over posts its
+    /// event (`order_switch_to_*`).
+    pub fn change_orders(
+        &mut self,
+        f: impl FnOnce(&mut OrderBook) -> Option<Change>,
+    ) -> Option<Change> {
+        let change = f(&mut self.world.orders)?;
+        let (id, mut events) = (EntityId(change.slot), Vec::new());
+        if change.after.manual != change.before.manual {
+            self.world
+                .orders
+                .set_manual(change.slot, change.before.manual);
+            script::switch(&mut self.world, id, change.after.manual, &mut events);
+        }
+        if change.after.program != change.before.program
+            && let Some(tables) = &self.tables
+        {
+            script::set_program(
+                &mut self.world,
+                id,
+                change.after.program,
+                tables,
+                &mut events,
+            );
+        }
+        Some(change)
     }
 
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
@@ -248,7 +281,17 @@ mod tests {
         campaign.word();
         let mut sim = Sim::load(&scenario, campaign, motion::synthetic_tables());
         assert_eq!(sim.world.len(), 5);
-        assert_eq!(sim.world, World::from_scenario(&scenario));
+        assert_eq!(sim.world.orders, World::from_scenario(&scenario).orders);
+        // Each robot's program starts anew, in the file's order, staggered.
+        let waits: Vec<u16> = sim
+            .world
+            .iter()
+            .filter_map(|(_, e)| match e.state {
+                State::Robot(m) => Some(m.script.wait),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(waits, [39, 29, 19]);
         sim.tick(&[InputEvent::MouseMove { x: 1, y: 2 }]);
         sim.random().word();
         // Parked, it keeps its world and input and hands the word back as it stands.

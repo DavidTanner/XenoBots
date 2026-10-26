@@ -298,20 +298,17 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Scripts, FormatError> {
         .filter(|b| !b.is_empty())
         .ok_or_else(|| invalid(START.0, "no script area"))?
         .to_vec();
-    let mut programs = Vec::new();
-    loop {
-        let p = word(image, ds + usize::from(table) + 2 * programs.len())?;
-        if p == TABLE_END {
-            break;
-        }
-        if !(start..end).contains(&p) || programs.len() == 256 {
-            return Err(invalid(usize::from(table), "a program outside the scripts"));
-        }
-        programs.push(p);
-    }
-    if programs.is_empty() {
-        return Err(invalid(usize::from(table), "no programs"));
-    }
+    // As many programs as `order_find_program_name` allows (`cmp al, count`).
+    let count = match image.get(orders::COUNT.0..orders::COUNT.0 + 2) {
+        Some(&[op, n]) if op == orders::COUNT.1[0] && n > 0 => usize::from(n),
+        _ => return Err(invalid(orders::COUNT.0, "not the program count")),
+    };
+    let programs = (0..count)
+        .map(|n| match word(image, ds + usize::from(table) + 2 * n)? {
+            p if (start..end).contains(&p) => Ok(p),
+            _ => Err(invalid(usize::from(table), "a program outside the scripts")),
+        })
+        .collect::<Result<_, _>>()?;
     Ok(Scripts {
         start,
         bytes,
@@ -335,7 +332,7 @@ mod tests {
     const DS: usize = 0x20000;
 
     fn synthetic() -> Vec<u8> {
-        let mut image = vec![0u8; DS + 0x900];
+        let mut image = vec![0u8; DS + 0x9c00];
         synthetic_scripts(&mut image, DS);
         image
     }
@@ -345,9 +342,10 @@ mod tests {
         let scripts = read_image(&synthetic(), DS).unwrap();
         assert_eq!(scripts.times.len(), 0x88);
         assert_eq!(scripts.times[0x14], 60);
-        assert_eq!(scripts.programs.len(), 2);
-        assert_eq!(scripts.header_handler(0, 9), Some(0x768));
-        assert_eq!(scripts.header_handler(1, 9), None);
+        assert_eq!(scripts.programs.len(), 5);
+        assert_eq!(scripts.header_handler(1, 9), Some(0x9a76));
+        assert_eq!(scripts.header_handler(1, 7), None);
+        assert_eq!(scripts.header_handler(2, 9), None, "no header");
         assert_eq!(scripts.header_handler(9, 9), None, "the last program");
         let all = scripts.walk().unwrap();
         // A conditional jump back lands on an instruction.
@@ -363,14 +361,14 @@ mod tests {
             (TIMES.0 + 2, 0x00),
             (START.0 + 1, 0xff),
             (PILOT_EVENTS.0, 0xbf),
-            (DS + 0x713, 0x00),
+            (DS + 0x9b9b, 0x00),
         ] {
             let mut image = synthetic();
             image[at] = value;
             assert!(read_image(&image, DS).is_err(), "{at:#x}");
         }
         // An opcode with no handler, then a jump into the middle of an instruction.
-        for (at, value) in [(0x74c, 0xee), (0x751, 0xfc)] {
+        for (at, value) in [(0x9a6f, 0xee), (0x9a74, 0xfc)] {
             let mut image = synthetic();
             image[DS + at] = value;
             let scripts = read_image(&image, DS).unwrap();

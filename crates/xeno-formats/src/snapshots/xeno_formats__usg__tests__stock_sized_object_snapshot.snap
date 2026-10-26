@@ -75,7 +75,7 @@ expression: "&objects[..3]"
                 goal: 196,
                 unknown_33: 79,
                 script: 45747,
-                unknown_36: c77bb33cbc58,
+                unknown_36: 0000b33cbc58,
                 destination: Point {
                     x: -1370856058,
                     y: -1175302277,
