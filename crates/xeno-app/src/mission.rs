@@ -1173,6 +1173,8 @@ pub mod tests {
                 weak_drive: 0x28,
                 scorpion_speeds: vec![[0; motion::SPEED_ENTRIES]],
                 mission_programs: [[0; 3]; motion::MISSIONS],
+                atan: vec![0; motion::ATAN_ENTRIES],
+                script_speeds: [[0; 3]; 5],
             },
         }
     }

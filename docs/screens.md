@@ -516,7 +516,7 @@ A robot's **orders** are a program, one of 31 scripts in `xeno.exe`, and a switc
 between the program (automatic) and the pilot (manual). There is no other order
 parameter in the views: no waypoint or target is given in a console or the situation
 room (the scripts that go to a unit or a place use the robot's destination and target
-fields, set by the mission; T-053).
+fields, set by the mission; the scripts are traced in `docs/sim.md`, "Orders").
 
 **The program table** (`DS:0x4ff4`, 31 word offsets in the data segment, then 0xffff)
 points at the scripts. A script starts with a header: either a list of three-byte
@@ -546,8 +546,8 @@ record):
 | +0x23 bit 7 | Manual: the pilot drives and the program waits. Bits 4 and 5 are cleared when switching to manual; bit 3 is the situation room's recall |
 | +0x2e | **The program given** |
 | +0x30 | **The program running**: the one given, or a state the script entered by itself (in `scen12a` three human robots given program 9 are saved running 24). The console shows this one, and the next and previous programs are counted from it |
-| +0x31 | 10 when a program starts |
-| +0x33, +0x38 | 0, and a start phase from a counter (`DS:0x4db5`, stepping by 10 modulo 59) so robots given programs together do not run in step |
+| +0x31 | The script's stack pointer, 10 (empty) when a program starts (T-053, `docs/sim.md`, "Orders") |
+| +0x33, +0x38 | The script's flags, cleared; and its wait, started from a counter (`DS:0x4db5`, down 10 a start, up 49 more when it runs out) so robots given programs together do not run in step |
 | +0x34 | The script pointer; in a file, `0xa000` + its offset from the table (`1000:4826`, `4833`) |
 
 `order_set_program` (`1000:476f`) sets all of these from a program number.

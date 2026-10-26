@@ -246,10 +246,13 @@ The flags at +0x16 (`usg::flag`):
 | 0x2d | 1 | `path_point` | The point it heads for; 0xff its base |
 | 0x2e | 1 | `program_given` | A number in `xeno.exe`'s program table (T-043) |
 | 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
-| 0x31, 0x33, 0x38 | | | The script's timing (T-043) |
-| 0x32 | 1 | `goal` | What the robot heads for: 0x22 the point at `destination` (set with it), bit 0 an object (slot or pointer at +0x3a, a reference held), 0 nothing |
-| 0x34 | 2 | `script` | The script pointer, saved as `0xa000` + its offset from the program table |
-| 0x36 | | | Event bits, which the message panel reports |
+| 0x31 | 1 | | The script's stack pointer: 10 empty, stepping down by 1 or 2 a push; the stack is the bytes from +0x44 (T-053, `docs/sim.md`, "Orders") |
+| 0x33 | 1 | | The script's flags: bits 0, 6 and 7 the carry, zero and sign of its last test; bit 5 runs the script every tick and holds events off (an event's handler sets it) |
+| 0x38 | 2 | | The ticks the script waits before its next opcode; a program starts with a staggered wait (T-053) |
+| 0x32 | 1 | `goal` | What the robot heads for: bit 1 the point at `destination` (0x22 from a path, 2 from the hold order), bit 0 an object (slot or pointer at +0x3a, a reference held), bit 2 its own base, bit 3 its target (+0xe6), bit 4 a point the script worked out; 0 nothing (T-053) |
+| 0x34 | 2 | `script` | The script pointer (a data-segment offset in `DS:0x5034..0x5670`), saved as `0xa000` + its offset from the program table; flag bits in the top nibble restart the program given, or program 9, at load (`order_unpack_script_pointer`) |
+| 0x36 | 2 | | Events waiting for the script, a bit each (event n is bit n): 5 a hold point set, 7 hit, 0xa and 0xb the program or the pilot took over, others not traced (T-053) |
+| 0x44 | 10 | | The script's stack (T-053) |
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
 | 0x51 | 1 | `drive` | 0xff in nearly every stock robot. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed. A guessed name; +0x4f and +0x50 are reset to 0xff with it |
