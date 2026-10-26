@@ -3,10 +3,9 @@
 //! hill bounce, and the alien base's path walking. The tables come from the user's
 //! `xeno.exe` ([`Tables`], `xeno_formats::motion`).
 //!
-//! The scripts (T-053) decide where robots go; they call [`set_destination`],
-//! [`head_for_path_point`], [`advance_path_point`], [`join_nearest_path_point`] and set
-//! a robot's target heading and speed. The port runs no script yet, so a robot moves
-//! only by the speed and heading it was given.
+//! The scripts (`crate::script`, T-053) decide where robots go: they run between the
+//! speed step and the move, and call [`head_for_path_point`] and
+//! [`join_nearest_path_point`] and set a robot's target heading and speed.
 
 use xeno_formats::usg::{ObjectKind, Side};
 
@@ -136,9 +135,9 @@ fn kind_index(kind: ObjectKind) -> Option<usize> {
     RobotKind::of(kind).map(|k| k.index())
 }
 
-/// One robot's movement for a tick (`sim_move_*`, then the tick counter's step):
-/// returns whether it ended inside a hill. The recall (+0x23 bit 3) and the script are
-/// T-053's and do not run here.
+/// One robot's movement for a tick with no script (`sim_move_*`, then the tick
+/// counter's step): [`steer_and_speed`] then [`travel`]. Returns whether it ended
+/// inside a hill.
 pub fn move_robot(
     tables: &Tables,
     terrain: &Terrain,
@@ -148,8 +147,21 @@ pub fn move_robot(
     position: &mut Position,
     m: &mut Movement,
 ) -> bool {
+    steer_and_speed(tables, kind, helm, heading, m);
+    travel(terrain, kind, position, m)
+}
+
+/// The turn keys, steering, the speed step and the velocity: `sim_move_*` up to the
+/// script. The recall (+0x23 bit 3) is not run (T-105).
+pub fn steer_and_speed(
+    tables: &Tables,
+    kind: ObjectKind,
+    helm: u8,
+    heading: &mut u16,
+    m: &mut Movement,
+) {
     let Some(k) = kind_index(kind) else {
-        return false;
+        return;
     };
     // The pilot's turn keys.
     if m.mode & 0x10 != 0 {
@@ -195,7 +207,19 @@ pub fn move_robot(
     if changed {
         m.velocity = velocity(tables, *heading, m.speed);
     }
+}
 
+/// The move, the hill bounce and the tick counter's step: `sim_move_*` after the
+/// script. Returns whether the robot ended inside a hill.
+pub fn travel(
+    terrain: &Terrain,
+    kind: ObjectKind,
+    position: &mut Position,
+    m: &mut Movement,
+) -> bool {
+    if kind_index(kind).is_none() {
+        return false;
+    }
     position.x.0 = position.x.0.wrapping_add(i32::from(m.velocity.0));
     position.y.0 = position.y.0.wrapping_add(i32::from(m.velocity.1));
     // Inside a hill: back off at the same speed. The velocity stays as it is until the
@@ -225,7 +249,7 @@ pub fn set_destination(world: &mut World, id: EntityId, at: Position) {
     }
 }
 
-fn movement(world: &mut World, id: EntityId) -> Option<&mut Movement> {
+pub(crate) fn movement(world: &mut World, id: EntityId) -> Option<&mut Movement> {
     match &mut world.get_mut(id)?.state {
         State::Robot(m) => Some(m),
         _ => None,
@@ -233,7 +257,7 @@ fn movement(world: &mut World, id: EntityId) -> Option<&mut Movement> {
 }
 
 /// A robot's kind, side and movement, copied.
-fn robot(world: &World, id: EntityId) -> Option<(ObjectKind, Side, Movement)> {
+pub(crate) fn robot(world: &World, id: EntityId) -> Option<(ObjectKind, Side, Movement)> {
     let e = world.get(id)?;
     match e.state {
         State::Robot(m) => Some((e.kind, e.side, m)),
@@ -241,7 +265,7 @@ fn robot(world: &World, id: EntityId) -> Option<(ObjectKind, Side, Movement)> {
     }
 }
 
-fn base_position(world: &World, side: Side) -> Option<Position> {
+pub(crate) fn base_position(world: &World, side: Side) -> Option<Position> {
     world
         .base(side)
         .and_then(|b| world.get(b))
@@ -393,8 +417,9 @@ fn start_mission_program(
         .and_then(|mission| tables.mission_programs.get(mission))
         .zip(kind_index(kind))
         .map(|(programs, k)| programs[k]);
-    if let Some(change) = program.and_then(|p| world.orders.start_program(id.0, p)) {
-        events.push(Event::Program(change));
+    if let Some(program) = program {
+        crate::script::set_program(world, id, program, tables, events);
+        crate::script::switch(world, id, true, events);
     }
 }
 
@@ -472,26 +497,34 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
     let mut events = Vec::new();
     let ids: Vec<EntityId> = world.iter().map(|(id, _)| id).collect();
     for id in ids {
-        let Some((e, terrain)) = world.entity_and_terrain(id) else {
+        let Some(e) = world.get_mut(id) else {
             continue;
         };
-        let mut path_phase = false;
+        let (mut path_phase, mut is_robot) = (false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
                     Damage::Robot(c) => c.helm,
                     _ => 100,
                 };
-                let (heading, position) = (&mut e.heading, &mut e.position);
-                if move_robot(tables, terrain, e.kind, helm, heading, position, m) {
-                    events.push(Event::HillHit(id));
-                }
+                steer_and_speed(tables, e.kind, helm, &mut e.heading, m);
+                is_robot = true;
             }
             State::Base { tick } => {
                 *tick = tick.wrapping_add(1);
                 path_phase = *tick & 0xf == 2 && e.side == Side::Alien;
             }
             State::None => {}
+        }
+        if is_robot {
+            crate::script::step(world, id, tables, random, &mut events);
+            if let Some((e, terrain)) = world.entity_and_terrain(id)
+                && let State::Robot(m) = &mut e.state
+                && travel(terrain, e.kind, &mut e.position, m)
+            {
+                // shortcut: the hit's event 7 is posted with the damage (T-054).
+                events.push(Event::HillHit(id));
+            }
         }
         if path_phase {
             alien_path_phase(world, tables, random, &mut events);
@@ -538,5 +571,6 @@ pub(crate) fn synthetic_tables() -> Tables {
             [-23, -21, -35],
             [-43, -42, -71],
         ],
+        scripts: crate::script::tests::scripts(&[0x0a]),
     }
 }

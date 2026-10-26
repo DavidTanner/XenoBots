@@ -907,69 +907,64 @@ pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
 }
 
 /// Writes a made-up program table (`crate::orders`) into `image`, whose data segment
-/// starts at `ds`: five programs at `ds + 0x740` on (0 never offered, 1 for every kind,
+/// starts at `ds`: five programs at `ds + 0x9a40` on (0 never offered, 1 for every kind,
 /// 2 for every kind with a header of no item list, 3 for the scorpion only, 4 never
-/// offered), the table at `ds + 0x700` and the kind masks 1, 2, 4 at `ds + 0x720`.
-/// `image` must reach `0xd384` and `ds + 0x840`; it leaves the other synthetic tables
+/// offered), the table at `ds + 0x9a00` and the kind masks 1, 2, 4 at `ds + 0x9a20`.
+/// `image` must reach `0xd384` and `ds + 0x9b40`; it leaves the other synthetic tables
 /// alone.
 pub fn synthetic_programs(image: &mut [u8], ds: usize) {
     use crate::orders::{COUNT, MASKS, TABLE};
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    put(TABLE.0, &op(TABLE.1, 0x700));
+    put(TABLE.0, &op(TABLE.1, 0x9a00));
     put(COUNT.0, &[COUNT.1[0], 5]);
-    put(MASKS.0, &op(MASKS.1, 0x720));
-    put(ds + 0x720, &[1, 2, 4]);
+    put(MASKS.0, &op(MASKS.1, 0x9a20));
+    put(ds + 0x9a20, &[1, 2, 4]);
     let programs: [&[u8]; 5] = [
-        b"\x0f\x11\x02\x87\x05ZERO\0\x01\x02",
-        b"\x0f\x05\x12\x34\x09\x56\x78\x11\x02\x07\x04ONE\0",
-        b"\x11\x07\x04TWO\0",
-        b"\x0f\x09\x9a\xbc\x11\x02\x02\x06THREE\0",
-        b"\x0f\x11\x02\x82\x05FOUR\0",
+        b"\x0f\x11\x02\x87\x05ZERO\0\x0a",
+        b"\x0f\x05\x76\x9a\x09\x76\x9a\x11\x02\x07\x04ONE\0\x14\x5d\x32\x00\x43\xfb\x0a\x06",
+        b"\x02\x07\x04TWO\0\x0a",
+        b"\x0f\x09\x76\x9a\x11\x02\x02\x06THREE\0\x0a",
+        b"\x0f\x11\x02\x82\x05FOUR\0\x0a",
     ];
     for (n, program) in programs.iter().enumerate() {
-        let at = 0x740 + 0x20 * n;
-        put(ds + 0x700 + 2 * n, &(at as u16).to_le_bytes());
+        let at = 0x9a40 + 0x20 * n;
+        put(ds + 0x9a00 + 2 * n, &(at as u16).to_le_bytes());
         put(ds + at, program);
     }
 }
 
-/// Writes made-up scripts into `image` (`xeno_formats::script`): 136 opcodes at
-/// `DS:0x480` (each one's time its number, 60 for 0x14), the program table at
-/// `DS:0x6a0` with two programs, both event tables sending event 0 to `0x768`, and
-/// the script area `DS:0x740..0x780`. Program 0 has a header sending event 9 to
-/// `0x768`, its name, then waits a second, tests its distance and jumps back while
-/// far; program 1 is only a name and a halt; `0x768` returns.
+/// Writes made-up scripts into `image` (`xeno_formats::script`): the programs of
+/// [`synthetic_programs`] at `DS:0x9a40..0x9b00` (program 1 waits a second, tests its
+/// distance, jumps back while far and halts; its header sends events 5 and 9, and
+/// program 3's event 9, to a return at `0x9a76`; the others halt after their names),
+/// 136 opcodes at `DS:0x97e0` (each one's time its number, 60 for 0x14), and both
+/// event tables (`DS:0x9b80`, `0x9bc0`) sending events 0 to 12 to `0x9a76`.
 pub fn synthetic_scripts(image: &mut [u8], ds: usize) {
     use crate::script::{END, HANDLERS, PILOT_EVENTS, PROGRAM_EVENTS, START, TIMES};
+    synthetic_programs(image, ds);
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    put(HANDLERS.0, &op(HANDLERS.1, 0x480));
-    put(TIMES.0, &op(TIMES.1, 0x482));
-    put(crate::orders::TABLE.0, &op(crate::orders::TABLE.1, 0x6a0));
+    put(HANDLERS.0, &op(HANDLERS.1, 0x97e0));
+    put(TIMES.0, &op(TIMES.1, 0x97e2));
     for n in 0..0x88u16 {
         let time = if n == 0x14 { 60 } else { n };
-        put(ds + 0x482 + 4 * usize::from(n), &time.to_le_bytes());
+        put(ds + 0x97e2 + 4 * usize::from(n), &time.to_le_bytes());
     }
-    put(START.0, &op(START.1, 0x740));
-    put(END.0, &op(END.1, 0x780));
-    put(ds + 0x6a0, &[0x40, 0x07, 0x60, 0x07, 0xff, 0xff]);
-    put(PILOT_EVENTS.0, &op(PILOT_EVENTS.1, 0x700));
-    put(PROGRAM_EVENTS.0, &op(PROGRAM_EVENTS.1, 0x710));
-    put(ds + 0x700, &[0x68, 0x07, 0xff, 0xff]);
-    put(ds + 0x710, &[0x68, 0x07, 0xff, 0xff]);
-    put(
-        ds + 0x740,
-        b"\x0f\x09\x68\x07\x11\x02\x07\x04ZIG\0\x14\x5d\x32\x00\x43\xfb\x0a",
-    );
-    put(ds + 0x760, b"\x02\x87\x05NONE\0\x0a\x06");
+    put(START.0, &op(START.1, 0x9a40));
+    put(END.0, &op(END.1, 0x9b00));
+    put(PILOT_EVENTS.0, &op(PILOT_EVENTS.1, 0x9b80));
+    put(PROGRAM_EVENTS.0, &op(PROGRAM_EVENTS.1, 0x9bc0));
+    let table = [[0x76, 0x9a].repeat(13), vec![0xff, 0xff]].concat();
+    put(ds + 0x9b80, &table);
+    put(ds + 0x9bc0, &table);
 }
 
 /// A `.usg` scenario whose objects have the stock sizes (0x172 bytes, 0x34 for the
 /// relay): a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a
 /// human relay (slot 3), a human scorpion on program 2 (slot 5) and an alien scout on
 /// program 2 (slot 7), at x 100 + slot, y 130, heading slot x 0x1000. The robots are
-/// units with helm 90 and power 80; the base has taken 20 damage and starts in view
+/// units with helm 90 and power 80 and no script events; the base has taken 20 damage and starts in view
 /// mode 0; the relay has taken 3. The other bytes are synthetic, and the other chunks
 /// are [`synthetic_usg_chunks`]'s.
 pub fn synthetic_mission_usg() -> Vec<u8> {
@@ -990,6 +985,8 @@ pub fn synthetic_mission_usg() -> Vec<u8> {
                 data[at(0x24)] = 90;
                 data[at(0x2e)] = program;
                 data[at(0x30)] = program;
+                // No events waiting for the script.
+                data[at(0x36)..at(0x38)].fill(0);
                 data[at(0x4e)] = 80;
             }
             3 => {

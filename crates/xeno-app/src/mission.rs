@@ -461,7 +461,7 @@ impl Mission {
         f: impl FnOnce(&mut OrderBook) -> Option<Change>,
     ) {
         let change = match &mut self.run {
-            Run::Running(sim) => f(&mut sim.world.orders),
+            Run::Running(sim) => sim.change_orders(f),
             Run::Parked(_) => None,
         };
         self.log_change(change, programs);
@@ -1133,7 +1133,7 @@ pub mod tests {
         use xeno_formats::fixtures::synthetic_font_block;
         let mut image = vec![0u8; DS + 0x800];
         let relocated = synthetic_views(&mut image, DS);
-        let mut programs = vec![0u8; DS + 0x900];
+        let mut programs = vec![0u8; DS + 0x9c00];
         synthetic_programs(&mut programs, DS);
         let fonts = xeno_formats::font::parse(&synthetic_font_block()).unwrap();
         let sprites = (0..80u8)
@@ -1175,6 +1175,11 @@ pub mod tests {
                 mission_programs: [[0; 3]; motion::MISSIONS],
                 atan: vec![0; motion::ATAN_ENTRIES],
                 script_speeds: [[0; 3]; 5],
+                scripts: {
+                    let mut image = vec![0; 0x29c00];
+                    xeno_formats::fixtures::synthetic_scripts(&mut image, 0x20000);
+                    xeno_formats::script::read_image(&image, 0x20000).unwrap()
+                },
             },
         }
     }

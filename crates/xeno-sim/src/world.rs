@@ -100,6 +100,25 @@ pub struct Movement {
     pub stance_target: u8,
     /// +0x118: a scorpion's speed table.
     pub speed_table: u8,
+    pub script: Script,
+}
+
+/// A robot's script state (`docs/sim.md`, "Orders"); the program running is in the
+/// [`OrderBook`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Script {
+    /// +0x34: the script pointer, a data-segment offset.
+    pub pointer: u16,
+    /// +0x38: the ticks to wait before the next opcode.
+    pub wait: u16,
+    /// +0x31: the stack pointer, 10 when empty, into [`Script::stack`] (+0x44).
+    pub sp: u8,
+    pub stack: [u8; 10],
+    /// +0x33: carry (bit 0), zero (bit 6) and sign (bit 7) of the last test; bit 5
+    /// steps every tick and holds events off.
+    pub flags: u8,
+    /// +0x36: the events waiting, a bit each.
+    pub events: u16,
 }
 
 impl Movement {
@@ -128,6 +147,11 @@ impl Movement {
             stance: r.stance,
             stance_target: r.stance_target,
             speed_table: r.speed_table,
+            // The rest is set when loading starts the program anew.
+            script: Script {
+                events: u16::from_le_bytes([r.unknown_36.0[0], r.unknown_36.0[1]]),
+                ..Script::default()
+            },
         }
     }
 }
@@ -158,6 +182,12 @@ impl StateHash for State {
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.drive, m.stance, m.stance_target, m.speed_table]);
+                let s = m.script;
+                h.u16(s.pointer);
+                h.u16(s.wait);
+                h.bytes(&[s.sp, s.flags]);
+                h.bytes(&s.stack);
+                h.u16(s.events);
             }
             State::Base { tick } => {
                 h.u8(1);
@@ -251,6 +281,8 @@ pub struct World {
     pub units: [Vec<EntityId>; 2],
     /// Each side's command object (`DS:0x568e`, `0x5690`): the last base loaded for it.
     pub bases: [Option<EntityId>; 2],
+    /// `DS:0x4db5`: staggers the waits programs start with (`docs/sim.md`, "Orders").
+    pub stagger: u8,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -335,6 +367,9 @@ impl World {
             paths: Paths::from_scenario(scenario),
             units,
             bases,
+            // shortcut: the original carries the stagger from mission to mission
+            // (from 0 at start-up); it only decides which robots start in step.
+            stagger: 0,
         }
     }
 
@@ -442,6 +477,7 @@ impl StateHash for World {
             units.iter().for_each(|id| h.u16(id.0));
             h.u16(base.map_or(0xffff, |id| id.0));
         }
+        h.u8(self.stagger);
     }
 }
 

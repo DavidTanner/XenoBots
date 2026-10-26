@@ -45,7 +45,7 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     // Synthetic, not the game's: an LZEXE-packed image whose entry point loads DS =
     // 0x20, with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
     // Also made-up map room tables (`synthetic_map_room`), mission views, a training
-    // menu and programs (`synthetic_views`, `synthetic_programs`) and a review
+    // menu and programs with their scripts (`synthetic_views`, `synthetic_scripts`) and a review
     // (`synthetic_review`), the campaign's rules (`synthetic_campaign`), and the
     // cutscenes after a mission and the captions' string segment (`synthetic_endings`),
     // and the movement tables (`synthetic_motion`).
@@ -64,7 +64,7 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     relocations.extend(xeno_formats::fixtures::synthetic_views(&mut image, 0x200));
     relocations.extend(xeno_formats::fixtures::synthetic_review(&mut image, 0x200));
     relocations.extend(xeno_formats::fixtures::synthetic_endings(&mut image, 0x200));
-    xeno_formats::fixtures::synthetic_programs(&mut image, 0x200);
+    xeno_formats::fixtures::synthetic_scripts(&mut image, 0x200);
     xeno_formats::fixtures::synthetic_campaign(&mut image, 0x200);
     xeno_formats::fixtures::synthetic_motion(
         &mut image,

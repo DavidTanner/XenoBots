@@ -8,6 +8,7 @@
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
+use crate::script::{self, Scripts};
 use crate::{FormatError, sequence};
 
 /// `mov cx, ss:[bx + table + 2]` and `mov bx, ss:[bx + table]` in
@@ -66,6 +67,8 @@ pub struct Motion {
     pub atan: Vec<u16>,
     /// The speed the script's opcodes 0x54 to 0x58 ask for, by opcode and kind.
     pub script_speeds: [[i16; 3]; 5],
+    /// The robots' scripts (`xeno_formats::script`).
+    pub scripts: Scripts,
 }
 
 fn bytes(image: &[u8], at: usize, n: usize) -> Result<&[u8], FormatError> {
@@ -148,6 +151,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         mission_programs,
         atan,
         script_speeds,
+        scripts: script::read_image(image, ds)?,
     })
 }
 
@@ -190,9 +194,10 @@ mod tests {
 
     /// Made-up tables: a sine table of `i * 0x100`, turn steps 1, 2 and 3, a weak
     /// drive at 7, two speed tables (the speed itself and half of it) and programs
-    /// numbered by mission and kind.
+    /// numbered by mission and kind, an arctangent and script speeds, and the scripts
+    /// of `synthetic_scripts`.
     fn synthetic() -> Vec<u8> {
-        let mut image = vec![0u8; STRINGS + 0x400];
+        let mut image = vec![0u8; DS + 0x9c00];
         put(&mut image, SINE_NEXT.0, &[0x36, 0x8b, 0x8f, 0x02, 0x01]);
         put(&mut image, SINE_AT.0, &[0x36, 0x8b, 0x9f, 0x00, 0x01]);
         for i in 0..SINE_ENTRIES {
@@ -214,11 +219,12 @@ mod tests {
         for i in 0..3 * MISSIONS {
             image[DS + 0x400 + i] = i as u8;
         }
-        put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x08]);
+        crate::fixtures::synthetic_scripts(&mut image, DS);
+        put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
                 &mut image,
-                DS + 0x800 + 2 * i,
+                DS + 0xc00 + 2 * i,
                 &((i as u16) << 8).to_le_bytes(),
             );
         }

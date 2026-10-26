@@ -1,7 +1,7 @@
 //! `xeno-tool simulate`: runs a scenario in the sim with no window and prints where
-//! its robots are (`docs/sim.md`, "Movement"). Nothing drives robots until the scripts
-//! (T-053) and cockpit keys (T-105) do, so `--drive` gives one a speed and heading to
-//! watch it go.
+//! its robots are (`docs/sim.md`, "Movement", "Orders"). The robots' scripts drive
+//! them; `--drive` gives one a speed and heading to start with (its script may change
+//! them).
 
 use std::fmt::Write;
 
