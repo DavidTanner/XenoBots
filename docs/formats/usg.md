@@ -39,8 +39,8 @@ The reader (`1000:eefc`) opens the file and requires the first tag to be `SHDR`.
 then looks each tag up in a 9-entry table at `DS:0x7f26` (tag, handler) and calls the
 handler, which reads the data from the open file. It skips the data of an unknown
 tag, and it stops at `TERM`. The ninth entry, `SDEF`, is in no `.usg` file. It calls
-the save-game loader for the `scendef.bin` table (`1000:76ab`, see `scendef.md`), so
-save files use the same chunk format. `xeno_formats::usg` rejects a repeated known
+the save-game loader for the campaign (`1000:76ab`, "Save files" below), so save files
+use the same chunk format. `xeno_formats::usg` rejects a repeated known
 tag, data after `TERM`, and a missing `TERM`. It keeps unknown chunks in
 `Scenario::other_chunks`.
 
@@ -434,25 +434,72 @@ and always all of them:
 7. `TERM`.
 
 The save game (`file_write_save_game`, `1000:f01b`) is the same with `SDEF` after
-`SHDR`. `xeno_formats::usg::write` writes a `Scenario` this way (an `SDEF` among
-`other_chunks` goes after `SHDR`, other unknown chunks are dropped, a missing chunk is
+`SHDR`. `xeno_formats::usg::write` writes a `Scenario` this way (its `save` as `SDEF`
+after `SHDR`, unknown chunks dropped, a missing chunk is
 written as the game's empty state), and **every stock `.usg` comes back byte for
 byte** (`real_assets_usg_round_trip`): stock objects are in slot order, every `MAPP`
 is whole paragraphs and every `ORDR` ends at its NUL.
 
 ## Save files
 
-Found in T-024. Progress is saved to `<NAME>.LOG`, where `NAME` is the login name, up
-to eight characters, space-padded into the template at `DS:0x613b` (`1000:7912`). At
-login `1000:70ec` loads it through the chunk reader, or `scendef.bin` if there is
-none. `1000:f01b` saves the same chunks as the scenario writer (`1000:efde`, above)
-with `SDEF` after `SHDR`. `state.rst` is not a save file (`rst.md`).
+Found in T-024, fields named in T-057. Progress is saved to `<NAME>.LOG`, where `NAME`
+is the login name, up to eight characters, space-padded into the template at
+`DS:0x613b` (`        .LOG`, filled by `1000:7912`). DOS reads the padded 8.3 name with
+its trailing spaces dropped, so the file is `NAME.LOG`. `state.rst` is not a save file
+(`rst.md`).
 
-`SDEF` (written by `1000:7666`, read by `1000:76ab` only while loading a save, a flag
-at `DS:0x7ea1`) holds 30 bytes of state from `DS:0x5f97` (+0x00 the selected
-scenario, +0x04 the player's progress `DS:0x5f9b`, +0x12 the table's size in bytes,
-the rest not traced), then the loaded `scendef.bin` buffer rounded up to whole
-paragraphs, with each scenario's `state` (`scendef.md`).
+**Writing.** The map room's N (log in again) and Q (quit) both run
+`ui_map_room_save_if_loaded` (`1000:7423`): only if a game is loaded (`DS:0x6005`),
+`file_write_save_game` (`1000:f01b`) creates the file and writes the same chunks as the
+scenario writer (`1000:efde`, above) with `SDEF` after `SHDR`. So a save is the
+**whole loaded scenario as it stands in memory** plus the campaign: the clock, terrain,
+objects (a mission left with no result included, so playing it again resumes it),
+paths, briefing and sky of the scenario whose file is loaded (`DS:0x5f99`), which may
+be a training mission or one already won or lost. A game counts as loaded once a save
+has been read at log-in or a scenario has been played from the map room
+(`ui_map_room_play_selected`, `1000:739c`); a new campaign that has not played one
+yet writes no save.
+
+**Reading.** At log-in `ui_login_and_load_save_game` (`1000:70ec`) calls the chunk
+reader (`scen_read_chunks`, `1000:eefc`) on the name with `AL` = 0xff, which it keeps
+at `DS:0x7ea1` (the map room's play and the training menu pass 0). If that fails (no
+file, or no `SHDR` first) a new campaign starts from `scendef.bin`; otherwise the game
+counts as loaded and the campaign check runs (`scen_update_campaign_progress`,
+`docs/screens.md`, "Campaign rules"). With the flag 0 `SDEF`'s handler returns carry and
+the reader skips the chunk, and the reader puts the campaign's calendar day and month
+(`DS:0x7d4a`, `0x7d4b`) back after the file; with 0xff they stay as the save's `SHDR`
+clock left them. **So the campaign's calendar is saved in `SHDR`.**
+
+**`SDEF`** (`scen_write_sdef`, `1000:7666`) is one write of 36 bytes from `DS:0x5f91`
+(the tag, the size word and the 30 bytes of state below) and one of the scenario table
+buffer. The size word is 30 plus the table's size; the reader (`scen_read_sdef`,
+`1000:76ab`) ignores it and reads 30 bytes, then +0x12 bytes of table into a buffer of
+that size, indexes the records and sets the selection's record offset (`DS:0x5ff5`).
+
+| Offset | Size | Field (`SaveState`) | Meaning |
+|---|---|---|---|
+| 0x00 | 2 | `selected` | The map room's selection `DS:0x5f97`: a record id (twice its position) or 0xffff |
+| 0x02 | 2 | `loaded` | The scenario whose file is loaded `DS:0x5f99`, an id or 0xffff (training, a lost mission, a new campaign) |
+| 0x04 | 2 | `progress` | `DS:0x5f9b`, compared with each record's `unlock_level` |
+| 0x06 | 2 | `score` | `DS:0x5f9d` |
+| 0x08 | 2 | `wins` | `DS:0x5f9f` |
+| 0x0a | 2 | `losses` | `DS:0x5fa1` |
+| 0x0c | 2 | `kills` | `DS:0x5fa3`, every mission's kills added up |
+| 0x0e | 2 | `robots_lost` | `DS:0x5fa5`, the player's robots lost |
+| 0x10 | 2 | `unknown_10` | `DS:0x5fa7`: a new campaign clears it; no other instruction names it |
+| 0x12 | 2 | (table size) | `DS:0x5fa9`: the table buffer's size in bytes, its paragraphs times 16 (`mem_get_block_paragraphs`, `1fe6:1c7b`) |
+| 0x14 | 1 | `result` | `DS:0x5fab`: 0xff new campaign, 0 no result, 1 won, 2 lost, 3 training |
+| 0x15 | 1 | `campaign_won` | `DS:0x5fac` |
+| 0x16 | 8 | `unknown_16` | `DS:0x5fad`..`0x5fb4`: no instruction names them (a search of every absolute operand); leftover memory |
+| 0x1e | size | `table` | The scenario table as `scendef.bin` lays it out, each record's `state` as it stands, then the end marker and whatever else the buffer holds to its last paragraph (`scendef.md`) |
+
+The game-loaded flag (`DS:0x6005`), the selection's offset and the open levels
+(`DS:0x5ff5`..`0x5fff`) are not saved; the reader and the campaign check rebuild them.
+
+`xeno_formats::usg` parses `SDEF` into `Scenario::save` (`SaveState`; it rejects a
+chunk whose size is not 30 plus the table's, or whose table does not decode) and
+`write` writes it after `SHDR`; `SaveState::set_scenarios` pads a table with zeros to a
+paragraph as the writer's buffer is. `xeno-tool inspect` prints a save's campaign.
 
 ## Open questions
 

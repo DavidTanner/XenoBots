@@ -2,7 +2,7 @@
 //! map room's world map as a clickable box, says when it becomes available, and names
 //! the place. The training missions are not in it. See `docs/formats/scendef.md`.
 
-use binrw::{BinRead, NullString, binrw};
+use binrw::{BinRead, BinWrite, NullString, binrw};
 
 use crate::FormatError;
 
@@ -81,13 +81,28 @@ impl ScenarioTable {
     pub const MAX_SCENARIOS: usize = 32;
 }
 
-/// Decodes `scendef.bin`: records until the end marker, which must end the file.
-pub fn parse(bytes: &[u8]) -> Result<ScenarioTable, FormatError> {
-    let invalid = |offset: usize, reason: String| FormatError::Invalid {
+fn invalid(offset: usize, reason: String) -> FormatError {
+    FormatError::Invalid {
         offset: offset as u64,
         reason,
-    };
+    }
+}
 
+/// Decodes `scendef.bin`: records until the end marker, which must end the file.
+pub fn parse(bytes: &[u8]) -> Result<ScenarioTable, FormatError> {
+    let (table, end) = parse_records(bytes)?;
+    if end != bytes.len() {
+        return Err(invalid(
+            end,
+            format!("{} bytes after the end marker", bytes.len() - end),
+        ));
+    }
+    Ok(table)
+}
+
+/// Decodes the records up to the end marker, which bytes may follow (a save's copy of
+/// the table fills whole paragraphs), and returns where the marker ends.
+pub fn parse_records(bytes: &[u8]) -> Result<(ScenarioTable, usize), FormatError> {
     let mut cursor = std::io::Cursor::new(bytes);
     let mut scenarios = Vec::new();
     loop {
@@ -107,15 +122,18 @@ pub fn parse(bytes: &[u8]) -> Result<ScenarioTable, FormatError> {
         cursor.set_position(at as u64);
         scenarios.push(Scenario::read(&mut cursor)?);
     }
+    Ok((ScenarioTable { scenarios }, cursor.position() as usize))
+}
 
-    let end = cursor.position() as usize;
-    if end != bytes.len() {
-        return Err(invalid(
-            end,
-            format!("{} bytes after the end marker", bytes.len() - end),
-        ));
+/// Encodes `table` as `scendef.bin` lays it out: the records, then the end marker.
+pub fn write(table: &ScenarioTable) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    for scenario in &table.scenarios {
+        scenario.write(&mut out).expect("writing to memory");
     }
-    Ok(ScenarioTable { scenarios })
+    let mut out = out.into_inner();
+    out.extend(ScenarioTable::END_MARKER.to_le_bytes());
+    out
 }
 
 #[cfg(test)]
@@ -150,6 +168,19 @@ mod tests {
         assert_eq!(second.state, 0);
         assert_eq!(second.name_lines(), ["SECOND", "PLACE"]);
         assert_eq!(table.scenarios[0].name_lines(), ["FIRST PLACE"]);
+    }
+
+    #[test]
+    fn the_writer_gives_the_bytes_back() {
+        let bytes = two_scenarios();
+        let mut table = parse(&bytes).unwrap();
+        assert_eq!(write(&table), bytes);
+        table.scenarios[1].state = 0xc;
+        let back = parse(&write(&table)).unwrap();
+        assert_eq!(back, table);
+        let mut padded = write(&table);
+        padded.extend([7; 5]);
+        assert_eq!(parse_records(&padded).unwrap(), (table, padded.len() - 5));
     }
 
     #[test]
@@ -202,7 +233,9 @@ mod tests {
             .join("../..")
             .join(dir)
             .join("scendef.bin");
-        let table = parse(&std::fs::read(path).unwrap()).unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        let table = parse(&bytes).unwrap();
+        assert_eq!(write(&table), bytes);
         assert_eq!(table.scenarios.len(), 13, "scen00a..scen12a");
         for (i, s) in table.scenarios.iter().enumerate() {
             assert_eq!(s.index(), i, "id of record {i}");

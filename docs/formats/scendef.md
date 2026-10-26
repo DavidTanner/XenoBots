@@ -58,10 +58,12 @@ when `unlock_level` is at most the progress and `state` is not 0xa; while the la
 campaign mission has no result, only the one at 0xc.
 
 The save routine (`xeno.exe` `1000:7666`) writes 36 bytes of game state from
-`DS:0x5f91` and then the whole loaded table, and the load routine (`1000:76ab`) reads
-it back. So a save file carries every scenario's `state`. The save file is the
-player's `<NAME>.LOG`, and this data is its `SDEF` chunk (T-024, `usg.md`, "Save
-files").
+`DS:0x5f91` and then the whole loaded table buffer, in whole paragraphs, and the load
+routine (`1000:76ab`) reads it back. So a save file carries every scenario's `state`.
+The save file is the player's `<NAME>.LOG`, and this data is its `SDEF` chunk (T-024,
+T-057, `usg.md`, "Save files"). `xeno_formats::scendef::write` encodes a table (every
+stock file comes back byte for byte) and `parse_records` reads one with bytes after
+its end marker.
 
 ## How the game uses it
 

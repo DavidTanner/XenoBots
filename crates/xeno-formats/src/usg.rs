@@ -8,6 +8,7 @@ use std::fmt;
 use binrw::{BinRead, BinWrite, binrw};
 
 use crate::FormatError;
+use crate::scendef::{self, ScenarioTable};
 
 /// One chunk as stored: a four-letter tag, a u16 size and that many bytes.
 #[binrw]
@@ -609,9 +610,66 @@ pub struct Scenario {
     pub briefing: Option<Vec<u8>>,
     /// `BGND`: the sky picture's file name, see [`Scenario::background_name`].
     pub background: Option<Vec<u8>>,
-    /// Chunks with other tags, which the game skips (a save file's `SDEF` is read by
-    /// other code), in file order.
+    /// `SDEF`: the campaign, in a save game only.
+    pub save: Option<SaveState>,
+    /// Chunks with other tags, which the game skips, in file order.
     pub other_chunks: Vec<Chunk>,
+}
+
+/// `SDEF`, a save game's campaign (`scen_write_sdef`, `1000:7666`): 30 bytes from
+/// `xeno.exe` `DS:0x5f97`, then the game's copy of `scendef.bin` with each scenario's
+/// `state`, in the whole paragraphs its buffer fills. The game reads it only while
+/// loading a save (`scen_read_sdef`, `1000:76ab`). Scenario references are record ids
+/// (twice the position), 0xffff for none.
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveState {
+    /// The map room's selection (`DS:0x5f97`).
+    pub selected: u16,
+    /// The scenario whose file is loaded (`DS:0x5f99`): this save's other chunks.
+    pub loaded: u16,
+    /// The player's progress (`DS:0x5f9b`), compared with each `unlock_level`.
+    pub progress: u16,
+    pub score: u16,
+    pub wins: u16,
+    pub losses: u16,
+    /// Every mission's kills and own robots lost, added up.
+    pub kills: u16,
+    pub robots_lost: u16,
+    /// `DS:0x5fa7`: a new campaign clears it; nothing else uses it.
+    pub unknown_10: u16,
+    #[bw(try_calc = u16::try_from(table.len()))]
+    table_size: u16,
+    /// The last campaign mission's result (`DS:0x5fab`: 0xff new, 0 none, 1 won, 2
+    /// lost, 3 training).
+    pub result: u8,
+    /// Every scenario is won (`DS:0x5fac`).
+    pub campaign_won: u8,
+    /// `DS:0x5fad`..`0x5fb4`: nothing uses them.
+    pub unknown_16: [u8; 8],
+    /// The table's bytes: see [`SaveState::scenarios`].
+    #[br(count = table_size)]
+    pub table: Vec<u8>,
+}
+
+impl SaveState {
+    /// Bytes before the table.
+    pub const HEADER_SIZE: usize = 30;
+    /// "None" in [`SaveState::selected`] and [`SaveState::loaded`].
+    pub const NONE: u16 = 0xffff;
+
+    /// The scenario table (the bytes after its end marker are the buffer's slack).
+    pub fn scenarios(&self) -> Result<ScenarioTable, FormatError> {
+        scendef::parse_records(&self.table).map(|(table, _)| table)
+    }
+
+    /// Stores `table` as the game does: its bytes, zeros to a whole paragraph.
+    pub fn set_scenarios(&mut self, table: &ScenarioTable) {
+        self.table = scendef::write(table);
+        self.table
+            .resize(self.table.len().next_multiple_of(TERRAIN_PARAGRAPH), 0);
+    }
 }
 
 impl Scenario {
@@ -670,6 +728,7 @@ pub fn parse(bytes: &[u8]) -> Result<Scenario, FormatError> {
     let mut human_paths = None;
     let mut briefing = None;
     let mut background = None;
+    let mut save = None;
     let mut other_chunks = Vec::new();
     loop {
         let at = cursor.position() as usize;
@@ -750,6 +809,10 @@ pub fn parse(bytes: &[u8]) -> Result<Scenario, FormatError> {
                 once(background.is_some())?;
                 background = Some(chunk.data);
             }
+            b"SDEF" => {
+                once(save.is_some())?;
+                save = Some(parse_save(&chunk.data, data_at)?);
+            }
             _ => other_chunks.push(chunk),
         }
     }
@@ -761,8 +824,22 @@ pub fn parse(bytes: &[u8]) -> Result<Scenario, FormatError> {
         human_paths,
         briefing,
         background,
+        save,
         other_chunks,
     })
+}
+
+/// The game reads 30 bytes and then the table's size from them, not the chunk's: the
+/// two must agree, and the table must decode.
+fn parse_save(data: &[u8], data_at: usize) -> Result<SaveState, FormatError> {
+    let save = SaveState::read(&mut std::io::Cursor::new(data))?;
+    let want = SaveState::HEADER_SIZE + save.table.len();
+    if data.len() != want {
+        let reason = format!("\"SDEF\" chunk of {} bytes, not {want}", data.len());
+        return Err(invalid(data_at, reason));
+    }
+    save.scenarios()?;
+    Ok(save)
 }
 
 fn parse_paths(data: &[u8], data_at: usize) -> Result<PathTable, FormatError> {
@@ -853,9 +930,8 @@ fn binary(value: &impl for<'a> BinWrite<Args<'a> = ()>) -> Vec<u8> {
 /// Encodes `scenario` as the game's scenario writer does (`file_write_scenario`,
 /// `1000:efde`, behind the situation room's Ctrl+Alt+P): `SHDR`, `MAPP`, `DCBS`,
 /// `APTH`, `HPTH`, `ORDR`, `BGND`, `TERM`, every one always. A save game
-/// (`file_write_save_game`) writes an `SDEF` chunk after `SHDR`; one in
-/// [`Scenario::other_chunks`] is written there. Other unknown chunks are dropped,
-/// as the game never writes any.
+/// (`file_write_save_game`) writes [`Scenario::save`] as an `SDEF` chunk after
+/// `SHDR`. Unknown chunks are dropped, as the game never writes any.
 ///
 /// - The objects go in slot order, the order the game walks its object table.
 /// - `ORDR` is the briefing up to and including its first NUL (one is added if it
@@ -866,8 +942,8 @@ fn binary(value: &impl for<'a> BinWrite<Args<'a> = ()>) -> Vec<u8> {
 pub fn write(scenario: &Scenario) -> Result<Vec<u8>, FormatError> {
     let mut out = Vec::new();
     chunk(&mut out, b"SHDR", &binary(&scenario.header))?;
-    for sdef in scenario.other_chunks.iter().filter(|c| &c.tag == b"SDEF") {
-        chunk(&mut out, b"SDEF", &sdef.data)?;
+    if let Some(save) = &scenario.save {
+        chunk(&mut out, b"SDEF", &binary(save))?;
     }
     let terrain = scenario.terrain.as_ref().map(terrain_bytes);
     chunk(&mut out, b"MAPP", &terrain.unwrap_or_default())?;
@@ -1015,7 +1091,7 @@ mod tests {
     fn unknown_chunks_are_kept_and_others_are_optional() {
         let mut chunks = synthetic_usg_chunks();
         chunks.retain(|(tag, _)| matches!(tag, b"SHDR" | b"TERM"));
-        chunks.insert(1, (*b"SDEF", vec![1, 2, 3]));
+        chunks.insert(1, (*b"XTRA", vec![1, 2, 3]));
         let s = parse(&synthetic_usg_from(&chunks)).unwrap();
         assert_eq!(s.objects, None);
         assert_eq!(s.background_name(), None);
@@ -1023,10 +1099,82 @@ mod tests {
         assert_eq!(
             s.other_chunks,
             [Chunk {
-                tag: *b"SDEF",
+                tag: *b"XTRA",
                 data: vec![1, 2, 3]
             }]
         );
+    }
+
+    /// A save's campaign: scenario 2 selected and loaded, progress 3, score 1500, 2
+    /// wins, 1 loss, 40 kills, 9 robots lost, 0x5fa7 = 7, no result yet, and the two
+    /// records of `scendef`'s tests (the second won) padded to 48 bytes with 0xaa.
+    fn synthetic_sdef() -> Vec<u8> {
+        use crate::fixtures::synthetic_scendef;
+        let mut table = synthetic_scendef(&[
+            ((10, 20, 19, 29), 1, b"FIRST\x0c"),
+            ((100, 200, 109, 209), 3, b"SECOND\x0c"),
+        ]);
+        table[12] = 2; // the first record's state: open at alert 2
+        table[21 + 12] = 0xa; // the second record (after 14 + 7 bytes): won
+        table.resize(48, 0xaa);
+        let mut sdef: Vec<u8> = [2u16, 2, 3, 1500, 2, 1, 40, 9, 7, 48]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        sdef.extend([0, 0]);
+        sdef.extend([0x55; 8]);
+        sdef.extend(table);
+        sdef
+    }
+
+    #[test]
+    fn a_save_s_campaign_decodes() {
+        let mut chunks = synthetic_usg_chunks();
+        chunks.insert(1, (*b"SDEF", synthetic_sdef()));
+        let s = parse(&synthetic_usg_from(&chunks)).unwrap();
+        assert!(s.other_chunks.is_empty());
+        let save = s.save.unwrap();
+        assert_eq!((save.selected, save.loaded, save.progress), (2, 2, 3));
+        assert_eq!((save.score, save.wins, save.losses), (1500, 2, 1));
+        assert_eq!((save.kills, save.robots_lost, save.unknown_10), (40, 9, 7));
+        assert_eq!((save.result, save.campaign_won), (0, 0));
+        assert_eq!(save.table.len(), 48);
+        let table = save.scenarios().unwrap();
+        let states: Vec<u16> = table.scenarios.iter().map(|r| r.state).collect();
+        assert_eq!(states, [2, 0xa]);
+        insta::assert_debug_snapshot!(save);
+
+        // The game writes the whole table in paragraphs; the writer pads with zeros.
+        let mut again = save.clone();
+        again.set_scenarios(&table);
+        assert_eq!(again.table.len(), 48);
+        assert_eq!(again.scenarios().unwrap(), table);
+    }
+
+    #[test]
+    fn a_save_s_table_must_fill_its_chunk_and_decode() {
+        for (what, sdef) in [
+            ("short", {
+                let mut d = synthetic_sdef();
+                d.pop();
+                d
+            }),
+            ("long", {
+                let mut d = synthetic_sdef();
+                d.push(0);
+                d
+            }),
+            ("no end marker", {
+                let mut d = synthetic_sdef();
+                d.truncate(SaveState::HEADER_SIZE + 4);
+                d[0x12] = 4;
+                d
+            }),
+        ] {
+            let mut chunks = synthetic_usg_chunks();
+            chunks.insert(1, (*b"SDEF", sdef));
+            assert!(parse(&synthetic_usg_from(&chunks)).is_err(), "{what}");
+        }
     }
 
     #[test]
@@ -1133,7 +1281,7 @@ mod tests {
         let mut chunks = synthetic_usg_chunks();
         chunks.retain(|(tag, _)| matches!(tag, b"SHDR" | b"TERM"));
         chunks.insert(1, (*b"XTRA", vec![9]));
-        chunks.insert(1, (*b"SDEF", vec![1, 2, 3]));
+        chunks.insert(1, (*b"SDEF", synthetic_sdef()));
         let s = parse(&synthetic_usg_from(&chunks)).unwrap();
         let bytes = write(&s).unwrap();
         let tags: Vec<&[u8]> = {
@@ -1155,7 +1303,8 @@ mod tests {
         assert_eq!(back.human_paths.unwrap().count, 0);
         assert_eq!(back.briefing.as_deref(), Some(&[0][..]));
         assert_eq!(back.background, Some(vec![0; BACKGROUND_SIZE]));
-        assert_eq!(back.other_chunks.len(), 1, "XTRA is dropped");
+        assert!(back.other_chunks.is_empty(), "XTRA is dropped");
+        assert_eq!(back.save, s.save);
 
         // The briefing ends at its first NUL; the terrain fills a paragraph.
         let mut s = parse(&synthetic_usg()).unwrap();

@@ -79,8 +79,8 @@ rules"); a mission left with no result keeps 0. The cutscenes, their captions an
 "Sequences" (T-045).
 
 **Saving**: `<NAME>.LOG` is written when the player logs in again or quits from the map
-room (`1000:7423`, only if a game is loaded, `DS:0x6005`), and read at log-in
-(`usg.md`, "Save files").
+room (`ui_map_room_save_if_loaded`, `1000:7423`, only if a game is loaded,
+`DS:0x6005`), and read at log-in (`usg.md`, "Save files").
 
 **Widgets.** Every screen is a list of 12-byte widgets (type word, state offset,
 rectangle) opened with `ui_open_widget_set` (`1000:2343`); events go to them with
@@ -1255,4 +1255,9 @@ T-048 named, in `xeno.exe`: `file_write_scenario` (`1000:efde`), `scen_write_shd
 `mem_reset_circle_buffer` (`0x0839`), `file_create_map` (`0x074e`), and created
 `ui_enter_map_editor` (`0x006e`), `ui_exit_map_editor` (`0x011a`),
 `gfx_emit_map_editor_render_nodes` (`0x01c9`) and `ui_map_editor_on_key` (`0x032a`).
+All `confirmed`, all saved.
+
+T-057 named, in `xeno.exe`: `ui_map_room_save_if_loaded` (`1000:7423`),
+`scen_load_scenario_table` (`1000:712e`, the log-in's new campaign: `scendef.bin`
+through slot `0x2b0`, then the index) and `mem_get_block_paragraphs` (`1fe6:1c7b`).
 All `confirmed`, all saved.
