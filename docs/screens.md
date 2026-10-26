@@ -1209,6 +1209,15 @@ Ghidra holds an older instruction inside its first one), `sim_turn_round_on_path
 `order_switch_to_manual` and `order_switch_to_automatic` (above, "Orders"). Details in
 `docs/sim.md`, "Movement". All `confirmed`, all saved.
 
+T-054 named, in `xeno.exe`: `sim_spawn_explosion` (`1000:e67b`),
+`sim_init_explosion_from_template` (`1000:e79a`), `sim_alloc_object_slot`
+(`1000:f4b1`), `sim_free_object_slot` (`1000:f5cd`), `sim_count_kill_and_loss`
+(`1fe6:6af6`), `sim_remove_unit_from_list` (`1fe6:6e71`), and created
+`sim_tick_explosion` (`1000:e7e3`), `sim_damage_shot_target` (`1000:e954`),
+`sim_find_shot_hit` (`1000:e8ac`), `sim_damage_objects_in_radius` (`1000:e8eb`) and
+`sim_step_humanoid_weapons` (`1000:b08a`). Details in `docs/sim.md`, "Damage". All
+`confirmed`, all saved.
+
 T-041 named the name entry's routines (`ui_draw_name_entry`, `ui_name_entry_on_key`,
 `ui_name_entry_type_char`, `ui_name_entry_backspace`, `ui_name_entry_accept`,
 `ui_name_entry_cancel`) and the text services; the list is in

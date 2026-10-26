@@ -1180,6 +1180,7 @@ pub mod tests {
                     xeno_formats::fixtures::synthetic_scripts(&mut image, 0x20000);
                     xeno_formats::script::read_image(&image, 0x20000).unwrap()
                 },
+                damage: xeno_formats::fixtures::synthetic_damage_tables(),
             },
         }
     }

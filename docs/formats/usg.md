@@ -207,7 +207,7 @@ bytes). Unnamed bytes are kept as `unknown_XX` fields.
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play and not traced (shots and explosions, presumably); removing an object can turn it into kind 15 |
+| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play: 6, 7 and 8 are shots (T-054's survey, `docs/sim.md`, "Weapons and shots"), 13 an explosion; the rest are not traced. Removing an object can turn it into kind 15 |
 | 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved. Some stock files repeat a number |
 | 0x04 | 4 | `x` | Position, 16.16 |
 | 0x08 | 4 | `y` | |
@@ -256,10 +256,13 @@ The flags at +0x16 (`usg::flag`):
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
 | 0x51 | 1 | `drive` | 0xff in nearly every stock robot. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed. A guessed name; +0x4f and +0x50 are reset to 0xff with it |
-| 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile) |
+| 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile). A humanoid's bit 7 is a fire request (script opcode 0x7d) and bits 5 and 6 its first and second weapon about to fire (T-054) |
+| 0xdd | 1 | | A humanoid's selected weapon, 0 or 1 (script opcodes 0x7b, 0x7c; T-054) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
 | 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged. Bit 2 is set in stock robots; the other bits are not traced |
 | 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
+| 0xfd | 1 | | Bit 7: a scorpion's relay deployer damaged (a hit can set it; with it the relay count reads 0). Bit 0: firing takes energy from +0x50; bit 5: the no-energy message was shown (T-054) |
+| 0x108, 0x109 | 1, 1 | | A humanoid's first and second weapon's cool-down, counted down every 8 ticks (T-054) |
 | 0x10b, 0x10c | 1, 1 | `stance`, `stance_target` | A scout's stance and the one it is rising or sinking to (0x30 standing; it moves only standing); a humanoid's speed gear (+0x10b, an index into its cockpit's speeds, updated when it hits a hill) |
 | 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
 | 0x118 | 1 | `speed_table` | A scorpion's speed goes through `xeno.exe`'s speed table `speed_table / 2` (0x0c, the last, in stock scorpions; other kinds hold other values and do not use it) |
@@ -271,7 +274,8 @@ picks one of the kind's components by chance from a table (`DS:0x6856` humanoid,
 `0x659a` scorpion, `0x6c06` scout; three-byte entries of a chance out of 256 and a
 routine) and damages it: the helm or the power percentage drops, or a bit above is
 set (a second hit on a damaged weapon destroys it). The message panel reports each.
-Robots have no hit points: a robot hit for 80 or less survives.
+Robots have no hit points: a robot hit for 80 or less survives. T-054 traced the
+details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 
 **Bases** (0x172 bytes, `usg::Base`):
 
