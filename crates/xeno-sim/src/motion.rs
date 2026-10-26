@@ -20,8 +20,11 @@ use crate::world::{Damage, EntityId, Movement, Position, State, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     /// The robot ended its move inside a hill: its speed was negated and it takes a
-    /// 0-point hit (`sim_damage_object`; damage is T-054).
+    /// 0-point hit (`sim_damage_object`).
     HillHit(EntityId),
+    /// The object was destroyed (`docs/sim.md`, "Damage"): a robot or relay is gone
+    /// and an explosion stands where it was; a base stays, destroyed.
+    Destroyed(EntityId),
     /// The alien base gave the robot path `slot` (`sim_assign_random_path`).
     PathTaken { robot: EntityId, slot: u8 },
     /// A path's mission started a program.
@@ -479,12 +482,15 @@ fn alien_path_phase(
 /// count their ticks and the alien base walks its robots along paths.
 pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Event> {
     let mut events = Vec::new();
-    let ids: Vec<EntityId> = world.iter().map(|(id, _)| id).collect();
-    for id in ids {
+    // Slot by slot, as `sim_tick_all_objects` walks the table: an object made in a
+    // higher slot during the pass ticks in it too.
+    let mut next = world.next_from(0);
+    while let Some(id) = next {
+        next = world.next_from(id.0 + 1);
         let Some(e) = world.get_mut(id) else {
             continue;
         };
-        let (mut path_phase, mut is_robot) = (false, false);
+        let (mut path_phase, mut is_robot, mut gone) = (false, false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -494,11 +500,15 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 steer_and_speed(tables, e.kind, helm, &mut e.heading, m);
                 is_robot = true;
             }
-            State::Base { tick } => {
+            State::Base { tick, .. } => {
                 *tick = tick.wrapping_add(1);
                 path_phase = *tick & 0xf == 2 && e.side == Side::Alien;
             }
+            state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
             State::None => {}
+        }
+        if gone {
+            world.remove(id);
         }
         if is_robot {
             crate::script::step(world, id, tables, random, &mut events);
@@ -506,8 +516,8 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 && let State::Robot(m) = &mut e.state
                 && travel(terrain, e.kind, &mut e.position, m)
             {
-                // shortcut: the hit's event 7 is posted with the damage (T-054).
                 events.push(Event::HillHit(id));
+                crate::damage::hit(world, id, 0, tables, random, &mut events);
             }
         }
         if path_phase {
@@ -518,7 +528,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Made-up tables for tests: a true quarter sine (the last entry 0, as the original's),
 /// a turn step of 0x100, a weak drive at 0x28, two speed tables (the speed, and half

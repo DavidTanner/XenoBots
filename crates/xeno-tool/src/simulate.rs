@@ -1,7 +1,7 @@
 //! `xeno-tool simulate`: runs a scenario in the sim with no window and prints where
 //! its robots are (`docs/sim.md`, "Movement", "Orders"). The robots' scripts drive
 //! them; `--drive` gives one a speed and heading to start with (its script may change
-//! them).
+//! them), and `--hit` hits an object (`docs/sim.md`, "Damage").
 
 use std::fmt::Write;
 
@@ -17,8 +17,8 @@ pub struct Drive {
     pub heading: u16,
 }
 
-/// Parses `SLOT:SPEED:HEADING` (numbers in decimal, or hex with `0x`).
-pub fn parse_drive(text: &str) -> Result<Drive, String> {
+/// `N` numbers split by `:` (decimal, or hex with `0x`).
+fn numbers<const N: usize>(text: &str, shape: &str) -> Result<[i64; N], String> {
     let number = |s: &str| -> Result<i64, String> {
         let parsed = match s.strip_prefix("0x") {
             Some(hex) => i64::from_str_radix(hex, 16),
@@ -27,13 +27,41 @@ pub fn parse_drive(text: &str) -> Result<Drive, String> {
         parsed.map_err(|e| format!("{s}: {e}"))
     };
     let parts: Vec<&str> = text.split(':').collect();
-    let [slot, speed, heading] = parts[..] else {
-        return Err("expected SLOT:SPEED:HEADING".into());
-    };
+    let parts: [&str; N] = parts[..]
+        .try_into()
+        .map_err(|_| format!("expected {shape}"))?;
+    let mut out = [0; N];
+    for (n, s) in out.iter_mut().zip(parts) {
+        *n = number(s)?;
+    }
+    Ok(out)
+}
+
+/// Parses `SLOT:SPEED:HEADING` (numbers in decimal, or hex with `0x`).
+pub fn parse_drive(text: &str) -> Result<Drive, String> {
+    let [slot, speed, heading] = numbers(text, "SLOT:SPEED:HEADING")?;
     Ok(Drive {
-        slot: u16::try_from(number(slot)?).map_err(|e| e.to_string())?,
-        speed: i16::try_from(number(speed)?).map_err(|e| e.to_string())?,
-        heading: number(heading)? as u16,
+        slot: u16::try_from(slot).map_err(|e| e.to_string())?,
+        speed: i16::try_from(speed).map_err(|e| e.to_string())?,
+        heading: heading as u16,
+    })
+}
+
+/// A hit to give an object before tick `tick` runs, as a shot's would (T-114).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hit {
+    pub tick: u64,
+    pub slot: u16,
+    pub points: u8,
+}
+
+/// Parses `TICK:SLOT:POINTS`.
+pub fn parse_hit(text: &str) -> Result<Hit, String> {
+    let [tick, slot, points] = numbers(text, "TICK:SLOT:POINTS")?;
+    Ok(Hit {
+        tick: u64::try_from(tick).map_err(|e| e.to_string())?,
+        slot: u16::try_from(slot).map_err(|e| e.to_string())?,
+        points: u8::try_from(points).map_err(|e| e.to_string())?,
     })
 }
 
@@ -75,6 +103,7 @@ pub fn run(
     ticks: u64,
     every: u64,
     drives: &[Drive],
+    hits: &[Hit],
 ) -> anyhow::Result<String> {
     let mut sim = Sim::load(scenario, Random::seeded(seed), tables);
     for d in drives {
@@ -88,7 +117,12 @@ pub fn run(
     }
     let mut out = format!("tick 0\n{}", robots(&sim));
     for _ in 0..ticks {
-        for event in sim.tick(&[]) {
+        let next = sim.retrace() + 1;
+        let due = hits.iter().filter(|h| h.tick == next);
+        let hit: Vec<_> = due
+            .flat_map(|h| sim.hit(EntityId(h.slot), h.points))
+            .collect();
+        for event in hit.into_iter().chain(sim.tick(&[])) {
             let _ = writeln!(out, "tick {}: {}", sim.retrace(), describe(event));
         }
         if every != 0 && sim.retrace().is_multiple_of(every) {
@@ -102,6 +136,7 @@ pub fn run(
 fn describe(event: Event) -> String {
     match event {
         Event::HillHit(id) => format!("{} hit a hill", id.0),
+        Event::Destroyed(id) => format!("{} destroyed", id.0),
         Event::PathTaken { robot, slot } => format!("{} took path {slot}", robot.0),
         Event::Program(c) => format!("{} runs program {}", c.slot, c.after.program),
     }
@@ -131,5 +166,14 @@ mod tests {
         assert_eq!(parse_drive("2:-21:0").unwrap().speed, -21);
         assert!(parse_drive("2:3").is_err());
         assert!(parse_drive("x:3:4").is_err());
+        assert_eq!(
+            parse_hit("70:0x12:81"),
+            Ok(Hit {
+                tick: 70,
+                slot: 18,
+                points: 81
+            })
+        );
+        assert!(parse_hit("1:2:300").is_err());
     }
 }

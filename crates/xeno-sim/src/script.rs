@@ -633,7 +633,7 @@ fn run(
         (0x70, _) => join_nearest_path_point(world, id),
         (0x72, _) => {
             let damaged = matches!(world.get(id).map(|e| e.damage),
-                Some(crate::world::Damage::Robot(c)) if c.targeting);
+                Some(crate::world::Damage::Robot(c)) if c.targeting & 1 != 0);
             if let Some(m) = movement(world, id) {
                 set_flags(m, damaged, u16::from(!damaged).wrapping_neg(), false);
             }
@@ -654,7 +654,7 @@ fn run(
             set_flags(m, false, result, false);
         }
         // shortcut: sensing and object goals (T-112), the gear steps (T-105), weapons
-        // (T-054) and the relay net (T-113) are not ported: the script stays here.
+        // (T-114) and the relay net (T-113) are not ported: the script stays here.
         _ => m.script.pointer = i.at,
     }
 }

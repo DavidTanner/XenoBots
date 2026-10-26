@@ -61,9 +61,21 @@ pub struct Entity {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum State {
     Robot(Movement),
-    /// A base: +0x41, its tick count.
+    /// A base: +0x41, its tick count; +0x2c and +0x2b, the enemy robots it has
+    /// destroyed and its own side's lost; +0x16 bit 0, destroyed.
     Base {
         tick: u8,
+        kills: u8,
+        losses: u8,
+        destroyed: bool,
+    },
+    /// An explosion (`docs/sim.md`, "Damage"): its frame (+0x18) up to the last
+    /// (+0x1a), the ticks a frame (+0x1b) and the ticks left of this one (+0x1c).
+    Explosion {
+        frame: u8,
+        last: u8,
+        ticks: u8,
+        countdown: u8,
     },
     /// Relays, obstacles and objects without a known layout do nothing yet.
     #[default]
@@ -161,7 +173,12 @@ impl State {
     pub fn of(object: &Object) -> State {
         match &object.body {
             Body::Robot(r) => State::Robot(Movement::of(r)),
-            Body::Base(b) => State::Base { tick: b.tick },
+            Body::Base(b) => State::Base {
+                tick: b.tick,
+                kills: b.kills,
+                losses: b.losses,
+                destroyed: object.flags & usg::flag::GONE != 0,
+            },
             _ => State::None,
         }
     }
@@ -189,9 +206,23 @@ impl StateHash for State {
                 h.bytes(&s.stack);
                 h.u16(s.events);
             }
-            State::Base { tick } => {
+            State::Base {
+                tick,
+                kills,
+                losses,
+                destroyed,
+            } => {
                 h.u8(1);
-                h.u8(tick);
+                h.bytes(&[tick, kills, losses, u8::from(destroyed)]);
+            }
+            State::Explosion {
+                frame,
+                last,
+                ticks,
+                countdown,
+            } => {
+                h.u8(3);
+                h.bytes(&[frame, last, ticks, countdown]);
             }
             State::None => h.u8(2),
         }
@@ -218,10 +249,27 @@ pub struct Components {
     pub power: u8,
     /// +0xdc: weapons damaged.
     pub weapons: u8,
-    /// +0xec bit 0: the targeting computer is damaged.
-    pub targeting: bool,
+    /// +0xec: bit 0, the targeting computer is damaged.
+    pub targeting: u8,
     /// +0xf6: cameras, map, radar and sensors damaged, weapons destroyed.
     pub systems: u8,
+    /// +0xfd: bit 7, a scorpion's relay deployer damaged.
+    pub equipment: u8,
+}
+
+impl Components {
+    /// The component byte at `offset` in the object, if the sim keeps it.
+    pub fn byte(&mut self, offset: u16) -> Option<&mut u8> {
+        match offset {
+            0x24 => Some(&mut self.helm),
+            0x4e => Some(&mut self.power),
+            0xdc => Some(&mut self.weapons),
+            0xec => Some(&mut self.targeting),
+            0xf6 => Some(&mut self.systems),
+            0xfd => Some(&mut self.equipment),
+            _ => None,
+        }
+    }
 }
 
 impl Damage {
@@ -232,8 +280,9 @@ impl Damage {
                 helm: r.helm,
                 power: r.power,
                 weapons: r.weapons,
-                targeting: r.targeting & 1 != 0,
+                targeting: r.targeting,
                 systems: r.systems,
+                equipment: r.unknown_f7.0[6],
             }),
             Body::Base(b) => Damage::Taken(b.damage),
             Body::Relay(r) => Damage::Taken(u16::from(r.damage)),
@@ -247,7 +296,8 @@ impl StateHash for Damage {
         match *self {
             Damage::Robot(c) => {
                 h.u8(0);
-                h.bytes(&[c.helm, c.power, c.weapons, u8::from(c.targeting), c.systems]);
+                h.bytes(&[c.helm, c.power, c.weapons, c.targeting, c.systems]);
+                h.u8(c.equipment);
             }
             Damage::Taken(n) => {
                 h.u8(1);
@@ -439,6 +489,14 @@ impl World {
     pub(crate) fn entity_and_terrain(&mut self, id: EntityId) -> Option<(&mut Entity, &Terrain)> {
         let entity = self.entities.get_mut(&id)?;
         Some((entity, &self.terrain))
+    }
+
+    /// The first object in slot `from` or above.
+    pub fn next_from(&self, from: u16) -> Option<EntityId> {
+        self.entities
+            .range(EntityId(from)..)
+            .next()
+            .map(|(&id, _)| id)
     }
 
     /// The objects in slot order.

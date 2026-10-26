@@ -209,7 +209,7 @@ the speeds, the target heading, +0x2c, +0x2d, +0x32, the destination, +0x51, +0x
 holds each side's unit list in file order and `World::bases` each side's command
 object, both filled at load. `motion::tick` runs the objects in slot order: robots
 move (`steer_and_speed`, the script, then `travel`), and the alien base's path phase
-runs at its count's phase 2. Its events are `HillHit` (the 0-point hit, for T-054),
+runs at its count's phase 2. Its events are `HillHit` (the 0-point hit, T-054's `Destroyed`),
 `PathTaken` and `Program` (orders changed: the mission's program given and the
 program bit set, kept as `Orders::manual` until T-111, or a script's state).
 
@@ -404,14 +404,14 @@ hold here, joining the nearest path point, the targeting check and the path comm
 events dispatch to the header's or the tables' handlers.
 
 Shortcuts, each named in the code: an opcode not ported (sensing and object goals,
-T-112; the gear steps 0x51 and 0x52, T-105; weapons, T-054; the relay net, T-113)
+T-112; the gear steps 0x51 and 0x52, T-105; weapons, T-114; the relay net, T-113)
 **halts the script on itself**, so a robot keeps its speed and heading; messages do
-nothing (T-104); the hit's event 7 is not posted (T-054); the 64-tick object-goal
+nothing (T-104); the 64-tick object-goal
 check is skipped (no object goals yet); the gear bytes are not kept; field opcodes
 read 0 at other offsets; return addresses are pushed as offsets from the script
 area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
-paths and the human robots on ENGAGE halt at the weapons check (T-054), and an alien
+paths and the human robots on ENGAGE halt at the weapons check (T-114), and an alien
 scorpion on DENSE NET halts at once (T-113).
 
 ## Damage (T-054)
@@ -525,7 +525,28 @@ have their own routines, not read.
 
 ### The port (T-054)
 
-Not yet: part 2 of T-054 ports the damage, destruction and explosions.
+`xeno_sim::damage` does the above with `Motion::damage`. `damage::hit` is
+`sim_damage_object`: a robot's points pick parts through its chance table (`pick`)
+and wear its `Components` (which keep +0x24, +0x4e, +0xdc, +0xec, +0xf6 and +0xfd, the
+bytes the stock routines touch; a routine on any other byte does nothing), then event
+7 is posted; over the threshold `damage::destroy` counts the loss and the kill in the
+bases' `State::Base` (`kills`, `losses`, and `destroyed` for +0x16 bit 0, loaded from
+the file), makes the explosion, and takes the robot out of its unit list, the
+`OrderBook` and the world. Bases and relays follow their routines. An explosion is an
+`Entity` of kind 13 with `State::Explosion` (frame, last, ticks, countdown), in the
+lowest free slot unless the 240 slots or the small pool of 200 are full;
+`motion::tick` steps it and removes it after its last frame, and walks the slots so
+that an object made during the pass in a higher slot ticks in it. The hill bounce
+calls `hit` with 0 points, so it posts event 7. All of it is in the state hash.
+`motion::Event::Destroyed` reports a robot or relay gone, or a base destroyed.
+`Sim::hit` gives a hit between ticks (the shots are T-114), and `xeno-tool simulate
+--hit TICK:SLOT:POINTS` uses it.
+
+Shortcuts, each named in the code: the screen flash, the sounds and the messages
+(T-104, M5); the call sign's slot, the roster's redraw and selection and the view's
+change (T-103, T-104); a destroyed base's mission end (T-055); a freed slot is reused
+at once (the original waits for the robots targeting the object to let go, T-112);
+the explosion's height and +0x19 are not kept (T-100 draws it).
 
 ## Loading a scenario
 
