@@ -205,6 +205,7 @@ cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries
 cargo run -p xeno-tool -- inspect --all ./gameFiles
 cargo run -p xeno-tool -- simulate ./gameFiles/scen00a.usg --ticks 21000 --every 7000  # robots' positions as their scripts drive them, no window (--drive SLOT:SPEED:HEADING starts one)
+cargo run -p xeno-tool -- simulate ./gameFiles/scen00a.usg --ticks 120 --every 0 --hit 10:3:81  # hit slot 3 for 81 points before tick 10: "tick 10: 3 destroyed"
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check

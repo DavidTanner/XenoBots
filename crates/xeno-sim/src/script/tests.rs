@@ -66,7 +66,8 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
                 helm: 100,
                 power: 100,
                 weapons: 0,
-                targeting: false,
+                targeting: 0,
+                equipment: 0,
                 systems: 0,
             }),
             state: State::Robot(m),
@@ -81,7 +82,12 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
             heading: 0,
             radius: 0x2300,
             damage: Damage::Taken(0),
-            state: State::Base { tick: 0 },
+            state: State::Base {
+                tick: 0,
+                kills: 0,
+                losses: 0,
+                destroyed: false,
+            },
         },
     );
     world.bases[1] = Some(EntityId(0));

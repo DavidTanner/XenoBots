@@ -3,6 +3,7 @@
 //! window, audio or clock: the host passes in the input of each retrace and calls
 //! [`Sim::tick`] once per retrace (`docs/game-loop.md`).
 
+pub mod damage;
 pub mod hash;
 pub mod input;
 pub mod motion;
@@ -128,6 +129,23 @@ impl Sim {
             Some(tables) => motion::tick(&mut self.world, tables, &mut self.random),
             None => Vec::new(),
         }
+    }
+
+    /// Object `id` takes a hit of `points` between ticks (`damage::hit`), as a shot's
+    /// would (T-114). Without tables, nothing.
+    pub fn hit(&mut self, id: EntityId, points: u8) -> Vec<Event> {
+        let mut events = Vec::new();
+        if let Some(tables) = &self.tables {
+            damage::hit(
+                &mut self.world,
+                id,
+                points,
+                tables,
+                &mut self.random,
+                &mut events,
+            );
+        }
+        events
     }
 
     /// Changes a robot's orders as the player does: a new program starts its script

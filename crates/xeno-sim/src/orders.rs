@@ -108,6 +108,11 @@ impl OrderBook {
         self.robots.get(&slot)
     }
 
+    /// The robot in `slot` is gone (destroyed).
+    pub fn remove(&mut self, slot: u16) {
+        self.robots.remove(&slot);
+    }
+
     /// The robots of `side`, by slot.
     pub fn side(&self, side: Side) -> impl Iterator<Item = (u16, &Robot)> {
         self.robots

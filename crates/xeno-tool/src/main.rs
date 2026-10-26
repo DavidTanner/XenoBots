@@ -59,8 +59,8 @@ enum Command {
     },
     /// Run a scenario in the sim with no window and print where its robots are
     /// (`docs/sim.md`, "Movement"). The movement tables come from the `xeno.exe` beside
-    /// the scenario. No script runs yet (T-053), so robots move
-    /// only when `--drive` gives them a speed and heading.
+    /// the scenario. The robots' scripts drive them; `--drive` starts one off and
+    /// `--hit` hits an object.
     Simulate {
         /// The `.usg` scenario.
         scenario: PathBuf,
@@ -77,6 +77,10 @@ enum Command {
         /// 65,536ths of a turn; numbers decimal or `0x` hex). Repeatable.
         #[arg(long, value_parser = simulate::parse_drive)]
         drive: Vec<simulate::Drive>,
+        /// Hit an object before a tick: `TICK:SLOT:POINTS` (over 80 destroys a robot;
+        /// `docs/sim.md`, "Damage"). Repeatable.
+        #[arg(long, value_parser = simulate::parse_hit)]
+        hit: Vec<simulate::Hit>,
     },
     /// Print a file's 256-colour palette, one colour per line. Finds it by extension
     /// (pcx, vcl, m@l), or reads it raw from `--offset`.
@@ -127,6 +131,7 @@ fn main() -> anyhow::Result<ExitCode> {
             every,
             seed,
             drive,
+            hit,
         } => {
             let bytes = std::fs::read(&scenario)
                 .with_context(|| format!("cannot read {}", scenario.display()))?;
@@ -135,7 +140,7 @@ fn main() -> anyhow::Result<ExitCode> {
             let tables = simulate::tables(&scenario.with_file_name("xeno.exe"))?;
             print!(
                 "{}",
-                simulate::run(&parsed, tables, seed, ticks, every, &drive)?
+                simulate::run(&parsed, tables, seed, ticks, every, &drive, &hit)?
             );
         }
         Command::Palette {

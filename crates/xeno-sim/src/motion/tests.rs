@@ -4,7 +4,7 @@ use crate::terrain::{Feature, Path};
 use crate::world::{Components, Entity, Fixed};
 use xeno_formats::usg::TerrainFeature;
 
-fn at(x: i16, y: i16) -> Position {
+pub(crate) fn at(x: i16, y: i16) -> Position {
     Position {
         x: Fixed::from_int(x),
         y: Fixed::from_int(y),
@@ -12,7 +12,7 @@ fn at(x: i16, y: i16) -> Position {
 }
 
 /// A robot standing at `(x, y)`, heading 0, full helm and drive, standing (scouts).
-fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
+pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
     Entity {
         kind,
         side,
@@ -23,7 +23,8 @@ fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
             helm: 100,
             power: 100,
             weapons: 0,
-            targeting: false,
+            targeting: 0,
+            equipment: 0,
             systems: 0,
         }),
         state: State::Robot(Movement {
@@ -36,7 +37,7 @@ fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
     }
 }
 
-fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
+pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
     Entity {
         kind: ObjectKind::Base,
         side,
@@ -44,7 +45,12 @@ fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
         heading: 0,
         radius: 0x2300,
         damage: Damage::Taken(0),
-        state: State::Base { tick },
+        state: State::Base {
+            tick,
+            kills: 0,
+            losses: 0,
+            destroyed: false,
+        },
     }
 }
 
@@ -251,6 +257,12 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
     let before = world.get(EntityId(2)).unwrap().position;
     events.extend(tick(&mut world, &tables, &mut random));
     assert_eq!(events, [Event::HillHit(EntityId(2))]);
+    // The bounce is a 0-point hit: event 7 waits for the script, nothing is worn.
+    assert_eq!(moving(&world, 2).script.events, 1 << 7);
+    assert_eq!(
+        world.get(EntityId(2)).unwrap().damage,
+        robot(ObjectKind::Scorpion, Side::Human, 0, 0).damage
+    );
     assert_ne!(world.get(EntityId(2)).unwrap().position, before);
 }
 
