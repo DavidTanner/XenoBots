@@ -1310,6 +1310,16 @@ pub fn synthetic_damage(image: &mut [u8], ds: usize) {
     put(ROBOT_EXPLOSION_AT, &op(&[0xb8], 0x9b40));
     put(RELAY_EXPLOSION_AT, &op(&[0xb8], 0x9b45));
     put(ds + 0x9b40, &[0, 9, 10, 0x40, 1, 0, 9, 8, 0, 1]);
+    // A base's end: five templates (frames 0 to `i`, `i + 1` ticks), radii 0x2800 and
+    // 0x4000, the end at step 0x24.
+    for (i, at) in END_EXPLOSIONS_AT.into_iter().enumerate() {
+        let t = 0x9b50 + 5 * i as u16;
+        put(at, &op(&[0xb8], t));
+        put(ds + usize::from(t), &[0, i as u8 + 1, i as u8 + 1, 0, 0]);
+    }
+    put(END_RADII_AT[0], &op(&[0xc7, 0x44, 0x14], 0x2800));
+    put(END_RADII_AT[1], &op(&[0xc7, 0x44, 0x14], 0x4000));
+    put(END_STEP_AT.0, &[END_STEP_AT.1, &[0x24]].concat());
 }
 
 /// The tables [`synthetic_damage`] writes, read back.

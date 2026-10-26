@@ -284,7 +284,7 @@ details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 | 0x2b | 1 | `losses` | The side's robots lost this mission (T-045) |
 | 0x2c | 1 | `kills` | Enemy robots destroyed this mission |
 | 0x2e | 2 | `damage` | Damage taken (`sim_damage_base`, `1000:62b7`). At 300 the base is destroyed (`GONE`) and the other side is told; below that its own side is told, at most once every 480 counts of `DS:0x374`. Playing a campaign scenario adds 0, 50, 100 or 150 to the player's base by the record's alert level (`sim_apply_scenario_alert`, table `DS:0x5a3f`) |
-| 0x30 | 2 | `end_step` | Once the base is destroyed, the mission's end steps it; at 0x24 the mission ends, won if the alien base was destroyed (`sim_end_mission_with_result`, T-046) |
+| 0x30 | 2 | `end_step` | Once the base is destroyed, the mission's end steps it every 16 ticks with explosions; at 0x24 the mission ends, won if the alien base was destroyed (`sim_end_mission_with_result`, T-046, T-055: `docs/sim.md`, "The mission's end"). 0 in every stock file |
 | 0x34, 0x37 | 2, 1 | `typed`, `view_mode` | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
 | 0x41 | 1 | `tick` | Steps by one every tick; its low four bits pick the tick's routine (`DS:0x5aea`): at 2 the alien base hands out paths (T-052, `docs/sim.md`, "Movement") |
 | 0x4d | 2 | | The side's unit list, set at load |
@@ -292,9 +292,11 @@ details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 
 **Relays** (0x34 bytes, `usg::Relay`): +0x33 `damage`, at 20 the relay is removed
 (`sim_damage_relay`, `1000:cfba`). +0x1f and +0x20 are its set-up state, and a new
-relay sets the words at +0x25, +0x29, +0x2d and +0x31 to 0xffff; not traced.
-**Obstacles** (0x34 bytes) have no damage routine, so shots do not harm them; nothing
-past +0x18 is known.
+relay sets the words at +0x25, +0x29, +0x2d and +0x31 to 0xffff. Its tick
+(`sim_tick_relay`, T-055) counts +0x1e and every 16 ticks runs a routine by +0x1f
+(set-up stage +0x20, linked from +0x21, its colour +0x1d); not traced further (T-113).
+**Obstacles** (0x34 bytes) have no damage routine and a tick that does nothing, so
+shots do not harm them and they never change; nothing past +0x18 is known.
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
 sit on whole-number positions in chains near their own side's base.
