@@ -339,8 +339,7 @@ pub struct Mission {
     capture: Option<(Target, MouseButton)>,
     dirty: bool,
     /// The scenario as loaded, which the editor's keys change and Ctrl+Alt+P saves
-    /// (the sim does not run yet, so it is the mission's state; T-057 for saving the
-    /// running sim).
+    /// (and a save writes; T-116 for saving the running sim's world).
     scenario: Option<Scenario>,
     editor: Editor,
 }
@@ -424,6 +423,11 @@ impl Mission {
             Run::Parked(parked) => Run::Running(parked.resume(campaign.take_random())),
             running => running,
         };
+    }
+
+    /// The scenario as loaded (and edited), which a save writes.
+    pub fn scenario(&self) -> Option<&Scenario> {
+        self.scenario.as_ref()
     }
 
     #[cfg(test)]

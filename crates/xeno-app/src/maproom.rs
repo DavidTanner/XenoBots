@@ -162,6 +162,9 @@ pub struct Campaign {
     pub loaded: Option<usize>,
     /// The calendar's day (`DS:0x7d4a`), advanced after each result.
     pub day: u8,
+    /// A game is loaded (`DS:0x6005`): a save was read at log-in or a scenario played,
+    /// so N and Q save.
+    pub game_loaded: bool,
     /// What the last check found open.
     pub open: Open,
     /// The run's one random word (`docs/sim.md`, "The run's random word"), from the
@@ -185,6 +188,7 @@ impl Campaign {
             won: false,
             loaded: None,
             day: 0,
+            game_loaded: false,
             open: Open::default(),
             random: Some(random),
         };

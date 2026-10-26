@@ -15,6 +15,7 @@ mod maproom;
 mod mission;
 mod pointer;
 mod review;
+mod save;
 mod screens;
 mod test_pattern;
 mod translate;
@@ -42,9 +43,9 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     game_dir: Option<PathBuf>,
 
-    /// Where the situation room's Ctrl+Alt+P (`EDITED.USG`) and the scenario editor's
-    /// terrain key (`BACKUP.MAP`) save. Defaults to the game directory, as the
-    /// original saves in its own.
+    /// Where the situation room's Ctrl+Alt+P (`EDITED.USG`), the scenario editor's
+    /// terrain key (`BACKUP.MAP`) and the map room's N and Q (`<NAME>.LOG`, read back at
+    /// log-in) save. Defaults to the game directory, as the original saves in its own.
     #[arg(long, value_name = "PATH")]
     save_dir: Option<PathBuf>,
 
@@ -228,13 +229,14 @@ fn main() -> ExitCode {
         // Not shown after --view.
         _ if viewer.is_some() => window::FrontEnd::TestCard(keymap::KeyMap::empty()),
         Some(start) => match screens::load(&files).and_then(|p| {
-            let login = login::load(&files, seed)?;
+            let mut login = login::load(&files, seed)?;
             let mut missions = mission::load(&files, login.campaign.scenarios.len())?;
             let endings = intro::load_endings(&files)?;
             let map = maproom::load(&files)?;
             missions.editor_unlocked = map.editor;
             if let Some(dir) = &cli.save_dir {
                 missions.save_dir = dir.clone();
+                login.save_dir = dir.clone();
             }
             Ok((p, login, map, missions, endings))
         }) {
