@@ -313,17 +313,15 @@ fn write(world: &mut World, id: EntityId, at: u8, value: u16, word: bool) {
     }
 }
 
-/// Opcodes 0x2a to 0x41: add, subtract, compare, test, or and and, on a field or the
-/// top of the stack, a byte or a word.
+/// Opcodes 0x2a to 0x41: add, subtract, compare, test, or and and, four each, on a
+/// field (the operand names one) or the top of the stack, a byte or a word.
 fn arithmetic(world: &mut World, id: EntityId, i: &Instruction) {
-    let n = i.op - 0x2a;
-    let (operation, word) = (n / 4, i.op & 1 == 1);
-    let on_field = matches!(operation, 0 | 3 | 4) == (n % 4 < 2);
-    let (at, value) = match i.operand {
-        Operand::Bytes(f, v) => (f, u16::from(v)),
-        Operand::ByteWord(f, v) => (f, v),
-        Operand::Byte(v) => (0, u16::from(v)),
-        Operand::Word(v) => (0, v),
+    let operation = (i.op - 0x2a) / 4;
+    let (on_field, at, value, word) = match i.operand {
+        Operand::Bytes(f, v) => (true, f, u16::from(v), false),
+        Operand::ByteWord(f, v) => (true, f, v, true),
+        Operand::Byte(v) => (false, 0, u16::from(v), false),
+        Operand::Word(v) => (false, 0, v, true),
         _ => return,
     };
     let Some(m) = movement(world, id) else {

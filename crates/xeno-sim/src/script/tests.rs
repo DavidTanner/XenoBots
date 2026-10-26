@@ -263,3 +263,85 @@ fn real_assets_stock_robots_drive_to_their_points() {
     });
     assert!(heading_out);
 }
+
+#[test]
+fn arithmetic_works_on_a_field_or_the_stack_with_the_flags() {
+    // (opcode and operand, the start value, the result, carry, zero, sign); the byte
+    // field is +0x2c, the word field +0x28.
+    let field_byte = |op: u8, v: u8| vec![op, 0x2c, v];
+    let field_word = |op: u8, v: u16| [&[op, 0x28][..], &v.to_le_bytes()].concat();
+    let cases: [(Vec<u8>, u16, u16, bool, bool, bool); 8] = [
+        (field_byte(0x2a, 0x20), 0xf0, 0x10, true, false, false), // add
+        (field_byte(0x30, 0x20), 0x10, 0xf0, true, false, true),  // sub
+        (field_byte(0x34, 0x20), 0x20, 0x20, false, true, false), // cmp: unchanged
+        (field_byte(0x36, 0xf0), 0x0f, 0x0f, false, true, false), // test: unchanged
+        (field_byte(0x3a, 0xf0), 0x3f, 0xff, false, false, true), // or
+        (field_byte(0x40, 0x0f), 0x3c, 0x0c, false, false, false), // and
+        (field_word(0x2b, 1), 0xffff, 0, true, true, false),      // add a word
+        (field_word(0x41, 0x8000), 0xffff, 0x8000, false, false, true), // and a word
+    ];
+    for (op, start, result, carry, zero, sign) in cases {
+        let word = op[1] == 0x28;
+        let set: Vec<u8> = if word {
+            [&[0x4e, 0x28][..], &start.to_le_bytes()].concat()
+        } else {
+            vec![0x4d, 0x2c, start as u8]
+        };
+        let (mut world, tables) = setup(&[set, op.clone(), vec![0x0a]].concat());
+        steps(&mut world, &tables, 2);
+        let after = m(&world);
+        let value = if word {
+            after.target_speed as u16
+        } else {
+            u16::from(after.path)
+        };
+        let f = after.script.flags;
+        assert_eq!(
+            (value, f & CARRY != 0, f & ZERO != 0, f & SIGN != 0),
+            (result, carry, zero, sign),
+            "{op:02x?}"
+        );
+    }
+    // On the stack: push +0x2c, work on the top, pop it back into +0x2c.
+    for (op, result) in [
+        (vec![0x2c, 3], 8), // add
+        (vec![0x2e, 3], 2), // sub
+        (vec![0x32, 3], 5), // cmp: unchanged
+        (vec![0x38, 2], 5), // test: unchanged
+        (vec![0x3c, 4], 5), // or
+        (vec![0x3e, 6], 4), // and
+    ] {
+        let script = [&[0x4d, 0x2c, 5, 0x24, 0x2c][..], &op, &[0x28, 0x2c, 0x0a]].concat();
+        let (mut world, tables) = setup(&script);
+        steps(&mut world, &tables, 4);
+        assert_eq!(m(&world).path, result, "{op:02x?}");
+        assert_eq!(m(&world).script.sp, EMPTY);
+    }
+    // A word on the stack: push +0x28, add, pop.
+    let script = [
+        0x4e, 0x28, 0xff, 0x00, 0x25, 0x28, 0x2d, 0x01, 0x01, 0x29, 0x28, 0x0a,
+    ];
+    let (mut world, tables) = setup(&script);
+    steps(&mut world, &tables, 4);
+    assert_eq!(m(&world).target_speed, 0x200);
+}
+
+#[test]
+fn the_conditional_jumps_follow_the_flags() {
+    // Compare +0x2c (a) with b, then the jump; taken, it skips setting +0x2c to 0x99.
+    for (a, b, taken) in [
+        (1u8, 2u8, [0x43, 0x45, 0x48, 0x49, 0x4b]), // carry, sign
+        (2, 2, [0x44, 0x45, 0x47, 0x4a, 0x4c]),     // zero
+        (3, 2, [0x44, 0x46, 0x48, 0x4a, 0x4c]),     // none
+    ] {
+        for jump in 0x43..=0x4c {
+            let script = [
+                0x4d, 0x2c, a, 0x34, 0x2c, b, jump, 3, 0x4d, 0x2c, 0x99, 0x0a,
+            ];
+            let (mut world, tables) = setup(&script);
+            steps(&mut world, &tables, 4);
+            let skipped = m(&world).path == a;
+            assert_eq!(skipped, taken.contains(&jump), "{a} vs {b}, {jump:#x}");
+        }
+    }
+}

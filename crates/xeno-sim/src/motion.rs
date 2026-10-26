@@ -135,22 +135,6 @@ fn kind_index(kind: ObjectKind) -> Option<usize> {
     RobotKind::of(kind).map(|k| k.index())
 }
 
-/// One robot's movement for a tick with no script (`sim_move_*`, then the tick
-/// counter's step): [`steer_and_speed`] then [`travel`]. Returns whether it ended
-/// inside a hill.
-pub fn move_robot(
-    tables: &Tables,
-    terrain: &Terrain,
-    kind: ObjectKind,
-    helm: u8,
-    heading: &mut u16,
-    position: &mut Position,
-    m: &mut Movement,
-) -> bool {
-    steer_and_speed(tables, kind, helm, heading, m);
-    travel(terrain, kind, position, m)
-}
-
 /// The turn keys, steering, the speed step and the velocity: `sim_move_*` up to the
 /// script. The recall (+0x23 bit 3) is not run (T-105).
 pub fn steer_and_speed(

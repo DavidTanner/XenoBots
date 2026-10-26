@@ -140,13 +140,15 @@ fn the_drive_and_helm_limit_the_speed() {
     assert_eq!(map_scorpion_speed(&t, 0, 100), 63);
 }
 
+/// One robot's tick with no script: steer and speed, then the move.
 fn step(world: &mut World, id: u16) -> bool {
     let t = synthetic_tables();
     let (e, terrain) = world.entity_and_terrain(EntityId(id)).unwrap();
     let State::Robot(m) = &mut e.state else {
         panic!()
     };
-    move_robot(&t, terrain, e.kind, 100, &mut e.heading, &mut e.position, m)
+    steer_and_speed(&t, e.kind, 100, &mut e.heading, m);
+    travel(terrain, e.kind, &mut e.position, m)
 }
 
 #[test]
