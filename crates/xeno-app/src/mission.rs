@@ -321,6 +321,8 @@ pub struct Mission {
     pub file: String,
     run: Run,
     viewed: Viewed,
+    /// Sound events heard in the view shown since the last [`Mission::take_sounds`].
+    sounds: Vec<u8>,
     /// The situation room's roster: its selection (base +0x3e) and first row (+0x4c).
     selected: Option<u16>,
     roster_top: usize,
@@ -386,6 +388,7 @@ impl Mission {
             file,
             run,
             viewed: Viewed::Base,
+            sounds: Vec::new(),
             selected: None,
             roster_top: 0,
             panel_pressed: false,
@@ -621,8 +624,24 @@ impl Mission {
             if let xeno_sim::motion::Event::MissionOver { won } = event {
                 over = Some(won);
             }
+            Self::hear(self.viewed, &mut self.sounds, event);
         }
         over
+    }
+
+    /// Keeps a sound `event` that is heard everywhere, or only while its object's
+    /// console is open and it is (`DS:0x7e16`; none in the situation room).
+    fn hear(viewed: Viewed, sounds: &mut Vec<u8>, event: xeno_sim::motion::Event) {
+        if let xeno_sim::motion::Event::Sound { event, only_for } = event
+            && only_for.is_none_or(|id| viewed == Viewed::Robot(id.0))
+        {
+            sounds.push(event);
+        }
+    }
+
+    /// The sound events heard since the last call.
+    pub fn take_sounds(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.sounds)
     }
 
     /// The port's stand-in for shots (T-114): `side`'s base takes hits until it is
@@ -1314,6 +1333,28 @@ pub mod tests {
                 "{ended:?}"
             );
         }
+    }
+
+    #[test]
+    fn robot_sounds_are_heard_only_on_their_console() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        let hit = |m: &mut Mission, points| {
+            let Run::Running(sim) = &mut m.run else {
+                unreachable!()
+            };
+            for event in sim.hit(xeno_sim::EntityId(robot), points) {
+                Mission::hear(m.viewed, &mut m.sounds, event);
+            }
+            m.take_sounds()
+        };
+        // The hit sound (event 21) is the robot's console's; destroyed (2), everyone's.
+        assert_eq!(hit(&mut m, 0), []);
+        m.view_robot(robot).unwrap();
+        assert_eq!(hit(&mut m, 0), [21]);
+        m.base();
+        assert_eq!(hit(&mut m, 81), [2]);
     }
 
     #[test]
