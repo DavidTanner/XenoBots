@@ -287,6 +287,15 @@ The routine also keeps a use count for up to 7 blocks on the voices and sets bit
 and 0x40 of the block's host slot entry, clearing 0x40 when its count drops to 0
 (presumably so the host does not free a block that is playing; not traced).
 
+**In the port** (T-061): `xeno_audio::Mixer` does the tick above (advance, then fetch;
+the byte at `end` mixed once, `xeno_audio::block_data` appending it to the samples;
+the averaging with `h`, which starts at 0x80) and outputs the **Sound Blaster** back
+end's DAC byte, the device the port imitates. `Mixer::play` takes the queue flag as
+above, "the same block" being the same shared samples. Not modelled: the volume shift
+(always 0), the use counts, and whether an immediate play clears a queued sound (it
+does not in the port; not traced). The PC speaker, AdLib and Disney back ends are not
+imitated.
+
 ## Open questions
 
 - Bytes 11 to 15 of each patch: never read by this driver; perhaps fields of the

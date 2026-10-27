@@ -202,6 +202,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where C
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README): sprite banks, skies, screens, pictures, models
 cargo run -p xeno-audio --example music -- ./gameFiles mainthem  # one song on the emulated OPL2, then exit
+cargo run -p xeno-audio --example sfx -- ./gameFiles 6  # one dsounds.bin block through the effects mixer, then exit
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries
 cargo run -p xeno-tool -- inspect --all ./gameFiles

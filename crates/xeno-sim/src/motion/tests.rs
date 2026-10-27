@@ -257,7 +257,11 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
     let tables = synthetic_tables();
     let before = world.get(EntityId(2)).unwrap().position;
     events.extend(tick(&mut world, &tables, &mut random));
-    assert_eq!(events, [Event::HillHit(EntityId(2))]);
+    let sound = Event::Sound {
+        event: 21,
+        only_for: Some(EntityId(2)),
+    };
+    assert_eq!(events, [Event::HillHit(EntityId(2)), sound]);
     // The bounce is a 0-point hit: event 7 waits for the script, nothing is worn.
     assert_eq!(moving(&world, 2).script.events, 1 << 7);
     assert_eq!(

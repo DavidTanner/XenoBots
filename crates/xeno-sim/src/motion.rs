@@ -32,6 +32,13 @@ pub enum Event {
     /// A destroyed base's end script reached its last step: the mission is over, won
     /// if the base was the alien one (`sim_end_mission_with_result`).
     MissionOver { won: bool },
+    /// Sound event `event` plays (`docs/formats/dsounds.md`, "Sound events"): for every
+    /// view, or with `only_for` only while that object's console is open
+    /// (`snd_play_sound_effect_if_viewed`).
+    Sound {
+        event: u8,
+        only_for: Option<EntityId>,
+    },
 }
 
 /// The sine of `angle` (65,536 to a turn) as `sim_sine_magnitude` works it out: the

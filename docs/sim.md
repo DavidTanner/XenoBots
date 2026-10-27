@@ -545,8 +545,12 @@ calls `hit` with 0 points, so it posts event 7. All of it is in the state hash.
 `Sim::hit` gives a hit between ticks (the shots are T-114), and `xeno-tool simulate
 --hit TICK:SLOT:POINTS` uses it.
 
-Shortcuts, each named in the code: the screen flash, the sounds and the messages
-(T-104, M5); the call sign's slot, the roster's redraw and selection and the view's
+The sounds (T-061) are `motion::Event::Sound { event, only_for }`: event 21 with the
+robot for a hit (the hill bounce too, not when it is destroyed), event 2 for everyone
+when a robot is destroyed. They are not in the state hash (the original's sound calls
+change nothing the sim reads).
+
+Shortcuts, each named in the code: the screen flash and the messages (T-104); the call sign's slot, the roster's redraw and selection and the view's
 change (T-103, T-104); a freed slot is reused
 at once (the original waits for the robots targeting the object to let go, T-112);
 the explosion's height and +0x19 are not kept (T-100 draws it).
@@ -646,7 +650,10 @@ losses; a training mission goes back to the map room. Ctrl+W and Ctrl+L in a mis
 hit the alien or the player's base until it is destroyed (`Mission::destroy_base`,
 through `Sim::hit`), standing in for the shots (T-114).
 
-Shortcuts, each named in the code: the sounds (M5); the base's damaged look and the
+Each step's sound is a `motion::Event::Sound` for everyone (T-061), the events
+written in `damage::step_base_end` rather than read from `DS:0x7342`.
+
+Shortcuts, each named in the code: the base's damaged look and the
 explosions' height (T-100); with the small objects' pool full the original moves
 whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
 or a resumed ended mission) stay where they are, where the original's table runs into

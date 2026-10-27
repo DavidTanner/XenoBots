@@ -150,6 +150,14 @@ fn describe(event: Event) -> String {
         Event::Program(c) => format!("{} runs program {}", c.slot, c.after.program),
         Event::MissionOver { won: true } => "mission won".into(),
         Event::MissionOver { won: false } => "mission lost".into(),
+        Event::Sound {
+            event,
+            only_for: Some(id),
+        } => format!("sound {event} (heard on {}'s console)", id.0),
+        Event::Sound {
+            event,
+            only_for: None,
+        } => format!("sound {event}"),
     }
 }
 

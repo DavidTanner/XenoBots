@@ -13,6 +13,10 @@ use crate::world::{Components, Damage, Entity, EntityId, Position, State, World}
 
 /// The event a hit posts to the robot's script.
 const EVENT_HIT: u8 = 7;
+/// Sound events (`docs/formats/dsounds.md`, "Sound events"): a robot hit, a robot
+/// destroyed (and a base's big explosion).
+const SOUND_HIT: u8 = 21;
+const SOUND_DESTROYED: u8 = 2;
 /// The object table's slots, and the small objects' pool (everything but robots and
 /// bases).
 const SLOTS: u16 = 240;
@@ -35,8 +39,7 @@ pub fn hit(
     let (d, kind, at) = (&tables.damage, e.kind, e.position);
     match (RobotKind::of(kind), &mut e.damage, &mut e.state) {
         (Some(kind), Damage::Robot(parts), _) => {
-            // shortcut: the screen flash and the hit sound are the console's and
-            // audio's (T-104, M5).
+            // shortcut: the screen flash is the console's (T-104).
             let robot = &d.robots[kind.index()];
             if points > robot.destroy_over {
                 destroy(world, id, tables, events);
@@ -51,6 +54,10 @@ pub fn hit(
             if let Some(m) = movement(world, id) {
                 crate::script::post(m, EVENT_HIT);
             }
+            events.push(Event::Sound {
+                event: SOUND_HIT,
+                only_for: Some(id),
+            });
         }
         (_, Damage::Taken(taken), State::Base { destroyed, .. }) => {
             if !*destroyed {
@@ -138,6 +145,10 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
     world.units[usize::from(crate::world::side_code(side))].retain(|&u| u != id);
     world.orders.remove(id.0);
     world.remove(id);
+    events.push(Event::Sound {
+        event: SOUND_DESTROYED,
+        only_for: None,
+    });
     events.push(Event::Destroyed(id));
 }
 
@@ -180,7 +191,7 @@ fn spawn_explosion(
 /// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run
 /// every 16 ticks): explosions on it, and at the last step the mission is over, won
 /// if the base is the alien one (`docs/sim.md`, "The mission's end").
-// shortcut: the sounds (M5), the base's damaged look at steps 4 and 14 and the
+// shortcut: the base's damaged look at steps 4 and 14 and the
 // explosions' height (T-100) are not kept.
 pub fn step_base_end(
     world: &mut World,
@@ -197,6 +208,23 @@ pub fn step_base_end(
     let State::Base { end_step, .. } = e.state else {
         return;
     };
+    // `snd_play_base_end_step_sound`'s table at `DS:0x7342` (`docs/sim.md`), and the
+    // big explosion's sound at step 20.
+    // shortcut: the table's events are written here, not read from `xeno.exe`; read
+    // them if another build turns up.
+    let sound = match end_step {
+        0 | 5 | 12 | 17 => Some(3),
+        3 | 8 | 15 => Some(4),
+        10 | 16 => Some(5),
+        20 => Some(SOUND_DESTROYED),
+        _ => None,
+    };
+    if let Some(event) = sound {
+        events.push(Event::Sound {
+            event,
+            only_for: None,
+        });
+    }
     // `sim_step_base_end_script`'s jump table by `step / 4`.
     let (template, radius, next) = match end_step >> 2 & 0xf {
         n @ 0..=4 => (Some(n.min(3)), end.radii[0], end_step + 1),

@@ -109,9 +109,15 @@ fn wear_stops_at_0_and_bits_set_the_first_clear_one() {
 fn a_hit_wears_a_robot_point_by_point_and_posts_event_7() {
     let mut world = world();
     let mut random = Random::seeded(7);
-    // 0 points: only the event, and no random word drawn.
+    // 0 points: only the event and the hit sound for its console, and no random word.
     let before = random.clone();
-    assert!(hit_for(&mut world, 9, 0, &mut random).is_empty());
+    assert_eq!(
+        hit_for(&mut world, 9, 0, &mut random),
+        [Event::Sound {
+            event: 21,
+            only_for: Some(EntityId(9))
+        }]
+    );
     assert_eq!(random, before);
     let events = |w: &World| match w.get(EntityId(9)).unwrap().state {
         State::Robot(m) => m.script.events,
@@ -139,7 +145,12 @@ fn a_robot_hit_over_the_threshold_is_destroyed_and_counted() {
     let mut world = world();
     let mut random = Random::seeded(1);
     let events = hit_for(&mut world, 4, 0x51, &mut random);
-    assert_eq!(events, [Event::Destroyed(EntityId(4))]);
+    // Heard in every view, and no hit sound.
+    let sound = Event::Sound {
+        event: 2,
+        only_for: None,
+    };
+    assert_eq!(events, [sound, Event::Destroyed(EntityId(4))]);
     assert!(world.orders.get(4).is_none());
     assert_eq!(world.units(Side::Human), [EntityId(6)]);
     // A loss for its side, a kill for the other.
@@ -270,6 +281,26 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
                 continue;
             }
             runs += 1;
+            // The sound by step (`docs/sim.md`), heard in every view.
+            let sounds: Vec<_> = events
+                .iter()
+                .filter_map(|e| match *e {
+                    Event::Sound { event, only_for } => Some((event, only_for)),
+                    _ => None,
+                })
+                .collect();
+            let sound = match runs - 1 {
+                0 | 5 | 12 | 17 => Some(3),
+                3 | 8 | 15 => Some(4),
+                10 | 16 => Some(5),
+                20 => Some(2),
+                _ => None,
+            };
+            assert_eq!(
+                sounds,
+                Vec::from_iter(sound.map(|e| (e, None))),
+                "run {runs}"
+            );
             // The template by step: synthetic template `i` shows each frame `i + 1`
             // ticks; the new explosion is on its first or (ticking in the same pass,
             // one tick a frame) second frame, older ones further on.
@@ -327,9 +358,13 @@ fn real_assets_a_stock_robot_is_worn_and_destroyed() {
         panic!("scen00a has human units");
     };
     let before = sim.world.get(first).unwrap().damage;
-    assert!(sim.hit(first, 80).is_empty());
+    let sound = |event, only_for| Event::Sound { event, only_for };
+    assert_eq!(sim.hit(first, 80), [sound(21, Some(first))]);
     assert_ne!(sim.world.get(first).unwrap().damage, before);
-    assert_eq!(sim.hit(second, 81), [Event::Destroyed(second)]);
+    assert_eq!(
+        sim.hit(second, 81),
+        [sound(2, None), Event::Destroyed(second)]
+    );
     assert!(!sim.world.units(Side::Human).contains(&second));
     let kills = |side| match sim.world.get(sim.world.base(side).unwrap()).unwrap().state {
         State::Base { kills, losses, .. } => (kills, losses),
