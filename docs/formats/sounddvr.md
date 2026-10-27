@@ -233,6 +233,60 @@ chip. Choices:
   dropped), and the initial contents of per-channel state the driver never set (taken
   as 0).
 
+## The effects mixer (T-065)
+
+Read from the digitised-sound init (`0x01f7`, slot `0x438`), the play routine
+(`0x03b4`, slot `0x44c`), the start and queue routines (`0x1d9c`, `0x1e4d`), the
+device select (`0x1ead`) and all four back ends. Addresses are load-image offsets;
+these tables are in the code segment.
+
+**Devices.** The init needs the CPU byte at least `'2'` (a 286), then maps the
+device letter: `N` none (0; it also clears the load slot `0x444`, so `dsounds.bin`
+is not loaded), `I` PC speaker (1), `A` AdLib (2), `D` Disney Sound Source (3), `C`
+Sound Blaster (4); any other letter gives 3. Four tables of five words (devices 0 to
+4; device 0's entries are a bare `ret`) give each device's detect (`0x12d9`), init
+(`0x12cf`), shutdown (`0x12e5`) and tick (`0x12ef`); the tick is called from the
+7231 Hz timer interrupt (`dsounds.md`).
+
+**Each tick**, for voices 0, 1, 2 in turn: the 16-bit fraction gains the step and
+the position the carry, **then** the byte at the new position is fetched (a sound
+starts at its first sample with fraction 0, so with step 0xffff the first sample is
+fetched on the first tick and the next on the second); it becomes
+`(byte >> shift) + recentre` (two immediates the play routine patches into the
+tick code, see "Volume"); the three are summed in 16 bits. If the position has
+reached `end`, the voice takes its queued sound (or the built-in silent block), but
+the byte just fetched is still in the sum. Then
+`v = (sum + h + 1) >> 2`, where `h` is the previous `v` (a history buffer indexed by
+a counter masked with the word at `0x132d`; the init sets the mask to 0 through
+`0x1d7f`, so `h` is just the last output), and `v` is stored as the new `h`. The
+output is `v` or a 9-bit index `2v + b`, `b` the bit the shift dropped:
+
+| Device | Detect | Output each tick |
+|---|---|---|
+| PC speaker (`0x2083`) | none | Bit 7 of `v` drives the speaker (port 0x61 bit 1); PIT channel 2 held as a gate |
+| AdLib (`0x2508`) | the usual OPL2 timer test | The index through a 512-byte level table (`0x22c5`, 63 = silent down to 0) to OPL2 register 0x40, the first operator of voice 0, which the init sets up as a held tone (the classic "PCM through total level" trick) |
+| Disney Sound Source (`0x279f`) | the first BIOS printer port (`0040:0008`..) whose FIFO fills | The index through the DAC table (`0x1b7c`) to the printer data port, strobed by writing 0x0c then 0x04 to its control port; index 0x100 (silence) is not sent |
+| Sound Blaster (`0x2954`) | DSP reset at the fixed base 0x220 (reads 0xaa) | DSP command 0x10 (direct DAC) and the index through the DAC table; speaker on (0xd1) at init, off (0xd0) at shutdown |
+
+The **DAC table** (512 bytes at `0x1b7c`, right after the volume table) is 1 below
+index 128, then `min(index - 128, 255)`: the DAC byte is about `(s0 + s1 + s2 + h) / 2
+- 128`, clipped. Silence (three 0x80 voices) settles at `v` = 0x80, index 0x100, DAC
+0x80.
+
+**Volume.** `DL` from the caller is the voice's shift, and the **volume table** at
+`0x1b75` its re-centring term: 7 bytes, `0x80 - (0x80 >> n)` for `n` = 0 to 6, so
+`(byte >> n) + table[n]` keeps silence at 0x80. `DL` is not checked (7 and up read the
+DAC table). `xeno.exe` always passes 0, so the stock game plays every effect at full
+volume and the table is never used.
+
+**Play and queue.** `AH` bit 7 clear: the sound starts on the voice now. Set: it is
+stored as the voice's next sound and starts when the current one reaches its end, or
+at once if the voice is silent or already playing that block. `AL = 0xff` plays the
+silent block in the same two ways, so a queued stop lets the current sound finish.
+The routine also keeps a use count for up to 7 blocks on the voices and sets bits 0x20
+and 0x40 of the block's host slot entry, clearing 0x40 when its count drops to 0
+(presumably so the host does not free a block that is playing; not traced).
+
 ## Open questions
 
 - Bytes 11 to 15 of each patch: never read by this driver; perhaps fields of the
