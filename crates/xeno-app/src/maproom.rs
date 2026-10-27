@@ -69,6 +69,8 @@ pub struct Assets {
     /// The review, which the map room opens (T-044), and its panels' font.
     pub review: Review,
     pub review_font: Font,
+    /// The review's pages' models, in page order.
+    pub review_models: Vec<Option<xeno_render::LoadedModel>>,
 }
 
 /// Reads the tables (the map room's and the review's) from the user's `xeno.exe`, the
@@ -112,6 +114,7 @@ pub fn load(files: &GameFiles) -> Result<Assets, String> {
         editor: unlocked(EDITOR_WORD, rules.editor_unlock),
         rules,
         review_font: font(review.font)?,
+        review_models: crate::review::load_models(files, &review),
         review,
         tables,
         sprites,
@@ -667,6 +670,7 @@ pub mod tests {
             editor: false,
             review: crate::review::tests::tables(),
             review_font: fonts[0].clone(),
+            review_models: Vec::new(),
         }
     }
 
