@@ -19,9 +19,13 @@ fn tone(hz: f64, secs: f64) -> Arc<[u8]> {
 
 fn main() -> Result<(), xeno_audio::DeviceSinkError> {
     let output = Output::open()?;
-    output.mixer().play(0, tone(440.0, 2.0), FULL_STEP);
+    output
+        .mixer()
+        .play(0, Some(tone(440.0, 2.0)), FULL_STEP, false);
     sleep(Duration::from_secs(1));
-    output.mixer().play(1, tone(659.25, 1.0), FULL_STEP);
+    output
+        .mixer()
+        .play(1, Some(tone(659.25, 1.0)), FULL_STEP, false);
     while output.mixer().is_playing(0) || output.mixer().is_playing(1) {
         sleep(Duration::from_millis(50));
     }

@@ -14,6 +14,15 @@ pub use mixer::{FULL_STEP, MIX_RATE, Mixer, VOICES};
 pub use music::{Driver, Music, OPL_RATE, Opl};
 pub use rodio::DeviceSinkError;
 
+/// A `dsounds.bin` block as [`Mixer::play`] takes it: its samples, then the byte at its
+/// `end`, which the driver mixes once.
+// shortcut: a block with no tail ends on silence, where the driver reads whatever
+// follows the block in memory; nothing to upgrade unless a stock block lacks a tail.
+pub fn block_data(sound: &xeno_formats::dsounds::Sound) -> Arc<[u8]> {
+    let end = sound.unknown_tail.first().copied().unwrap_or(0x80);
+    sound.samples.iter().copied().chain([end]).collect()
+}
+
 /// The default audio device, fed by a [`Mixer`] at [`MIX_RATE`] and, once given a bank,
 /// [`Music`] at [`OPL_RATE`]: two sources that rodio resamples and sums, so the
 /// effects and the music keep their own rates as on the original's two devices.
