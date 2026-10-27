@@ -12,8 +12,9 @@
 //! first rows overwritten) show as in the original.
 //!
 //! The credits are drawn in the game's fonts, read from the user's `mgavideo.dvr`
-//! (T-041), into the credits area, where the colour record fades them. Not yet: the
-//! music, whose clock the drop's waits and its end count.
+//! (T-041), into the credits area, where the colour record fades them. Its waits and
+//! its end count the retrace counter it carries on from the intro, which is the main
+//! theme's clock: the song and the intro start on the same retrace (T-062).
 
 use std::collections::VecDeque;
 

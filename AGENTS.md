@@ -19,7 +19,7 @@ in priority order:
 
 The project is at the **scaffold stage**: the Cargo workspace exists and `xeno-app`
 checks the game files, then opens a window that plays the start-up cutscene from the
-user's `xeno.exe` and `.vcl` pictures and the intro drop, then steps through
+user's `xeno.exe` and `.vcl` pictures and the intro drop, with the game's music (`xeno-audio`), then steps through
 placeholder screens in the original's order (`docs/screens.md`), run by a
 fixed-timestep loop at the original's retrace rate (`docs/game-loop.md`). `xeno-sim`
 holds the start of the deterministic simulation (`docs/sim.md`). Read `NEXT_STEPS.md` for the task backlog and pick
@@ -201,6 +201,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word'
 cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where Ctrl+Alt+P (EDITED.USG), the editor's Ctrl+M (BACKUP.MAP) and the map room's N and Q (<NAME>.LOG, loaded at log-in) save; the game dir otherwise
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
 cargo run -p xeno-app -- --game-dir ./gameFiles --view msprite1.b@n  # asset viewer (README): sprite banks, skies, screens, pictures, models
+cargo run -p xeno-audio --example music -- ./gameFiles mainthem  # one song on the emulated OPL2, then exit
 cargo run -p xeno-tool -- inspect ./gameFiles/scen00a.usg
 cargo run -p xeno-tool -- inspect ./gameFiles/xeno.exe     # unpacks it; lists the intro entries
 cargo run -p xeno-tool -- inspect --all ./gameFiles

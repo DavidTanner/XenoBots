@@ -2873,6 +2873,7 @@ dependencies = [
  "log",
  "softbuffer",
  "winit",
+ "xeno-audio",
  "xeno-formats",
  "xeno-render",
  "xeno-sim",
