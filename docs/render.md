@@ -27,7 +27,8 @@ pointer probe (below) and moves on to the list for the **view mode**, the byte a
 | 0xa | `DS:0x3948` | as 6, plus `4164` and slot `0x5f0` | The second display, mode 1 |
 | 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps | The second display, mode 2; the situation room's map (T-103) |
 | 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room and the editors (T-103, T-109) |
-| 0x18, 0x1a | `DS:0x3988`, `0x398c` | other | Not the 3D view |
+| 0x18 | `DS:0x3988` | other | Not the 3D view |
+| 0x1a | `DS:0x398c` | camera, clear, one node at a time, end | The review (below, "The review's view") |
 
 The steps of the 3D lists:
 
@@ -299,6 +300,27 @@ So, in real numbers, with `d` the node's approximate distance:
 is drawn 1:1 about 0.24 units away. Perspective divides by the approximate distance,
 not by the depth `Z`, which only decides what is behind.
 
+## The review's view (T-047)
+
+View mode 0x1a's list is camera, `1000:374e` (fills the buffer with colour
+`DS:0x1457`, 0 for the review, and empties the list `DS:0x39e2`), `1000:2ea4` and end.
+`1000:2ea4` draws without a list: it sets the target, then asks the producers for one
+node at a time into a single node at `DS:0x4cd0` and draws each at once through the
+table `DS:0x39c8` by type (2 and 6: `gfx_draw_model_on_screen`, `1000:3424`; the
+others nothing), until they have no more. In the review the producers are the terrain
+(`MAPP` records, if any are loaded; type 8 draws nothing here) and the review's hook.
+
+`gfx_draw_model_on_screen` has no camera, culling or perspective: the scale is the
+node's +0x12 word (slot `0x584`), the anchor (`W / 2 + [node + 0x0b]`, `H / 2 -
+[node + 0x0f]`), the words in the middle of x and y (slot `0x578`), the facing from
+the node's heading alone (`docs/screens.md`, "The review (T-044)"), then the frames as
+`gfx_draw_model`. Its table entries are the maps' types 0x1c and 0x20 (`DS:0x39ae`),
+so `mxx.md`'s note on those holds too.
+
+`xeno_render::LoadedModel` (a model's facings as `gfx_load_model` fills them),
+`model_facing` and `Framebuffer::draw_model` (a model at a facing with its frame bytes)
+are shared with the mission's 3D view (T-101), which still needs the projection above.
+
 ## Not traced here
 
 - The terrain nodes' drawing (type 8, `1000:3595`), the sky and the ground's
@@ -315,7 +337,8 @@ instructions that use them: the kinds' models (`DS:0xe70c`) and frame offsets
 (`DS:0xe71d`), each kind's 3D node type (following the routines of `DS:0xe7d8` to the
 header writer), the focal factors (`DS:0x4d2a`, `0x4d2e`, `0x4d32`), the models' size
 factors (the `mov` instructions at `1000:7b61`) and the stand-in size at `DS:0x4d52`,
-and the distance limit (`1000:301e`). Drawing the view is T-101.
+and the distance limit (`1000:301e`). Drawing the view is T-101; the model drawing it
+needs is in `xeno_render` (above, "The review's view").
 
 `xeno_sim::motion::walk` runs each robot's walking animation after its move with the
 leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,

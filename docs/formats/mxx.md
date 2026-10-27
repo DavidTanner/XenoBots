@@ -259,7 +259,9 @@ routine by the node's type byte (table at `DS:0x3994`):
 Nothing in `xeno.exe` makes a type 4 node. `gfx_draw_model_on_screen` (`1000:3424`,
 a model at a fixed point, its facing the node's heading itself) is not in this table:
 T-029 read it at types 0x22 and 0x26, but those run past the 3D table into the maps'
-(`DS:0x39ae`), where it is types 0x1c and 0x20 (T-103).
+(`DS:0x39ae`), where it is types 0x1c and 0x20 (T-103), and it draws the review's
+robot (types 2 and 6 of the review's table `DS:0x39c8`; `docs/render.md`, "The
+review's view").
 
 Who makes the render nodes, in what order, which type and frame numbers each object
 kind gets, and the projection behind the anchor and scale are in `docs/render.md`
@@ -401,4 +403,6 @@ separately; combining them by `depth` is for the renderer.
 `xeno_render::ModelScale` is the repeat table and `Framebuffer::blit_model_image` the
 image blit of slot `0x58c`, with a `ModelTarget` holding the clip rectangle, the
 anchor and the scale. `Framebuffer::draw_model_frames` composes one frame of each
-animation by `depth`, as above (T-056).
+animation by `depth`, as above (T-056). `xeno_render::LoadedModel` keeps a directional
+model's facings as `gfx_load_model` fills them, `model_facing` picks the facing, and
+`Framebuffer::draw_model` draws a facing with a node's frame bytes (T-047).

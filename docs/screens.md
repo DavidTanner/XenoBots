@@ -676,20 +676,64 @@ transparent from the string segment (`1fe6:4a47`, as the map room's alert word).
 texts carry their own layout: 0x0c starts a new line, 0x0e moves one pixel right, and
 code 0x7f is a glyph. There is no wrapping, scrolling or paging inside a panel.
 
-**The robot.** `ui_review_tick` (`1000:7aa2`) runs once per change of the host's tick
-counter `DS:0x374`: it counts down the current script step and, at 0, runs the next one
-(`ui_review_step_script`, `1fe6:7927`), then calls the step's per-tick routine and the
-page's parts routine. A script is a list of words: an opcode (0 to 16, handlers by
-opcode at `1fe6:7948`, per-tick routines at `1fe6:795c`) and its operands: 0 moves
-(for `n` ticks, adding a step to the position `DS:0x61ac` each tick), 2 waits `n`
-ticks, 4 jumps to an offset in the script (the loop), 6 and 8 turn one way or the
-other (adding or subtracting a step to the facing `DS:0x61b6`), 10 and 12 switch the
-parts routine between two per page (tables at `1fe6:79d8` and `1fe6:7a04`: presumably
-walking and standing), 14 and 16 do nothing. The render hook (`1000:7a5f`) then adds one
-render node with that type, model, position, facing and part bytes, and the 3D
-renderer draws it as it draws a mission's units (`mxx.md`, "Drawing"). Drawing it
-needs the renderer's projection and scaled model blit (T-056), so the port leaves it
-to T-047.
+**The robot** (T-047). `ui_review_tick` (`1000:7aa2`) runs once per change of the
+host's game clock `DS:0x374` (the 60 Hz chain), when the loop finds the 3D view due
+(`1fe6:39c3`: whenever no input event is waiting): it counts the review's ticks
+(`DS:0x61d2`, never reset), counts down the current script step (`DS:0x61d8`) and at 0
+runs the next ones (`ui_review_step_script`, `1fe6:7927`), then applies the step's
+per-tick change (`DS:0x61da`) and calls the page's parts routine (far, `DS:0x61dc`).
+
+A page's set-up (`ui_review_set_up_page`) zeroes the heading `DS:0x61ac`, the walking
+counter `DS:0x61e4` and the sixteen frame bytes from `DS:0x61bc`, and stores: the model
+(`DS:0x61b9`), how many frame bytes the node carries (`DS:0x61ba`: 5, 12, 7), the middle
+word of the model's y (`DS:0x61b3`: 0, -3, 16, the **height** in pixels above the
+view's centre), the **scale** `DS:0x61b6` = 0, the three texts, the standing parts
+routine and the script (`DS:0x6254`, `0x627c`, `0x629e`: the next step its first, due
+at the next tick).
+
+**Scripts** are words: an opcode (handlers `1fe6:7948`, per-tick changes `1fe6:795c`,
+both by opcode) and its operands.
+
+| Opcode | Operands | Effect |
+|---|---|---|
+| 0 | ticks, step | For that many ticks, add the step to the heading (65,536 to a turn) |
+| 2 | ticks | Wait |
+| 4 | byte offset | Go on at that step at once |
+| 6, 8 | ticks, step | For that many ticks, add the step to the scale, or subtract it |
+| 10, 12 | none | Switch to the page's walking (table `1fe6:79d8`) or standing (`1fe6:7a04`) parts routine and go on at once |
+| 14, 16 | none | Nothing; the count is left at 0, so the next step comes 65,536 ticks later (no script uses them) |
+
+A step with ticks has its change applied on each of them, the first on the tick it
+starts. The three stock scripts are the same: grow from 0 to 1:1 in 32 ticks; then,
+looping, a quarter turn in 16 ticks standing, walk, wait 128 ticks walking, a whole
+turn in 128 ticks walking, stand, wait 64 ticks. After the loop's jump an unreachable
+shrink follows.
+
+**Parts routines** (segment `1fe6`), one standing and one walking per page:
+
+- **Walking** (`7568`, `762a`, `7763`): the counter `DS:0x61e4` goes up by 6 every tick
+  and bits 4 to 7 of its low byte pick an entry of 16-byte tables written into the
+  frame bytes: the humanoid's legs (frames 3, 4) and arms (1, 2) from four tables, the
+  scorpion's six legs from six, the scout's two leg pairs (1 and 5, 2 and 6) from two.
+- **Standing** (`75dd`, `76cf`, `77ae`): on ticks whose count is a multiple of 4, each
+  part not at frame 0 settles: the humanoid's legs step up to 5 and wrap to 0, its arms
+  step down to 0; the scorpion's legs step up to 6 and wrap; the scout's pairs step
+  together to 6 and wrap.
+
+**Drawing.** The view's widget (`1fe6:78df`) asks for view mode 0x1a with background
+colour `DS:0x1457` = 0, zoom 1, and the region of the picture's colour-255 pixels
+(`DS:0x6238`) as the target. That mode's steps (`docs/render.md`, "The review's view")
+clear the buffer and draw the one node the render hook (`1000:7a5f`) makes: no camera,
+no perspective. The model's anchor is the buffer's centre (`W / 2`, `H / 2`, halves
+rounded down) plus the middle word of the node's x (0) across and less that of its y
+(the height) down; the scale is the node's z low word (`DS:0x61b6`, 256 = 1:1); the
+facing comes from the heading alone, `((((h + 0x8000) >> 8) >> 2) + 1) & 0x3e` (as
+`mxx.md`'s rule with a bearing of 0, so heading 0 shows facing 32); the frames are the
+node's, one per animation of the model, drawn as `mxx.md`, "Drawing". The frame is
+copied through the region when ready. The region's rectangle (slot `0x59c`) is the
+bounding box of the colour-255 pixels, its left edge moved down to an even column and
+its right edge up when its width is odd; in `REVIEW` that is 148 by 97 pixels from
+(163, 16), inside the widget's (14, 161, 115, 313).
 
 ### The briefing (T-044)
 
@@ -1090,8 +1134,8 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 - What slot `0x5b4` does exactly (the orders view's clear, presumably filling the
   view's region with one colour), and how often the mission loop passes, which sets
   the orders' typing speed (T-044; check in DOSBox).
-- The review's 3D view: the render hook's node layout, the due check `1fe6:39c3`, the
-  parts routines and the scripts' steps in ticks (T-047, with T-056).
+- The review's robot against DOSBox: its speed (one step a 60 Hz tick, when the loop
+  has no input waiting) and its place in the view (T-047).
 - What runs the step list at `DS:0x38ea` whose last routine sets the quit flag at
   `1000:424b` (T-055 found it touches no object; `docs/sim.md`, "The mission's end").
 - The situation room's panels, spinners and remaining keys, the consoles'

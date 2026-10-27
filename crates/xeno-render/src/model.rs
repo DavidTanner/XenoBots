@@ -2,7 +2,7 @@
 //! clip rectangle from slot `0x574`, the anchor from `0x578` and the scale from
 //! `0x584`; see `docs/formats/mxx.md`, "Drawing").
 
-use xeno_formats::mxx::{Frame, Image, Part};
+use xeno_formats::mxx::{Animation, Frame, Image, Model, Part, View};
 
 use crate::{Framebuffer, Rect};
 
@@ -154,6 +154,116 @@ impl Framebuffer {
                 self.blit_model_image(found, x, y, part.is_flipped(), target);
             }
         }
+    }
+
+    /// Draws `model` at `facing` (an even 64th of a turn, [`model_facing`]) with frame
+    /// `frames[k]` of each animation `k` (0 when `frames` is short), as the 3D view's
+    /// model routines do. Frame numbers past an animation's end draw nothing of it
+    /// (the original does not check them).
+    pub fn draw_model(
+        &mut self,
+        model: &LoadedModel,
+        facing: u8,
+        frames: &[u8],
+        target: &ModelTarget,
+    ) {
+        let Some((view, animations)) = model.facing(facing) else {
+            return;
+        };
+        let frames: Vec<&Frame> = animations
+            .iter()
+            .enumerate()
+            .filter_map(|(k, a)| a.get(usize::from(frames.get(k).copied().unwrap_or(0))))
+            .collect();
+        let image = |part: &Part| {
+            let from = if part.is_direction_free() {
+                &model.direction_free
+            } else {
+                &view.images
+            };
+            from.get(part.image_index())
+        };
+        self.draw_model_frames(&frames, image, target);
+    }
+}
+
+/// The facing a model is drawn at when its heading less the bearing to it from the
+/// camera is `relative` (65,536 to a turn): rounded to the nearest even 64th (a tie
+/// rounds up) and turned half way round, so facing 0 looks at the viewer
+/// (`docs/formats/mxx.md`, "Choosing the facing").
+pub fn model_facing(relative: u16) -> u8 {
+    ((((relative >> 10) + 1) & 0x3e) ^ 0x20) as u8
+}
+
+/// A directional model as `gfx_load_model` keeps it (`docs/formats/mxx.md`,
+/// "Loading"): its views, the `.m00`'s images, and for each even facing the view
+/// drawn and whether it is that view's mirror facing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedModel {
+    views: Vec<View>,
+    direction_free: Vec<Image>,
+    facings: [Option<(usize, bool)>; 32],
+}
+
+impl LoadedModel {
+    /// From the `.m00` and the directional files read in order (`.m08`, then `.m16`,
+    /// then `.m32`). Facings with no view of their own show another's, as after the
+    /// last pass: after `.m08` facings `8j + 2` and `8j + 4` show `8j` and `8j + 6`
+    /// shows `8j + 8`; after `.m16` facings `4j + 2` show `4j`.
+    pub fn new(m00: &Model, passes: &[Model]) -> LoadedModel {
+        let direction_free = m00
+            .views
+            .iter()
+            .find(|v| !v.header.has_facing())
+            .map(|v| v.images.clone())
+            .unwrap_or_default();
+        let views: Vec<View> = passes.iter().flat_map(|m| m.views.clone()).collect();
+        let mut facings = [None; 32];
+        let mut set = |facing: i16, entry| {
+            if let Some(slot) = usize::try_from(facing / 2)
+                .ok()
+                .and_then(|f| facings.get_mut(f))
+            {
+                *slot = Some(entry);
+            }
+        };
+        for (v, view) in views.iter().enumerate() {
+            let h = &view.header;
+            if h.has_facing() {
+                set(h.mirror_facing, (v, true));
+                set(h.facing, (v, false));
+            }
+        }
+        // In units of 2: facing `2f` shows facing `2 * shown(f)`.
+        let shown = |f: usize| match (passes.len(), f % 4) {
+            (1, 1) => f - 1,
+            (1, 2) => f - 2,
+            (1, 3) => (f + 1) % 32,
+            (2, _) => f & !1,
+            _ => f,
+        };
+        let own = facings;
+        for (f, entry) in facings.iter_mut().enumerate() {
+            if entry.is_none() {
+                *entry = own[shown(f)];
+            }
+        }
+        LoadedModel {
+            views,
+            direction_free,
+            facings,
+        }
+    }
+
+    /// The view drawn at `facing` (an even 64th of a turn) and its animations there.
+    pub fn facing(&self, facing: u8) -> Option<(&View, &[Animation])> {
+        let (v, mirror) = (*self.facings.get(usize::from(facing / 2) % 32)?)?;
+        let view = &self.views[v];
+        let animations = match (&view.mirror_animations, mirror) {
+            (Some(mirrored), true) => mirrored,
+            _ => &view.animations,
+        };
+        Some((view, animations))
     }
 }
 
@@ -341,6 +451,81 @@ mod tests {
         );
         let t = target(256, (0, 0), Rect::new(0, 0, 0, 5));
         assert_eq!(drawn(&sample(), 0, 0, false, &t), "eeeeeeee\n".repeat(5));
+    }
+
+    #[test]
+    fn facings_round_to_the_nearest_even_64th_turned_half_round() {
+        assert_eq!(model_facing(0), 32);
+        assert_eq!(model_facing(0x8000), 0);
+        // 1/64 of a turn is 0x400: just under a 64th rounds down, a 64th up.
+        assert_eq!(model_facing(0x3ff), 32);
+        assert_eq!(model_facing(0x400), 34);
+        assert_eq!(model_facing(0x4000), 48);
+        assert_eq!(model_facing(0xfc00), 32);
+        assert_eq!(model_facing(0xf800), 30);
+    }
+
+    /// A view at `facing` and its mirror, whose one animation's one frame draws image 0
+    /// at x 0 (the mirror's at x 1), and whose image is one pixel of colour `facing + 1`.
+    fn view(facing: i16) -> View {
+        let mirror = (64 - facing) % 64;
+        let frame = |x| {
+            vec![vec![Frame {
+                depth: 0,
+                parts: vec![Part { image: 0, x, y: 0 }],
+            }]]
+        };
+        View {
+            header: xeno_formats::mxx::ViewHeader {
+                size: 0,
+                facing,
+                mirror_facing: mirror,
+                index_offset: 0,
+                mirror_index_offset: 0,
+                lists_offset: 0,
+                mirror_lists_offset: 0,
+                data_offset: 0,
+            },
+            animations: frame(0),
+            mirror_animations: (mirror != facing).then(|| frame(1)),
+            images: vec![image(1, &[(0, &[facing as u8 + 1])])],
+        }
+    }
+
+    fn model(facings: &[i16]) -> Model {
+        Model {
+            views: facings.iter().map(|&f| view(f)).collect(),
+        }
+    }
+
+    /// The facing whose view `facing` draws, and the column (1 for a mirror facing).
+    fn shown(loaded: &LoadedModel, facing: u8) -> (u8, usize) {
+        let mut fb = Framebuffer::new(Size::new(2, 1));
+        let t = target(256, (0, 0), Rect::new(0, 0, 2, 1));
+        fb.draw_model(loaded, facing, &[], &t);
+        let column = fb.pixels().iter().position(|&p| p != 0).unwrap();
+        (fb.pixels()[column] - 1, column)
+    }
+
+    #[test]
+    fn facings_without_a_view_show_another_as_after_the_last_pass() {
+        let m00 = Model { views: Vec::new() };
+        let m08 = model(&[0, 8, 16, 24, 32]);
+        let one = LoadedModel::new(&m00, std::slice::from_ref(&m08));
+        // 8j + 2 and 8j + 4 show 8j, 8j + 6 shows 8j + 8; mirrors draw at column 1.
+        assert_eq!(shown(&one, 2), (0, 0));
+        assert_eq!(shown(&one, 4), (0, 0));
+        assert_eq!(shown(&one, 6), (8, 0));
+        assert_eq!(shown(&one, 14), (16, 0));
+        assert_eq!(shown(&one, 32), (32, 0));
+        assert_eq!(shown(&one, 40), (24, 1));
+        assert_eq!(shown(&one, 62), (0, 0));
+        // After `.m16`, 4j + 2 shows 4j.
+        let two = LoadedModel::new(&m00, &[m08, model(&[4, 12, 20, 28])]);
+        assert_eq!(shown(&two, 6), (4, 0));
+        assert_eq!(shown(&two, 10), (8, 0));
+        assert_eq!(shown(&two, 62), (4, 1));
+        assert_eq!(shown(&two, 58), (8, 1));
     }
 
     #[test]

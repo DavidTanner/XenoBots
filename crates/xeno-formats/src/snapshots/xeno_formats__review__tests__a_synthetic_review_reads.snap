@@ -71,6 +71,74 @@ Review {
                     67,
                 ],
             ],
+            height: 5,
+            script: [
+                Grow {
+                    ticks: 2,
+                    by: 128,
+                },
+                Walk,
+                Turn {
+                    ticks: 3,
+                    by: 1024,
+                },
+                Wait {
+                    ticks: 2,
+                },
+                Stand,
+                Jump {
+                    to: 1,
+                },
+            ],
+            standing: Standing {
+                every: 3,
+                rules: [
+                    Settle {
+                        frames: [
+                            1,
+                            2,
+                        ],
+                        wrap: Some(
+                            3,
+                        ),
+                    },
+                    Settle {
+                        frames: [
+                            3,
+                        ],
+                        wrap: None,
+                    },
+                ],
+            },
+            walking: Walking {
+                speed: 16,
+                tables: [
+                    (
+                        [
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                        ],
+                        [
+                            1,
+                            4,
+                        ],
+                    ),
+                ],
+            },
         },
         Page {
             model: 2,
@@ -87,6 +155,74 @@ Review {
                     71,
                 ],
             ],
+            height: -3,
+            script: [
+                Grow {
+                    ticks: 2,
+                    by: 128,
+                },
+                Walk,
+                Turn {
+                    ticks: 3,
+                    by: 1024,
+                },
+                Wait {
+                    ticks: 2,
+                },
+                Stand,
+                Jump {
+                    to: 1,
+                },
+            ],
+            standing: Standing {
+                every: 3,
+                rules: [
+                    Settle {
+                        frames: [
+                            1,
+                            2,
+                        ],
+                        wrap: Some(
+                            3,
+                        ),
+                    },
+                    Settle {
+                        frames: [
+                            3,
+                        ],
+                        wrap: None,
+                    },
+                ],
+            },
+            walking: Walking {
+                speed: 16,
+                tables: [
+                    (
+                        [
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                            1,
+                            2,
+                            0,
+                        ],
+                        [
+                            1,
+                            4,
+                        ],
+                    ),
+                ],
+            },
         },
     ],
 }
