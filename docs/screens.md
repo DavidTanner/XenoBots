@@ -917,7 +917,7 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Log-in | `login.m@l`, the name entry (T-041) | Letters and digits: the name. Backspace. Enter: log in, map room. ESC: quit, or the map room after N |
 | Map room | `maproom.m@l`, the boxes, panels, buttons, hover label and campaign-won box (T-042, T-046) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. Ctrl+Space: run the mission again. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys. With the user's `XENO.KEY`: `=`, `-` progress, Ctrl+W won, Ctrl+L lost |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
-| Review | `review.m@l`, the page's text panels, a placeholder for the robot (T-044) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
+| Review | `review.m@l`, the page's text panels, the walking and turning robot (T-044, T-047) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
 | Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); the port's Ctrl+W and Ctrl+L destroy the alien or the player's base (the mission then ends won or lost after its end script, T-055), Ctrl+C campaign won (a placeholder) |
 | Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
@@ -1082,8 +1082,11 @@ original.
   colour; Tab, Alt+Tab and a left release on the next button turn the pages, wrapping;
   ESC, Alt+Q and a left release on the exit button go back to the map room, which fades
   in again. The buttons' frames are XORed with 9 on a press and back on a release over
-  them (a release elsewhere leaves them XORed). The robot's view (the picture's
-  colour-255 pixels) is hatched with a "T-047" label.
+  them (a release elsewhere leaves them XORed). The robot (T-047) is `ReviewState`'s
+  `Robot`: one tick per 60 Hz tick of the 70 Hz retraces, its script and parts routines
+  read from the user's `xeno.exe`, the page's model loaded as the start-up loads it
+  (`xeno_render::LoadedModel`) and drawn by `Framebuffer::draw_model` into a buffer the
+  size of the colour-255 region, copied through it.
 - **Cutscenes after a mission** (T-045): as `vcl.md`, "In the port". The lose picture
   is chosen by the robot console the mission last opened (`Screens::console`, reset
   when the map room plays a scenario); the win caption shows the numbers the won
@@ -1110,7 +1113,7 @@ original.
   read as a save starts a new campaign, logged. The map room's N and Q write it there
   once a save was loaded or a scenario played (`xeno-app/src/save.rs`). The world
   written is the loaded scenario as loaded, not the running sim's (T-116).
-- **Not modelled**: the review's turning robots (T-047) and the music.
+- **Not modelled**: the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
 

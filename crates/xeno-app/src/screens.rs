@@ -710,6 +710,9 @@ impl Screens {
         {
             self.draw_mission(fb);
         }
+        if self.screen == Review && self.next.is_none() && self.loading.is_none() {
+            self.review.retrace(&self.map_assets.review);
+        }
         if self.screen == Review && self.next.is_none() && self.review.take_dirty() {
             self.draw_review(fb);
         }
@@ -809,7 +812,9 @@ impl Screens {
             fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
         }
         let assets = &self.map_assets;
-        self.review.draw(fb, &assets.review, &assets.review_font);
+        let models = &assets.review_models;
+        self.review
+            .draw(fb, &assets.review, &assets.review_font, models);
         self.review.take_dirty();
     }
 
@@ -2050,7 +2055,26 @@ pub(crate) mod tests {
         assert_eq!(screens.screen(), Review);
         let pages = screens.map_assets.review.pages.len();
         assert_eq!(pages, 3);
+        assert!(screens.map_assets.review_models.iter().all(Option::is_some));
+        // The picture's colour-255 pixels, all inside the view's rectangle.
+        let picture = &screens
+            .pictures
+            .iter()
+            .find(|(n, _)| *n == "review.m@l")
+            .unwrap()
+            .1;
+        let view = screens.map_assets.review.view;
+        let region: Vec<usize> = (0..64_000).filter(|&i| picture.pixels[i] == 255).collect();
+        assert!(
+            region
+                .iter()
+                .all(|&i| view.contains((i % 320) as u16, (i / 320) as u16))
+        );
         for page in 1..=pages {
+            // Once grown (32 ticks) the robot covers part of the region.
+            (0..100).for_each(|_| screens.retrace([], &mut fb));
+            let drawn = region.iter().filter(|&&i| fb.pixels()[i] != 0).count();
+            assert!(drawn > 200, "page {}: {drawn} pixels", page - 1);
             screens.retrace(&[down(0x0f)], &mut fb);
             screens.retrace(&[up(0x0f)], &mut fb);
             assert_eq!(screens.review.page(), page % pages);

@@ -89,7 +89,8 @@ robot's orders on its console, but the 3D views, scanners, instruments and the
 roster's contents are placeholders marked "T-056". The situation room's orders view
 (O) types the scenario's briefing from your `.usg` file, as the original does. The
 review is the original's reference of the robots, with its pages, texts, keys and
-buttons from your `xeno.exe`; the turning robot in it is a placeholder marked "T-047".
+buttons from your `xeno.exe`, and each page's robot walks and turns in its view by
+the original's scripts.
 A mission ends won or lost when a base is destroyed, after the base's end (about 7.5
 seconds of explosions): the alien base won, yours lost. Robots do not shoot yet, so in
 a mission Ctrl+W destroys the alien base and Ctrl+L yours (Ctrl+C ends it with the
