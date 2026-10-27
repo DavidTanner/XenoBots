@@ -426,6 +426,11 @@ impl Screens {
         self.endings = Some(Box::new(endings));
     }
 
+    /// The mission's sound events heard since the last call (`Mission::take_sounds`).
+    pub fn take_sounds(&mut self) -> Vec<u8> {
+        self.mission.take_sounds()
+    }
+
     /// The cutscene to play now, if a mission has just ended in one: the window plays
     /// it in the 320x240 mode, then calls [`Screens::cutscene_over`]. As
     /// `1000:6f9e`: the campaign won, else lost (the picture by the console opened

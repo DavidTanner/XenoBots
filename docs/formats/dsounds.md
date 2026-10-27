@@ -127,6 +127,14 @@ nothing.
 slot `0x44c`. Block 1 is named only by event 11, which nothing plays, so it is never
 heard either. The other 14 blocks are.
 
+**In the port** (T-061): the sim reports the events it reaches as
+`motion::Event::Sound` (21 for a hit, 2 for a robot destroyed, 2 to 5 for the base's
+end steps), with the robot for the viewed ones; `xeno-app`'s `Jukebox` plays them on
+`xeno_audio::Mixer` from the user's `dsounds.bin` and event table, a viewed event only
+while that robot's console is open (never in the situation room). The other events
+wait for the weapons (T-114), the leg frames (T-100), the consoles (T-104) and the
+cockpit keys (T-105).
+
 ## Open questions
 
 - Which of the 0, 1, 2 display modes (+0xef) is the camera, map or radar.

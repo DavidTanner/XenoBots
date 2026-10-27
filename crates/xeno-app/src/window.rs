@@ -394,6 +394,9 @@ impl App {
         match &mut self.front {
             FrontEnd::Screens(screens) => {
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
+                for event in screens.take_sounds() {
+                    self.music.effect(event);
+                }
                 self.palette = screens.palette();
                 self.input.screen_claims_escape = screens.claims_escape();
                 let cutscene = screens.take_cutscene();
