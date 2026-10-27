@@ -114,7 +114,8 @@ called through, then devices 0 to 5) into each table's slot.
 
 All writes go through `opl_write_register` (`0x0f5b`): the register number to port
 0x388, a short delay, the value to 0x389, a longer delay (both delays are busy loops
-calibrated against the PIT; an emulator can drop them). Below, `v` is the channel's
+calibrated against the PIT). An emulator must not drop them entirely: the chip has to
+run between a key off and the next key on or it never sees the key off (T-118). Below, `v` is the channel's
 OPL2 voice from the channel table (a channel whose entry is 9 or more is ignored by
 every routine), `car` and `mod` are the voice's operator offsets, and the patch bytes
 are numbered 0 to 15.
@@ -223,6 +224,11 @@ chip. Choices:
 - **Tick**: the caller ticks once per retrace of the mode on screen (70.09 / 59.94 Hz).
   Writes reach the chip when the tick runs and are heard from the next batch of 256
   samples the device pulls, so notes may land a few milliseconds off the retrace.
+- **Write delays**: the chip runs one sample (about 20 µs, close to the driver's
+  delays) after each register write, and those samples play before new ones. A drum
+  hit is a note off and a note on in the same tick; with no chip time between them the
+  key off was never seen and the hit not struck again, so the drums (`mainthem`'s
+  program 114 on channels 4 and 5) were nearly silent (T-118).
 - **Faithful details kept**: key on with the voice's previous frequency then `A0`/`B0`
   with the new one; channel 8 silent (no voice); the init at every start; the loaded
   program quirk above; pitch envelopes run although every stock one is flat; a stop
