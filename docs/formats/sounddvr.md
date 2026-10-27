@@ -3,9 +3,9 @@
 ## Status
 
 **Confirmed** (T-063) from the music driver's code in `sounddvr.dvr`: the program
-loader, the per-tick pitch pass and the AdLib back end's seven routines. The bank is
-game data: the port must read it from the user's copy at run time and never store it in
-the repository. This is the groundwork for
+loader, the per-tick pitch pass and the AdLib back end's seven routines.
+`xeno_formats::sounddvr` reads every table below from the user's copy at run time; the
+bank is game data and is never stored in the repository. This is the groundwork for
 T-062 (OPL2 music); the `.ms3` files themselves are in [`ms3.md`](ms3.md).
 
 ## Addresses
@@ -17,7 +17,7 @@ at load) is `DS`'s paragraph, 0x2a8 in the stock driver, so `DS:x` is load-image
 `0x2a80 + x` (Ghidra `12a8:x`). The table offsets in T-063's notes and in `ms3.md`
 (`0x15b4`, `0x0fc9`, ...) are `DS` offsets.
 
-A reader should find each table through the instruction that indexes it (checking the
+The parser finds each table through the instruction that indexes it (it checks the
 instruction's bytes first, so another build is refused rather than misread):
 
 | Table | `DS` offset (stock) | Found at (code) | Entries |
@@ -180,7 +180,11 @@ or put the frequency first, with the same result.
 
 ## Parser
 
-None yet: T-063's second part adds `xeno_formats::sounddvr`.
+`xeno_formats::sounddvr` (T-063): `parse` returns a `Bank` with the 128 `binrw`
+`Patch`es (named registers, `unknown_0b`), the 256 frequency words, each program's
+`Envelope` (signed steps and whether it loops), the Tandy pointers, velocity factors,
+transposes, MIDI program map, channel-to-voice map and the operator offsets.
+`xeno-tool inspect sounddvr.dvr` prints the counts.
 
 ## Symbols
 

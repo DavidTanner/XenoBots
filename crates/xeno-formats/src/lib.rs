@@ -35,6 +35,7 @@ pub mod scendef;
 pub mod script;
 pub mod sequence;
 pub mod setup;
+pub mod sounddvr;
 pub mod usg;
 pub mod vcl;
 pub mod vgaintro;

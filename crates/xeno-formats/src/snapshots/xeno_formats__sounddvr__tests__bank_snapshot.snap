@@ -1,0 +1,125 @@
+---
+source: crates/xeno-formats/src/sounddvr.rs
+expression: short
+---
+Bank {
+    patches: [
+        Patch {
+            carrier_20: 0,
+            carrier_40: 1,
+            carrier_60: 2,
+            carrier_80: 3,
+            carrier_e0: 4,
+            modulator_20: 5,
+            modulator_level: 6,
+            modulator_60: 7,
+            modulator_80: 8,
+            modulator_e0: 9,
+            c0: 10,
+            unknown_0b: [
+                11,
+                12,
+                13,
+                14,
+                15,
+            ],
+        },
+        Patch {
+            carrier_20: 1,
+            carrier_40: 2,
+            carrier_60: 3,
+            carrier_80: 4,
+            carrier_e0: 5,
+            modulator_20: 6,
+            modulator_level: 7,
+            modulator_60: 8,
+            modulator_80: 9,
+            modulator_e0: 10,
+            c0: 11,
+            unknown_0b: [
+                12,
+                13,
+                14,
+                15,
+                16,
+            ],
+        },
+    ],
+    frequencies: [
+        4096,
+        4097,
+        4098,
+        4099,
+    ],
+    pitch_envelopes: [
+        Envelope {
+            steps: [
+                2,
+                -2,
+            ],
+            looped: true,
+        },
+        Envelope {
+            steps: [
+                0,
+            ],
+            looped: false,
+        },
+    ],
+    tandy_attack: [
+        256,
+        257,
+    ],
+    tandy_release: [
+        512,
+        513,
+    ],
+    velocity_factor: [
+        0,
+        1,
+    ],
+    transpose: [
+        0,
+        -1,
+        -2,
+        -3,
+    ],
+    midi_programs: [
+        1,
+        2,
+    ],
+    channel_voices: [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        99,
+        8,
+    ],
+    modulator_slots: [
+        0,
+        1,
+        2,
+        8,
+        9,
+        10,
+        16,
+        17,
+        18,
+    ],
+    carrier_slots: [
+        3,
+        4,
+        5,
+        11,
+        12,
+        13,
+        19,
+        20,
+        21,
+    ],
+}
