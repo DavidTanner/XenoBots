@@ -190,13 +190,13 @@ model has animations. Who writes them:
 **Walking.** Each robot's move routine ends, after the hills test, with its walking
 animation (humanoid `sim_animate_humanoid_walk` `1000:ad67`, scorpion `1000:95a2`,
 scout `1000:c799`). Each keeps a step counter, adds the speed (+0x26) shifted right
-arithmetically to its low byte and takes `step = (counter >> 4) & 15`:
+arithmetically by 3 to it (the low byte, wrapping) and takes `step = counter >> 4`:
 
-| Kind | Counter | Speed shift | While moving (speed not 0) | While still |
-|---|---|---|---|---|
-| Humanoid | +0x105 | 2 | legs +0x101, +0x102 = `CS:0xaef1[step]`, `CS:0xaf01[step]`; model height = `0x0a00 + CS:0xaf31[step]` (words); eye height 0x0f80 | counter 0; every 8 ticks (`DS:0x62c6 & 7 = 0`) each leg not at 0 steps up one, 5 wrapping to 0 |
-| Scorpion | +0x116 | 3 | legs +0xff, +0x101, +0x103, +0x100, +0x102, +0x104 from the six 16-byte tables at `CS:0x964b`, `0x965b`, `0x966b`, `0x967b`, `0x968b`, `0x969b` | every 8 ticks each leg not at 0 steps up one, 6 wrapping to 0 |
-| Scout | +0x10a | 3 | +0xff and +0x103 = `CS:0xc860[step]`, +0x100 and +0x104 = `CS:0xc870[step]`; model height `0x0c80 + CS:0xc880[step]` (words) | turning, or standing (stance 0x30): counter and the four 0; otherwise (crouched, still) all four `CS:0xc8a0[stance >> 4]`, model height `0x0c80 - 8 * stance` |
+| Kind | Counter | While moving (speed not 0) | While still |
+|---|---|---|---|
+| Humanoid | +0x105 | legs +0x101, +0x102 = `CS:0xaef1[step]`, `CS:0xaf01[step]`; model height = `0x0a00 + CS:0xaf31[step]` (words); eye height 0x0f80 | counter 0; every 8 ticks (`DS:0x62c6 & 7 = 0`) each leg not at 0 steps up one, 5 wrapping to 0 |
+| Scorpion | +0x116 | legs +0xff, +0x101, +0x103, +0x100, +0x102, +0x104 from the six 16-byte tables at `CS:0x964b`, `0x965b`, `0x966b`, `0x967b`, `0x968b`, `0x969b` | every 8 ticks each leg not at 0 steps up one, 6 wrapping to 0 |
+| Scout | +0x10a | +0xff and +0x103 = `CS:0xc860[step]`, +0x100 and +0x104 = `CS:0xc870[step]`; model height `0x0c80 + CS:0xc880[step]` (words) | turning, or standing (stance 0x30): counter and the four 0; otherwise (crouched, still) all four `CS:0xc8a0[stance >> 4]`, model height `0x0c80 - 8 * stance` |
 
 The tables are in the code segment (`CS:x` is image offset `x`). The humanoid's arms
 (+0xff, +0x100) follow its weapons (`1000:ae23`, `ae8a`: raised through +0x103 and
