@@ -115,6 +115,7 @@ fn details(file: &Path, bytes: &[u8]) -> Option<Details> {
         "exe" | "dvr" if xeno_formats::lzexe::is_packed(bytes) => exe_details(file, bytes),
         _ if name.eq_ignore_ascii_case("vgaintro.dvr") => vgaintro_details(bytes),
         _ if name.eq_ignore_ascii_case("mgavideo.dvr") => mgavideo_details(bytes),
+        _ if name.eq_ignore_ascii_case("sounddvr.dvr") => sounddvr_details(bytes),
         _ => return None,
     })
 }
@@ -154,6 +155,32 @@ fn vgaintro_details(bytes: &[u8]) -> Details {
 }
 
 /// The fonts and the colour-animation list read from `mgavideo.dvr`.
+/// A summary of the music driver's instrument bank (counts, not data).
+fn sounddvr_details(bytes: &[u8]) -> Details {
+    use xeno_formats::sounddvr;
+
+    let bank = sounddvr::parse(bytes).map_err(|e| format!("sounddvr:  cannot parse: {e}\n"))?;
+    let moving = bank
+        .pitch_envelopes
+        .iter()
+        .filter(|e| e.steps.iter().any(|&s| s != 0));
+    let voices = bank
+        .channel_voices
+        .iter()
+        .filter(|&&v| usize::from(v) < sounddvr::VOICES);
+    Ok(format!(
+        "sounddvr:  {} OPL2 patches, {} programs ({} transposed, {} with a moving pitch envelope)\n\
+         sounddvr:  {} pitches, {} of {} channels on OPL2 voices\n",
+        bank.patches.len(),
+        bank.transpose.len(),
+        bank.transpose.iter().filter(|&&t| t != 0).count(),
+        moving.count(),
+        bank.frequencies.len(),
+        voices.count(),
+        bank.channel_voices.len(),
+    ))
+}
+
 fn mgavideo_details(bytes: &[u8]) -> Details {
     use xeno_formats::{font::Style, mgavideo};
 
@@ -895,7 +922,8 @@ mod tests {
     use xeno_formats::fixtures::{
         synthetic_bytes, synthetic_dsounds, synthetic_lzexe, synthetic_mgavideo, synthetic_model,
         synthetic_ms3, synthetic_numbers, synthetic_pcx, synthetic_scendef, synthetic_screen,
-        synthetic_sprite_bank, synthetic_usg, synthetic_vcl, synthetic_vgaintro,
+        synthetic_sounddvr, synthetic_sprite_bank, synthetic_usg, synthetic_vcl,
+        synthetic_vgaintro,
     };
 
     #[test]
@@ -1170,6 +1198,22 @@ mod tests {
         );
         assert!(matches!(
             outcome(Path::new("vgaintro.dvr"), b"MZ"),
+            Outcome::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn sounddvr_shows_its_bank() {
+        let out = report(Path::new("SOUNDDVR.DVR"), &synthetic_sounddvr());
+        assert!(
+            out.contains(
+                "sounddvr:  128 OPL2 patches, 130 programs (129 transposed, 1 with a moving pitch envelope)\n\
+                 sounddvr:  256 pitches, 9 of 10 channels on OPL2 voices\n"
+            ),
+            "{out}"
+        );
+        assert!(matches!(
+            outcome(Path::new("sounddvr.dvr"), b"MZ"),
             Outcome::Failed(_)
         ));
     }

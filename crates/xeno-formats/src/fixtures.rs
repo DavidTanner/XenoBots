@@ -578,6 +578,70 @@ pub fn synthetic_vgaintro(numbers: &crate::vgaintro::Numbers) -> Vec<u8> {
     file
 }
 
+/// A synthetic `sounddvr.dvr`: an MZ file whose `DS` (paragraph 0x120) holds every
+/// table behind the instructions [`crate::sounddvr::TABLES`] expects. Patch `p` is the
+/// bytes `p..p + 16`; frequency `n` is `0x1000 | n`; program `p` has transpose `-p`,
+/// velocity factor `p`, MIDI program `p + 1`, Tandy words `0x100 + p` and `0x200 + p`;
+/// program 0's pitch envelope is `2, -2` looped and every other one is `0` then end.
+/// The envelope scripts are the image's last 0x40 bytes.
+pub fn synthetic_sounddvr() -> Vec<u8> {
+    use crate::sounddvr::{DS_AT, PATCHES, PITCHES, PROGRAMS, TABLES};
+
+    let ds = 0x1200;
+    let mut image = vec![0u8; ds + 0xf00];
+    let put = |image: &mut Vec<u8>, at: usize, bytes: &[u8]| {
+        image[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+    put(&mut image, DS_AT.0, &[DS_AT.1, &[0x6b, 0x08]].concat());
+    put(&mut image, 0x86b, &0x120u16.to_le_bytes());
+    let offsets = [
+        0x10, 0x810, 0xa10, 0xb14, 0xc18, 0xd1c, 0xd9e, 0xe20, 0xea0, 0xeaa, 0xeb3,
+    ];
+    for ((_, at, op), offset) in TABLES.iter().zip(offsets) {
+        put(
+            &mut image,
+            *at,
+            &[*op, &(offset as u16).to_le_bytes()].concat(),
+        );
+    }
+    let program_words = |f: &dyn Fn(usize) -> u16| -> Vec<u8> {
+        (0..PROGRAMS).flat_map(|p| f(p).to_le_bytes()).collect()
+    };
+    let patches: Vec<u8> = (0..PATCHES)
+        .flat_map(|p| (0..16).map(move |i| (p + i) as u8))
+        .collect();
+    let frequencies: Vec<u8> = (0..PITCHES)
+        .flat_map(|n| (0x1000 | n as u16).to_le_bytes())
+        .collect();
+    let envelopes = program_words(&|p| if p == 0 { 0xec0 } else { 0xec4 });
+    let tables: [Vec<u8>; 11] = [
+        patches,
+        frequencies,
+        envelopes,
+        program_words(&|p| 0x100 + p as u16),
+        program_words(&|p| 0x200 + p as u16),
+        (0..PROGRAMS).map(|p| p as u8).collect(),
+        (0..PROGRAMS).map(|p| (p as u8).wrapping_neg()).collect(),
+        (0..PATCHES).map(|p| p as u8 + 1).collect(),
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 99, 8],
+        vec![0, 1, 2, 8, 9, 10, 16, 17, 18],
+        vec![3, 4, 5, 11, 12, 13, 19, 20, 21],
+    ];
+    for (offset, table) in offsets.iter().zip(&tables) {
+        put(&mut image, ds + offset, table);
+    }
+    put(&mut image, ds + 0xec0, &[2, 0xfe, 0x81, 0, 0, 0x80]);
+    // The MZ header: two paragraphs, no relocations.
+    let size = 0x20 + image.len();
+    let mut file = b"MZ".to_vec();
+    for word in [(size % 512) as u16, size.div_ceil(512) as u16, 0, 2] {
+        file.extend(word.to_le_bytes());
+    }
+    file.resize(0x20, 0);
+    file.extend(image);
+    file
+}
+
 /// An LZEXE-packed `config.dvr` holding `keys` as player 1's and 2's default tables
 /// where [`crate::setup::default_keys`] looks: the menu walker's instruction pointing
 /// at a made-up first menu entry that ends with the last remap label and the tables.
