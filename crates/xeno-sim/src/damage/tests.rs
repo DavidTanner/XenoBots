@@ -268,6 +268,10 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
             State::Base { tick, end_step, .. } => (tick, end_step),
             _ => panic!(),
         };
+        let look = |w: &World| match w.get(EntityId(slot)).unwrap().state {
+            State::Base { look, .. } => look,
+            _ => panic!(),
+        };
         let mut runs = 0;
         loop {
             let events = crate::motion::tick(&mut world, &tables, &mut random);
@@ -281,6 +285,8 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
                 continue;
             }
             runs += 1;
+            // Its damaged look goes up as the step reaches 4 and 14.
+            assert_eq!(look(&world), u8::from(step >= 4) + u8::from(step >= 14));
             // The sound by step (`docs/sim.md`), heard in every view.
             let sounds: Vec<_> = events
                 .iter()

@@ -40,6 +40,7 @@ pub mod sounds;
 pub mod usg;
 pub mod vcl;
 pub mod vgaintro;
+pub mod view3d;
 pub mod views;
 
 pub use error::FormatError;

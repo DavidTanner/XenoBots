@@ -255,13 +255,18 @@ routine by the node's type byte (table at `DS:0x3994`):
 | 2 | `gfx_draw_model` | A unit at its world position |
 | 4 | `gfx_draw_model_with_turret` | The same, but animation 0 turns separately: it is always frame 0, drawn at the facing given by the node's byte +0x1e (an angle's high byte), and the other animations' frame numbers start at +0x1f |
 | 6 | `gfx_draw_model_sized` | Type 2 with a size factor taken from the word after the node's frame numbers |
-| 0x22, 0x26 | `gfx_draw_model_on_screen` | A model at a fixed point of the view, scale from the node; its facing is the node's heading itself (heading 0 shows facing 0) |
 
-Which objects use which type, and the frame numbers they hold, are the simulation's
-business (T-051, T-100). A render node holds, among others, the object number (+0x02),
-the type (+0x04), the model number (+0x05), the heading (+0x08, 65,536 to a turn),
-the position (+0x0a), the distance from the camera (+0x16, 16.16) and, from +0x1e,
-one frame number per animation.
+Nothing in `xeno.exe` makes a type 4 node. `gfx_draw_model_on_screen` (`1000:3424`,
+a model at a fixed point, its facing the node's heading itself) is not in this table:
+T-029 read it at types 0x22 and 0x26, but those run past the 3D table into the maps'
+(`DS:0x39ae`), where it is types 0x1c and 0x20 (T-103).
+
+Who makes the render nodes, in what order, which type and frame numbers each object
+kind gets, and the projection behind the anchor and scale are in `docs/render.md`
+(T-100). A node holds, among others, the object (+0x02), the type (+0x04), the model
+number (+0x05), the heading (+0x08, 65,536 to a turn), the position (+0x0a), the
+distance from the camera (+0x16, 16.16) and, from +0x1e, one frame number per
+animation.
 
 **Choosing the facing.** With `b` the bearing from the camera to the unit and `h` the
 unit's heading (both 65,536 to a turn), the game computes, in 16-bit arithmetic,
@@ -274,11 +279,12 @@ angles from the +y axis towards +x.
 **Culling and scale** (type 2). The viewer's own object is skipped, as are units
 outside a coarse cone of two octants either side of the view direction, models with
 no animations and units 125 or more units away. The scale `s` (8.8 fixed point, 256 = 1:1) is the model's size factor times the
-projection's factor for the distance. Size factors set at start-up: humanoid 0x44,
-scorpion 0x80, scout 0x40, missile 0x80, netrelay 0x28, plasma 0x28, laser 0x20,
-basedome 0x180, obst 0x58. `explode` and `cloak` keep 0x100, which means "use the
-size the caller set", and type 6 nodes bring their own. The unit's position is
-projected to the anchor, the screen point that part offsets are measured from.
+projection's factor for the distance (`docs/render.md`, "Projection"). Size factors
+set at start-up: humanoid 0x44, scorpion 0x80, scout 0x40, missile 0x80, netrelay
+0x28, plasma 0x28, laser 0x20, basedome 0x180, obst 0x58. `explode` and `cloak` keep
+0x100, which stands for 128 (the float at `DS:0x4d52`), and type 6 nodes bring their
+own. The unit's position is projected to the anchor, the screen point that part
+offsets are measured from.
 
 **Composing a frame.** For each animation `k` (0 to the model's count - 1) the game
 takes frame number `node[0x1e + k]` of animation `k` in the facing's index, with no
@@ -300,8 +306,10 @@ from slot `0x574`, the anchor from `0x578` and the scale from `0x584`):
   the anchor plus the sum of `r` over `0..u` (minus the sum over `u..0` when `u` is
   negative); a count of 0 drops it. Rows work the same way. So `s = 256` is 1:1,
   smaller scales drop evenly spread rows and columns, and larger ones repeat them.
-  (Slot `0x580` can pick one of six such orders; the game was not seen calling it,
-  and order 0 is the one above.)
+  (Slot `0x580` can pick one of six such orders, but order 0, the one above, is
+  always used: no binary calls slot `0x580` or `0x588`, and inside `mgavideo.dvr` the
+  routine of `0x580` is reached only from that of `0x588`, which draws a list of
+  images with a pattern each; T-100.)
 - Only pixels inside the row spans are drawn, and **colour 0 is skipped**. Each row is
   limited to the image's width.
 - Unlike the sprite blitters (`b@n.md`), the image is clipped to the 3D view's
@@ -339,7 +347,7 @@ to 254, and the three cockpits agree on all of them except 253 and 254, which on
 ## Open questions
 
 None about loading, drawing or facing direction. Which render type and frame numbers
-each object gets belongs to the simulation and renderer (T-051, T-100).
+each object gets, and the projection, are in `docs/render.md` (T-100).
 
 ## In the executables
 
@@ -370,7 +378,7 @@ each object gets belongs to the simulation and renderer (T-051, T-100).
 `gfx_set_model_target` `0x3c2c` (slot `0x574`), `gfx_set_model_anchor` `0x3c6d`
 (`0x578`), `gfx_get_scale_pattern` `0x3c7c` (`0x57c`), `gfx_select_scale_pattern`
 `0x3c92` (`0x580`), `gfx_set_model_scale` `0x3cc0` (`0x584`),
-`gfx_draw_model_image_list` `0x3d18` (`0x588`, not traced further),
+`gfx_draw_model_image_list` `0x3d18` (`0x588`, never called),
 `gfx_draw_model_image` `0x3d6c` (`0x58c`), `gfx_draw_model_image_scaled` `0x3d70`,
 `gfx_place_model_image_rect` `0x3dab`, `gfx_key_model_rows_shrunk` `0x3f12`,
 `gfx_key_model_rows_enlarged` `0x4046`, `gfx_key_model_rows_mirrored` `0x419f`.
