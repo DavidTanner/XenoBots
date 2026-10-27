@@ -2156,4 +2156,96 @@ pub(crate) mod tests {
             );
         }
     }
+
+    /// Opens each console of the first training mission with a robot of its kind: the
+    /// view is drawn through the picture's colour-255 region; then, turned towards each
+    /// stock unit within 30 units, every one lands inside the view and draws pixels of
+    /// its model there.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_consoles_draw_the_units_in_view() {
+        use xeno_render::view3d::{FLAT_SKY, GROUND, place};
+        for view in [View::Humanoid, View::Scorpion, View::Scout] {
+            let Some(mut screens) = real_screens(Mission(view)) else {
+                return;
+            };
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            for _ in 0..40 {
+                screens.retrace([], &mut fb);
+            }
+            let mission = screens.mission();
+            let assets = &screens.mission_assets;
+            let tables = assets.view3d.as_ref().expect("the 3D view's tables");
+            assert!(assets.models.iter().all(Option::is_some));
+            let mission::Viewed::Robot(slot) = mission.viewed() else {
+                panic!("{view:?}");
+            };
+            let picture = screens
+                .pictures
+                .iter()
+                .find(|(n, _)| Some(*n) == Mission(view).file())
+                .map(|(_, p)| p)
+                .unwrap();
+            let region: Vec<usize> = (0..64_000).filter(|&i| picture.pixels[i] == 255).collect();
+            let ground = region.iter().filter(|&&i| fb.pixels()[i] == GROUND).count();
+            // The ground shows below the horizon, and no colour 255 is left.
+            assert!(ground > 0, "{view:?}: no ground");
+            assert!(region.iter().all(|&i| fb.pixels()[i] != 255), "{view:?}");
+            let mut plain = Framebuffer::new(Size::MODE_13H);
+            plain.pixels_mut().copy_from_slice(&picture.pixels);
+            let (_, _, width, height) = crate::review::region(&plain).unwrap();
+            let heights = crate::scene::heights(mission.scenario());
+            let id = xeno_sim::EntityId(slot);
+            let mut world = mission.world().clone();
+            let at = world.get(id).unwrap().position;
+            let near: Vec<_> = world
+                .iter()
+                .filter(|&(other, e)| {
+                    let d = xeno_sim::terrain::approx_distance(at, e.position);
+                    other != id && d.0 > 0x2_0000 && d.0 < 30 << 16
+                })
+                .map(|(other, e)| (other, e.position))
+                .collect();
+            assert!(!near.is_empty(), "{view:?}");
+            let mut big = 0;
+            for (other, position) in near {
+                world.get_mut(id).unwrap().heading =
+                    xeno_sim::script::bearing(&assets.motion.atan, at, position);
+                let camera =
+                    crate::scene::camera(&world, id, tables, &assets.motion, &heights).unwrap();
+                let nodes =
+                    crate::scene::nodes(&world, tables, &camera, &assets.motion.atan, &heights);
+                let node = nodes.iter().find(|n| n.object == other.0).unwrap();
+                let size = (width as u16, height as u16);
+                let ((x, y), scale) = place(tables, &camera, node, true, size)
+                    .unwrap_or_else(|| panic!("{view:?}: {other:?} not drawn"));
+                assert!(
+                    x.abs_diff(width as i32 / 2) <= 1,
+                    "{view:?}: {other:?} at {x}"
+                );
+                assert!(
+                    (0..height as i32).contains(&y),
+                    "{view:?}: {other:?} at {y}"
+                );
+                let mut alone = Framebuffer::new(Size::new(width, height));
+                alone.draw_view(
+                    tables,
+                    &camera,
+                    std::slice::from_ref(node),
+                    &assets.models,
+                    None,
+                );
+                let drawn = alone
+                    .pixels()
+                    .iter()
+                    .filter(|&&p| p != FLAT_SKY && p != GROUND);
+                // Far units shrink below a pixel (a scale of 256 is 1:1).
+                if scale >= 32 {
+                    assert!(drawn.count() > 0, "{view:?}: {other:?} drew nothing");
+                    big += 1;
+                }
+            }
+            assert!(big > 0, "{view:?}: no unit near enough to see");
+        }
+    }
 }

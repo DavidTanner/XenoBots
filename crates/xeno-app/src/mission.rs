@@ -1,8 +1,9 @@
 //! A mission's views (T-043): the situation room, the view of the player's base, and
 //! the console of each robot, as `ui_open_view_of_object` and their widgets run them
-//! (`docs/screens.md`, "The mission's views", "Orders"). The simulation does not run
-//! yet (T-050 on), so what it would draw (the 3D view, scanners, instruments, the
-//! roster's contents) is a labelled placeholder for T-056; switching views and setting
+//! (`docs/screens.md`, "The mission's views", "Orders"). A console's main view is the
+//! viewed robot's 3D view (T-101, [`crate::scene`]); what else the running mission
+//! would draw (scanners, instruments, the roster's contents) is a labelled
+//! placeholder; switching views and setting
 //! orders work. So does the briefing (T-044): the scenario's `ORDR` text, typed into the
 //! situation room's main view in its orders mode (O), as `ui_sitroom_type_orders_text`
 //! types it (`docs/screens.md`, "The briefing (T-044)").
@@ -19,25 +20,28 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use xeno_formats::ban::Sky;
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::orders;
 use xeno_formats::usg::{self, Scenario, Side};
+use xeno_formats::view3d::{self, View3d};
 use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
     TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
 use xeno_formats::{editor, lzexe, map, mgavideo, motion};
-use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
-use xeno_sim::{Parked, Random, Sim, World};
+use xeno_sim::{EntityId, Parked, Random, Sim, World};
 
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, MouseButton};
 use crate::maproom::{Campaign, scenario_file};
 use crate::screens::View;
+use crate::{review, scene};
 
 /// Original handlers (offsets in `xeno.exe`'s segment `1000`) whose keys the port acts
 /// on; the key tables themselves are read from the user's copy.
@@ -125,6 +129,13 @@ pub struct Assets {
     pub editor_unlocked: bool,
     /// Where Ctrl+Alt+P and the editor save (`--save-dir`, else the game directory).
     pub save_dir: PathBuf,
+    /// The 3D view's tables (T-101), if the user's `xeno.exe` has them where the port
+    /// reads them; without them the consoles' views keep the placeholder.
+    pub view3d: Option<View3d>,
+    /// Every model, by model number / 2.
+    pub models: Vec<Option<LoadedModel>>,
+    /// Each scenario's sky strip, by file name; none is the flat sky.
+    pub skies: BTreeMap<String, Sky>,
 }
 
 /// The names the port saves under until it has the original's file dialogs (T-110):
@@ -173,9 +184,13 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         })
         .chain((0..campaign_records).map(scenario_file));
     let mut scenarios = BTreeMap::new();
+    let mut skies = BTreeMap::new();
     for name in names {
         match read(&name).and_then(|b| usg::parse(&b).map_err(|e| format!("{name}: {e}"))) {
             Ok(scenario) => {
+                if let Some(sky) = scene::load_sky(files, &scenario) {
+                    skies.insert(name.clone(), sky);
+                }
                 scenarios.insert(name, scenario);
             }
             Err(e) => log::warn!("mission: {e}"),
@@ -195,6 +210,11 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         editor,
         editor_unlocked: false,
         save_dir: files.dir().path.clone(),
+        view3d: view3d::read(&exe)
+            .inspect_err(|e| log::warn!("xeno.exe: no 3D view tables this port can read: {e}"))
+            .ok(),
+        models: scene::load_models(files),
+        skies,
     })
 }
 
@@ -956,12 +976,42 @@ impl Mission {
         }
         let font = assets.fonts.get(&UNIT_FONT);
         for &colour in colours {
+            if colour == 255 && self.draw_view(fb, assets) {
+                continue;
+            }
             hatch(fb, colour, font, "T-056");
         }
         match self.viewed {
             Viewed::Base => self.draw_situation(fb, assets),
             Viewed::Robot(slot) => self.draw_console(fb, assets, slot),
         }
+    }
+
+    /// A console's main view (T-101): the viewed robot's 3D view, drawn in a buffer the
+    /// size of the colour-255 region and copied through it; `false` (nothing drawn) in
+    /// the situation room, without the 3D tables or when the robot is gone.
+    fn draw_view(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+        let (Viewed::Robot(slot), Some(view)) = (self.viewed, &assets.view3d) else {
+            return false;
+        };
+        let Some((left, top, width, height)) = review::region(fb) else {
+            return false;
+        };
+        let mut buffer = Framebuffer::new(Size::new(width, height));
+        let drawn = scene::draw(
+            &mut buffer,
+            self.world(),
+            EntityId(slot),
+            view,
+            &assets.motion,
+            &scene::heights(self.scenario.as_ref()),
+            &assets.models,
+            assets.skies.get(&self.file),
+        );
+        if drawn {
+            review::copy_through(fb, &buffer, left, top);
+        }
+        drawn
     }
 
     /// The orders mode: the main view's colour-255 pixels cleared to 0x10 (slot `0x5b4`,
@@ -1235,6 +1285,9 @@ pub mod tests {
             editor: None,
             editor_unlocked: false,
             save_dir: PathBuf::new(),
+            view3d: None,
+            models: Vec::new(),
+            skies: BTreeMap::new(),
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
