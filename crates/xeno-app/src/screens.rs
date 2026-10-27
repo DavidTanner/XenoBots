@@ -464,6 +464,7 @@ impl Screens {
 
     /// Notes the robot console a mission view opens, for the lose picture.
     fn viewed(&mut self, view: View) {
+        self.mission.restart_tint();
         if let Some(console) = match view {
             View::SitRoom => None,
             View::Humanoid => Some(0),
@@ -702,6 +703,19 @@ impl Screens {
             && let Some(won) = self.mission.tick(events.iter().copied())
         {
             self.act(End(if won { Ending::Won } else { Ending::Lost }));
+        }
+        // The time-of-day tint, once no fade is pending or running (the records blend
+        // from the shadow, and a fade's uploads would wipe them).
+        if matches!(self.screen, Mission(_))
+            && self.next.is_none()
+            && self.fade_in.is_none()
+            && !self.dac.fading()
+            && let Some(weight) = self.mission.tint()
+        {
+            log::debug!("mission: time-of-day tint {weight}");
+            for record in mission::TINT_RECORDS {
+                self.dac.start_anim(record, weight);
+            }
         }
         if matches!(self.screen, Mission(_))
             && self.next.is_none()
@@ -1966,6 +1980,28 @@ pub(crate) mod tests {
         let mut screens = new(Mission(View::Scout));
         screens.retrace([], &mut Framebuffer::new(Size::MODE_13H));
         assert_eq!(screens.screen(), Mission(View::SitRoom));
+    }
+
+    #[test]
+    fn a_mission_view_starts_the_time_of_day_tint_after_its_fade_in() {
+        use xeno_render::anim::flag::ACTIVE;
+        let tinted = |s: &Screens| {
+            mission::TINT_RECORDS
+                .map(|r| s.dac.anims().flags(r).unwrap() & ACTIVE != 0)
+                .contains(&true)
+        };
+        let mut screens = new(Mission(View::Scorpion));
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        let mut faded = 0;
+        for _ in 0..80 {
+            screens.retrace([], &mut fb);
+            if screens.screen() == Mission(View::Scorpion) && screens.dac.fading() {
+                faded += 1;
+                assert!(!tinted(&screens), "not during the fade in");
+            }
+        }
+        assert!(faded > 0);
+        assert!(tinted(&screens));
     }
 
     /// The user's files: the screens' pictures and the assets of the log-in, the map

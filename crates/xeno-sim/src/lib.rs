@@ -3,6 +3,7 @@
 //! window, audio or clock: the host passes in the input of each retrace and calls
 //! [`Sim::tick`] once per retrace (`docs/game-loop.md`).
 
+pub mod clock;
 pub mod damage;
 pub mod hash;
 pub mod input;
@@ -14,6 +15,7 @@ pub mod script;
 pub mod terrain;
 pub mod world;
 
+pub use clock::Clock;
 pub use random::Random;
 pub use rate::Rate;
 pub use world::{
@@ -116,11 +118,13 @@ impl Sim {
         &self.mouse
     }
 
-    /// One retrace with the input that arrived for it: the held keys and buttons are
-    /// tracked (nothing acts on them yet), then every object ticks in slot order
+    /// One retrace with the input that arrived for it: the mission clock moves on
+    /// ([`Clock::advance`]), the held keys and buttons are tracked (nothing acts on
+    /// them yet), then every object ticks in slot order
     /// (`docs/sim.md`, "Movement"). Returns what the tick did.
     pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Vec<Event> {
         self.retrace += 1;
+        self.world.clock.advance();
         for event in events {
             self.keys.apply(event);
             self.mouse.apply(event);
@@ -276,6 +280,11 @@ mod tests {
         let start = sim.state_hash();
         sim.run(&log, 2);
         assert_eq!(sim.retrace(), 2);
+        assert_eq!(
+            sim.world.clock.tick,
+            2 * Clock::STEP,
+            "the clock moves each retrace"
+        );
         assert!(sim.keys().is_down(key));
         assert_ne!(sim.state_hash(), start);
         sim.run(&log, 3);
@@ -300,6 +309,12 @@ mod tests {
         let mut sim = Sim::load(&scenario, campaign, motion::synthetic_tables());
         assert_eq!(sim.world.len(), 5);
         assert_eq!(sim.world.orders, World::from_scenario(&scenario).orders);
+        let start = (
+            sim.world.clock.hour,
+            sim.world.clock.minute,
+            sim.world.clock.tick,
+        );
+        assert_eq!(start, (7, 29, 20), "the clock starts from SHDR");
         // Each robot's program starts anew, in the file's order, staggered.
         let waits: Vec<u16> = sim
             .world

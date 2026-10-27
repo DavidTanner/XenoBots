@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, Side};
 
+use crate::clock::Clock;
 use crate::hash::{StateHash, StateHasher};
 use crate::orders::OrderBook;
 use crate::terrain::{Paths, Terrain};
@@ -359,6 +360,8 @@ pub struct World {
     pub stagger: u8,
     /// `DS:0x62c6`: the object passes run, which the walking animations go by.
     pub ticks: u16,
+    /// The mission clock (`DS:0x7d46`), from the scenario's `SHDR`.
+    pub clock: Clock,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -449,6 +452,7 @@ impl World {
             // shortcut: the original carries this count from mission to mission too;
             // only the settling legs read it (every 8 passes).
             ticks: 0,
+            clock: Clock::from_start(&scenario.header.start),
         }
     }
 
@@ -566,6 +570,10 @@ impl StateHash for World {
         }
         h.u8(self.stagger);
         h.u16(self.ticks);
+        let c = self.clock;
+        for n in [c.hour, c.minute, c.second, c.tick] {
+            h.u8(n);
+        }
     }
 }
 
