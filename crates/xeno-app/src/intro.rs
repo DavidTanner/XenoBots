@@ -12,9 +12,11 @@
 //! retrace as in the original, if the code between retraces took no time (loading a
 //! picture from disk did take time, which is not modelled).
 //!
-//! Not yet: the music, whose start resets the retrace counter `DS:0x370` that the end
-//! times count from. Without music the counter starts with the sequence (or, for
-//! `TRIUMPH`, where its song would start).
+//! The music (T-062): a song's start resets the retrace counter `DS:0x370` that the end
+//! times count from. `MAINTHEM` starts with the intro (the app starts it on the same
+//! retrace, so the counter starts with both), `WIN1` and `WIN2` just before their
+//! cutscene, and `BIGWIN3` inside `TRIUMPH`'s routine; each cutscene after a mission
+//! stops its song before its last wait. The cutscene hands these over as [`Cue`]s.
 
 use std::collections::VecDeque;
 
@@ -26,6 +28,7 @@ use xeno_render::{DAC_BYTES, Dac, Fade, Framebuffer, Palette, Size, TextCursor, 
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, ScanCode};
+use crate::music::{self, Cue};
 
 /// P pauses until the next key (the abort hook `1000:fccf`).
 const PAUSE: ScanCode = ScanCode(0x19);
@@ -188,6 +191,7 @@ impl Endings {
     pub fn won(&self, numbers: Numbers) -> Cutscene {
         let caption = self.table.win_caption(numbers);
         self.play(Kind::Ending, 0, self.table.win, caption)
+            .with_song(music::WIN1)
     }
 
     /// The lose entry for the selector word / 2 (the robot console opened last).
@@ -195,11 +199,13 @@ impl Endings {
         let index = index.min(ending::LOSE_ENTRIES - 1);
         let caption = self.table.lose_caption(index);
         self.play(Kind::Ending, 1 + index, self.table.lose[index], caption)
+            .with_song(music::WIN2)
     }
 
     pub fn triumph(&self) -> Cutscene {
         let caption = self.table.triumph_caption();
         self.play(Kind::Triumph, 4, self.table.triumph, caption)
+            .with_song(music::BIG_WIN3)
     }
 }
 
@@ -226,8 +232,10 @@ enum Op {
     WaitTick,
     /// `sim_wait_ticks_polled`: this many ticks, polling before each; a key ends it.
     WaitTicks(u32),
-    /// Where the music would start: the counter goes back to 0.
-    ResetCounter,
+    /// `snd_start_song`: the cutscene's song starts and the counter goes back to 0.
+    StartSong,
+    /// `snd_stop_song`.
+    StopSong,
     /// Until the retrace counter has moved this many times.
     WaitRetraces(u16),
     /// Slot `0x490`: picture `n` into video memory from the top.
@@ -271,7 +279,7 @@ fn compile(kind: Kind, entries: &[Entry]) -> (Vec<Op>, Vec<usize>) {
                 ops.extend([Op::Poll(OnKey::Ignore), Op::WaitTick]);
             }
         }
-        Kind::Triumph => ops.extend([Op::ResetCounter, Op::WaitTicks(TRIUMPH_BEFORE)]),
+        Kind::Triumph => ops.extend([Op::StartSong, Op::WaitTicks(TRIUMPH_BEFORE)]),
         Kind::Ending => {}
     }
     for (i, e) in entries.iter().enumerate() {
@@ -333,10 +341,14 @@ fn compile(kind: Kind, entries: &[Entry]) -> (Vec<Op>, Vec<usize>) {
     match kind {
         // An abort ends the whole chain.
         Kind::Intro => resume.fill(ops.len()),
-        Kind::Triumph => ops.extend([Op::WaitTicks(TRIUMPH_AFTER), Op::WaitTicks(ENDING_TAIL)]),
+        Kind::Triumph => ops.extend([
+            Op::WaitTicks(TRIUMPH_AFTER),
+            Op::StopSong,
+            Op::WaitTicks(ENDING_TAIL),
+        ]),
         // The 15 ticks after leaving the mode are waited here, in it, before the mode
         // goes back to 13h: the screen is black either way.
-        Kind::Ending => ops.push(Op::WaitTicks(ENDING_TAIL)),
+        Kind::Ending => ops.extend([Op::StopSong, Op::WaitTicks(ENDING_TAIL)]),
     }
     ops.push(Op::End);
     (ops, resume)
@@ -377,6 +389,9 @@ pub struct Cutscene {
     paused: bool,
     /// The entry playing.
     entry: usize,
+    /// The song this cutscene starts and stops, and a start or stop not yet taken.
+    song: Option<&'static str>,
+    cue: Option<Cue>,
     aborted: bool,
     finished: bool,
 }
@@ -411,9 +426,26 @@ impl Cutscene {
             keys: VecDeque::new(),
             paused: false,
             entry: 0,
+            song: None,
+            cue: None,
             aborted: false,
             finished: false,
         }
+    }
+
+    /// Plays `song`. An ending's starts before its first retrace, a triumph's where
+    /// its routine starts it.
+    fn with_song(mut self, song: &'static str) -> Cutscene {
+        self.song = Some(song);
+        if self.kind == Kind::Ending {
+            self.cue = Some(Cue::Start(song));
+        }
+        self
+    }
+
+    /// A music start or stop since the last call.
+    pub fn take_cue(&mut self) -> Option<Cue> {
+        self.cue.take()
     }
 
     /// The 320x240 view on video memory.
@@ -529,7 +561,11 @@ impl Cutscene {
                 return self.wait(self.ticks != start);
             }
             Op::WaitTicks(n) => return self.wait_ticks(n),
-            Op::ResetCounter => self.counter = 0,
+            Op::StartSong => {
+                self.counter = 0;
+                self.cue = self.song.map(Cue::Start);
+            }
+            Op::StopSong => self.cue = self.song.map(|_| Cue::Stop),
             Op::Caption(i) => return self.type_caption(i, fb),
             Op::WaitRetraces(n) => {
                 let start = *self.since.get_or_insert(self.retraces);

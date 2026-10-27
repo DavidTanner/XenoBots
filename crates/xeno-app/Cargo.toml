@@ -14,6 +14,7 @@ env_logger = "0.11"
 log = "0.4"
 softbuffer = "0.4"
 winit = "0.30"
+xeno-audio = { path = "../xeno-audio" }
 xeno-formats = { path = "../xeno-formats" }
 xeno-render = { path = "../xeno-render" }
 xeno-sim = { path = "../xeno-sim" }

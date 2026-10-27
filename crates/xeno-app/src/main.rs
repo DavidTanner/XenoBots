@@ -13,6 +13,7 @@ mod keymap;
 mod login;
 mod maproom;
 mod mission;
+mod music;
 mod pointer;
 mod review;
 mod save;
@@ -260,6 +261,15 @@ fn main() -> ExitCode {
     if cli.check {
         return ExitCode::SUCCESS;
     }
+    let mut music = match viewer {
+        Some(_) => music::Jukebox::default(),
+        None => music::Jukebox::open(&files),
+    };
+    // The game's own start (intro, drop, log-in) plays the main theme from its first
+    // retrace; `--screen` starts elsewhere, in silence.
+    if viewer.is_none() && cli.screen.is_none() {
+        music.cue(music::Cue::Start(music::MAIN_THEME));
+    }
     match window::run(
         cli.scale,
         cli.aspect,
@@ -268,6 +278,7 @@ fn main() -> ExitCode {
         intro,
         drop,
         front,
+        music,
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

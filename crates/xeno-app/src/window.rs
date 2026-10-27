@@ -34,8 +34,9 @@ use crate::drop;
 use crate::input::{InputLog, Keys, Mouse};
 use crate::intro::{Cutscene, Kind};
 use crate::keymap::KeyMap;
+use crate::music::{Cue, Jukebox};
 use crate::pointer;
-use crate::screens::Screens;
+use crate::screens::{Screen, Screens};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
 use crate::viewer::Viewer;
@@ -52,7 +53,8 @@ pub enum FrontEnd {
 
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
-/// or closes the window.
+/// or closes the window. `music` plays what the cutscenes and screens cue.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
     aspect: Aspect,
@@ -61,6 +63,7 @@ pub fn run(
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
     front: FrontEnd,
+    music: Jukebox,
 ) -> Result<(), Box<dyn Error>> {
     // Without the intro, the drop starts at once, its counter where its first wait ends.
     let playing = match (&viewer, &intro, drop.take()) {
@@ -118,6 +121,7 @@ pub fn run(
         size: PhysicalSize::new(0, 0),
         fullscreen: false,
         error: None,
+        music,
     };
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -178,6 +182,8 @@ struct App {
     fullscreen: bool,
     /// The error that stopped the event loop, if any.
     error: Option<Box<dyn Error>>,
+    /// Ticked every retrace; cued by the cutscenes and the screens.
+    music: Jukebox,
 }
 
 /// Counts for the once-a-second rate log.
@@ -313,6 +319,8 @@ impl App {
     /// clock must
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
+        // The driver's hook runs first in the retrace interrupt, whatever the mode.
+        self.music.tick();
         let retrace = self.log_base + step.retrace;
         self.log.record(retrace, self.input.take());
         for event in self.log.events_at(retrace) {
@@ -326,6 +334,9 @@ impl App {
         if let Some(cutscene) = &mut self.cutscene {
             let done = cutscene.retrace(self.log.events_at(retrace), ticked, &mut self.fb);
             self.palette = cutscene.palette();
+            if let Some(cue) = cutscene.take_cue() {
+                self.music.cue(cue);
+            }
             if done {
                 let (aborted, counter) = (cutscene.aborted(), cutscene.counter());
                 let kind = cutscene.kind();
@@ -387,11 +398,19 @@ impl App {
                 self.input.screen_claims_escape = screens.claims_escape();
                 let cutscene = screens.take_cutscene();
                 if screens.take_changed() {
+                    // `MAINTHEM` stops on entering the map room's loop (`1000:6f34`).
+                    if screens.screen() == Screen::MapRoom {
+                        self.music.cue(Cue::Stop);
+                    }
                     self.title = format!("Xenobots - {}", screens.screen().label());
                     self.set_title();
                 }
                 // A cutscene after a mission: the 320x240 mode until it ends.
-                if let Some(cutscene) = cutscene {
+                if let Some(mut cutscene) = cutscene {
+                    // An ending's song starts before the mode change.
+                    if let Some(cue) = cutscene.take_cue() {
+                        self.music.cue(cue);
+                    }
                     self.fb = Cutscene::framebuffer();
                     self.palette = cutscene.palette();
                     self.cutscene = Some(cutscene);
@@ -683,6 +702,7 @@ mod tests {
             size: PhysicalSize::new(0, 0),
             fullscreen: false,
             error: None,
+            music: Jukebox::default(),
         }
     }
 
@@ -724,5 +744,66 @@ mod tests {
         };
         assert_eq!(screens.screen(), Screen::MapRoom);
         assert!(app.cutscene.is_none() && app.pointer_shown());
+    }
+
+    /// Runs `app` for `n` retraces from its start; the retraces where the song cued
+    /// changed, and where the mode did.
+    type Changes = Vec<(u64, Option<&'static str>)>;
+    fn run_app(app: &mut App, n: u64) -> (Changes, Vec<u64>) {
+        let (mut cues, mut modes, mut playing, mut at) = (Vec::new(), Vec::new(), None, 0);
+        for r in 1..n {
+            at += 1;
+            let changed = app.tick(Step {
+                retrace: at,
+                sixty_hz: at,
+            });
+            if changed {
+                app.restart_clock(Duration::from_millis(r));
+                (at, _) = (0, modes.push(r));
+            }
+            if app.music.playing != playing {
+                playing = app.music.playing;
+                cues.push((r, playing));
+            }
+        }
+        (cues, modes)
+    }
+
+    #[test]
+    fn each_cutscene_after_a_mission_plays_its_song() {
+        use crate::music::{BIG_WIN3, WIN1, WIN2};
+        use crate::screens::{Ending, Screen, tests};
+        for (ending, song, starts) in [
+            (Ending::Won, WIN1, 1),
+            (Ending::Lost, WIN2, 1),
+            // At the cutscene's second retrace, after the mode change and the blank.
+            (Ending::Triumph, BIG_WIN3, 3),
+        ] {
+            let mut screens = tests::new(Screen::Cutscene(ending));
+            screens.set_endings(tests::endings());
+            let mut app = test_app(FrontEnd::Screens(Box::new(screens)));
+            let (cues, modes) = run_app(&mut app, 2_000);
+            // Started with the cutscene, stopped before its last 15-tick wait.
+            assert_eq!(modes.len(), 2, "{ending:?}");
+            assert_eq!(cues.len(), 2, "{ending:?}: {cues:?}");
+            assert_eq!(cues[0], (starts, Some(song)));
+            assert_eq!(cues[1].1, None);
+            assert!(
+                (14..=16).contains(&(modes[1] - cues[1].0)),
+                "{cues:?} {modes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_main_theme_stops_on_entering_the_map_room() {
+        use crate::music::MAIN_THEME;
+        use crate::screens::{Screen, tests};
+        for (screen, playing) in [(Screen::Login, Some(MAIN_THEME)), (Screen::MapRoom, None)] {
+            let mut app = test_app(FrontEnd::Screens(Box::new(tests::new(screen))));
+            app.music.cue(Cue::Start(MAIN_THEME));
+            run_app(&mut app, 10);
+            assert_eq!(app.music.playing, playing, "{screen:?}");
+        }
     }
 }
