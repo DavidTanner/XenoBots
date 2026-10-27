@@ -228,10 +228,13 @@ routine is the map table's types 0x1c and 0x20 (T-103).
 2. **Coarse cone.** `o` is the octant of the vector from the camera to the node
    (`sim_get_octant`, `1000:084a`: quadrant by the signs of x and y, then whether
    `|y| >= |x|` in that quadrant, so octant 0 is from +x towards +y, counting
-   anticlockwise; a vector on a boundary takes the higher octant) and `c` the camera's,
+   anticlockwise; a vector on a diagonal takes the higher octant, one on an axis the
+   lower but for +x, which is octant 0, and a zero vector is octant 0) and `c` the camera's,
    the top three bits of `0x4000 - heading` (`1000:0378`, in `DS:0x4d28`). With
    `d = |o - c|` (as bytes), the node is kept if `(d + 2) & 7 <= 4`: within two
-   octants either way.
+   octants either way. The camera's octant holds its view direction, so the cone
+   always covers the half-plane in front: it only drops nodes behind or exactly
+   abeam (depth 0, which the depth test below would keep).
 3. The model has animations (`DS:0x2300[model]` not 0).
 4. The distance's whole part (+0x18) is under 0x7d (125 units).
 5. `P = F / float(distance)` (below), kept in `DS:0x4d4e`.
@@ -323,8 +326,8 @@ are shared with the mission's 3D view (T-101), which still needs the projection 
 
 ## Not traced here
 
-- The terrain nodes' drawing (type 8, `1000:3595`), the sky and the ground's
-  `GROUND.BIN` (T-101); the map marks (types 0xa, 0xc, 0xe) and the map table (T-103).
+- The terrain nodes' drawing (type 8, `1000:3595`) and the ground's `GROUND.BIN`
+  (T-101 part 2); the map marks (types 0xa, 0xc, 0xe) and the map table (T-103).
 - The second display's extra steps (`1000:4164`, slot `0x5f0`) and the static (T-104).
 - Explosions' height: the end script lowers each by `random & 0x7ff` (`docs/sim.md`,
   "The mission's end"); with the model height that gives its z, which the sim does
@@ -339,6 +342,21 @@ header writer), the focal factors (`DS:0x4d2a`, `0x4d2e`, `0x4d32`), the models'
 factors (the `mov` instructions at `1000:7b61`) and the stand-in size at `DS:0x4d52`,
 and the distance limit (`1000:301e`). Drawing the view is T-101; the model drawing it
 needs is in `xeno_render` (above, "The review's view").
+
+**The 3D view (T-101).** `xeno_render::view3d` has the float operations
+(`GameFloat`), the focal factor, the rotation (`Camera::rotate`), the octants and cone,
+the sort (`sort_far_to_near`) and the culling and projection (`place`), and
+`Framebuffer::draw_view` runs the ground, sky and draw steps into the view's buffer.
+`xeno-app`'s `scene` builds the camera and the nodes from the sim's world (distance
+and bearing by `xeno_sim`'s `approx_distance` and `bearing`, the coarse one
+`1000:059e` uses) and the console copies the buffer through its picture's colour-255
+region, the bounding box `review::region` measures. `LoadedModel::single_view` and
+`quarter_turn` are the other two loaders. Not yet: the terrain nodes (type 8, T-101
+part 2); each object's z and model height come from the scenario as loaded (the sim
+keeps neither, so hills, the walking bob of +0x12 and the explosions' drop are left
+out); only the frames the sim keeps are set (the humanoid's and scout's footstep legs,
+a base's look, an explosion's frame), the rest are 0; the sky is detail 1 only (the
+main view's).
 
 `xeno_sim::motion::walk` runs each robot's walking animation after its move with the
 leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,

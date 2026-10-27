@@ -255,6 +255,29 @@ impl LoadedModel {
         }
     }
 
+    /// `gfx_load_model_single_view` (`explode`, `plasma`, `basedome`, `cloak`, `obst`):
+    /// facing 0, unflipped, for every direction.
+    pub fn single_view(m00: &Model, m08: &Model) -> LoadedModel {
+        let mut model = LoadedModel::new(m00, std::slice::from_ref(m08));
+        model.repeat(1);
+        model
+    }
+
+    /// `gfx_load_model_quarter_turn` (`netrelay`): facing `f` shows facing `f mod 16`,
+    /// unflipped, so the model looks the same every quarter turn.
+    pub fn quarter_turn(m00: &Model, passes: &[Model]) -> LoadedModel {
+        let mut model = LoadedModel::new(m00, passes);
+        model.repeat(8);
+        model
+    }
+
+    /// Every facing shows the first `n` (in units of 2), with their plain frames.
+    fn repeat(&mut self, n: usize) {
+        for f in 0..32 {
+            self.facings[f] = self.facings[f % n].map(|(v, _)| (v, false));
+        }
+    }
+
     /// The view drawn at `facing` (an even 64th of a turn) and its animations there.
     pub fn facing(&self, facing: u8) -> Option<(&View, &[Animation])> {
         let (v, mirror) = (*self.facings.get(usize::from(facing / 2) % 32)?)?;
@@ -526,6 +549,21 @@ mod tests {
         assert_eq!(shown(&two, 10), (8, 0));
         assert_eq!(shown(&two, 62), (4, 1));
         assert_eq!(shown(&two, 58), (8, 1));
+    }
+
+    #[test]
+    fn single_view_and_quarter_turn_models_repeat_unflipped() {
+        let m00 = Model { views: Vec::new() };
+        let one = LoadedModel::single_view(&m00, &model(&[0, 8, 16, 24, 32]));
+        assert_eq!(shown(&one, 0), (0, 0));
+        assert_eq!(shown(&one, 24), (0, 0));
+        assert_eq!(shown(&one, 40), (0, 0));
+        let relay =
+            LoadedModel::quarter_turn(&m00, &[model(&[0, 8, 16, 24, 32]), model(&[4, 12, 20, 28])]);
+        assert_eq!(shown(&relay, 4), (4, 0));
+        assert_eq!(shown(&relay, 20), (4, 0));
+        assert_eq!(shown(&relay, 46), (12, 0));
+        assert_eq!(shown(&relay, 60), (12, 0));
     }
 
     #[test]

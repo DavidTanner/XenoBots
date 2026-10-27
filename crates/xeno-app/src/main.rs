@@ -17,6 +17,7 @@ mod music;
 mod pointer;
 mod review;
 mod save;
+mod scene;
 mod screens;
 mod test_pattern;
 mod translate;

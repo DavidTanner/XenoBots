@@ -35,7 +35,7 @@ pub enum Request {
 }
 
 /// The models' files by model number / 2 (`docs/formats/mxx.md`, "Loading").
-const MODEL_FILES: [&str; 11] = [
+pub const MODEL_FILES: [&str; 11] = [
     "humanoid", "scorpion", "scout", "missile", "netrelay", "explode", "plasma", "laser",
     "basedome", "cloak", "obst",
 ];
@@ -364,14 +364,21 @@ impl ReviewState {
             let (facing, frames) = (model_facing(self.robot.heading), &self.robot.frames);
             buffer.draw_model(model, facing, frames, &target);
         }
-        let stride = fb.surface().width;
-        let pixels = fb.pixels_mut();
-        for (y, row) in buffer.pixels().chunks(width).enumerate() {
-            let start = (top + y) * stride + left;
-            for (p, &colour) in pixels[start..start + width].iter_mut().zip(row) {
-                if *p == 255 {
-                    *p = colour;
-                }
+        copy_through(fb, &buffer, left, top);
+    }
+}
+
+/// Slot `0x5a4`: `buffer` copied with its top-left at (`left`, `top`) onto `fb`'s
+/// colour-255 pixels only.
+pub fn copy_through(fb: &mut Framebuffer, buffer: &Framebuffer, left: usize, top: usize) {
+    let width = buffer.surface().width;
+    let stride = fb.surface().width;
+    let pixels = fb.pixels_mut();
+    for (y, row) in buffer.pixels().chunks(width).enumerate() {
+        let start = (top + y) * stride + left;
+        for (p, &colour) in pixels[start..start + width].iter_mut().zip(row) {
+            if *p == 255 {
+                *p = colour;
             }
         }
     }
@@ -380,7 +387,7 @@ impl ReviewState {
 /// The bounding box of `fb`'s colour-255 pixels as slot `0x59c` measures it (left,
 /// top, width, height): when the width is odd, the left edge moves down to an even
 /// column and the right edge up to one.
-fn region(fb: &Framebuffer) -> Option<(usize, usize, usize, usize)> {
+pub fn region(fb: &Framebuffer) -> Option<(usize, usize, usize, usize)> {
     let width = fb.surface().width;
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
     for (i, _) in fb.pixels().iter().enumerate().filter(|&(_, &p)| p == 255) {

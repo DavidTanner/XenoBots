@@ -15,6 +15,7 @@ mod model;
 pub mod present;
 mod sprite;
 mod text;
+pub mod view3d;
 
 pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
