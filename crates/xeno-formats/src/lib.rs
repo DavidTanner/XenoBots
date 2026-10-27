@@ -36,6 +36,7 @@ pub mod script;
 pub mod sequence;
 pub mod setup;
 pub mod sounddvr;
+pub mod sounds;
 pub mod usg;
 pub mod vcl;
 pub mod vgaintro;

@@ -65,23 +65,71 @@ MZ header), as Ghidra shows them in segment `1000`.
   `docs/re/dvr-protocol.md`): `AL` is the slot, `AH` the voice (0..2;
   bit 7 queues the sound to start when the voice's current sound ends), `CX` a step
   that overrides the file's when non-zero, `DL` a volume (each sample is shifted
-  right by `DL` and re-centred). `AL = 0xff` stops the voice.
-- **Mixer** (four routines, one per output device, chosen at init; one drives the PC
-  speaker, another a Sound Blaster at DSP port 0x22c): sums the three voices' bytes.
-  The PC-speaker version adds a term from a small history buffer, divides by four and
-  drives the speaker with the top bit.
+  right by `DL` and re-centred). `AL = 0xff` silences the voice (at once, or queued
+  with bit 7).
+- **Mixer** (four routines, one per output device, chosen at init: PC speaker, AdLib,
+  Disney Sound Source, Sound Blaster): sums the three voices' bytes with the previous
+  output, divides by four and sends the result to the device (T-065).
 
-`xeno.exe` plays effects through a table of 29 sound events at `DS:0x7e18` (4 bytes
-each: slot, voice/flags, step override). Every entry has step override 0 and volume
-0 is passed, so the stock game plays each sample at its file rate and full volume.
-Blocks 4 and 15 are not referenced by that table.
+Details of the mixer and its four back ends are in [`sounddvr.md`](sounddvr.md),
+"The effects mixer".
+
+## Sound events
+
+**Confirmed** (T-065) from every caller in `xeno.exe`. The game plays effects through
+a table of 29 **sound events** at `DS:0x7e18`, 4 bytes each: the block (`AL`; 0xff
+plays nothing), the voice and flags (`AH`: voice 0 to 2, bit 7 queued), and a step
+override (`CX`). Callers pass **twice the event number** in `AX` (so the `0x2a` and `4`
+in `docs/sim.md` are events 21 and 2); `AX = 0xffff` plays nothing. Three routines
+use the table:
+
+- `snd_play_sound_effect` (`1000:ee90`): plays the event (`DL` = 0, full volume) and
+  records it in `DS:0x7e14` (written, never read).
+- `snd_play_sound_effect_if_viewed` (`1000:eec6`): the same, but only when `DI` is
+  the object whose console is open (`DS:0x7e16`, set by `ui_open_view_of_object`). Most
+  robot sounds go through it, so only the robot being watched is heard.
+- `1000:eeb1` (not a function in the project): "stops" the event's voice by playing
+  block 0xff with the event's flags; event 28's flags queue, so its sound finishes.
+
+Every entry's step override is 0, so each block plays at its file's rate.
+`xeno_formats::sounds` reads the table from the user's `xeno.exe`.
+
+| Event (`AX`) | Block | Voice | Queued | Trigger | Played by (`1000:`) | Heard |
+|---|---|---|---|---|---|---|
+| 0 (0x00) | 9 | 0 | | A humanoid fires its missile (a kind-8 shot, cool-down 50) | `sim_fire_humanoid_missile` (`b16e`) | viewed |
+| 1 (0x02) | 10 | 0 | | A kind-7 shot is fired: a humanoid's cannon (cool-down 12), a scout's plasma cannon | `sim_fire_humanoid_cannon` (`b0f6`), scout `c965` | viewed |
+| 2 (0x04) | 6 | 1 | | A robot is destroyed; a destroyed base's big explosion (end step 20) | `sim_destroy_robot` (`de65`); base end | all |
+| 3 (0x06) | 6 | 1 | | A destroyed base's end, steps 0, 5, 12, 17 | `snd_play_base_end_step_sound` (`e708`) | all |
+| 4 (0x08) | 11 | 1 | | A shot or mine explodes: kind 5 (`e20d`), kind 6 (`e318`, `e33d`), kind 7 (`e464`), kind 8 (`e584`), a mine, kind 9 (`e5d3`, "MINE DETONATED"); base end steps 3, 8, 15 | the kinds' ticks; base end | all |
+| 5 (0x0a) | 3 | 0 | | A kind-6 shell is fired: a scorpion's rapid-fire cannon (heard by all), a scout's cannon (viewed); base end steps 10, 16 | scorpion `9884`, scout `c9ee`; base end | see trigger |
+| 6, 7, 8 | none | 2 | yes | Nothing | never played | |
+| 9 (0x12) | 13 | 2 | | Lock warning: another robot keeps a target lock on this one (`1000:d6ad` sets its +0xed to 0xff; it halves each pass, and the warning sounds on some passes while it is not 0) | scorpion `9a39`, humanoid `b347`, scout `cb1f` | viewed |
+| 10 (0x14) | 0 | 2 | | The console's display mode (+0xef) changes: the keys pick 0, 1 or 2, the scorpion's missile camera is 3 and falls back on its own when the missile is gone | `ui_set_humanoid_display_mode` (`b3e9`), scorpion `99c7`, scout `cbc1` | all (only consoles call it) |
+| 11 | 1 | 2 | | Nothing | never played | |
+| 12 (0x18) | 2 | 0 | | A scorpion fires its tail missile (a kind-5 shot, one at a time) | scorpion `97da` | viewed |
+| 13 (0x1a) | 8 | 1 | | Humanoid footstep: a leg's frame (+0x101, +0x102) wraps to 0 | `ae11` | viewed |
+| 14 (0x1c) | 7 | 1 | | Scorpion footstep: when it moves, its six legs' frames are set from a table by the step, and an even step plays it | `sim_step_scorpion_leg_frames` (`95dd`) | viewed |
+| 15 (0x1e) | 7 | 1 | | Scout footstep: a leg's frame (+0x103, +0x104) wraps to 0 | `snd_play_scout_footstep` (`c84e`) | viewed |
+| 16 to 19 | none | 0 | | Nothing | never played | |
+| 20 | 11 | 2 | | Nothing | never played | |
+| 21 (0x2a) | 11 | 2 | | A robot is hit (also for 0 points, so the hill bounce) | `sim_damage_humanoid`, `sim_damage_scorpion`, `sim_damage_scout` | viewed |
+| 22, 23, 24 | none | 0 | | Nothing | never played | |
+| 25 (0x32) | 5 | 2 | | A scorpion deploys a relay from its cargo bay | scorpion `9b20` | viewed |
+| 26 (0x34) | 12 | 2 | | A target lock is taken ("TARGET ACQUIRED") | `sim_lock_target` (`d8af`) | viewed |
+| 27 (0x36) | 14 | 2 | | The selected weapon (+0xdd) changes | `sim_select_scorpion_weapon` (`98a9`), humanoid `b23d`, scout `ca37` | viewed |
+| 28 (0x38) | 16 | 2 | yes | Display noise: the open console's display mode has bit 2 set (the mode's device, by a table at `DS:0x70be`, is damaged in +0xf6, or the scorpion's missile camera was just lost); played when the bit sets, the voice "stopped" (silence queued) when it clears or the console closes | `daa2`, `dac0` | the open console |
+
+"Viewed" means `snd_play_sound_effect_if_viewed`. Shot kinds are `usg.md`'s object
+kinds (5 to 9 have their ticks at `DS:0xe6e8`); deploying mines and buoys plays
+nothing.
+
+**Blocks 4 and 15 are never played**: no event names them, and nothing else calls
+slot `0x44c`. Block 1 is named only by event 11, which nothing plays, so it is never
+heard either. The other 14 blocks are.
 
 ## Open questions
 
-- Which game action triggers each of the 29 events (and so what each sound is).
-- The other mixer back ends (device ids and ports) and the exact volume table at
-  `0x1b75`; the PC-speaker path is the only one read in full.
-- Whether anything plays blocks 4 and 15.
+- Which of the 0, 1, 2 display modes (+0xef) is the camera, map or radar.
 
 ## Parser
 

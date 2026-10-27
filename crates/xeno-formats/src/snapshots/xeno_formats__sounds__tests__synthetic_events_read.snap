@@ -1,0 +1,28 @@
+---
+source: crates/xeno-formats/src/sounds.rs
+expression: "events[..3]"
+---
+[
+    Event {
+        block: Some(
+            0,
+        ),
+        voice: 0,
+        queued: false,
+        step: 0,
+    },
+    Event {
+        block: None,
+        voice: 2,
+        queued: true,
+        step: 0,
+    },
+    Event {
+        block: Some(
+            3,
+        ),
+        voice: 1,
+        queued: false,
+        step: 16384,
+    },
+]

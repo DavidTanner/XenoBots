@@ -445,7 +445,8 @@ the hill bounce (0 points, `docs/sim.md`, "Movement"), a shot's direct hit
    byte or more, is taken. The last stock entry is 255, so one always is. The entry's
    component routine runs.
 4. Event 7 (hit) is posted to the robot's script, also for 0 points, and a sound
-   plays (0x2a).
+   plays (event 21, `AX` = 0x2a, `docs/formats/dsounds.md`, "Sound events"; only if
+   the robot's console is open).
 
 The component routines come in three shapes, and `xeno_formats::damage::Part`
 decodes each by its instructions: **wear**, a second random word's low byte masked
@@ -466,7 +467,7 @@ Ctrl+D):
    (`sim_count_kill_and_loss`, `1fe6:6af6`; the `WIN` caption's numbers).
 3. Its call sign's slot is freed (`DS:0x72c5` by +0xdb).
 4. An explosion is made where it stood (`sim_spawn_explosion`, below), and a sound
-   plays (4).
+   plays (event 2, `AX` = 4, heard everywhere).
 5. It is taken out of its side's unit list, the rest moving up in order
    (`sim_remove_unit_from_list`, `1fe6:6e71`), the roster is marked for a redraw and,
    if it was the roster's selection, another is picked; if it was on view, the view
@@ -581,7 +582,9 @@ or more, "Damage" above). Then:
      instruction (64.0); the step goes up by **four**, to 24;
    - steps 24 to 35: the step goes up by one, nothing else.
    The sounds play through `snd_play_sound_effect` (`1000:ee90`, slot `0x44c`); they
-   draw no random word.
+   draw no random word. By step (T-065): event 3 at steps 0, 5, 12 and 17, event 4
+   (a shot's explosion) at 3, 8 and 15, event 5 at 10 and 16, event 2 at 20, none
+   at the others.
 2. If the new step is 4 or 14, the base's +0x18 goes up by one (its look in the 3D
    view: a damaged frame).
 3. Once the step is 0x24 or more (read from the `cmp` at `1000:68dd`): won
