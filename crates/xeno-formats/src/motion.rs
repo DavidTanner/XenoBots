@@ -1,7 +1,8 @@
 //! What the port reads from the user's `xeno.exe` to move robots (`docs/sim.md`,
 //! "Movement"): the sine table the velocity comes from, each kind's turn step, the
 //! drive level under which a robot goes at half speed, the scorpion's speed tables, and
-//! the program each path mission gives each kind. Game data, read at run time; each
+//! the program each path mission gives each kind, and the leg frames of the walking
+//! animations (`docs/render.md`, "Walking"). Game data, read at run time; each
 //! table is found through an instruction that uses it, after checking that
 //! instruction's bytes.
 
@@ -34,6 +35,18 @@ pub(crate) const ATAN_AT: (usize, &[u8]) = (0x0835, &[0x36, 0x8b, 0x87]);
 /// `jmp [bx + table]` for the script's opcodes 0x54 to 0x58: each a table of three
 /// routines, by kind, that set the speed asked for.
 pub(crate) const SPEED_OPS: [usize; 5] = [0xd08c, 0xd084, 0xd07c, 0xd06c, 0xd074];
+
+/// `mov al, cs:[bx + table]` in the walking animations: the humanoid's legs (+0x101,
+/// +0x102), the scout's (+0x103, +0x104) and the scout's crouched legs.
+pub(crate) const HUMANOID_LEGS_AT: [usize; 2] = [0xadbe, 0xadcc];
+pub(crate) const SCOUT_LEGS_AT: [usize; 2] = [0xc7bf, 0xc7d1];
+pub(crate) const SCOUT_CROUCH_AT: usize = 0xc829;
+const LEG_OP: &[u8] = &[0x2e, 0x8a, 0x87];
+/// Steps in a walking animation's tables.
+pub const STEPS: usize = 16;
+/// A scout's stances run from 0 to 0x30, so its crouched legs are read by stance / 16
+/// from 4 entries.
+pub const CROUCHES: usize = 4;
 
 /// Entries in the sine table: a quarter turn in 256 steps, and the one after it.
 pub const SINE_ENTRIES: usize = 257;
@@ -72,6 +85,19 @@ pub struct Motion {
     pub scripts: Scripts,
     /// What damage does (`xeno_formats::damage`).
     pub damage: Damage,
+    pub walk: Walk,
+}
+
+/// The leg frames of the walking animations that make footsteps, by step
+/// (`docs/render.md`, "Walking").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Walk {
+    /// The humanoid's legs, +0x101 and +0x102.
+    pub humanoid_legs: [[u8; STEPS]; 2],
+    /// The scout's legs, +0x103 and +0x104 (+0xff and +0x100 follow them).
+    pub scout_legs: [[u8; STEPS]; 2],
+    /// A scout's four legs when it stands still crouched, by stance / 16.
+    pub scout_crouch: [u8; CROUCHES],
 }
 
 fn bytes(image: &[u8], at: usize, n: usize) -> Result<&[u8], FormatError> {
@@ -156,7 +182,26 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         script_speeds,
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
+        walk: Walk {
+            humanoid_legs: [
+                legs(image, HUMANOID_LEGS_AT[0])?,
+                legs(image, HUMANOID_LEGS_AT[1])?,
+            ],
+            scout_legs: [
+                legs(image, SCOUT_LEGS_AT[0])?,
+                legs(image, SCOUT_LEGS_AT[1])?,
+            ],
+            scout_crouch: legs(image, SCOUT_CROUCH_AT)?[..CROUCHES]
+                .try_into()
+                .expect("4 bytes"),
+        },
     })
+}
+
+/// A walking table in the code segment, through the `mov al, cs:[bx + table]` at `at`.
+fn legs(image: &[u8], at: usize) -> Result<[u8; STEPS], FormatError> {
+    let table = usize::from(operand(image, at, LEG_OP)?);
+    Ok(bytes(image, table, STEPS)?.try_into().expect("16 bytes"))
 }
 
 /// The speed a set-speed routine at `at` asks for: `mov word [di + 0x28], speed`,
@@ -225,6 +270,7 @@ mod tests {
         }
         crate::fixtures::synthetic_scripts(&mut image, DS);
         crate::fixtures::synthetic_damage(&mut image, DS);
+        crate::fixtures::synthetic_walk(&mut image);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
@@ -288,6 +334,8 @@ mod tests {
         assert_eq!(motion.mission_programs[6], [18, 19, 20]);
         assert_eq!(motion.atan[255], 0xff00);
         assert_eq!(motion.script_speeds[4], [20, 35, -15]);
+        assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
+        assert_eq!(motion.walk.scout_crouch[3], 3);
         insta::assert_debug_snapshot!(motion);
     }
 
@@ -306,6 +354,9 @@ mod tests {
             (SPEED_OPS[2], 0xfe),
             (0x9000, 0xb4),
             (0x9104, 0x8a),
+            (HUMANOID_LEGS_AT[1], 0x3e),
+            (SCOUT_LEGS_AT[0] + 2, 0x86),
+            (SCOUT_CROUCH_AT + 1, 0x8b),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -343,5 +394,14 @@ mod tests {
         // Opcode 0x54 is each kind's top speed, 0x58 its fastest reverse.
         assert!(motion.script_speeds[0].iter().all(|&s| s > 0));
         assert!(motion.script_speeds[4].iter().all(|&s| s < 0));
+        // Leg frames within their animations (humanoid 5 frames, scout 12), each leg
+        // coming back to 0 in a stride.
+        let w = &motion.walk;
+        for legs in &w.humanoid_legs {
+            assert!(legs.iter().all(|&f| f < 5) && legs.contains(&0));
+        }
+        let scout = w.scout_legs.iter().flatten().chain(&w.scout_crouch);
+        assert!(scout.into_iter().all(|&f| f < 12));
+        assert!(w.scout_legs.iter().all(|legs| legs.contains(&0)));
     }
 }

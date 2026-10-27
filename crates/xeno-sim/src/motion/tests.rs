@@ -262,7 +262,12 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
         event: 21,
         only_for: Some(EntityId(2)),
     };
-    assert_eq!(events, [Event::HillHit(EntityId(2)), sound]);
+    // Then its walk: backing off, its step is even, a footstep.
+    let footstep = Event::Sound {
+        event: 14,
+        only_for: Some(EntityId(2)),
+    };
+    assert_eq!(events, [Event::HillHit(EntityId(2)), sound, footstep]);
     // The bounce is a 0-point hit: event 7 waits for the script, nothing is worn.
     assert_eq!(moving(&world, 2).script.events, 1 << 7);
     assert_eq!(
@@ -294,6 +299,98 @@ fn walkers() -> World {
     world.paths.alien.count = 2;
     world.orders = OrderBook::default();
     world
+}
+
+/// The footsteps `kind` walking with `m` makes over `n` ticks, by tick (from 1).
+fn footsteps(kind: ObjectKind, m: &mut Movement, n: u16) -> Vec<(u16, u8)> {
+    let walk = synthetic_walk();
+    let mut heard = Vec::new();
+    for t in 1..=n {
+        super::walk(&walk, kind, 0, t, m, |e| heard.push((t, e)));
+    }
+    heard
+}
+
+#[test]
+fn a_leg_coming_back_to_0_is_a_footstep() {
+    // At speed 0x80 the step goes up one a tick; the legs are `step & 3` and
+    // `(step + 2) & 3`, so one or the other comes back to 0 every other tick.
+    let mut m = Movement {
+        speed: 0x80,
+        ..Movement::default()
+    };
+    let heard = footsteps(ObjectKind::Humanoid, &mut m, 6);
+    assert_eq!(heard, [(2, 13), (4, 13), (6, 13)]);
+    assert_eq!((m.stride, m.legs), (0x60, [2, 0]));
+    // Still, the legs settle a frame every 8 ticks (4 wrapping to 0) and say nothing.
+    m.speed = 0;
+    m.legs = [4, 2];
+    assert!(footsteps(ObjectKind::Humanoid, &mut m, 8).is_empty());
+    assert_eq!((m.stride, m.legs), (0, [0, 3]));
+    // At half that, a leg stays at 0 for two ticks: one footstep.
+    let mut m = Movement {
+        speed: 0x40,
+        ..Movement::default()
+    };
+    assert_eq!(footsteps(ObjectKind::Humanoid, &mut m, 6), [(4, 13)]);
+    // A scout the same with event 15; it backs off at a negative speed too.
+    let mut m = Movement {
+        speed: -0x80,
+        ..Movement::default()
+    };
+    assert_eq!(footsteps(ObjectKind::Scout, &mut m, 4), [(2, 15), (4, 15)]);
+}
+
+#[test]
+fn a_scorpion_steps_on_every_even_step_and_a_still_scout_crouches() {
+    let mut m = Movement {
+        speed: 0x40,
+        ..Movement::default()
+    };
+    // Half a step a tick: steps 0, 1, 1, 2, 2, 3 after each.
+    let heard: Vec<u16> = footsteps(ObjectKind::Scorpion, &mut m, 6)
+        .into_iter()
+        .map(|(t, e)| {
+            assert_eq!(e, 14);
+            t
+        })
+        .collect();
+    assert_eq!(heard, [1, 4, 5]);
+    // A scout standing still, or turning, puts its legs down; crouched it takes them
+    // by its stance.
+    let mut m = Movement {
+        stance: STANDING,
+        stride: 0x50,
+        legs: [3, 3],
+        ..Movement::default()
+    };
+    assert!(footsteps(ObjectKind::Scout, &mut m, 1).is_empty());
+    assert_eq!((m.stride, m.legs), (0, [0, 0]));
+    m.stance = 0x20;
+    footsteps(ObjectKind::Scout, &mut m, 1);
+    assert_eq!(m.legs, [2, 2]);
+    m.target_heading = 0x100;
+    footsteps(ObjectKind::Scout, &mut m, 1);
+    assert_eq!(m.legs, [0, 0]);
+}
+
+#[test]
+fn a_moving_robot_s_footsteps_are_heard_on_its_console() {
+    let tables = synthetic_tables();
+    let mut world = World::default();
+    world.insert(EntityId(4), robot(ObjectKind::Humanoid, Side::Human, 0, 0));
+    set(&mut world, 4, |m| (m.speed, m.target_speed) = (0x80, 0x80));
+    let mut random = Random::seeded(1);
+    let mut heard = Vec::new();
+    for _ in 0..4 {
+        heard.extend(tick(&mut world, &tables, &mut random));
+    }
+    let footstep = Event::Sound {
+        event: 13,
+        only_for: Some(EntityId(4)),
+    };
+    assert_eq!(heard.iter().filter(|e| **e == footstep).count(), 2);
+    assert_eq!(world.ticks, 4);
 }
 
 #[test]

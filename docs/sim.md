@@ -213,7 +213,9 @@ object, both filled at load. `motion::tick` runs the objects in slot order: robo
 move (`steer_and_speed`, the script, then `travel`), and the alien base's path phase
 runs at its count's phase 2. Its events are `HillHit` (the 0-point hit, T-054's `Destroyed`),
 `PathTaken` and `Program` (orders changed: the mission's program given and the
-program bit set, kept as `Orders::manual` until T-111, or a script's state).
+program bit set, kept as `Orders::manual` until T-111, or a script's state). After the
+move each robot walks (`motion::walk`, `docs/render.md`, "Walking"): its step counter
+and footstep legs step, and its footsteps are `Event::Sound`s (13 to 15) for it.
 
 The scripts (T-053, below) call `head_for_path_point` and
 `join_nearest_path_point`. Left out until their tasks: the recall (bit 3), the

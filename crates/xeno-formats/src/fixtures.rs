@@ -1393,11 +1393,36 @@ pub fn synthetic_damage_tables() -> crate::damage::Damage {
     crate::damage::read_image(&image, 0x1_0000).expect("synthetic damage tables")
 }
 
+/// Writes made-up walking tables (`crate::motion::Walk`) at 0xa100 up, with the
+/// instructions that read them: legs `step & 3` and `(step + 2) & 3` (humanoid, then
+/// scout), crouched legs `stance / 16`.
+pub fn synthetic_walk(image: &mut [u8]) {
+    use crate::motion::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let tables = [
+        (HUMANOID_LEGS_AT[0], 0),
+        (HUMANOID_LEGS_AT[1], 2),
+        (SCOUT_LEGS_AT[0], 0),
+        (SCOUT_LEGS_AT[1], 2),
+    ];
+    for (i, (at, shift)) in tables.into_iter().enumerate() {
+        let table = 0xa100 + 0x10 * i as u16;
+        put(
+            at,
+            &[&[0x2e, 0x8a, 0x87][..], &table.to_le_bytes()].concat(),
+        );
+        let legs: Vec<u8> = (0..STEPS as u8).map(|k| (k + shift) & 3).collect();
+        put(usize::from(table), &legs);
+    }
+    put(SCOUT_CROUCH_AT, &[0x2e, 0x8a, 0x87, 0x40, 0xa1]);
+    put(0xa140, &(0..STEPS as u8).collect::<Vec<_>>());
+}
+
 /// Writes made-up movement tables (`crate::motion`) into a load image whose data
 /// segment starts at `ds` and string segment at `strings`: a sine table of `i * 0x100`
 /// at `DS:0x9000`, turn steps 0x5b, a weak drive at 0x28, one speed table (the speed
 /// itself) at `strings + 0x800`, every mission's programs 8, 13, 8 at `DS:0x9300`,
-/// and the damage tables of [`synthetic_damage`].
+/// and the walking and damage tables of [`synthetic_walk`] and [`synthetic_damage`].
 pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     use crate::motion::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1433,6 +1458,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
         );
         put(routine, &op(&[0xc7, 0x45, 0x28], 10 * (i as u16 + 1)));
     }
+    synthetic_walk(image);
     synthetic_damage(image, ds);
 }
 
