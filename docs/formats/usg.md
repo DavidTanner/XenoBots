@@ -213,8 +213,8 @@ bytes). Unnamed bytes are kept as `unknown_XX` fields.
 | 0x08 | 4 | `y` | |
 | 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object. The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
 | 0x10 | 2 | `heading` | 65,536 to a turn. The editor's arrow keys step it by 0xb6 (a degree). The 3D view's render node copies it (`mxx.md`) |
-| 0x12 | 2 | `unknown_12` | Set per kind when an object is made (8.8: humanoid 10, scorpion 10.5, scout 12.5; a relay's from a table by its state). Not traced |
-| 0x14 | 2 | `radius` | 8.8. Set per kind when an object is made: base 35, scorpion 18, humanoid and scout 10, obstacle 13, relay 5. Contact checks take both radii off the distance; the render node keeps the whole part |
+| 0x12 | 2 | `unknown_12` | The model's height above z in the 3D view, added to z's low word (`docs/render.md`): set per kind when an object is made (0x0a00 humanoid, 0x0a80 scorpion, 0x0c80 scout, 0 shots; a relay's from a table by its stage); humanoids and scouts bob it as they walk |
+| 0x14 | 2 | `radius` | Set per kind when an object is made: base 35, scorpion 18, humanoid and scout 10, obstacle 13, relay 5 (as 8.8 numbers; the 3D view takes them as 1/65,536ths of a unit, like a z's low word, so a robot's radius is 10/256 of a unit there, `docs/render.md`). Contact checks take both radii off the distance; the render node keeps the whole part |
 | 0x16 | 1 | `flags` | Bits below |
 | 0x17 | 1 | `unknown_17` | More state bits: the scanners skip an object with bit 0; a robot's targeting sets bit 6. Not traced |
 

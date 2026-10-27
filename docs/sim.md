@@ -653,8 +653,12 @@ through `Sim::hit`), standing in for the shots (T-114).
 Each step's sound is a `motion::Event::Sound` for everyone (T-061), the events
 written in `damage::step_base_end` rather than read from `DS:0x7342`.
 
-Shortcuts, each named in the code: the base's damaged look and the
-explosions' height (T-100); with the small objects' pool full the original moves
+A base's look (+0x18, `State::Base::look`, from the file and in the state hash) goes up
+by one as the step becomes 4 and 14: the frame of its model in the 3D view
+(`docs/render.md`).
+
+Shortcuts, each named in the code: the explosions' height (the sim keeps no z yet;
+T-101); with the small objects' pool full the original moves
 whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
 or a resumed ended mission) stay where they are, where the original's table runs into
 code.

@@ -191,8 +191,7 @@ fn spawn_explosion(
 /// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run
 /// every 16 ticks): explosions on it, and at the last step the mission is over, won
 /// if the base is the alien one (`docs/sim.md`, "The mission's end").
-// shortcut: the base's damaged look at steps 4 and 14 and the
-// explosions' height (T-100) are not kept.
+// shortcut: the explosions' height is not kept: the sim has no z yet (T-101).
 pub fn step_base_end(
     world: &mut World,
     id: EntityId,
@@ -253,8 +252,12 @@ pub fn step_base_end(
         // Lowered by a random amount (`sim_lower_explosion_randomly`).
         random.word();
     }
-    if let Some(State::Base { end_step, .. }) = world.get_mut(id).map(|e| &mut e.state) {
+    if let Some(State::Base { end_step, look, .. }) = world.get_mut(id).map(|e| &mut e.state) {
         *end_step = next;
+        // Its damaged look (+0x18, `docs/render.md`).
+        if next == 4 || next == 14 {
+            *look = look.wrapping_add(1);
+        }
         if next >= end.last_step.into() {
             events.push(Event::MissionOver { won });
         }
