@@ -1,0 +1,13 @@
+[package]
+name = "xeno-audio"
+description = "Xenobots / Ultrabots reimplementation: the sound mixer and its audio output"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Output only: no decoders (the game's formats are ours to decode), no recording.
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
