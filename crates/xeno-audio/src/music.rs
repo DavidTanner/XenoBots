@@ -3,6 +3,8 @@
 //! driver's OPL2 register writes, in its order, to any [`Opl`]; and [`Music`], the
 //! driver on an emulated chip (Nuked-OPL3 in OPL2 mode) rendering at [`OPL_RATE`].
 
+use std::collections::VecDeque;
+
 use nuked_opl3::Opl3Chip;
 use xeno_formats::ms3::{Event, Song};
 use xeno_formats::sounddvr::{Bank, CHANNELS, VOICES};
@@ -350,14 +352,44 @@ impl Driver {
 /// The driver on an emulated OPL2, rendering mono samples at [`OPL_RATE`].
 pub struct Music {
     pub driver: Driver,
-    chip: Opl3Chip,
+    chip: Chip,
+}
+
+/// The emulated chip, which runs one sample after each register write, as the
+/// driver's delay after each write gives the real one about that long (`opl_write_register`).
+/// Without it a key off and the next key on land on the same sample and the chip never
+/// sees the key off, so a repeated note (the drums) is not struck again.
+struct Chip {
+    opl: Opl3Chip,
+    /// Samples run during writes, played before any new ones.
+    pending: VecDeque<i16>,
+}
+
+impl Chip {
+    fn sample(&mut self) -> i16 {
+        let mut frame = [0i16; 2];
+        let _ = self.opl.generate(&mut frame);
+        // In OPL2 mode both outputs carry the same mix.
+        frame[0]
+    }
+}
+
+impl Opl for Chip {
+    fn write(&mut self, reg: u8, value: u8) {
+        self.opl.write_register(u16::from(reg), value);
+        let s = self.sample();
+        self.pending.push_back(s);
+    }
 }
 
 impl Music {
     pub fn new(bank: Bank) -> Self {
         Self {
             driver: Driver::new(bank),
-            chip: Opl3Chip::new(OPL_RATE),
+            chip: Chip {
+                opl: Opl3Chip::new(OPL_RATE),
+                pending: VecDeque::new(),
+            },
         }
     }
 
@@ -376,13 +408,14 @@ impl Music {
         self.driver.tick(&mut self.chip);
     }
 
-    /// Renders the next `out.len()` samples.
+    /// Renders the next `out.len()` samples: those run during writes first, so the
+    /// chip's clock stays the device's.
     pub fn render(&mut self, out: &mut [i16]) {
-        let mut frame = [0i16; 2];
         for s in out {
-            // In OPL2 mode both outputs carry the same mix.
-            let _ = self.chip.generate(&mut frame);
-            *s = frame[0];
+            *s = match self.chip.pending.pop_front() {
+                Some(s) => s,
+                None => self.chip.sample(),
+            };
         }
     }
 }
@@ -620,6 +653,50 @@ mod tests {
         let s = song(programs, &[(on(0, 30, 124), 1), (on(0, 30, 124), 1)]);
         let ticks = play(&mut d, &s, 2);
         assert_eq!(ticks[1][2..], [(0xa0, 60), (0xb0, 0x30)]);
+    }
+
+    /// A drum hit: the note off and the next note on in one tick strike it again.
+    #[test]
+    fn a_note_off_and_on_in_one_tick_strikes_again() {
+        let mut bank = bank();
+        // A 440 Hz sine (modulator silent) that decays and does not sustain.
+        bank.patches[0] = Patch {
+            carrier_20: 0x01,
+            carrier_40: 0,
+            carrier_60: 0xf8,
+            carrier_80: 0xff,
+            carrier_e0: 0,
+            modulator_20: 0x01,
+            modulator_level: 0,
+            modulator_60: 0xf0,
+            modulator_80: 0xff,
+            modulator_e0: 0,
+            c0: 0,
+            unknown_0b: [0; 5],
+        };
+        bank.frequencies = vec![0x1244; 256];
+        bank.modulator_slots = vec![0, 1, 2, 8, 9, 0xa, 0x10, 0x11, 0x12];
+        bank.carrier_slots = vec![3, 4, 5, 0xb, 0xc, 0xd, 0x13, 0x14, 0x15];
+        let s = song(
+            [0; 16],
+            &[
+                (on(0, 30, 127), 20),
+                (Event::NoteOff { channel: 0 }, 0),
+                (on(0, 30, 127), 20),
+            ],
+        );
+        let mut m = Music::new(bank);
+        m.start(&s);
+        let mut peaks = Vec::new();
+        for _ in 0..24 {
+            m.tick();
+            let mut buf = [0i16; 700];
+            m.render(&mut buf);
+            peaks.push(buf.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0));
+        }
+        // Struck in the first tick, decayed by the 20th, struck again in the 21st.
+        assert!(peaks[0] > 4 * peaks[19], "{peaks:?}");
+        assert!(peaks[20] > 4 * peaks[19], "{peaks:?}");
     }
 
     /// Plays the four songs the game starts from the user's files, through the chip,
