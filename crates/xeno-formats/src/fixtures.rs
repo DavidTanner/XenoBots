@@ -906,15 +906,21 @@ pub fn synthetic_campaign(image: &mut [u8], ds: usize) {
 /// string segment, at offset 0x40).
 pub const SYNTHETIC_REVIEW_WIDGETS: usize = 0x18400;
 pub const SYNTHETIC_REVIEW_STRINGS: usize = SYNTHETIC_MAP_ROOM_STRINGS + 0x40;
+/// The script of [`synthetic_review`]'s pages: grow by 0x80 for 2 ticks, walk, turn by
+/// 0x400 for 3 ticks, wait 2, stand, and back to the walk.
+pub const SYNTHETIC_REVIEW_SCRIPT: [u16; 12] = [6, 2, 0x80, 10, 0, 3, 0x400, 2, 2, 12, 4, 6];
 
 /// Writes made-up review tables (`crate::review`) into `image`, whose data segment
 /// starts at `ds`, and returns the image offsets to relocate, ascending: a picture, a
 /// text widget, the view and both buttons; three keys (ESC leave, Tab next, Alt+Tab
-/// previous); font 2 in colour 0x33; three panels; two pages (models 0 and 2) whose
-/// texts are `A`..`E` and `F`, new line, `G`. `image` must reach
-/// `SYNTHETIC_REVIEW_STRINGS + 16` and `ds + 0xe0`, and the tables use `ds + 0xa0` to
-/// `ds + 0xe0`; it leaves the other synthetic tables alone, sharing the string segment
-/// [`synthetic_map_room`] points at.
+/// previous); font 2 in colour 0x33; three panels; two pages (models 0 and 2, heights 5
+/// and -3) whose texts are `A`..`E` and `F`, new line, `G`. Both run
+/// [`SYNTHETIC_REVIEW_SCRIPT`] and the same parts routines: standing every fourth tick,
+/// frames 1 and 2 step up together to 3, frame 3 down; walking 16 a tick, frames 1 and 4
+/// from the table 0, 1, 2, 0, 1, 2, ... `image` must reach
+/// `SYNTHETIC_REVIEW_STRINGS + 16` and `ds + 0x3a0`, and the tables use `ds + 0xa0` to
+/// `ds + 0xe0` and `ds + 0x380` to `ds + 0x398`; it leaves the other synthetic tables
+/// alone, sharing the string segment [`synthetic_map_room`] points at.
 pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
     use crate::maproom::STRINGS_SEGMENT;
     use crate::review::*;
@@ -957,17 +963,49 @@ pub fn synthetic_review(image: &mut [u8], ds: usize) -> Vec<usize> {
         ds + 0xc0,
         &words(&[20, 10, 80, 150, 110, 10, 180, 150, 130, 170, 180, 300]),
     );
-    put(KERNEL + 0x7b30, &words(&[0x7b40, 0x7b70]));
-    let texts = [(0, [0x40, 0x42, 0x44]), (2, [0x46, 0x48, 0x4a])];
-    for (page, (model, texts)) in texts.into_iter().enumerate() {
-        let code = KERNEL + 0x7b40 + 0x30 * page;
+    put(KERNEL + 0x7b30, &words(&[0x7b40, 0x7b80]));
+    let segment = (KERNEL / 16) as u16;
+    let mut relocated = vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1];
+    let texts = [(0, 5, [0x40, 0x42, 0x44]), (2, -3i16, [0x46, 0x48, 0x4a])];
+    for (page, (model, height, texts)) in texts.into_iter().enumerate() {
+        let code = KERNEL + 0x7b40 + 0x40 * page;
         put(code + PAGE_MODEL.0, &[PAGE_MODEL.1, &[model]].concat());
         for ((at, code_op), text) in PAGE_TEXTS.into_iter().zip(texts) {
             put(code + at, &op(code_op, text));
         }
+        for ((at, code_op), value) in [
+            (PAGE_HEIGHT, height as u16),
+            (PAGE_STANDING, 0x7c00),
+            (PAGE_STANDING_SEGMENT, segment),
+            (PAGE_SCRIPT, 0x380),
+        ] {
+            put(code + at, &op(code_op, value));
+        }
+        relocated.push(code + PAGE_STANDING_SEGMENT.0 + 4);
+        put(KERNEL + 0x7ca0 + 4 * page, &words(&[0x7c40, segment]));
+        relocated.push(KERNEL + 0x7ca0 + 4 * page + 2);
     }
+    put(WALKING.0, &op(WALKING.1, 0x7ca0));
+    #[rustfmt::skip]
+    put(KERNEL + 0x7c00, &[
+        0xf7, 0x06, 0xd2, 0x61, 0x03, 0x00, 0x75, 0x2b,
+        0x80, 0x3e, 0xbd, 0x61, 0x00, 0x74, 0x19, 0xfe, 0x06, 0xbd, 0x61, 0xfe, 0x06, 0xbe,
+        0x61, 0x80, 0x3e, 0xbd, 0x61, 0x03, 0x72, 0x0a, 0xc6, 0x06, 0xbd, 0x61, 0x00, 0xc6,
+        0x06, 0xbe, 0x61, 0x00,
+        0x80, 0x3e, 0xbf, 0x61, 0x00, 0x74, 0x04, 0xfe, 0x0e, 0xbf, 0x61,
+        0xcb,
+    ]);
+    #[rustfmt::skip]
+    put(KERNEL + 0x7c40, &[
+        0x83, 0x06, 0xe4, 0x61, 0x10, 0x8b, 0x1e, 0xe4, 0x61, 0xd0, 0xeb, 0xd0, 0xeb, 0xd0,
+        0xeb, 0xd0, 0xeb, 0x83, 0xe3, 0x0f, 0x2e, 0x8a, 0x87, 0x80, 0x7c, 0xa2, 0xbd, 0x61,
+        0xa2, 0xc0, 0x61, 0xcb,
+    ]);
+    put(KERNEL + 0x7c80, &[0, 1, 2].repeat(6)[..16]);
+    put(ds + 0x380, &words(&SYNTHETIC_REVIEW_SCRIPT));
     put(strings + 0x40, b"A\0B\0C\0D\0E\0F\x0cG\0");
-    vec![WIDGETS_SEGMENT.0 + 1, STRINGS_SEGMENT.0 + 1]
+    relocated.sort_unstable();
+    relocated
 }
 
 /// Writes a made-up program table (`crate::orders`) into `image`, whose data segment

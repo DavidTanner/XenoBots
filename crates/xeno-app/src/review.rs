@@ -184,7 +184,7 @@ pub mod tests {
     /// 100), font 2 in colour 0x33.
     pub fn tables() -> Review {
         let ds = 0x20000;
-        let mut image = vec![0u8; ds + 0x100];
+        let mut image = vec![0u8; ds + 0x400];
         let relocated = synthetic_review(&mut image, ds);
         review::read_image(&image, ds, &relocated).unwrap()
     }
