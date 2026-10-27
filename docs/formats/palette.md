@@ -219,20 +219,39 @@ Contents are the user's to read, never committed; this is the shape only.
   start: blinks and frame cycles of single colours (253, 254, 255), two-frame blinks
   of 23..25 and 230..255, frame cycles and one-frame loads over 32..47, rotates over
   16..23, 24..31, 16..31 and 32..47, one-frame loads of 128..254, and blends (kind 3)
-  over 49..63, 128..252 and 16..63. `xeno.exe` starts only three of them directly:
+  over 49..63, 128..252 and 16..63. `xeno.exe` starts these directly:
   - record 23 (colour 254, on and off every 32 retraces) by
     `ui_edit_name_with_blinking_cursor` (`1000:77ce`), the log-in screen's name entry,
     which turns it off again when the name is done: the text cursor's blink;
   - records 5 and 6 (blends over 49..63 and 128..252) by `pal_tint_for_time_of_day`
     (`1000:ed70`), called from `sim_advance_clock` (unless `DS:0x7d4d` is set) and
     restarted whenever the weight changes: 128 (frame 0, night) before 06:00 and after
-    18:59, `0x78 - 2 * minute` from 06:00 to 06:59, 0 (the palette itself) from 07:00
-    to 17:59, `2 * minute` from 18:00 to 18:59. So the 3D view's colours darken at
-    dusk and lighten at dawn with the mission clock (`DS:0x7d46` hours, `0x7d47`
-    minutes).
-  No other direct caller of `pal_start_anim` or `pal_activate_anim` exists in
-  `xeno.exe`; calls through the word slots from the `1fe6` segment or `mapdvr.dvr` were
-  not searched for (the Ghidra tools at hand had no byte or instruction search).
+    18:59, `0x78 - 2 * minute` from 06:00 to 06:59 (so 120 at 06:00, down to 2), 0
+    (the palette itself) from 07:00 to 17:59, `2 * minute` from 18:00 to 18:59 (0 up
+    to 118, then 128 at 19:00). So the 3D view's colours darken at dusk and lighten
+    at dawn with the mission clock (`DS:0x7d46` hours, `0x7d47` minutes), which moves
+    4 sixtieths a retrace (`docs/sim.md`, "The mission clock"): once a retrace, but a
+    new weight only every 900 retraces over the two fading hours. The last weight is
+    kept at `DS:0x7d4c`; 0xff forces a restart, set at start-up (`1000:ecc2`) and by
+    `1000:ecff`, which the situation room's and the consoles' view draws call after
+    starting their own records (below) and `ui_sitroom_set_view_mode` calls on every
+    mode key. `DS:0x7d4d` (no tint) is cleared by every mission view's draw (the
+    situation room's at `1000:550a`, the three consoles' at `845f`, `a0c3`, `bb86`) and
+    by the situation room's main-view routines for modes 0, 4, 6 and 8 (`DS:0x5ae0`);
+    **mode 2's routine (`1fe6:704a`) sets it** and resets `0x7d4c`. So the tint runs
+    on every mission view, the situation room included (its picture's colours in
+    those ranges are tinted too), except while the situation room's main view is in
+    mode 2 (S). A blend shows its frame once; the next upload of the shadow puts the
+    palette back until the weight changes, which is why each view's draw forces a
+    restart. The port (T-102): `xeno_sim::Clock::tint`, started by `xeno-app` on
+    records 5 and 6 of the screens' list once no fade is pending or running.
+  The views' draws also start records of their own (found by T-102, not yet read
+  through): the situation room 0, 1, 0x10 and 0x11 (`1000:54b9` on), the console
+  drawn at `1000:bb86` 0xc, 4, 0x10 and 0x11 between a hold and a release (`1000:bb35`
+  on); the other two consoles' draws (before `845f`, `a0c3`) not read. Not ported
+  (T-125).
+  T-037 missed those (it saw only direct callers); calls through the word slots from
+  the `1fe6` segment or `mapdvr.dvr` are still to be searched for.
 - **`vgaintro.dvr`'s list** (its data at load offset 0x13090, 0x1de1 bytes): six
   records, all off at start. Records 0..=4 are blends from the palette (kind 3) over
   colours 0..=251 (two frames of 252 colours each, speed 5); record 5 is a blend between
@@ -272,9 +291,9 @@ offset 0x28; the same routine finds the fonts (`font.md`).
   moves the pointer (above).
 - What sets the hidden switch (`DS:0x618 = 0xe263`) that `vgaiff.dvr`'s screenshot
   needs (T-039). Its IFF reader is never called (`docs/re/dvr-protocol.md`).
-- Whether anything outside segment `1000` of `xeno.exe` starts the other 21 built-in
-  records, and what sets `DS:0x7d4d` (no tint). A DOSBox check of the dusk tint and the
-  log-in cursor blink.
+- Whether anything outside segment `1000` of `xeno.exe` starts the other built-in
+  records. A DOSBox check of the dusk tint and the log-in cursor blink. (Settled,
+  T-102: `DS:0x7d4d` is set only by the situation room's mode 2, above.)
 - `mgavideo.dvr` code at load offset 0x450 (not in the slot table that was read) dims
   the shadow into a third buffer and points `DS:0x68e` at it while it waits for an
   upload, so a blend started then would mix against the dimmed colours. Who calls it

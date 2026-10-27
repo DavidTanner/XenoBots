@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -704,6 +704,28 @@ and checks: every object is loaded, one per slot; each side's count of each kind
 the parser's; each side has one base (`docs/formats/usg.md`); every unit has orders;
 a side has at most 38 units (its unit list); and the robots and bases fit the
 40-object pool, the relays and obstacles the 200-object one (`usg.md`, `DCBS`).
+
+## The mission clock (T-102)
+
+`DS:0x7d46` holds the game clock: hours, minutes, seconds and sixtieths (then the
+campaign's day and month). The start-up sets it to 12:00:00.00 (`1000:ecc2`), and a
+scenario's `SHDR` start replaces all but the date (`docs/formats/usg.md`). The mission
+loop calls `sim_advance_clock` (`1000:ed05`) once per retrace, just before the object
+tick, so it runs on every mission view. It adds **4** sixtieths, then carries into
+seconds, minutes and hours by subtracting 60 (24 for hours); past midnight it also
+moves the campaign's day on (`DS:0x7d4a`, by a days-per-month table at `DS:0x7d8f`,
+and the month `0x7d4b`). So game time runs 15 times faster than the retrace count's
+seconds: an hour is 54,000 retraces, about 12.8 minutes at 70 Hz.
+
+It then calls `pal_tint_for_time_of_day` (`1000:ed70`), unless `DS:0x7d4d` is set,
+for the 3D view's colours (`docs/formats/palette.md`, "The lists in the stock
+drivers"): a weight of 128 before 06:00 and from 19:00, `0x78 - 2 * minute` over
+06:xx, 0 from 07:00 to 17:59 and `2 * minute` over 18:xx.
+
+The port: `xeno_sim::Clock` in `World::clock`, from the `SHDR` start, in the state
+hash, advanced first in `Sim::tick`; `Clock::tint` is the weight. The date's
+roll-over is not ported (T-124). `xeno-app` starts the records from it
+(`Mission::tint`).
 
 ## The run's random word
 

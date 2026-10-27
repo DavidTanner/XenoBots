@@ -82,6 +82,12 @@ const ORDERS_COLOUR: u8 = 0x1d;
 const ORDERS_HIGH_COLOUR: u8 = 0x17;
 const ORDERS_CLEAR: u8 = 0x10;
 const ORDERS_CURSOR: (i32, i32) = (96, 30);
+/// The main view's mode 2 (S), whose routine (`1fe6:704a`) sets `DS:0x7d4d`: no
+/// time-of-day tint while it is shown.
+const UNTINTED_MODE: u8 = 2;
+/// `mgavideo.dvr`'s blend records over colours 49..=63 and 128..=252 that
+/// `pal_tint_for_time_of_day` (`1000:ed70`) starts.
+pub const TINT_RECORDS: [u8; 2] = [5, 6];
 
 /// Alt+Q, the only key word the situation room's end handler acts on.
 const ALT_Q: u16 = 0x2010;
@@ -360,6 +366,8 @@ pub struct Mission {
     typed: usize,
     capture: Option<(Target, MouseButton)>,
     dirty: bool,
+    /// The tint's last weight (`DS:0x7d4c`); none (0xff) restarts it.
+    tint: Option<u8>,
     /// The scenario as loaded, which the editor's keys change and Ctrl+Alt+P saves
     /// (and a save writes; T-116 for saving the running sim's world).
     scenario: Option<Scenario>,
@@ -420,6 +428,7 @@ impl Mission {
             typed: 0,
             capture: None,
             dirty: true,
+            tint: None,
             scenario: None,
             editor: Editor::default(),
         };
@@ -631,6 +640,26 @@ impl Mission {
         }
     }
 
+    /// A view's picture was just shown: the tint starts again at the next clock step
+    /// (`1000:ecff`, called as each view is drawn).
+    pub fn restart_tint(&mut self) {
+        self.tint = None;
+    }
+
+    /// The weight to start [`TINT_RECORDS`] with now, if the mission clock's
+    /// (`Clock::tint`) changed since the last (`pal_tint_for_time_of_day`); none in the
+    /// situation room's mode 2 or while the mission is parked.
+    pub fn tint(&mut self) -> Option<u8> {
+        let Run::Running(sim) = &self.run else {
+            return None;
+        };
+        if self.viewed == Viewed::Base && self.mode == UNTINTED_MODE {
+            return None;
+        }
+        let weight = sim.world.clock.tint();
+        (self.tint != Some(weight)).then(|| *self.tint.insert(weight))
+    }
+
     /// One retrace of the mission's world with that retrace's input, if it runs (a
     /// parked mission waits). What it did goes to the log. `Some(won)` once a
     /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
@@ -744,6 +773,7 @@ impl Mission {
                 }
                 self.mode = mode;
                 self.typed = 0;
+                self.tint = None;
                 self.dirty = true;
                 None
             }
@@ -1319,6 +1349,30 @@ pub mod tests {
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
         Mission::new(file, scenario, Random::seeded(1), &assets.motion)
+    }
+
+    /// The tint starts once per weight, again after a view is shown, and not in the
+    /// situation room's mode 2.
+    #[test]
+    fn the_tint_starts_when_the_clock_s_weight_changes() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let set_hour = |m: &mut Mission, hour| match &mut m.run {
+            Run::Running(sim) => sim.world.clock.hour = hour,
+            Run::Parked(_) => unreachable!(),
+        };
+        set_hour(&mut m, 3);
+        assert_eq!(m.tint(), Some(0x80));
+        assert_eq!(m.tint(), None, "the same weight is not restarted");
+        set_hour(&mut m, 12);
+        assert_eq!(m.tint(), Some(0));
+        m.restart_tint();
+        assert_eq!(m.tint(), Some(0));
+        m.mode = UNTINTED_MODE;
+        m.restart_tint();
+        assert_eq!(m.tint(), None);
+        m.mode = ORDERS_MODE;
+        assert_eq!(m.tint(), Some(0));
     }
 
     /// With unlock word 9 the editor's keys act in the situation room; its terrain

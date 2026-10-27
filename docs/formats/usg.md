@@ -70,7 +70,7 @@ in about the same area. Height (z) is 0 on open ground.
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0x00 | 2 | `version` | 0x80 in every file. Any other value makes the game read only 0x16 bytes of each object and skip `APTH`/`HPTH` (an older layout). The parser accepts only 0x80 |
-| 0x02 | 1 | `start.hour` | Copied to the game clock at `DS:0x7d46`. `1000:ed05` advances it: 60 ticks per second, then seconds, minutes, hours, days (from a days-per-month table) and months |
+| 0x02 | 1 | `start.hour` | Copied to the game clock at `DS:0x7d46`. `1000:ed05` advances it 4 sixtieths a retrace (`docs/sim.md`, "The mission clock"), then seconds, minutes, hours, days (from a days-per-month table) and months |
 | 0x03 | 1 | `start.minute` | |
 | 0x04 | 1 | `start.second` | |
 | 0x05 | 1 | `start.tick` | Sixtieths of a second |
