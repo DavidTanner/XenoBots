@@ -12,7 +12,7 @@ strips), [`m@l.md`](m@l.md) (full-screen pictures), [`vcl.md`](vcl.md) (cutscene
 pictures), [`mxx.md`](mxx.md) (the
 `.m00`/`.m08`/`.m16`/`.m32` unit models),
 [`scendef.md`](scendef.md) (the campaign scenario table), [`usg.md`](usg.md) (the
-scenarios), [`fgd.md`](fgd.md) (the intro drop's foreground layers), [`ms3.md`](ms3.md) (the music), [`dsounds.md`](dsounds.md) (the sound effects),
+scenarios), [`fgd.md`](fgd.md) (the intro drop's foreground layers), [`ms3.md`](ms3.md) (the music), [`sounddvr.md`](sounddvr.md) (the music driver's instrument bank), [`dsounds.md`](dsounds.md) (the sound effects),
 [`map.md`](map.md) (the map editor's terrain files), [`rst.md`](rst.md) (`state.rst`,
 which the game does not use), [`disk-markers.md`](disk-markers.md) (the installer's
 `xenobot.1`/`.2`),
