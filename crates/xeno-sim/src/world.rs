@@ -116,6 +116,11 @@ pub struct Movement {
     pub stance_target: u8,
     /// +0x118: a scorpion's speed table.
     pub speed_table: u8,
+    /// The walking animation's step counter (humanoid +0x105, scorpion +0x116, scout
+    /// +0x10a) and the leg frames that make footsteps (humanoid +0x101 and +0x102,
+    /// scout +0x103 and +0x104; `docs/render.md`, "Walking").
+    pub stride: u8,
+    pub legs: [u8; 2],
     pub script: Script,
 }
 
@@ -144,7 +149,14 @@ impl Movement {
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
-    fn of(r: &usg::Robot) -> Movement {
+    fn of(r: &usg::Robot, kind: ObjectKind) -> Movement {
+        // +0xf7 and +0x10d onwards, by kind.
+        let (f7, l) = (&r.unknown_f7.0, &r.unknown_10d.0);
+        let (stride, legs) = match kind {
+            ObjectKind::Humanoid => (f7[0xe], [f7[0xa], f7[0xb]]),
+            ObjectKind::Scorpion => (l[9], [0; 2]),
+            _ => (f7[0x13], [f7[0xc], f7[0xd]]),
+        };
         Movement {
             tick: r.tick,
             velocity: (r.velocity_x, r.velocity_y),
@@ -163,6 +175,8 @@ impl Movement {
             stance: r.stance,
             stance_target: r.stance_target,
             speed_table: r.speed_table,
+            stride,
+            legs,
             // The rest is set when loading starts the program anew.
             script: Script {
                 events: u16::from_le_bytes([r.unknown_36.0[0], r.unknown_36.0[1]]),
@@ -176,7 +190,7 @@ impl State {
     /// The movement state `object`'s layout records.
     pub fn of(object: &Object) -> State {
         match &object.body {
-            Body::Robot(r) => State::Robot(Movement::of(r)),
+            Body::Robot(r) => State::Robot(Movement::of(r, object.kind)),
             Body::Base(b) => State::Base {
                 tick: b.tick,
                 kills: b.kills,
@@ -205,6 +219,7 @@ impl StateHash for State {
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.drive, m.stance, m.stance_target, m.speed_table]);
+                h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
                 let s = m.script;
                 h.u16(s.pointer);
                 h.u16(s.wait);
@@ -342,6 +357,8 @@ pub struct World {
     pub bases: [Option<EntityId>; 2],
     /// `DS:0x4db5`: staggers the waits programs start with (`docs/sim.md`, "Orders").
     pub stagger: u8,
+    /// `DS:0x62c6`: the object passes run, which the walking animations go by.
+    pub ticks: u16,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -429,6 +446,9 @@ impl World {
             // shortcut: the original carries the stagger from mission to mission
             // (from 0 at start-up); it only decides which robots start in step.
             stagger: 0,
+            // shortcut: the original carries this count from mission to mission too;
+            // only the settling legs read it (every 8 passes).
+            ticks: 0,
         }
     }
 
@@ -545,6 +565,7 @@ impl StateHash for World {
             h.u16(base.map_or(0xffff, |id| id.0));
         }
         h.u8(self.stagger);
+        h.u16(self.ticks);
     }
 }
 

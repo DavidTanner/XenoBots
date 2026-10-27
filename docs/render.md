@@ -316,3 +316,11 @@ instructions that use them: the kinds' models (`DS:0xe70c`) and frame offsets
 header writer), the focal factors (`DS:0x4d2a`, `0x4d2e`, `0x4d32`), the models' size
 factors (the `mov` instructions at `1000:7b61`) and the stand-in size at `DS:0x4d52`,
 and the distance limit (`1000:301e`). Drawing the view is T-101.
+
+`xeno_sim::motion::walk` runs each robot's walking animation after its move with the
+leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,
+cs:[bx + table]` of each routine): the step counter and the two legs that make
+footsteps (`Movement::stride`, `legs`, loaded from the file and in the state hash, as
+is the pass count `World::ticks`), and it reports the footsteps as
+`motion::Event::Sound` for the robot (`xeno-app` plays them on its console). The
+other animations and the model height's bob are not kept yet (T-101, T-114).

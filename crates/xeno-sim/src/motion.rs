@@ -7,6 +7,7 @@
 //! speed step and the move, and call [`head_for_path_point`] and
 //! [`join_nearest_path_point`] and set a robot's target heading and speed.
 
+use xeno_formats::motion::{STEPS, Walk};
 use xeno_formats::usg::{ObjectKind, Side};
 
 pub use xeno_formats::motion::Motion as Tables;
@@ -236,6 +237,65 @@ pub fn travel(
 
 /// A scout's stance when it stands, the only one it moves in.
 pub const STANDING: u8 = 0x30;
+
+/// Footstep sound events (`docs/formats/dsounds.md`, "Sound events").
+pub const FOOTSTEP_HUMANOID: u8 = 13;
+pub const FOOTSTEP_SCORPION: u8 = 14;
+pub const FOOTSTEP_SCOUT: u8 = 15;
+
+/// One tick of a robot's walking animation after its move (`docs/render.md`,
+/// "Walking"): the step counter and the legs that make footsteps. `ticks` is the
+/// pass count (`DS:0x62c6`); `footstep` hears each footstep event.
+// shortcut: only the legs that make footsteps are kept; the other animations (the
+// scorpion's legs, arms, tails) and the model height's bob wait for T-101 and T-114.
+pub fn walk(
+    walk: &Walk,
+    kind: ObjectKind,
+    heading: u16,
+    ticks: u16,
+    m: &mut Movement,
+    mut footstep: impl FnMut(u8),
+) {
+    m.stride = m.stride.wrapping_add((m.speed >> 3) as u8);
+    let step = usize::from(m.stride >> 4);
+    // A leg takes its frame for the step; one that comes back to 0 is a footstep.
+    let mut stride = |legs: &mut [u8; 2], tables: &[[u8; STEPS]; 2], event| {
+        for (leg, table) in legs.iter_mut().zip(tables) {
+            let old = std::mem::replace(leg, table[step]);
+            if *leg == 0 && old != 0 {
+                footstep(event);
+            }
+        }
+    };
+    match kind {
+        ObjectKind::Humanoid if m.speed != 0 => {
+            stride(&mut m.legs, &walk.humanoid_legs, FOOTSTEP_HUMANOID)
+        }
+        ObjectKind::Humanoid => {
+            // Still: the legs settle, one frame every 8 passes, 4 wrapping to 0.
+            m.stride = 0;
+            if ticks & 7 == 0 {
+                for leg in m.legs.iter_mut().filter(|l| **l != 0) {
+                    *leg = match leg.wrapping_add(1) {
+                        5 => 0,
+                        n => n,
+                    };
+                }
+            }
+        }
+        ObjectKind::Scorpion if m.speed != 0 && step % 2 == 0 => footstep(FOOTSTEP_SCORPION),
+        ObjectKind::Scout if m.speed != 0 => stride(&mut m.legs, &walk.scout_legs, FOOTSTEP_SCOUT),
+        ObjectKind::Scout if m.target_heading != heading || m.stance == STANDING => {
+            (m.stride, m.legs) = (0, [0; 2]);
+        }
+        ObjectKind::Scout => {
+            // shortcut: stances past 0x3f would read past the 4 entries; none occur.
+            let crouch = walk.scout_crouch.get(usize::from(m.stance >> 4));
+            m.legs = [crouch.copied().unwrap_or(0); 2];
+        }
+        _ => {}
+    }
+}
 
 /// Where robot `id` heads now: `at`, as a point (`sim_set_robot_destination`; an
 /// object it was heading for is dropped).
@@ -493,6 +553,7 @@ fn alien_path_phase(
 /// base steps the mission's end.
 pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Event> {
     let mut events = Vec::new();
+    world.ticks = world.ticks.wrapping_add(1);
     // Slot by slot, as `sim_tick_all_objects` walks the table: an object made in a
     // higher slot during the pass ticks in it too.
     let mut next = world.next_from(0);
@@ -533,6 +594,17 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 events.push(Event::HillHit(id));
                 crate::damage::hit(world, id, 0, tables, random, &mut events);
             }
+            let ticks = world.ticks;
+            if let Some(e) = world.get_mut(id)
+                && let State::Robot(m) = &mut e.state
+            {
+                walk(&tables.walk, e.kind, e.heading, ticks, m, |event| {
+                    events.push(Event::Sound {
+                        event,
+                        only_for: Some(id),
+                    })
+                });
+            }
         }
         if path_phase {
             alien_path_phase(world, tables, random, &mut events);
@@ -550,6 +622,17 @@ pub(crate) mod tests;
 /// Made-up tables for tests: a true quarter sine (the last entry 0, as the original's),
 /// a turn step of 0x100, a weak drive at 0x28, two speed tables (the speed, and half
 /// of it) and programs numbered `10 * mission + kind`.
+/// Made-up walking tables: legs `step & 3` and `(step + 2) & 3`, crouched `stance / 16`.
+#[cfg(test)]
+pub(crate) fn synthetic_walk() -> Walk {
+    let legs = |shift: u8| std::array::from_fn(|k| (k as u8 + shift) & 3);
+    Walk {
+        humanoid_legs: [legs(0), legs(2)],
+        scout_legs: [legs(0), legs(2)],
+        scout_crouch: [0, 1, 2, 3],
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn synthetic_tables() -> Tables {
     use xeno_formats::motion::{MISSIONS, SINE_ENTRIES, SPEED_ENTRIES};
@@ -584,5 +667,6 @@ pub(crate) fn synthetic_tables() -> Tables {
         ],
         scripts: crate::script::tests::scripts(&[0x0a]),
         damage: xeno_formats::fixtures::synthetic_damage_tables(),
+        walk: synthetic_walk(),
     }
 }
