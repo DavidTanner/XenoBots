@@ -2213,8 +2213,14 @@ pub(crate) mod tests {
                     xeno_sim::script::bearing(&assets.motion.atan, at, position);
                 let camera =
                     crate::scene::camera(&world, id, tables, &assets.motion, &heights).unwrap();
-                let nodes =
-                    crate::scene::nodes(&world, tables, &camera, &assets.motion.atan, &heights);
+                let nodes = crate::scene::nodes(
+                    &world,
+                    tables,
+                    &camera,
+                    &assets.motion.atan,
+                    &heights,
+                    &[],
+                );
                 let node = nodes.iter().find(|n| n.object == other.0).unwrap();
                 let size = (width as u16, height as u16);
                 let ((x, y), scale) = place(tables, &camera, node, true, size)
@@ -2246,6 +2252,41 @@ pub(crate) mod tests {
                 }
             }
             assert!(big > 0, "{view:?}: no unit near enough to see");
+            // Turned towards each hill of the mission's terrain, the view shows its
+            // facets (colours 57 to 61), nearer than 20 units.
+            let terrain = mission
+                .scenario()
+                .and_then(|s| s.terrain.as_ref())
+                .map_or(&[][..], |t| &t.features);
+            for (h, hill) in terrain.iter().enumerate().filter(|(_, f)| f.kind == 0x14) {
+                let centre = xeno_sim::Position {
+                    x: xeno_sim::Fixed(hill.x),
+                    y: xeno_sim::Fixed(hill.y),
+                };
+                if xeno_sim::terrain::approx_distance(at, centre).0 > 20 << 16 {
+                    continue;
+                }
+                world.get_mut(id).unwrap().heading =
+                    xeno_sim::script::bearing(&assets.motion.atan, at, centre);
+                let mut buffer = Framebuffer::new(Size::new(width, height));
+                crate::scene::draw(
+                    &mut buffer,
+                    &world,
+                    id,
+                    tables,
+                    &assets.motion,
+                    &heights,
+                    std::slice::from_ref(hill),
+                    &[],
+                    None,
+                );
+                let facets = buffer
+                    .pixels()
+                    .iter()
+                    .filter(|p| (57..=61).contains(*p))
+                    .count();
+                assert!(facets > 0, "{view:?}: hill {h} not drawn");
+            }
         }
     }
 }

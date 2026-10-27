@@ -5,9 +5,10 @@
 
 use xeno_formats::ban::{self, Sky};
 use xeno_formats::mxx;
-use xeno_formats::usg::{ObjectKind, Scenario};
+use xeno_formats::usg::{ObjectKind, Scenario, TerrainFeature};
 use xeno_formats::view3d::View3d;
-use xeno_render::view3d::{Camera, RenderNode, Trig, focal, sort_far_to_near};
+use xeno_render::shape::Shape;
+use xeno_render::view3d::{Camera, RenderNode, TERRAIN, Trig, focal, sort_far_to_near};
 use xeno_render::{Framebuffer, LoadedModel};
 use xeno_sim::motion::{Tables, sine};
 use xeno_sim::script::bearing;
@@ -88,43 +89,68 @@ fn frames(e: &Entity) -> Vec<u8> {
 }
 
 /// The objects' nodes in slot order, each kind's model and node type from `view`,
-/// sorted far to near. Terrain nodes (type 8) come first in the original's list; they
-/// draw nothing yet (T-101 part 2), so they are left out.
+/// after the terrain's, sorted far to near.
 pub fn nodes(
     world: &World,
     view: &View3d,
     camera: &Camera,
     atan: &[u16],
     heights: &Heights,
+    terrain: &[TerrainFeature],
 ) -> Vec<RenderNode> {
     let from = xeno_sim::Position {
         x: xeno_sim::Fixed(camera.x),
         y: xeno_sim::Fixed(camera.y),
     };
-    let mut nodes: Vec<RenderNode> = world
-        .iter()
-        .filter_map(|(id, e)| {
-            let kind = usize::from(u16::from(e.kind));
-            let node_type = (*view.node_types.get(kind)?)?;
-            let (z, height) = heights.get(usize::from(id.0)).copied().unwrap_or_default();
-            Some(RenderNode {
-                object: id.0,
-                model: view.kind_models[kind],
-                heading: e.heading,
-                // The height goes into the low word only, with no carry.
-                position: [
-                    e.position.x.0,
-                    e.position.y.0,
-                    (z & !0xffff) | i32::from((z as u16).wrapping_add(height)),
-                ],
-                radius: e.radius,
-                distance: approx_distance(from, e.position).0 as u32,
-                bearing: bearing(atan, from, e.position),
-                frames: frames(e),
-                size: (node_type == 6).then_some(e.heading),
-            })
+    let objects = world.iter().filter_map(|(id, e)| {
+        let kind = usize::from(u16::from(e.kind));
+        let node_type = (*view.node_types.get(kind)?)?;
+        let (z, height) = heights.get(usize::from(id.0)).copied().unwrap_or_default();
+        Some(RenderNode {
+            object: id.0,
+            model: view.kind_models[kind],
+            heading: e.heading,
+            // The height goes into the low word only, with no carry.
+            position: [
+                e.position.x.0,
+                e.position.y.0,
+                (z & !0xffff) | i32::from((z as u16).wrapping_add(height)),
+            ],
+            radius: e.radius >> 8,
+            distance: approx_distance(from, e.position).0 as u32,
+            bearing: bearing(atan, from, e.position),
+            frames: frames(e),
+            size: (node_type == 6).then_some(e.heading),
+            shape: None,
         })
-        .collect();
+    });
+    // The terrain records come first, in file order (`gfx_emit_terrain_render_node`).
+    // shortcut: their heading (+0x08, `[DS:0x1486] << 4`) only turns the untraced
+    // point ops' shapes, so it is left at 0.
+    let terrain = terrain.iter().map(|f| {
+        let centre = xeno_sim::Position {
+            x: xeno_sim::Fixed(f.x),
+            y: xeno_sim::Fixed(f.y),
+        };
+        RenderNode {
+            object: TERRAIN,
+            model: 0,
+            heading: 0,
+            position: [f.x, f.y, f.z],
+            radius: f.radius,
+            distance: approx_distance(from, centre).0 as u32,
+            bearing: bearing(atan, from, centre),
+            frames: Vec::new(),
+            size: None,
+            shape: Some(Shape {
+                radius: f.radius,
+                diagonal: f.diagonal,
+                height: f.height,
+                program: f.shape.clone(),
+            }),
+        }
+    });
+    let mut nodes: Vec<RenderNode> = terrain.chain(objects).collect();
     sort_far_to_near(&mut nodes);
     nodes
 }
@@ -139,13 +165,14 @@ pub fn draw(
     view: &View3d,
     tables: &Tables,
     heights: &Heights,
+    terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
 ) -> bool {
     let Some(camera) = camera(world, id, view, tables, heights) else {
         return false;
     };
-    let nodes = nodes(world, view, &camera, &tables.atan, heights);
+    let nodes = nodes(world, view, &camera, &tables.atan, heights, terrain);
     buffer.draw_view(view, &camera, &nodes, models, sky);
     true
 }
@@ -245,6 +272,8 @@ mod tests {
                 exponent: -8,
             },
             max_distance: 0x7d,
+            box_program: Vec::new(),
+            hill_program: Vec::new(),
         }
     }
 
@@ -283,7 +312,7 @@ mod tests {
         let eye = camera(&world, EntityId(2), &view, &tables, &heights).unwrap();
         // The humanoid's eye height on its z.
         assert_eq!((eye.z, eye.viewer, eye.heading), (0x1_0f80, 2, 0x1234));
-        let nodes = nodes(&world, &view, &eye, &tables.atan, &heights);
+        let nodes = nodes(&world, &view, &eye, &tables.atan, &heights, &[]);
         let summary: Vec<_> = nodes
             .iter()
             .map(|n| (n.object, n.model, n.frames.clone(), n.size))

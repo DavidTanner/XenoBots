@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use xeno_formats::ban::Sky;
 use xeno_formats::view3d::{Float, View3d};
 
+use crate::shape::{self, Builtins, Shape};
 use crate::{Framebuffer, LoadedModel, ModelScale, ModelTarget, Rect, model_facing};
 
 /// The ground step's colour, and the sky's when there is no strip.
@@ -224,7 +225,7 @@ pub struct RenderNode {
     pub heading: u16,
     /// x, y and z (the object's z with its model height), 16.16.
     pub position: [i32; 3],
-    /// The object's radius (+0x14); only its high byte counts.
+    /// +0x06: an object's radius (+0x14) high byte, or a terrain record's radius.
     pub radius: u16,
     /// From the camera, 16.16 (`sim_approx_distance_between`).
     pub distance: u32,
@@ -234,13 +235,17 @@ pub struct RenderNode {
     pub frames: Vec<u8>,
     /// A type 6 node's own size factor.
     pub size: Option<u16>,
+    /// A terrain node's (type 8) shape, drawn instead of a model.
+    pub shape: Option<Shape>,
 }
 
+/// A terrain node's object: the original's is 0, which is no object's offset.
+pub const TERRAIN: u16 = u16::MAX;
+
 impl RenderNode {
-    /// +0x1a: the distance less the radius's high byte, shifted to 16.16, not below 0.
+    /// +0x1a: the distance less the radius word shifted to 16.16, not below 0.
     pub fn near(&self) -> u32 {
-        self.distance
-            .saturating_sub(u32::from(self.radius & 0xff00))
+        self.distance.saturating_sub(u32::from(self.radius) << 8)
     }
 }
 
@@ -248,6 +253,15 @@ impl RenderNode {
 /// [`RenderNode::near`], nodes at the same distance in the order they were made.
 pub fn sort_far_to_near(nodes: &mut [RenderNode]) {
     nodes.sort_by_key(|n| Reverse(n.near()));
+}
+
+/// The first tests of every node routine: not the viewer's own, and within two
+/// octants of the camera's.
+fn in_cone(camera: &Camera, node: &RenderNode) -> bool {
+    let [x, y, _] = node.position;
+    let (dx, dy) = (x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
+    let d = octant(dx, dy).wrapping_sub(camera.octant()) as i8;
+    node.object != camera.viewer && (d.unsigned_abs().wrapping_add(2) & 7) <= 4
 }
 
 /// Where `gfx_draw_model` puts a node in a `width` by `height` buffer, and its scale,
@@ -262,12 +276,7 @@ pub fn place(
 ) -> Option<((i32, i32), u16)> {
     let [x, y, z] = node.position;
     let (dx, dy) = (x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
-    let d = octant(dx, dy).wrapping_sub(camera.octant()) as i8;
-    if node.object == camera.viewer
-        || (d.unsigned_abs().wrapping_add(2) & 7) > 4
-        || !animated
-        || node.distance >> 16 >= u32::from(view.max_distance)
-    {
+    if !in_cone(camera, node) || !animated || node.distance >> 16 >= u32::from(view.max_distance) {
         return None;
     }
     let p = camera.focal.over(GameFloat::from_raw(node.distance as i32));
@@ -340,7 +349,20 @@ impl Framebuffer {
         self.draw_sky(sky, camera.heading);
         let clip = Rect::new(0, 0, size.width as u32, size.height as u32);
         let buffer = (size.width as u16, size.height as u16);
+        let builtins = Builtins {
+            block: &view.box_program,
+            hill: &view.hill_program,
+        };
         for node in nodes {
+            // Type 8 (`1000:3595`): the cone, then the centre in front.
+            if let Some(shape) = &node.shape {
+                let [x, y, _] = node.position;
+                let (_, depth) = camera.rotate(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
+                if in_cone(camera, node) && depth >= 0 {
+                    shape::draw(self, camera, node.position, shape, builtins);
+                }
+                continue;
+            }
             let model = models
                 .get(usize::from(node.model / 2))
                 .and_then(Option::as_ref);
@@ -496,6 +518,12 @@ mod tests {
                 exponent: -8,
             },
             max_distance: 0x7d,
+            // Made up: the ring and centre, one quad of ring points in colour 7
+            // and a triangle on the centre in colour 8.
+            box_program: vec![0x0c],
+            hill_program: vec![
+                0x26, 0x10, 0xe4, 0xe0, 0xdc, 0xd8, 7, 0x0e, 0xd8, 0xe4, 0xe8, 8, 0,
+            ],
         }
     }
 
@@ -511,6 +539,7 @@ mod tests {
             bearing: 0,
             frames: Vec::new(),
             size: None,
+            shape: None,
         }
     }
 
@@ -578,8 +607,8 @@ mod tests {
                 ..node(0, d as i32, d)
             })
             .collect();
-        // Only a radius's high byte counts: 6 units less 0xff00 is 5 and 1/256.
-        nodes[4].radius = 0xffff;
+        // +0x06 is shifted to 16.16: 6 units less 0xff00 is 5 and 1/256.
+        nodes[4].radius = 0xff;
         assert_eq!(nodes[4].near(), 0x5_0100);
         sort_far_to_near(&mut nodes);
         let order: Vec<u16> = nodes.iter().map(|n| n.object).collect();
@@ -692,5 +721,42 @@ mod tests {
         behind.position[1] = -behind.position[1];
         fb.draw_view(&v, &c, &[behind], &models, None);
         assert_eq!(row(&fb, 4), [GROUND; 12]);
+    }
+
+    #[test]
+    fn terrain_nodes_run_their_shape_when_their_centre_is_in_front() {
+        let v = view();
+        // Two units up, looking down on a hill 32 units across.
+        let c = Camera {
+            z: 2 << 16,
+            ..camera(0)
+        };
+        let hill = |x: i32, y: i32| RenderNode {
+            object: TERRAIN,
+            shape: Some(Shape {
+                radius: 0x1000,
+                diagonal: 0xaab,
+                height: 0x100,
+                program: vec![0x14, 0],
+            }),
+            position: [x << 16, y << 16, 0],
+            ..node(x, y, y.unsigned_abs())
+        };
+        let colours = |c: &Camera, nodes: &[RenderNode]| {
+            let mut fb = Framebuffer::new(Size::new(100, 100));
+            fb.draw_view(&v, c, nodes, &[], None);
+            let mut seen: Vec<u8> = fb.pixels().to_vec();
+            seen.sort_unstable();
+            seen.dedup();
+            seen
+        };
+        // The made-up hill program's quad (7) and triangle (8) show over the ground.
+        assert_eq!(colours(&c, &[hill(0, 40)]), [7, 8, FLAT_SKY, GROUND]);
+        // Centre behind (octant 4, inside the cone): nothing, though the ring reaches
+        // in front.
+        assert_eq!(colours(&c, &[hill(-2, -1)]), [FLAT_SKY, GROUND]);
+        // Terrain is never the viewer's, even for slot 0.
+        let c0 = Camera { viewer: 0, ..c };
+        assert_eq!(colours(&c0, &[hill(0, 40)]), [7, 8, FLAT_SKY, GROUND]);
     }
 }

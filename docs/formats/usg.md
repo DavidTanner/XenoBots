@@ -152,7 +152,56 @@ stock `.usg` record's `shape` is its kind and the 0. The hill program puts eight
 ring at height z - +0x14 (at the radius on the axes and at (±+0x12, ±+0x12) on the
 diagonals) and one at the centre at z, and fills the facets between them in colours
 57 to 61. With the editor's values (z and +0x14 both a third of the radius) the ring
-lies on the ground. The exact facets and colours are for the 3D view (T-101).
+lies on the ground.
+
+**The shape ops (T-101).** `gfx_draw_terrain_shape` reserves the record's
+`point_slots` four-byte slots below its frame; an op's point operands are signed byte
+offsets of slots (multiples of 4, -0x04 down to -0x38 and beyond), each holding a
+projected screen point (y, then x). It reads the sine and cosine of the node's heading
+less the bearing (used only by the untraced ops) and the three sizes, the third as the
+**current height** (8.8). Then, by op:
+
+- **0x26** (`1000:1cb0`, the hill's first op): the current height is negated, and
+  eight points are made on the ring at it: in slots -0x1c to -0x38, offsets (0, r),
+  (-d, d), (-r, 0), (-d, -d), (0, -r), (d, -d), (r, 0), (d, d) from the centre
+  (r the radius, d the diagonal size, both turned to 16.16; anticlockwise from +y).
+  The current height is then set to 0 for good and the centre itself goes in slot -0x18.
+- **Projection** of an offset (`1000:20f4`): the centre plus the offset, at the current
+  height (shifted to 16.16) above the centre's z, relative to the camera and turned
+  as a model's anchor is (`docs/render.md`, "Projection"), giving the lateral `X` and
+  depth `Z`. In front (`Z` not negative) it is divided by the **larger of |X| and |Z|**
+  (not the approximate distance): `x = W/2 + int(float(X) * F / m)`, `y = H/2 -
+  int(float(z) * F / m)`, each 0x7fff if the addition overflows. Behind, `m = |X|` and
+  `x = W/2 ± int(F)` by the sign of `X` (the focal factor's width to that side), `y` as
+  before, with no overflow check.
+- **0x1c** a b c (`1000:1fc1`): slot a = the midpoint of b and c, each coordinate
+  `(b + c) >> 1` without overflow.
+- **0x1e** a b c (`1000:1f75`): slot a = b plus a quarter of the way to c, `b + ((c -
+  b) >> 2)`.
+- **0x0e** a b c colour and **0x10** a b c d colour (`1000:1ee6`, `1f2e`): the triangle or
+  quad of those slots, in that order, filled in the colour by `1fe6:4d7d` (below).
+- **0x12**, **0x14**, **0x16**: run the built-in block or hill program (`3b53:0` and
+  `3b53:0x16c`), then go on.
+- **0x0a**: skips 8 bytes. **0x00**, **0x0c**, **0x18**, **0x1a**: end the whole shape.
+  **0x20** sets a flag that moves a triangle's first corner and breaks into the
+  debugger (`int 3`): a developer's aid.
+- Not traced (no stock record uses them; only the block program does, and nothing
+  sees the block): the point ops 0x02, 0x04, 0x06, 0x08, 0x22 and 0x24, which turn
+  points by the shape's facing.
+
+The hill program is op 0x26; midpoints of ring points 0, 2, 4 and 6 with the centre;
+then for each quarter of the ring, two triangles (ring point, the next, the nearer
+midpoint) and a quad (midpoint, the ring point between, the next midpoint, the centre),
+in colours 57 to 61. The block program makes its points with op 0x04 and fills six
+quads in colours 7 to 14.
+
+**The polygon fill** (`1fe6:4d7d`): the corners' bounding box is tested against the
+buffer's clip rectangle, then the polygon is drawn only if it faces the viewer: from
+the top corner `t` (smallest y; on a tie the smallest x, the later corner on a full
+tie), with `n` the next corner and `p` the one before, only when `(n.x - t.x) * (p.y -
+t.y) < (n.y - t.y) * (p.x - t.x)` (corners anticlockwise on screen). Edges are walked
+into a table of a left and a right x per row (`1fe6:60ea`, clipped), and each row in the
+clip rectangle is filled from the left x up to, not including, the right x.
 
 ### `DCBS`: objects
 
