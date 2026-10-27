@@ -169,7 +169,14 @@ terrain record's radius is 8.8 in units.
 
 A terrain node (`1000:41c0`): +0x04 type 8, +0x05 0, +0x06 the record's radius, +0x08
 `[DS:0x1486] << 4`, +0x0a to +0x15 the record's x, y and z, +0x1e the record's offset
-in the `MAPP` buffer. Drawing it is T-101's (`gfx_draw_terrain_shape`).
+in the `MAPP` buffer. Its near distance takes the whole radius off (+0x06 is shifted
+left 8 for every node, so an object's radius high byte is 1/256 of a unit there and a
+record's radius a whole one).
+
+**Type 8** (`1000:3595`): the viewer test (a terrain node's object is 0, so it never
+matches), the coarse cone, then the centre's depth (`Z` of the rotation) must not be
+negative; then `gfx_draw_terrain_shape` (`docs/formats/usg.md`, "The shape ops") with
+the node's heading less the bearing to it, and the pointer probe. No distance limit.
 
 ### Frame numbers
 
@@ -326,8 +333,8 @@ are shared with the mission's 3D view (T-101), which still needs the projection 
 
 ## Not traced here
 
-- The terrain nodes' drawing (type 8, `1000:3595`) and the ground's `GROUND.BIN`
-  (T-101 part 2); the map marks (types 0xa, 0xc, 0xe) and the map table (T-103).
+- The ground's `GROUND.BIN` (`1000:435c`, drawn by `1fe6:67d3`; not in a stock
+  install); the map marks (types 0xa, 0xc, 0xe) and the map table (T-103).
 - The second display's extra steps (`1000:4164`, slot `0x5f0`) and the static (T-104).
 - Explosions' height: the end script lowers each by `random & 0x7ff` (`docs/sim.md`,
   "The mission's end"); with the model height that gives its z, which the sim does
@@ -351,8 +358,10 @@ the sort (`sort_far_to_near`) and the culling and projection (`place`), and
 and bearing by `xeno_sim`'s `approx_distance` and `bearing`, the coarse one
 `1000:059e` uses) and the console copies the buffer through its picture's colour-255
 region, the bounding box `review::region` measures. `LoadedModel::single_view` and
-`quarter_turn` are the other two loaders. Not yet: the terrain nodes (type 8, T-101
-part 2); each object's z and model height come from the scenario as loaded (the sim
+`quarter_turn` are the other two loaders. `xeno_render::shape` runs the terrain
+nodes' programs (the hill and block programs are read from the user's `xeno.exe` by
+`xeno_formats::view3d`), with a scan fill that is not yet the original's edge walker.
+Not yet: each object's z and model height come from the scenario as loaded (the sim
 keeps neither, so hills, the walking bob of +0x12 and the explosions' drop are left
 out); only the frames the sim keeps are set (the humanoid's and scout's footstep legs,
 a base's look, an explosion's frame), the rest are 0; the sky is detail 1 only (the

@@ -13,6 +13,7 @@ pub mod dac;
 mod framebuffer;
 mod model;
 pub mod present;
+pub mod shape;
 mod sprite;
 mod text;
 pub mod view3d;

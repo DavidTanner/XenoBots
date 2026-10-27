@@ -32,6 +32,14 @@ pub(crate) const DEFAULT_SIZE_AT: usize = 0x303f;
 /// `cmp dx, limit` in `gfx_draw_model`: the distance's whole part must be below it.
 pub(crate) const MAX_DISTANCE_AT: usize = 0x301e;
 
+/// The handlers of ops 0x12 and 0x14 in `gfx_draw_terrain_shape` (`push si`, `mov si,
+/// program`, the op loop, `mov ax, segment`, `mov es, ax`): the built-in box and hill
+/// programs.
+pub(crate) const BOX_AT: usize = 0x1eaa;
+pub(crate) const HILL_AT: usize = 0x1ec4;
+/// How much of a built-in program is kept; the stock ones are well under this.
+const PROGRAM_BYTES: usize = 0x100;
+
 /// A number in the game's floating-point format (`docs/render.md`, "Projection"):
 /// `mantissa * 2^exponent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +64,40 @@ pub struct View3d {
     pub default_size: Float,
     /// Models are drawn only nearer than this many units.
     pub max_distance: u8,
+    /// The built-in terrain shape programs (`docs/formats/usg.md`, "Drawing"): the bytes
+    /// from each one's start, ended by a 0 op.
+    pub box_program: Vec<u8>,
+    pub hill_program: Vec<u8>,
+}
+
+/// The program a built-in op's handler at `at` runs.
+fn shape_program(image: &[u8], at: usize) -> Result<Vec<u8>, FormatError> {
+    let (offset, segment) = match *image.get(at..at + 15).unwrap_or_default() {
+        [
+            0x56,
+            0xbe,
+            lo,
+            hi,
+            0xeb,
+            0x04,
+            0xff,
+            0x97,
+            _,
+            _,
+            0xb8,
+            s0,
+            s1,
+            0x8e,
+            0xc0,
+        ] => (u16::from_le_bytes([lo, hi]), u16::from_le_bytes([s0, s1])),
+        _ => return Err(invalid(at, "not a built-in shape op")),
+    };
+    let start = usize::from(segment) * 16 + usize::from(offset);
+    image
+        .get(start..(start + PROGRAM_BYTES).min(image.len()))
+        .filter(|p| !p.is_empty())
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| invalid(at, "a shape program past the end of the image"))
 }
 
 fn byte(image: &[u8], at: usize) -> Result<u8, FormatError> {
@@ -115,6 +157,8 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<View3d, FormatError> {
             Some(&[0x83, 0xfa, n]) => n,
             _ => return Err(invalid(MAX_DISTANCE_AT, "not the distance limit")),
         },
+        box_program: shape_program(image, BOX_AT)?,
+        hill_program: shape_program(image, HILL_AT)?,
     };
     for kind in 0..KINDS {
         view.kind_models[kind] = byte(image, models + kind)?;
@@ -213,6 +257,24 @@ mod tests {
         put(DEFAULT_SIZE_AT, &op(&[0xa1], 0x4d52));
         put(DS + 0x4d52, &[0, 0x80, 0xf8]);
         put(MAX_DISTANCE_AT, &[0x83, 0xfa, 0x7d]);
+        // The box at 0xa000 + 0 and the hill at 0xa000 + 8: made-up programs.
+        let builtin = |offset: u16| {
+            [
+                &op(&[0x56, 0xbe], offset)[..],
+                &[0xeb, 0x04, 0xff, 0x97, 0x88, 0x29],
+                &op(&[0xb8], 0xa00),
+                &[0x8e, 0xc0],
+            ]
+            .concat()
+        };
+        put(BOX_AT, &builtin(0));
+        put(HILL_AT, &builtin(8));
+        put(
+            0xa000,
+            &[
+                0x0e, 0xfc, 0xf8, 0xf4, 9, 0, 0, 0, 0x1c, 0xfc, 0xf8, 0xf4, 0,
+            ],
+        );
         image
     }
 
@@ -248,7 +310,13 @@ mod tests {
             }
         );
         assert_eq!(view.max_distance, 0x7d);
-        insta::assert_debug_snapshot!(view);
+        assert_eq!(view.box_program[..5], [0x0e, 0xfc, 0xf8, 0xf4, 9]);
+        assert_eq!(view.hill_program[..5], [0x1c, 0xfc, 0xf8, 0xf4, 0]);
+        insta::assert_debug_snapshot!(View3d {
+            box_program: Vec::new(),
+            hill_program: Vec::new(),
+            ..view
+        });
     }
 
     #[test]
@@ -263,6 +331,8 @@ mod tests {
             SIZE_MOVS_AT + 2,
             DEFAULT_SIZE_AT,
             MAX_DISTANCE_AT + 1,
+            BOX_AT + 4,
+            HILL_AT + 13,
             // A routine that is neither, and a writer of another shape.
             0x9010,
             0x9101,
@@ -332,5 +402,9 @@ mod tests {
             }
         );
         assert_eq!(view.max_distance, 0x7d);
+        // The hill program starts with its points (op 0x26) and fills in colours 57
+        // to 61; the box's with its points (op 4).
+        assert_eq!(view.hill_program[0], 0x26);
+        assert_eq!(view.box_program[0], 4);
     }
 }

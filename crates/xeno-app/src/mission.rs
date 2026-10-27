@@ -1005,6 +1005,10 @@ impl Mission {
             view,
             &assets.motion,
             &scene::heights(self.scenario.as_ref()),
+            self.scenario
+                .as_ref()
+                .and_then(|s| s.terrain.as_ref())
+                .map_or(&[], |t| &t.features),
             &assets.models,
             assets.skies.get(&self.file),
         );

@@ -1,6 +1,6 @@
 ---
 source: crates/xeno-formats/src/view3d.rs
-expression: view
+expression: "View3d { box_program: Vec::new(), hill_program: Vec::new(), ..view }"
 ---
 View3d {
     kind_models: [
@@ -98,4 +98,6 @@ View3d {
         exponent: -8,
     },
     max_distance: 125,
+    box_program: [],
+    hill_program: [],
 }
