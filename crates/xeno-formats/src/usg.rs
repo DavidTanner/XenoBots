@@ -409,20 +409,59 @@ pub struct Base {
     /// +0x30: once destroyed, the step of the mission's end; at 0x24 the mission ends,
     /// won if this is the alien base.
     pub end_step: u16,
-    pub unknown_32: Unknown<2>,
+    /// +0x32: what the situation room's map shows ([`Base::MAP_ROBOTS`] and the other
+    /// `MAP_` bits); bit 14 asks the status view to redraw.
+    pub map_overlays: u16,
     /// +0x34: how much of the briefing the orders view has typed.
     pub typed: u16,
-    pub unknown_36: u8,
+    /// +0x36: the map's zoom, 0 to 6: it scales by `1 << zoom`.
+    pub map_zoom: u8,
     /// +0x37: the situation room's main view mode (0, 2, 4, 6, 8: O, S, M, R, C).
     pub view_mode: u8,
     pub unknown_38: Unknown<9>,
     /// +0x41: counts the base's ticks; its low four bits pick the tick's routine
     /// (the alien base gives idle robots paths when they are 2).
     pub tick: u8,
-    pub unknown_42: Unknown<0x7b>,
+    /// +0x42: the roster's rows (cleared at load), its scroll and the side's unit list.
+    pub unknown_42: Unknown<0xd>,
+    /// +0x4f: the map's centre while [`Base::MAP_FREE`] is set.
+    pub map_centre: Point,
+    pub unknown_57: Unknown<2>,
+    /// +0x59: the units' message log the situation room's mode C shows; the first
+    /// slot with no text ends it.
+    pub messages: [Message; 7],
+    pub unknown_b4: Unknown<9>,
     /// +0xbd: the situation room's widget state.
     pub view_state: Unknown<0x43>,
     pub unknown_100: Unknown<0x72>,
+}
+
+impl Base {
+    /// [`Base::map_overlays`] bits (`docs/screens.md`, "The situation room's main
+    /// view"): the robots, drawn as sprites rather than dots, the relays, the grid,
+    /// the editor's paths, and the centre at [`Base::map_centre`] rather than on the
+    /// selected unit.
+    pub const MAP_ROBOTS: u16 = 0x01;
+    pub const MAP_SPRITES: u16 = 0x02;
+    pub const MAP_RELAYS: u16 = 0x08;
+    pub const MAP_GRID: u16 = 0x10;
+    pub const MAP_PATHS: u16 = 0x20;
+    pub const MAP_FREE: u16 = 0x8000;
+}
+
+/// One line of a base's message log (13 bytes).
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Message {
+    /// The unit's name, NUL-terminated.
+    pub name: [u8; 7],
+    /// The mission clock when it was sent.
+    pub hour: u8,
+    pub minute: u8,
+    pub unknown_09: [u8; 2],
+    /// The text: an offset in `xeno.exe`'s string segment; 0 for an empty slot.
+    pub text: u16,
 }
 
 /// A relay's bytes from +0x18 (0x34-byte objects).

@@ -11,6 +11,7 @@ mod game_dir;
 mod intro;
 mod keymap;
 mod login;
+mod mainview;
 mod maproom;
 mod mission;
 mod music;

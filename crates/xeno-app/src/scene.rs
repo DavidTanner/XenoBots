@@ -44,7 +44,7 @@ fn eye_height(e: &Entity) -> i16 {
     }
 }
 
-fn trig(tables: &Tables, angle: u16) -> Trig {
+pub(crate) fn trig(tables: &Tables, angle: u16) -> Trig {
     let (magnitude, one, negative) = sine(&tables.sine, angle);
     Trig {
         magnitude,

@@ -35,6 +35,7 @@ pub mod scendef;
 pub mod script;
 pub mod sequence;
 pub mod setup;
+pub mod sitroom;
 pub mod sounddvr;
 pub mod sounds;
 pub mod usg;

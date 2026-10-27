@@ -55,6 +55,21 @@ impl GameFloat {
         }
     }
 
+    /// `1000:0ced`: a 48-bit integer, its magnitude kept to the 16 bits from a whole
+    /// byte.
+    pub fn from_wide(v: i64) -> GameFloat {
+        let a = v.unsigned_abs();
+        let shift = [0u8, 8, 16, 24, 32]
+            .into_iter()
+            .find(|&s| a >> s < 0x1_0000)
+            .unwrap_or(32);
+        GameFloat {
+            mantissa: (a >> shift) as u16,
+            exponent: shift as i8,
+            negative: v < 0,
+        }
+    }
+
     /// `1000:0e11`.
     pub fn times(self, other: GameFloat) -> GameFloat {
         let p = u32::from(self.mantissa) * u32::from(other.mantissa);
@@ -122,7 +137,12 @@ impl GameFloat {
 /// The main view's focal factor from its table entry (`gfx_set_view_camera`, zoom 1,
 /// no shift): the word normalised to its top bit, kept to 16 bits.
 pub fn focal(f: Float) -> GameFloat {
-    let mut v = u32::from(f.mantissa);
+    focal_zoomed(f, 1)
+}
+
+/// The focal factor at a zoom (`DS:0x1452`, a factor above 1 multiplies the word).
+pub fn focal_zoomed(f: Float, zoom: u8) -> GameFloat {
+    let mut v = u32::from(f.mantissa) * u32::from(zoom.max(1));
     let mut n = 0i8;
     if v != 0 {
         while v >> 24 == 0 {
@@ -179,13 +199,35 @@ impl Camera {
     /// `1000:11c7`: the offset `(dx, dy)` turned to the camera, as 16.16s: lateral `X`
     /// (positive to the right) and depth `Z`, each sum of products kept in 48 bits.
     pub fn rotate(&self, dx: i32, dy: i32) -> (i32, i32) {
+        let (x, z) = self.rotate_wide(dx, dy);
+        ((x >> 16) as i32, (z >> 16) as i32)
+    }
+
+    /// The sums of [`Camera::rotate`] before their low 16 bits are dropped.
+    fn rotate_wide(&self, dx: i32, dy: i32) -> (i64, i64) {
         let term = |a: i32, t: Trig, flip: bool| {
             let p = product(a.unsigned_abs(), t);
             if (a < 0) ^ t.negative ^ flip { -p } else { p }
         };
         let x = term(dx, self.cos, false) + term(dy, self.sin, true);
         let z = term(dx, self.sin, false) + term(dy, self.cos, false);
-        ((x >> 16) as i32, (z >> 16) as i32)
+        (x, z)
+    }
+
+    /// `1000:3eb9`: the offset `(dx, dy)` on a map, in pixels: each sum of
+    /// [`Camera::rotate`] whole, times 2^-24 and the focal factor. The map's rows run
+    /// against `X` and its columns with `Z` (`1000:3ad8`).
+    pub fn map_offset(&self, dx: i32, dy: i32) -> (i16, i16) {
+        let (x, z) = self.rotate_wide(dx, dy);
+        let pixels = |v: i64| {
+            let f = GameFloat::from_wide(v);
+            let f = GameFloat {
+                exponent: f.exponent.wrapping_sub(24),
+                ..f
+            };
+            f.times(self.focal).to_int()
+        };
+        (pixels(x), pixels(z))
     }
 
     /// `1000:0378`: the octant the camera looks along.
@@ -441,6 +483,34 @@ mod tests {
             exponent: 0,
         });
         assert_eq!(focal, f(0xe600, -8));
+        // 48 bits keep their top 16 from a whole byte.
+        assert_eq!(GameFloat::from_wide(0xffff), f(0xffff, 0));
+        assert_eq!(GameFloat::from_wide(0xa_0000_0000), f(0xa00, 24));
+        assert_eq!(
+            GameFloat::from_wide(-0x100_0000_0000),
+            GameFloat {
+                negative: true,
+                ..f(0x100, 32)
+            }
+        );
+        assert_eq!(GameFloat::from_wide(0x1_2345_6789), f(0x123, 24));
+    }
+
+    /// The map's 327 at zoom 4: 1308 / 256 pixels a unit, rows against x.
+    #[test]
+    fn map_offsets_scale_by_the_zoomed_focal_factor() {
+        let map = Float {
+            mantissa: 327,
+            exponent: -16,
+        };
+        assert_eq!(focal_zoomed(map, 4), f(1308, -16));
+        assert_eq!(focal_zoomed(map, 0), focal(map));
+        let c = Camera {
+            focal: focal_zoomed(map, 4),
+            ..camera(0)
+        };
+        assert_eq!(c.map_offset(10 << 16, -3 << 16), (51, -15));
+        assert_eq!(c.map_offset(0x8000, 0), (2, 0));
     }
 
     #[test]

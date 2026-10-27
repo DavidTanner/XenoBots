@@ -1,0 +1,711 @@
+//! The situation room's main view in modes M, R and C (T-103; `docs/screens.md`, "The
+//! situation room's main view"): the map as view modes 0xc and 0xe draw it through
+//! the table at `DS:0x39ae`, the selected unit's own view, and the units' message log.
+
+use xeno_formats::ban::Sprite;
+use xeno_formats::font::Font;
+use xeno_formats::maproom::HANDLE_STEP;
+use xeno_formats::sitroom::SitRoom;
+use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
+use xeno_formats::view3d::View3d;
+use xeno_render::shape::fill_polygon;
+use xeno_render::view3d::{Camera, focal_zoomed};
+use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_sim::motion::Tables;
+use xeno_sim::{Damage, Entity, Position, State, World};
+
+use crate::scene::trig;
+
+/// The map's colours (`1fe6:6c05`): the background the clear step fills (`DS:0x1457`)
+/// and the hills (`DS:0x1458`). Short code constants, kept here.
+pub const MAP_BACKGROUND: u8 = 0x43;
+pub const MAP_HILL: u8 = 0x42;
+/// The terrain records the map draws: those whose program starts with op 0x14.
+const HILL_OP: u8 = 0x14;
+/// The objects' map routines' sprite handles (in `msprite0`) and dot colours.
+const MARKER_SPRITE: u16 = 0x198;
+const BASE_SPRITE: u16 = 0x1b8;
+const BASE_SPRITES: [u16; 2] = [0x1a8, 0x1b0];
+const RELAY_SPRITE: u16 = 0x180;
+const RELAY_SPRITES: [u16; 2] = [0x188, 0x190];
+const RELAY_DOTS: [u8; 2] = [0xfe, 0xfd];
+const RELAY_UNLINKED_DOT: u8 = 7;
+const ALIEN_DOT: u8 = 0xfd;
+const OBSTACLE_DOT: u8 = 1;
+const MARK_DOT: u8 = 0x0f;
+/// `+0x17` bits: bit 0 hides a robot from the map; bit 2, an alien one is detected.
+const HIDDEN: u8 = 0x01;
+const DETECTED: u8 = 0x04;
+/// A robot's `+0xfd` bit 2: in its base.
+const IN_BASE: u8 = 0x04;
+/// Sprites of zoom factors from this up are the large ones.
+const LARGE_ZOOM: u8 = 8;
+/// Where the map's zoom label and the robot view's heading go in the view's buffer,
+/// and the at-base text (`1fe6:6cb9`, `1000:5630`); the heading's degree sign.
+const ZOOM_LABEL: (i32, i32) = (8, 0x5a);
+const HEADING_LABEL: (i32, i32) = (0x0c, 0x60);
+const AT_BASE_LABEL: (i32, i32) = (0x30, 0x28);
+const DEGREE: u8 = 0x17;
+/// shortcut: the labels' colour is whatever the last text drawn left in the text
+/// state (`DS:0x644` +0x16); 0x0f is a guess, to check against DOSBox.
+const LABEL_COLOUR: u8 = 0x0f;
+/// Mode C (`1000:56a7`, `1fe6:6d02`): the heading's place and colours, the rule's
+/// colour, the rows (font 2) from y 0x28 every 12, names and times at x 0x60 in 0x14,
+/// texts at x 0x9c in 0x13. The view is cleared to 0x10 first.
+pub const LOG_CLEAR: u8 = 0x10;
+const LOG_HEADING: (i32, i32) = (0x60, 0x1e);
+const LOG_COLOUR: u8 = 0x14;
+const LOG_HIGH_COLOUR: u8 = 0xff;
+pub const LOG_FONT: u16 = 2;
+const LOG_TOP: i32 = 0x28;
+const LOG_STEP: i32 = 0x0c;
+const LOG_NAME_X: i32 = 0x60;
+const LOG_TEXT_X: i32 = 0x9c;
+const LOG_TEXT_COLOUR: u8 = 0x13;
+
+/// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MapState {
+    pub overlays: u16,
+    pub zoom: u8,
+    pub centre: Position,
+}
+
+impl MapState {
+    pub fn of(base: &Base) -> MapState {
+        MapState {
+            overlays: base.map_overlays,
+            zoom: base.map_zoom,
+            centre: Position {
+                x: xeno_sim::Fixed(base.map_centre.x),
+                y: xeno_sim::Fixed(base.map_centre.y),
+            },
+        }
+    }
+
+    fn factor(&self) -> u8 {
+        1u8.checked_shl(self.zoom.into()).unwrap_or(0)
+    }
+}
+
+/// The objects' +0x16 and +0x17 by slot.
+pub type Flags = [(u8, u8); 240];
+
+/// shortcut: the sim keeps neither the detection bits (+0x17) nor a relay's link
+/// (+0x16 bit 4), so both are the scenario's as loaded until it does.
+pub fn flags(scenario: Option<&Scenario>) -> Flags {
+    let mut flags = [(0, 0); 240];
+    for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
+        if let Some(f) = flags.get_mut(usize::from(o.slot)) {
+            *f = (o.flags, o.unknown_17);
+        }
+    }
+    flags
+}
+
+/// Whether robot `e` is in its base (+0xfd bit 2).
+pub fn in_base(e: &Entity) -> bool {
+    matches!(e.damage, Damage::Robot(c) if c.equipment & IN_BASE != 0)
+}
+
+/// The map's camera (`1fe6:6c05`): heading 0, at the map's centre while it is free,
+/// else on the selected unit out of its base, else on the base.
+pub fn camera(
+    base: Position,
+    selected: Option<&Entity>,
+    map: &MapState,
+    view: &View3d,
+    tables: &Tables,
+) -> Camera {
+    let at = match selected {
+        _ if map.overlays & Base::MAP_FREE != 0 => map.centre,
+        Some(e) if !in_base(e) => e.position,
+        _ => base,
+    };
+    Camera {
+        x: at.x.0,
+        y: at.y.0,
+        z: 0,
+        heading: 0,
+        sin: trig(tables, 0),
+        cos: trig(tables, 0x4000),
+        focal: focal_zoomed(view.focal[2], map.factor()),
+        viewer: u16::MAX,
+    }
+}
+
+/// A position's pixel in the buffer (`1000:3ad8`): rows up with x, columns right
+/// with y, from the middle.
+fn pixel(camera: &Camera, buffer: &Framebuffer, x: i32, y: i32) -> (i32, i32) {
+    let (across, along) = camera.map_offset(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
+    let size = buffer.surface();
+    (
+        (size.width / 2) as i32 + i32::from(along),
+        (size.height / 2) as i32 - i32::from(across),
+    )
+}
+
+/// Node type 0xc (`1000:38bc`): one pixel, if it is in the buffer.
+fn dot(buffer: &mut Framebuffer, (x, y): (i32, i32), colour: u8) {
+    let size = buffer.surface();
+    if (0..size.width as i32).contains(&x) && (0..size.height as i32).contains(&y) {
+        buffer.pixels_mut()[y as usize * size.width + x as usize] = colour;
+    }
+}
+
+/// Node type 0xa (`1000:3912`): the sprite centred on the point, keyed, if it fits;
+/// then a dot of `colour` unless it is 0.
+fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colour: u8) {
+    if let Some(sprite) = sprite {
+        let blit = SpriteBlit {
+            mode: BlitMode::Keyed,
+            anchor: Anchor::Centre,
+            ..SpriteBlit::default()
+        };
+        buffer.blit_sprite(sprite, at.0, at.1, blit);
+    }
+    if colour != 0 {
+        dot(buffer, at, colour);
+    }
+}
+
+/// `gfx_draw_hill_outline_on_map` (`1000:39fb`, `3a27`): a hill as an octagon in the
+/// hill colour, at its radius on the axes and two thirds of it on the diagonals,
+/// filled by the 3D view's polygon fill.
+fn hill(buffer: &mut Framebuffer, camera: &Camera, f: &TerrainFeature) {
+    let r = i32::from(f.radius) << 8;
+    let d = (r as u32 * 2 / 3) as i32;
+    let r = i32::from(camera.map_offset(r, r).1);
+    let d = i32::from(camera.map_offset(d, d).1);
+    let (x, y) = pixel(camera, buffer, f.x, f.y);
+    let corners = [
+        (x, y - r),
+        (x - d, y - d),
+        (x - r, y),
+        (x - d, y + d),
+        (x, y + r),
+        (x + d, y + d),
+        (x + r, y),
+        (x + d, y - d),
+    ]
+    .map(|(x, y)| (x as i16, y as i16));
+    fill_polygon(buffer, &corners, MAP_HILL);
+}
+
+/// What the main view needs to draw.
+pub struct Inputs<'a> {
+    pub room: &'a SitRoom,
+    pub view: &'a View3d,
+    /// `msprite0`, from handle 0.
+    pub sprites: &'a [Sprite],
+    pub font: Option<&'a Font>,
+}
+
+impl Inputs<'_> {
+    fn sprite(&self, handle: u16) -> Option<&Sprite> {
+        self.sprites.get(usize::from(handle / HANDLE_STEP))
+    }
+}
+
+/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, then the hills, the
+/// selected unit's destination and the objects in slot order, then the zoom label.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_map(
+    buffer: &mut Framebuffer,
+    world: &World,
+    camera: &Camera,
+    map: &MapState,
+    terrain: &[TerrainFeature],
+    flags: &Flags,
+    selected: Option<&Entity>,
+    inputs: &Inputs,
+) {
+    buffer.clear(MAP_BACKGROUND);
+    for f in terrain.iter().filter(|f| f.shape.first() == Some(&HILL_OP)) {
+        hill(buffer, camera, f);
+    }
+    // `1000:f914`: the selected robot's destination (+0x32 bit 1). shortcut: bit 0,
+    // a target object (+0x3a, sprite 0x1a0), is not kept by the sim, so not shown.
+    if let Some(State::Robot(m)) = selected.map(|e| e.state)
+        && m.goal & 3 == 2
+    {
+        let at = pixel(camera, buffer, m.destination.x.0, m.destination.y.0);
+        mark(buffer, at, inputs.sprite(MARKER_SPRITE), 0);
+    }
+    let sprites = map.overlays & Base::MAP_SPRITES != 0;
+    for (id, e) in world.iter() {
+        let (f16, f17) = flags[usize::from(id.0) % flags.len()];
+        let side = usize::from(e.side == Side::Alien);
+        let at = pixel(camera, buffer, e.position.x.0, e.position.y.0);
+        let kind = u16::from(e.kind);
+        match kind {
+            // `1000:f976` (and 10 through `1000:e5fe`, not traced).
+            0..=2 | 10 => {
+                let unseen = e.side == Side::Alien && f17 & DETECTED == 0;
+                if unseen || f17 & HIDDEN != 0 || map.overlays & Base::MAP_ROBOTS == 0 {
+                    continue;
+                }
+                let model = usize::from(inputs.view.kind_models[usize::from(kind)] / 2);
+                if !sprites {
+                    let colour = inputs.room.robot_dots.get(model).copied().unwrap_or(0);
+                    dot(buffer, at, colour);
+                    continue;
+                }
+                let size = usize::from(map.factor() >= LARGE_ZOOM);
+                let first = inputs.room.robot_sprites[size].get(model).copied();
+                let octant = (e.heading.wrapping_add(0x1000) >> 13) * HANDLE_STEP;
+                let sprite = first.and_then(|h| inputs.sprite(h + octant));
+                mark(buffer, at, sprite, if side == 1 { ALIEN_DOT } else { 0 });
+            }
+            // `1000:f9e5`.
+            3 => {
+                let handle = if sprites {
+                    BASE_SPRITES[side]
+                } else {
+                    BASE_SPRITE
+                };
+                mark(buffer, at, inputs.sprite(handle), 0);
+            }
+            // `1000:fa04`.
+            4 if map.overlays & Base::MAP_RELAYS != 0 => {
+                let linked = f16 & flag::RELAY_LINKED != 0;
+                match (sprites, linked) {
+                    (false, false) => dot(buffer, at, RELAY_UNLINKED_DOT),
+                    (false, true) => dot(buffer, at, RELAY_DOTS[side]),
+                    (true, false) => mark(buffer, at, inputs.sprite(RELAY_SPRITE), 0),
+                    (true, true) => mark(buffer, at, inputs.sprite(RELAY_SPRITES[side]), 0),
+                }
+            }
+            // `1000:fa6a`, `fa5c`.
+            9 | 12 => dot(buffer, at, MARK_DOT),
+            11 => dot(
+                buffer,
+                at,
+                if f16 & flag::RELAY_LINKED != 0 {
+                    0xff
+                } else {
+                    MARK_DOT
+                },
+            ),
+            // `1000:fa47`.
+            16 => dot(buffer, at, OBSTACLE_DOT),
+            // Shots (5 to 8) only with the developer's Ctrl+Alt+S (`DS:0x62ec` bit
+            // 6, not modelled); 13 to 15 never.
+            _ => {}
+        }
+    }
+    if let (Some(font), Some(name)) = (
+        inputs.font,
+        inputs.room.zoom_names.get(usize::from(map.zoom)),
+    ) {
+        let (x, y) = ZOOM_LABEL;
+        let mut cursor = TextCursor::at(x, y, LABEL_COLOUR);
+        let text = [inputs.room.zoom_prefix.as_slice(), name].concat();
+        buffer.draw_text(font, &mut cursor, &text, TextMode::Transparent);
+    }
+}
+
+/// Mode R's text over the robot's view (`1000:5630`): at its base the buffer is
+/// cleared to 0 under the at-base text, otherwise its heading in degrees.
+pub fn label_robot_view(buffer: &mut Framebuffer, e: &Entity, inputs: &Inputs) {
+    if in_base(e) {
+        buffer.clear(0);
+    }
+    let Some(font) = inputs.font else {
+        return;
+    };
+    let ((x, y), text) = robot_label(e, inputs.room);
+    let mut cursor = TextCursor::at(x, y, LABEL_COLOUR);
+    buffer.draw_text(font, &mut cursor, &text, TextMode::Transparent);
+}
+
+/// Where mode R's text goes and what it says.
+fn robot_label(e: &Entity, room: &SitRoom) -> ((i32, i32), Vec<u8>) {
+    if in_base(e) {
+        return (AT_BASE_LABEL, room.at_base.clone());
+    }
+    // `1000:02b7` prints five digits with zeros; the label starts at the third.
+    let degrees = crate::editor::degrees(e.heading);
+    let mut text = format!("{degrees:03}").into_bytes();
+    text.push(DEGREE);
+    (HEADING_LABEL, text)
+}
+
+/// Mode C (`1000:56a7`) on the screen, whose main view is already cleared: the
+/// heading and its rule, then a row for each message up to the first empty slot.
+/// shortcut: the log is the base's as loaded; the sim posts no messages yet.
+pub fn draw_log(fb: &mut Framebuffer, base: &Base, room: &SitRoom, heading: &Font, rows: &Font) {
+    let (x, y) = LOG_HEADING;
+    let mut cursor = TextCursor::at(x, y, LOG_COLOUR);
+    cursor.high_colour = LOG_HIGH_COLOUR;
+    fb.draw_text(
+        heading,
+        &mut cursor,
+        &room.log_heading,
+        TextMode::Transparent,
+    );
+    // shortcut: slot 0x558's line is not traced; the stock rule is level, drawn here
+    // with both ends.
+    let [top, left, bottom, right] = room.log_rule.map(usize::from);
+    let width = fb.surface().width;
+    for y in top..=bottom {
+        for x in left..=right.min(width - 1) {
+            if let Some(p) = fb.pixels_mut().get_mut(y * width + x) {
+                *p = LOG_COLOUR;
+            }
+        }
+    }
+    let rows_y = (LOG_TOP..).step_by(LOG_STEP as usize);
+    for (m, y) in base.messages.iter().take_while(|m| m.text != 0).zip(rows_y) {
+        let name = m.name.split(|&b| b == 0).next().unwrap_or_default();
+        let mut cursor = TextCursor::at(LOG_NAME_X, y, LOG_COLOUR);
+        fb.draw_text(rows, &mut cursor, name, TextMode::Transparent);
+        fb.draw_text(
+            rows,
+            &mut cursor,
+            &room.time_of(m.hour, m.minute),
+            TextMode::Transparent,
+        );
+        let mut cursor = TextCursor::at(LOG_TEXT_X, y, LOG_TEXT_COLOUR);
+        fb.draw_text(
+            rows,
+            &mut cursor,
+            room.string(m.text),
+            TextMode::Transparent,
+        );
+    }
+}
+
+/// The scenario's base of `side`.
+pub fn base_of(scenario: Option<&Scenario>, side: Side) -> Option<&Base> {
+    scenario?
+        .objects
+        .iter()
+        .flatten()
+        .find(|o| o.kind == ObjectKind::Base && o.side() == side)?
+        .base()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xeno_formats::ban::SpriteHeader;
+    use xeno_formats::usg::{Message, Point};
+    use xeno_formats::view3d::Float;
+    use xeno_sim::{Components, EntityId, Fixed, Movement};
+
+    /// Made-up tables: dots 0x30, 0x31, 0x32; small sprites from 0x10, large from 0x40.
+    fn room() -> SitRoom {
+        SitRoom {
+            robot_dots: [0x30, 0x31, 0x32],
+            robot_sprites: [[0x10, 0x20, 0x30], [0x40, 0x50, 0x60]],
+            zoom_prefix: b"Z".to_vec(),
+            zoom_names: vec![b"0".to_vec(); 7],
+            log_heading: b"LOG".to_vec(),
+            log_rule: [5, 6, 5, 60],
+            time: b"[00-00]".to_vec(),
+            time_digits: [1, 4],
+            at_base: b"A".to_vec(),
+            strings: b"\0A\0".to_vec(),
+        }
+    }
+
+    /// Kinds' models as the game's (humanoid 0, scorpion 2, scout 4); a map focal
+    /// factor of 1/256, so a unit is a pixel at zoom 0.
+    fn view() -> View3d {
+        View3d {
+            kind_models: [0, 2, 4, 0x10, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x14],
+            frame_offsets: [0; 17],
+            node_types: [None; 17],
+            focal: [Float {
+                mantissa: 256,
+                exponent: -16,
+            }; 3],
+            model_sizes: [0x100; 11],
+            default_size: Float {
+                mantissa: 0x8000,
+                exponent: -8,
+            },
+            max_distance: 0x7d,
+            box_program: Vec::new(),
+            hill_program: Vec::new(),
+        }
+    }
+
+    /// 3x3 raw sprites, sprite `n` all colour `n + 1`.
+    fn sprites() -> Vec<Sprite> {
+        (0..60u8)
+            .map(|n| Sprite {
+                header: SpriteHeader {
+                    size: 15,
+                    width: 3,
+                    height: 3,
+                    flags: 0,
+                    unknown_05: 8,
+                },
+                pixels: vec![n + 1; 9],
+                spans: Vec::new(),
+                trailing_empty_span: false,
+            })
+            .collect()
+    }
+
+    fn entity(kind: ObjectKind, side: Side, x: i16, y: i16, state: State) -> Entity {
+        Entity {
+            kind,
+            side,
+            position: Position {
+                x: Fixed::from_int(x),
+                y: Fixed::from_int(y),
+            },
+            heading: 0x2000,
+            radius: 0x0a00,
+            damage: Damage::None,
+            state,
+        }
+    }
+
+    /// A base at (10, 10); robots at (13, 15), (8, 5) (alien, detected) and (0, 0)
+    /// (alien, not detected); relays at (10, 0) (not linked) and (10, 2) (alien,
+    /// linked); an obstacle at (5, 10); a hill of radius 3 at (16, 10). The humanoid
+    /// heads for (12, 20), the scout for a target object.
+    fn world() -> (World, Flags, Vec<TerrainFeature>) {
+        let robot = State::Robot(Movement {
+            goal: 2,
+            destination: Position {
+                x: Fixed::from_int(12),
+                y: Fixed::from_int(20),
+            },
+            ..Movement::default()
+        });
+        let mut world = World::default();
+        let mut flags = [(0, 0); 240];
+        let mut put = |slot: u16, e: Entity, f| {
+            world.insert(EntityId(slot), e);
+            flags[usize::from(slot)] = f;
+        };
+        let (h, a) = (Side::Human, Side::Alien);
+        put(
+            0,
+            entity(ObjectKind::Base, h, 10, 10, State::default()),
+            (0, 0),
+        );
+        put(2, entity(ObjectKind::Humanoid, h, 13, 15, robot), (0, 0));
+        let target = State::Robot(Movement {
+            goal: 3,
+            ..match robot {
+                State::Robot(m) => m,
+                _ => unreachable!(),
+            }
+        });
+        put(3, entity(ObjectKind::Scout, a, 8, 5, target), (0, DETECTED));
+        put(4, entity(ObjectKind::Scorpion, a, 0, 0, robot), (0, 0));
+        put(
+            5,
+            entity(ObjectKind::Relay, h, 10, 0, State::default()),
+            (0, 0),
+        );
+        let linked = (flag::RELAY_LINKED, 0);
+        put(
+            6,
+            entity(ObjectKind::Relay, a, 10, 2, State::default()),
+            linked,
+        );
+        put(
+            7,
+            entity(ObjectKind::Obstacle, h, 5, 10, State::default()),
+            (0, 0),
+        );
+        let hill = TerrainFeature {
+            size: 0x1a,
+            kind: HILL_OP,
+            point_slots: 0,
+            x: 16 << 16,
+            y: 10 << 16,
+            z: 0,
+            radius: 3 << 8,
+            diagonal: 0,
+            height: 0,
+            shape: vec![HILL_OP, 0],
+        };
+        (world, flags, vec![hill])
+    }
+
+    fn draw(overlays: u16, zoom: u8, selected: Option<u16>) -> Framebuffer {
+        let (world, flags, terrain) = world();
+        let tables = crate::mission::tests::test_assets().motion;
+        let (room, view, sprites) = (room(), view(), sprites());
+        let map = MapState {
+            overlays,
+            zoom,
+            centre: Position::default(),
+        };
+        let selected = selected.and_then(|s| world.get(EntityId(s)));
+        let base = world.get(EntityId(0)).unwrap().position;
+        let camera = camera(base, selected, &map, &view, &tables);
+        let mut buffer = Framebuffer::new(xeno_render::Size::new(40, 20));
+        let inputs = Inputs {
+            room: &room,
+            view: &view,
+            sprites: &sprites,
+            font: None,
+        };
+        draw_map(
+            &mut buffer,
+            &world,
+            &camera,
+            &map,
+            &terrain,
+            &flags,
+            selected,
+            &inputs,
+        );
+        buffer
+    }
+
+    #[test]
+    fn the_map_shows_hills_and_objects_as_dots() {
+        let b = draw(Base::MAP_ROBOTS | Base::MAP_RELAYS, 0, None);
+        let at = |x, y| b.get(x, y).unwrap();
+        // x runs up the rows from the middle (20, 10), y along the columns.
+        assert_eq!(at(0, 0), MAP_BACKGROUND);
+        assert_eq!(at(25, 7), 0x30, "the humanoid");
+        assert_eq!(at(15, 12), 0x32, "the detected scout");
+        assert_eq!(at(10, 10), RELAY_UNLINKED_DOT);
+        assert_eq!(at(12, 10), RELAY_DOTS[1]);
+        assert_eq!(at(20, 15), OBSTACLE_DOT);
+        // The base's dotless sprite (0x1b8, sprite 55), centred.
+        assert_eq!(
+            [at(19, 9), at(21, 11), at(22, 10)],
+            [56, 56, MAP_BACKGROUND]
+        );
+        // The hill: 3 pixels on the axes, 2 on the diagonals, around (20, 4).
+        assert_eq!([at(20, 4), at(20, 2), at(18, 4)], [MAP_HILL; 3]);
+        assert_eq!(at(17, 1), MAP_BACKGROUND);
+        // Undetected aliens, and every robot without the overlay, are not shown.
+        let colours = |b: &Framebuffer| b.pixels().iter().filter(|&&p| p == 0x31).count();
+        assert_eq!(colours(&b), 0);
+        let b = draw(Base::MAP_RELAYS, 0, None);
+        assert_eq!(b.get(25, 7), Some(MAP_BACKGROUND));
+        assert_eq!(draw(0, 0, None).get(10, 10), Some(MAP_BACKGROUND));
+    }
+
+    /// The colour of the synthetic sprite a handle names.
+    fn colour(handle: u16) -> u8 {
+        (handle / HANDLE_STEP + 1) as u8
+    }
+
+    #[test]
+    fn the_map_shows_sprites_by_heading_and_zoom() {
+        let all = Base::MAP_ROBOTS | Base::MAP_RELAYS | Base::MAP_SPRITES;
+        let b = draw(all, 0, None);
+        let at = |b: &Framebuffer, x, y| b.get(x, y).unwrap();
+        // Heading 0x2000 is the second octant: the humanoid's 0x10 + 8.
+        assert_eq!(at(&b, 24, 6), colour(0x18));
+        // An alien robot's sprite has a dot in the middle (the scout's 0x30 + 8).
+        assert_eq!([at(&b, 14, 11), at(&b, 15, 12)], [colour(0x38), ALIEN_DOT]);
+        assert_eq!(at(&b, 12, 10), colour(RELAY_SPRITES[1]));
+        assert_eq!(at(&b, 20, 10), colour(BASE_SPRITES[0]));
+        // At zoom 3, a factor of 8, the large sprites; centred on the selected unit.
+        let b = draw(all, 3, Some(2));
+        assert_eq!(at(&b, 20, 10), colour(0x48));
+    }
+
+    #[test]
+    fn the_selected_unit_s_destination_is_marked() {
+        let b = draw(Base::MAP_ROBOTS, 0, Some(2));
+        // The camera follows the humanoid at (13, 15); its destination (12, 20) is a
+        // row down and five columns right.
+        assert_eq!(b.get(25, 11), Some(colour(MARKER_SPRITE)));
+        assert_eq!(b.get(20, 10), Some(0x30));
+        // A robot after a target object (bit 0) has no marker: the scout, whose
+        // destination is 4 rows up and 15 columns right.
+        let b = draw(Base::MAP_ROBOTS, 0, Some(3));
+        assert_eq!(b.get(35, 6), Some(MAP_BACKGROUND));
+        // With the map free the camera stays on the centre, (0, 0) here.
+        let b = draw(Base::MAP_ROBOTS | Base::MAP_FREE, 0, Some(2));
+        assert_eq!(b.get(20, 10), Some(MAP_BACKGROUND));
+    }
+
+    #[test]
+    fn the_log_lists_messages_to_the_first_empty_slot() {
+        let font = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
+            .unwrap()
+            .remove(0);
+        let mut base =
+            match xeno_formats::usg::parse(&xeno_formats::fixtures::synthetic_mission_usg())
+                .unwrap()
+                .objects
+                .unwrap()[0]
+                .body
+                .clone()
+            {
+                xeno_formats::usg::Body::Base(b) => b,
+                _ => unreachable!(),
+            };
+        let message = |text| Message {
+            name: *b"A\0\0\0\0\0\0",
+            hour: 9,
+            minute: 5,
+            unknown_09: [0; 2],
+            text,
+        };
+        base.messages = [
+            message(1),
+            message(1),
+            message(0),
+            message(1),
+            message(0),
+            message(0),
+            message(0),
+        ];
+        base.map_centre = Point::default();
+        let mut fb = Framebuffer::new(xeno_render::Size::MODE_13H);
+        draw_log(&mut fb, &base, &room(), &font, &font);
+        let rows: Vec<usize> = (0..200)
+            .filter(|&y| (0x9c..320).any(|x| fb.get(x, y) == Some(LOG_TEXT_COLOUR)))
+            .collect();
+        // Two rows of text, from y 0x28 every 12; the third slot ends the log.
+        assert!(
+            rows.iter().all(|&y| (0x28..0x28 + 24).contains(&y)),
+            "{rows:?}"
+        );
+        assert!(rows.iter().any(|&y| y >= 0x34));
+        assert_eq!(fb.get(6, 5), Some(LOG_COLOUR), "the rule");
+        assert_eq!(fb.get(60, 5), Some(LOG_COLOUR));
+        assert_eq!(fb.get(61, 5), Some(0));
+    }
+
+    #[test]
+    fn the_robot_view_is_labelled_or_cleared_at_its_base() {
+        let font = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
+            .unwrap()
+            .remove(0);
+        let (room, view, sprites) = (room(), view(), sprites());
+        let inputs = Inputs {
+            room: &room,
+            view: &view,
+            sprites: &sprites,
+            font: Some(&font),
+        };
+        let mut e = entity(ObjectKind::Humanoid, Side::Human, 0, 0, State::default());
+        // 0x2000 is 45 degrees.
+        assert_eq!(robot_label(&e, &room), (HEADING_LABEL, b"045\x17".to_vec()));
+        let mut buffer = Framebuffer::new(xeno_render::Size::new(200, 104));
+        buffer.clear(9);
+        label_robot_view(&mut buffer, &e, &inputs);
+        assert_eq!(buffer.get(0, 0), Some(9));
+        e.damage = Damage::Robot(Components {
+            helm: 100,
+            power: 100,
+            weapons: 0,
+            targeting: 0,
+            systems: 0,
+            equipment: IN_BASE,
+        });
+        assert_eq!(robot_label(&e, &room), (AT_BASE_LABEL, b"A".to_vec()));
+        label_robot_view(&mut buffer, &e, &inputs);
+        assert_eq!(buffer.get(0, 0), Some(0));
+        assert!(buffer.pixels().contains(&LABEL_COLOUR));
+    }
+}
