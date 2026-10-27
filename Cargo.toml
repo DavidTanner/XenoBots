@@ -9,3 +9,8 @@ rust-version = "1.88"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/DavidTanner/XenoBots"
 publish = false
+
+# The OPL2 emulator renders ~50,000 samples a second on the audio thread; unoptimised it
+# takes half a core and underruns, so optimise it even in debug builds.
+[profile.dev.package.nuked-opl3]
+opt-level = 3

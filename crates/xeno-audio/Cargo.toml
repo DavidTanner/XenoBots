@@ -1,6 +1,6 @@
 [package]
 name = "xeno-audio"
-description = "Xenobots / Ultrabots reimplementation: the sound mixer and its audio output"
+description = "Xenobots / Ultrabots reimplementation: the sound mixer, the music driver and their audio output"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,3 +11,10 @@ publish.workspace = true
 [dependencies]
 # Output only: no decoders (the game's formats are ours to decode), no recording.
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
+# Nuked-OPL3, ported to pure Rust (no C toolchain), bit-identical to the C reference.
+nuked-opl3 = "0.1"
+xeno-formats = { path = "../xeno-formats" }
+
+[dev-dependencies]
+# The example ticks at mode 13h's retrace rate.
+xeno-sim = { path = "../xeno-sim" }

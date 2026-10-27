@@ -171,6 +171,68 @@ or put the frequency first, with the same result.
   velocity sets the attenuation.
 - **PC speaker** (device 1): channel 0 only, PIT channel 2 divisors by pitch.
 
+## Starting and stopping a song
+
+Read for T-062 (dry-run reads). `snd_start_song` in `xeno.exe` calls the music init and
+then the song start for every song (`ms3.md`, "When songs play"), so each start is:
+
+1. **Music init** (slot `0x424`, entry `0x0151`, device init at `0x086d`, `0x08ac` for
+   the music): if a device was already set up, clear the sound-effect countdowns, stop
+   every note and call the old back end's silence routine; then fill the seven slots,
+   call the back end's init (`opl_init`, so the chip is re-initialised and program 0
+   reloaded at every song start) and stop every note again.
+2. **Song start** (`snd_start_song_now`, `0x0b4a`): stop every note (`0x0cce` also
+   clears the playing flag), copy `doubled_on`, then the 16 `programs` into the
+   channels' program table (`DS:0x2a`), writing 0xff into the "program last loaded"
+   table (`DS:0x34`) as it goes. The program table has 10 entries, so programs 10 to
+   15 land on the first six "last loaded" entries after their 0xff: **channels 0 to 5
+   start with the header's programs 10 to 15 as their loaded program, channels 6 to 9
+   with none**. A channel 0 to 5 whose own program equals that byte skips the load at
+   its first note and keeps the previous patch, velocity factor, transpose and
+   envelope (every stock file has 0 in bytes 10 to 15 and no channel 0 to 5 on
+   program 0, so none is affected). The delay is set to 1 and the song marked playing.
+
+**Stop every note** (`snd_stop_all_notes`, `0x0ce3`): for channels 0 to 9, clear the
+`En` offset and, unless the channel is busy with a sound effect, a note off. On the
+AdLib that is a key off on `B0` of every voice (channel 8 none).
+
+**Pitch last sent**: a note on sets it to 0xff, so the pitch pass sends the new pitch
+unless it is 0xff itself. The pitch pass and the back end's tick run on every retrace
+while the hook is installed, also after a song's `FF 2F`.
+
+## Playback in the port (T-062)
+
+`xeno_audio::Driver` does the above and the AdLib back end's writes, in the driver's
+order, to an `Opl` (a recording in tests); `xeno_audio::Music` puts it on an emulated
+chip. Choices:
+
+- **Emulator**: [`nuked-opl3`](https://crates.io/crates/nuked-opl3) 0.1.0
+  (LGPL-2.1-or-later, compatible with this repository's GPL-3.0-or-later): a pure Rust
+  port of Nuke.YKT's Nuked-OPL3, bit-identical to the C reference (its own parity
+  tests), no dependencies and no C toolchain. It is an OPL3, but left in OPL2 mode
+  (`NEW` = 0) it plays OPL2 register streams as the YMF262 does; Nuked-OPL3 is the
+  usual accuracy reference for AdLib music. Considered: `oplon` (MIT, pure Rust, has an
+  OPL2 mode, but checked against Nuked only acoustically), `opl-emu` (GPL-3.0, from a
+  Wolfenstein 3D port, less widely checked), `opl3-rs` (the C Nuked-OPL3 through
+  `cc`, so a C compiler on every platform), `opal` (binds C++), `opl-audio` (MIDI events
+  against a bank to PCM, its own emulator; the driver's register order would be lost).
+- **Rate and output**: the chip renders at its own 49,716 Hz into a second `rodio`
+  source beside the 7231 Hz effects mixer; rodio resamples and sums both. The effects
+  path (T-061) is untouched, and each part keeps the original's rate. In debug builds
+  the emulator is compiled with `opt-level = 3` (root `Cargo.toml`), or it underruns.
+- **Tick**: the caller ticks once per retrace of the mode on screen (70.09 / 59.94 Hz).
+  Writes reach the chip when the tick runs and are heard from the next batch of 256
+  samples the device pulls, so notes may land a few milliseconds off the retrace.
+- **Faithful details kept**: key on with the voice's previous frequency then `A0`/`B0`
+  with the new one; channel 8 silent (no voice); the init at every start; the loaded
+  program quirk above; pitch envelopes run although every stock one is flat; a stop
+  silences at once and stops the ticks.
+- **Not modelled**: the sound-effect countdowns (`DS:0x111`; the FM effects are T-066),
+  the global mute word (`DS:0x10`), programs 128 to 255 (the driver would read the next
+  table as a patch; skipped), channels 10 to 15 in events (past the driver's tables;
+  dropped), and the initial contents of per-channel state the driver never set (taken
+  as 0).
+
 ## Open questions
 
 - Bytes 11 to 15 of each patch: never read by this driver; perhaps fields of the
