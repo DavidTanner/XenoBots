@@ -4,8 +4,8 @@
 
 **Confirmed** (T-022) for the layout and the event stream, from the reader in
 `sounddvr.dvr` that loads and plays them. `xeno_formats::ms3` reads all six files to
-their end marker. The instrument bank the programs refer to, and the tick rate, are
-not decoded yet (see open questions).
+their end marker. The instrument bank the programs refer to is decoded in
+[`sounddvr.md`](sounddvr.md) (T-063); the tick rate is still to confirm (see open questions).
 
 It is **not** an AdLib register dump and not a Standard MIDI File. It is a single
 MIDI-like event stream with its own header, played by Kyle Freeman's "MS3" driver
@@ -75,7 +75,8 @@ first tick; there is no delay before it.
 ## How the driver plays it
 
 Addresses are offsets in `sounddvr.dvr`'s load image (file offset minus its 0x200-byte
-MZ header), as Ghidra shows them in segment `1000`.
+MZ header), as Ghidra shows them in segment `1000`. Data tables are in its data segment (`sounddvr.md`,
+"Addresses").
 
 - **Load** (`0x0b2e`, far entry `0x01e4`, file in `ES:BX`): copies `doubled_on` and
   `programs` into per-channel tables and starts reading at offset 0x30. Bit 0 of `AX`
@@ -88,12 +89,13 @@ MZ header), as Ghidra shows them in segment `1000`.
   is due. A note on a channel that is playing a driver sound effect (`0x09a0`) is
   dropped. Before a note, the channel's program is loaded if it changed.
 - **Pitch**: internally twice the note number, plus a per-program transpose, plus the
-  `En` offset, plus a per-program pitch envelope (a byte script advanced every tick:
-  each byte is added to the pitch; 0x80 holds; 0x81 jumps back to the start).
+  `En` offset, plus that tick's byte of a per-program pitch envelope (a byte script
+  advanced every tick: each byte is the offset for that tick only; 0x80 ends it, 0x81
+  jumps back to the start; `sounddvr.md`).
 - **Velocity** is scaled by a per-program factor: `velocity * 2 * factor / 256`.
-- **Programs** index tables of about 130 entries in the driver (envelope pointers,
-  two per-program words, transpose, velocity factor, and a program map for MIDI
-  output). Stock files use programs up to 117.
+- **Programs** index tables of 130 entries in the driver's data segment (envelope
+  pointers, Tandy volume-script pointers, transpose, velocity factor) and 128 OPL2
+  patches and MIDI program numbers (`sounddvr.md`). Stock files use programs up to 117.
 - **Back ends**: device 1 to 5 picks a set of seven routines (init, note on, pitch,
   program, ...). The MPU-401 back end sends real MIDI note on/off, program change
   (through the map) and pitch bend; the AdLib one writes OPL2 registers.
@@ -104,9 +106,6 @@ MZ header), as Ghidra shows them in segment `1000`.
   host's per-retrace hook chain, not its 60 Hz tick), so about 70.09 Hz in mode 13h
   and 59.94 Hz while the 320x240 mode is up. At 70 Hz `mainthem.ms3` lasts about 2
   minutes 38 seconds. Still to confirm against a DOSBox recording (T-064).
-- **Instrument bank.** The OPL2 patch layout behind the per-program words and the
-  envelope scripts, which T-062 needs to play anything. It lives in `sounddvr.dvr`, so
-  the port must read it from the user's copy at run time.
 - What `unknown_0f` means (the authoring tool's flags?), and why `robot3.ms3` has a
   `V2` signature. The driver ignores both.
 - The queue/loop flags each song is started with. From T-025: `xeno.exe` `1000:fc36`
