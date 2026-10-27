@@ -190,6 +190,6 @@ transposes, MIDI program map, channel-to-voice map and the operator offsets.
 
 Named in Ghidra (`sounddvr.dvr`, T-063): `snd_read_ms3_event` (`0x0b97`),
 `snd_run_due_events` (`0x0c73`), `snd_start_or_stop_note` (`0x0ae1`),
-`snd_load_channel_program` (`0x0d35`), `snd_stop_all_notes` (`0x0ce3`). The AdLib
+`snd_load_channel_program` (`0x0d35`), `snd_stop_all_notes` (`0x0ce3`). T-064 added `snd_queue_or_start_song` (`0x0b2e`), `snd_start_song_now` (`0x0b4a`) and `snd_music_tick` (`0x0a62`), but that save timed out too, so they may need redoing. The AdLib
 routine names above (`opl_*`) and the tick `0x0a62` are not functions in the project
 yet: the project's save stopped answering after the first renames (see T-063's note).
