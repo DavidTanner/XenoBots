@@ -1523,15 +1523,26 @@ original.
   remove, next and previous, mission with its defaults, drop the last point), the path
   display, Ctrl+E's flag and Ctrl+Alt+R (remove the relays). After each key the status
   rows are logged, built from the user's template and names as the original prints them
-  on its debug screen. Ctrl+M runs the terrain editor as if left at once (Alt+Q): it
-  writes `BACKUP.MAP` with no circles (`map::save_circles(&[])`: the original's
-  editor starts empty, T-109) and changes nothing. Ctrl+Alt+P (no
+  on its debug screen. Ctrl+M opens the terrain editor (below). Ctrl+Alt+P (no
   unlock, as in the original) writes the scenario with `usg::write` as `EDITED.USG`, a
   fixed name until the file dialogs (T-110). Both go to `--save-dir`, by default the
   game directory, where the original writes them. Not done: placing on the map,
-  Ctrl+D, the map scroll (T-108), the terrain editor itself (T-109), Ctrl+Alt+O and B
-  (T-110), Ctrl+C (T-103). The edits change the scenario copy, not the sim's world
-  (which does not run yet).
+  Ctrl+D, the map scroll (T-108), Ctrl+Alt+O and B (T-110), Ctrl+C (T-103). The edits
+  change the scenario copy, not the sim's world (which does not run yet).
+- **The terrain editor** (T-109, `crates/xeno-app/src/terrain.rs`): Ctrl+M, with the
+  key table read from the user's `mapdvr.dvr` (`xeno_formats::mapdvr`; without it
+  Ctrl+M does nothing), opens it over the whole screen and the sim stands still. The
+  view is `mainview`'s map at the editor's camera, zoom and shift, cleared to 0x1f,
+  with the circles as octagons (0x0e the selected one and the drag's, 0x0c the
+  others), the origin's sprite and the mission's objects as the situation room's map
+  shows them. A left press moves the camera to the point under the pointer, a
+  Ctrl+left drag makes a circle; the arrows, Z and X, Ctrl+arrows, Ctrl+Z and X,
+  Ctrl+`,` and `.`, Space, Alt+N and Alt+I work as traced; **Alt+E** makes the circles
+  the mission's terrain through the sim (`Sim::set_terrain`; the scenario copy, so the
+  views and a save, follows) and **Alt+Q** writes `BACKUP.MAP` to `--save-dir` and
+  closes it. The status is logged at debug level. Not done: Alt+L and Alt+S (the file
+  dialogs, T-110), Shift+`*` (a screenshot), the grid (T-143); the point under the
+  pointer is worked out from the camera now rather than the last frame's.
 - **Saves** (T-057): the log-in loads `<NAME>.LOG` from `--save-dir` (else the game
   directory), any case, into the campaign, the map room's selection and the loaded
   mission (parked, so playing the loaded scenario resumes it); a file that does not

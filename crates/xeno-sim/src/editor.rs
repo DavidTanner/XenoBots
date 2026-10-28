@@ -6,11 +6,11 @@
 
 use xeno_formats::editor::Editor;
 use xeno_formats::orders::RobotKind;
-use xeno_formats::usg::{Body, Object, ObjectKind, Side, flag};
+use xeno_formats::usg::{Body, Object, ObjectKind, Side, TerrainFeature, flag};
 
 use crate::motion::Event;
 use crate::orders::{Orders, Robot};
-use crate::terrain::Paths;
+use crate::terrain::{Paths, Terrain};
 use crate::world::side_code;
 use crate::{Damage, Entity, EntityId, Position, Sim, State, World, damage, script};
 
@@ -271,6 +271,12 @@ impl Sim {
     pub fn set_paths(&mut self, paths: Paths) {
         self.world.paths = paths;
     }
+
+    /// The terrain editor's Apply (`0x06b5`): the `MAPP` buffer is replaced by the
+    /// records `world` (in the world, the origin added), which hills now stop robots by.
+    pub fn set_terrain(&mut self, world: &[TerrainFeature]) {
+        self.world.terrain = Terrain::of(world);
+    }
 }
 
 /// `sim_alloc_object_slot` (`1000:f4b1`): the lowest free slot, and the entry in
@@ -329,6 +335,29 @@ mod tests {
             ],
             program_table: motion::synthetic_tables().scripts.start,
         }
+    }
+
+    #[test]
+    fn the_terrain_editor_s_apply_replaces_the_terrain() {
+        let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let before = sim.state_hash();
+        let hill = TerrainFeature {
+            size: 24,
+            kind: TerrainFeature::HILL,
+            point_slots: 0x10,
+            x: 40 << 16,
+            y: 40 << 16,
+            z: 0,
+            radius: 0x300,
+            diagonal: 0x200,
+            height: 0x100,
+            shape: vec![TerrainFeature::HILL, 0],
+        };
+        sim.set_terrain(std::slice::from_ref(&hill));
+        assert!(sim.world.terrain.hill_at(at(41, 40)).is_some());
+        assert_eq!(sim.world.terrain.features.len(), 1);
+        assert_ne!(sim.state_hash(), before);
     }
 
     #[test]

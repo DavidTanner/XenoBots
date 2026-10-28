@@ -20,6 +20,7 @@ mod review;
 mod save;
 mod scene;
 mod screens;
+mod terrain;
 mod test_pattern;
 mod translate;
 mod viewer;
