@@ -498,4 +498,19 @@ MissionViews {
             ],
         ],
     },
+    pointer_shapes: PointerShapes {
+        main_view: [
+            0,
+            0,
+            3,
+            3,
+            0,
+        ],
+        console: [
+            3,
+            4,
+            6,
+            4,
+        ],
+    },
 }

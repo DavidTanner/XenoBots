@@ -44,6 +44,7 @@ use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, MouseButton};
 use crate::mainview::{self, MapState};
 use crate::maproom::{Campaign, scenario_file};
+use crate::pointer::{ARROW, CORNER};
 use crate::screens::View;
 use crate::{review, scene};
 
@@ -152,6 +153,16 @@ const LOST_MISSILE_CAMERA: u8 = 7;
 const MAX_DISPLAY_ZOOM: u8 = 4;
 /// The second display's region, and its view modes: the camera (6) and the map (0xc).
 const SECOND_DISPLAY: u8 = 254;
+/// The third display's region (T-130 to T-132 draw it).
+const THIRD_DISPLAY: u8 = 253;
+/// Per robot kind, the widgets whose mouse handlers test the 3D view's, the second
+/// display's and the third display's regions (humanoid `1000:9d83`, `9eea`, `9fcc`;
+/// scorpion `8081`, `828e`, `8370`; scout `b540`, `b68c`, `b76e`; T-106).
+const REGION_WIDGETS: [[u16; 3]; 3] = [
+    [0x84, 0x86, 0xaa],
+    [0xbc, 0xbe, 0xd8],
+    [0x106, 0x108, 0x126],
+];
 const CAMERA_VIEW: u8 = 6;
 const MAP_VIEW: u8 = 0xc;
 /// The sound events of a display mode key (10) and of a damaged display (28).
@@ -1127,9 +1138,49 @@ impl Mission {
         }
     }
 
-    /// Whether (`x`, `y`) is over the view's corner, which shows its own pointer shape.
-    pub fn over_corner(&self, assets: &Assets, at: (u16, u16)) -> bool {
-        self.target(assets, at) == Some(Target::Corner)
+    /// The pointer's shape at `at`, where the view's picture has `colour` (T-106,
+    /// `docs/screens.md`, "Shape and visibility"). The dispatcher (`1000:2509`) hands a
+    /// move to the last widget whose rectangle holds it: the corners pick shape 2; the
+    /// situation room's main view the shape for its mode (`1000:575b`) over its
+    /// colour-255 pixels (slot `0x5bc`); a console's 3D view, second and third displays
+    /// theirs over colours 255, 254 and 253, the second display's map mode with `alt`
+    /// held its own. Anywhere else the arrow, as those handlers set it when the pointer
+    /// leaves them or their region.
+    pub fn pointer_shape(&self, assets: &Assets, (x, y): (u16, u16), colour: u8, alt: bool) -> u8 {
+        let Some(top) = assets
+            .tables(self.view())
+            .widgets
+            .iter()
+            .rev()
+            .find(|w| w.area.is_some_and(|a| a.contains(x, y)))
+        else {
+            return ARROW;
+        };
+        let shapes = &assets.views.pointer_shapes;
+        match (self.viewed, top.kind) {
+            (_, SITUATION_CORNER_TYPE | CONSOLE_CORNER_TYPE) => CORNER,
+            (Viewed::Base, MAIN_VIEW_TYPE) if colour == 255 => shapes
+                .main_view
+                .get(usize::from(self.mode / 2))
+                .copied()
+                .unwrap_or(ARROW),
+            (Viewed::Robot(slot), kind) => {
+                let Some(robot) = self.book().get(slot) else {
+                    return ARROW;
+                };
+                let regions = REGION_WIDGETS[robot.kind.index()];
+                match regions.iter().position(|&k| k == kind) {
+                    Some(0) if colour == 255 => shapes.console[0],
+                    Some(1) if colour == SECOND_DISPLAY => {
+                        let map = self.display_mode(slot, assets) == MAP_DISPLAY;
+                        shapes.console[if map && alt { 2 } else { 1 }]
+                    }
+                    Some(2) if colour == THIRD_DISPLAY => shapes.console[3],
+                    _ => ARROW,
+                }
+            }
+            _ => ARROW,
+        }
     }
 
     /// The widget under (`x`, `y`) in the view shown.
@@ -1831,8 +1882,30 @@ pub mod tests {
         let mut alien = objects[0].clone();
         (alien.slot, alien.flags) = (1, alien.flags | usg::flag::ALIEN);
         objects.insert(1, alien);
+        // The consoles' region widgets (T-106): the 3D view over rows 40 to 99, the
+        // second display 100 to 129, the third 130 to 159.
+        let mut views = views::read_image(&image, DS, &relocated).unwrap();
+        let region = |kind, top, bottom| views::Widget {
+            kind,
+            state: 0,
+            area: Some(Rect {
+                top,
+                left: 40,
+                bottom,
+                right: 280,
+            }),
+        };
+        for (view, kinds) in [&mut views.humanoid, &mut views.scorpion, &mut views.scout]
+            .into_iter()
+            .zip(REGION_WIDGETS)
+        {
+            for (kind, (top, bottom)) in kinds.into_iter().zip([(40, 100), (100, 130), (130, 160)])
+            {
+                view.widgets.push(region(kind, top, bottom));
+            }
+        }
         Assets {
-            views: views::read_image(&image, DS, &relocated).unwrap(),
+            views,
             training: views::read_training_image(&image, DS, &relocated).unwrap(),
             programs: orders::read_image(&programs, DS).unwrap(),
             fonts: [0, 2, ORDERS_FONT]
@@ -2020,6 +2093,68 @@ pub mod tests {
         // Leaving the console gives the display noise's voice silence (`1000:dac0`).
         m.base();
         assert_eq!(hit(&mut m, 81), [Sound::Stop(28), Sound::Play(2)]);
+    }
+
+    /// The pointer's shape by the picture's colour under it, the view and its mode
+    /// (T-106; the synthetic tables give M and R 3, and the consoles 3, 4, 6, 4).
+    #[test]
+    fn the_pointer_takes_the_regions_shapes() {
+        let mut assets = test_assets();
+        let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
+        main_view.kind = MAIN_VIEW_TYPE;
+        let area = main_view.area.as_mut().unwrap();
+        (area.top, area.bottom) = (40, 100);
+        assets.views.situation.widgets.push(main_view);
+        // A later widget over the third display's last rows takes the moves there.
+        let mut over = main_view;
+        (over.kind, over.area) = (
+            0x0e,
+            over.area.map(|a| Rect {
+                top: 150,
+                bottom: 160,
+                ..a
+            }),
+        );
+        assets.views.humanoid.widgets.push(over);
+        let mut m = mission(&assets);
+        // The widgets of `test_assets`, and the main view: the main view or 3D view on
+        // row 50, the second display on row 110, the third on row 140.
+        let shape = |m: &Mission, y, colour, alt| m.pointer_shape(&assets, (100, y), colour, alt);
+        m.mode = ORDERS_MODE;
+        assert_eq!(shape(&m, 50, 255, false), 0);
+        m.mode = MAP_MODE;
+        assert_eq!(shape(&m, 50, 255, false), 3);
+        assert_eq!(shape(&m, 50, 254, false), 0, "only the main view's region");
+        assert_eq!(
+            shape(&m, 170, 255, false),
+            0,
+            "only in the main view's widget"
+        );
+        assert_eq!(m.pointer_shape(&assets, (1, 1), 255, false), CORNER);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        m.view_robot(robot).unwrap();
+        let shapes = [
+            (50, 255),
+            (110, 254),
+            (140, 253),
+            (50, 254),
+            (140, 255),
+            (170, 255),
+        ]
+        .map(|(y, c)| shape(&m, y, c, true));
+        assert_eq!(
+            shapes,
+            [3, 4, 4, 0, 0, 0],
+            "each widget tests its own colour"
+        );
+        assert_eq!(
+            shape(&m, 155, 253, false),
+            0,
+            "the last widget takes the move"
+        );
+        m.set_display_mode(robot, MAP_DISPLAY);
+        assert_eq!(shape(&m, 110, 254, true), 6, "the map with Alt");
+        assert_eq!(shape(&m, 110, 254, false), 4);
     }
 
     #[test]
@@ -2366,6 +2501,17 @@ pub mod tests {
             area: Some(area),
         };
         assets.views.situation.widgets.push(main_view);
+        // A later widget over the third display's last rows takes the moves there.
+        let mut over = main_view;
+        (over.kind, over.area) = (
+            0x0e,
+            over.area.map(|a| Rect {
+                top: 150,
+                bottom: 160,
+                ..a
+            }),
+        );
+        assets.views.humanoid.widgets.push(over);
         // O and M, bound as the original binds them.
         assets
             .views
@@ -2508,6 +2654,64 @@ pub mod tests {
                         .count();
                     assert!(background > 1000, "{name}: {background}");
                 }
+            }
+        }
+    }
+
+    /// The pointer's regions (T-106): over each one, the widget the dispatcher hands
+    /// a move to (the last whose rectangle holds it) is the one whose handler tests
+    /// that region, for nearly all of its pixels.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_pointer_regions_are_their_widgets() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let v = &assets.views;
+        let [h, s, c] = REGION_WIDGETS;
+        for (view, file, colours, kinds) in [
+            (
+                &v.situation,
+                "sitroom.m@l",
+                &[255][..],
+                &[MAIN_VIEW_TYPE][..],
+            ),
+            (&v.humanoid, "humancon.m@l", &[255, 254, 253], &h),
+            (&v.scorpion, "scorpcon.m@l", &[255, 254, 253], &s),
+            (&v.scout, "scoutcon.m@l", &[255, 254, 253], &c),
+        ] {
+            let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+            for (&colour, &kind) in colours.iter().zip(kinds) {
+                let (mut ours, mut others) = (0, 0);
+                for (i, _) in picture
+                    .pixels
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &p)| p == colour)
+                {
+                    let (x, y) = ((i % 320) as u16, (i / 320) as u16);
+                    let top = view
+                        .widgets
+                        .iter()
+                        .rev()
+                        .find(|w| w.area.is_some_and(|a| a.contains(x, y)));
+                    *if top.is_some_and(|w| w.kind == kind) {
+                        &mut ours
+                    } else {
+                        &mut others
+                    } += 1;
+                }
+                assert!(
+                    ours > 400 && others * 20 < ours,
+                    "{file} {colour}: {others} of {ours}"
+                );
             }
         }
     }

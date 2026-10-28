@@ -236,7 +236,7 @@ install one more (0x2a and 0x3a).
 | `0x590`, `0x594`, `0x598` | Fonts (`font.md`): `0x590` (`gfx_select_glyph_renderer`) points `0x594` (transparent) and `0x598` (opaque) at the font kind's glyph renderers, which are not in the slot table |
 | `0x546` | Stub for `LIGHT.MOD` (dead) |
 | `0x574`–`0x58c` | Scaled model images (`mxx.md`, "Drawing"): `0x574` target, row table and clip rectangle, `0x578` anchor, `0x57c`/`0x580` get/select the scale pattern, `0x584` scale (8.8), `0x588` draw a prepared list of images (not traced), `0x58c` draw one row-span image, colour 0 transparent, mirrored if `DL` bit 0 |
-| `0x59c`–`0x5bc` | Screen-region helpers: build a run-length region of one colour from a loaded picture and compile it into copy code, then copy through it; not traced further |
+| `0x59c`–`0x5bc` | Screen-region helpers: build a run-length region of one colour from a loaded picture and compile it into copy code, then copy through it; mostly not traced further. `0x5bc` (0x226e) tests a point (`CX` row, `DX` column) against the region at `DS:BX`: carry when its screen offset falls in one of the runs (T-106, `docs/screens.md`, "Shape and visibility") |
 | `0x5c0`–`0x5ec` | Sprite blitters by directory handle (`AX`) into a rectangle (`DS:BX`): `0x5c0` anchor mode, `0x5c4`–`0x5d4` opaque, `0x5d8`–`0x5e8` colour 0 transparent, `0x5ec` a window of a raw sprite (`b@n.md`) |
 | `0x5f0` | Remap a buffer through a 256-byte table, not traced further |
 | `0x5f4`, `0x5fe`, `0x606` | Stubs for `vga240.mod` |

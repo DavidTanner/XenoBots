@@ -401,11 +401,35 @@ Every caller in `xeno.exe`, read from Ghidra's listing of both code segments:
 - **Corners.** A mission view's corner (`ui_sitroom_corner_on_mouse`, `1000:5c30`, and
   `ui_console_corner_on_mouse`, `1000:7cbf`) picks shape 2 when the dispatcher says
   the pointer entered it (0x200) and shape 0 when it left (0x400).
-- **Not ported yet.** The situation room's main view picks its shape by the view mode
-  (a word table at `DS:0x5a14`, by the mode byte) while the pointer is over the
-  view's region, and 0 off it; each console does the same over its instruments
-  (shapes 3, 4 or 6 by the unit's state). They need the views' regions (T-056).
-  `ui_run_file_dialog` (`1fe6:83db`) shows shape 0 while a file dialog runs and puts
+- **The views' regions (T-106).** The mouse dispatcher (`1000:2509`) hands a move to
+  one widget: the last in the set whose rectangle holds it (a group, type 4, is
+  searched inside), through the mouse handler table `DS:0x3608` by type; a widget
+  that loses the pointer gets 0x400. Four kinds of handler set a shape on each move
+  (0x1) by testing the point against a colour region with slot `0x5bc` (`mgavideo.dvr`
+  0x226e: the screen offset of the point against the region's run list; carry when
+  inside), and set 0 when it is outside or on 0x400:
+  - The situation room's main view (type 0x50, `1000:571f`, region `DS:0x5680`, its
+    colour-255 pixels): the word at `DS:0x5a14 + mode`, the mode being the base's
+    +0x37 (0, 2, 4, 6, 8). The stock table gives 3 in modes M and R and 0 in O, S
+    and C. `DS:0x594c` remembers whether it is over the region.
+  - A console's 3D view (colour 255; humanoid type 0x84 `1000:9d83` region
+    `DS:0x6832`, scorpion 0xbc `8081` `0x6540`, scout 0x106 `b540` `0x6bbc`): 3.
+  - Its second display (colour 254; 0x86 `9eea` `0x683e`, 0xbe `828e` `0x654c`, 0x108
+    `b68c` `0x6bc8`): 4, or 6 when the display mode (+0xef, bit 2 set while damaged)
+    is exactly 2, the map, and the event's word at +2 has 0x2000. The posting
+    routine (`1fe6:357c`) stores there the keyboard's last key word (`DS:0x1bf0`)
+    with the mouse buttons ORed into its high byte, so 0x2000 is presumably Alt, as
+    in the key words; the writer of the high byte, `DS:0x1bf1`, is not traced.
+  - Its third display (colour 253; 0xaa `9fcc` `0x684a`, 0xd8 `8370` `0x6558`, 0x126
+    `b76e` `0x6bd4`): 4.
+
+  The consoles' handlers keep which region the pointer is over in `DS:0x6a7e`
+  (humanoid; 1 the 3D view, 2 the second display, 3 the third), scorpion `0x65e9`,
+  scout `0x6e16`; their clicks are T-133. All three kinds use the same shapes. On the
+  stock pictures the last widget over a region is its own handler's for all but a few
+  dozen pixels at the regions' edges (row 107 of the humanoid's second display, rows
+  47 to 49 of the scorpion's 3D view), where another widget takes the move.
+- **Elsewhere.** `ui_run_file_dialog` (`1fe6:83db`) shows shape 0 while a file dialog runs and puts
   the old one back (the editor and saves, T-048). Pixel and text drawing straight to
   the screen (`1000:376c`, `40a0`–`41b2`, `1fe6:4d54`) and a screenshot routine
   (`1fe6:4ce9`) hide and show it around their writes. The terrain editor in
@@ -1185,9 +1209,13 @@ original.
   retrace is the least the original would show; a longer, made-up span would only add
   lag. Input in that retrace is dropped, as during a fade out. After a fade the
   palette is black, so the busy retrace only delays those screens by one retrace. In
-  the mission views, moving into a corner picks shape 2 and moving out picks 0; a view
-  that opens starts outside its corner. The main view's and the instruments' shapes
-  wait for their regions (T-056).
+  the mission views, each move picks the shape the widget it lands on would set
+  (T-106, `MissionState::pointer_shape`): the last widget whose rectangle holds it,
+  its region tested on the view's picture (the pixel's colour, which is what slot
+  `0x5bc`'s region holds), Alt from the keys held, the mode and display mode as they
+  are; 2 on a corner, 0 elsewhere. A view opens with the arrow. As in the original, a
+  mode key or Alt changes the shape only at the next move. The shapes are read from
+  the user's `xeno.exe` (`views::PointerShapes`).
 - **Map room** (`crates/xeno-app/src/maproom.rs`, T-042): as "The map room (T-042)"
   above. It draws over `maproom.m@l` the boxes (keyed: the look for each `state`, or
   unavailable above the progress), the highlight on the selection, the name, score
