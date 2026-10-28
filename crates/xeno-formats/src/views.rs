@@ -55,6 +55,14 @@ pub(crate) const DISPLAY_DEVICES: (usize, &[u8]) = (0xdb6e, &[0x8a, 0x87]);
 pub(crate) const DISPLAY_MAP_COLOURS: [usize; 3] = [0x9e14, 0x812d, 0xb5cc];
 const SET_MAP_CLEAR: [u8; 4] = [0xc6, 0x06, 0x57, 0x14];
 const SET_MAP_HILL: [u8; 4] = [0xc6, 0x06, 0x58, 0x14];
+/// The pointer's shapes over the views' regions (T-106; `docs/screens.md`, "Shape and
+/// visibility"): the situation room's main view takes the shape the word table names
+/// by its mode byte (`mov ax, [bx + table]` at `1000:575b`); a humanoid console's
+/// mouse handlers `mov ax, shape` over the 3D view (`1000:9dba`), the second display
+/// (`9f77`), the second display in its map mode with Alt (`9f88`) and the third
+/// display (`a02b`). The scorpion's and scout's handlers use the same numbers.
+pub(crate) const MAIN_VIEW_SHAPES: (usize, &[u8]) = (0x575b, &[0x8b, 0x87]);
+pub(crate) const CONSOLE_SHAPES: [usize; 4] = [0x9dba, 0x9f77, 0x9f88, 0xa02b];
 /// Where the console's unit-name button prints (`mov ax, y; mov bx, x` at
 /// `1000:7d5d`).
 pub(crate) const UNIT_LABEL: (usize, &[u8]) = (0x7d5d, &[0xb8]);
@@ -180,6 +188,18 @@ pub struct MissionViews {
     pub unit_label: (u16, u16),
     pub message_panel: MessageStyle,
     pub second_display: SecondDisplay,
+    pub pointer_shapes: PointerShapes,
+}
+
+/// The pointer's shapes over the views' regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PointerShapes {
+    /// The situation room's main view (its colour-255 region), by mode / 2 (the
+    /// base's +0x37: 0, 2, 4, 6, 8).
+    pub main_view: [u8; 5],
+    /// A console's 3D view (colour 255), second display (254), the second display in
+    /// its map mode with Alt held, and third display (253).
+    pub console: [u8; 4],
 }
 
 /// A console's second display (`docs/screens.md`, "The second display (T-104)").
@@ -401,6 +421,20 @@ impl Exe<'_> {
         })
     }
 
+    fn pointer_shapes(&self) -> Result<PointerShapes, FormatError> {
+        let mut shapes = PointerShapes {
+            main_view: [0; 5],
+            console: [0; 4],
+        };
+        for (i, shape) in shapes.main_view.iter_mut().enumerate() {
+            *shape = self.table_word(MAIN_VIEW_SHAPES, 2 * i)?.to_le_bytes()[0];
+        }
+        for (shape, at) in shapes.console.iter_mut().zip(CONSOLE_SHAPES) {
+            *shape = operand(self.image, at, &[0xb8])?.to_le_bytes()[0];
+        }
+        Ok(shapes)
+    }
+
     fn message_panel(&self) -> Result<MessageStyle, FormatError> {
         let high = match self.bytes(MESSAGE_HIGH.0, 2)? {
             &[op, colour] if op == MESSAGE_HIGH.1 => colour,
@@ -456,6 +490,7 @@ pub fn read_image(
         ),
         message_panel: exe.message_panel()?,
         second_display: exe.second_display()?,
+        pointer_shapes: exe.pointer_shapes()?,
     })
 }
 
@@ -622,6 +657,8 @@ mod tests {
         assert!(corrupt(MESSAGE_COLOURS.0, 0x90).0);
         assert!(corrupt(DISPLAY_DEVICES.0, 0x90).0);
         assert!(corrupt(DISPLAY_MAP_COLOURS[2] + 5, 0x90).0);
+        assert!(corrupt(MAIN_VIEW_SHAPES.0, 0x90).0);
+        assert!(corrupt(CONSOLE_SHAPES[3], 0x90).0);
         for (at, _) in [
             TRAINING_WIDGETS,
             TRAINING_KEYS,
@@ -668,6 +705,9 @@ mod tests {
         assert_eq!(counts(&views.scorpion), (37, 38));
         assert_eq!(counts(&views.scout), (39, 40));
         assert_eq!(counts(&views.situation), (30, 32));
+        // T-106: shape 3 over modes M and R; 3, 4, 6, 4 in the consoles.
+        assert_eq!(views.pointer_shapes.main_view, [0, 0, 3, 3, 0]);
+        assert_eq!(views.pointer_shapes.console, [3, 4, 6, 4]);
         for kind in RobotKind::ALL {
             let view = views.console(kind);
             for t in [

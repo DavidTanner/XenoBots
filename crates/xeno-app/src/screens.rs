@@ -34,7 +34,7 @@ use crate::intro::{Cutscene, Endings};
 use crate::login::{self, NameEntry, Outcome, Player};
 use crate::maproom::{self, Campaign, MapState, Request};
 use crate::mission::{self, Mission as MissionState, Request as MissionRequest};
-use crate::pointer::{self, ARROW, BUSY, CORNER};
+use crate::pointer::{self, ARROW, BUSY};
 use crate::review::{self, ReviewState};
 use crate::save;
 use crate::test_pattern;
@@ -353,8 +353,6 @@ pub struct Screens {
     map_room_shown: bool,
     /// A picture to load at the next retrace, with the busy pointer shown until then.
     loading: Option<Load>,
-    /// The pointer is over a mission view's corner.
-    corner: bool,
 }
 
 /// The logged-in player's campaign, or the guest's.
@@ -416,7 +414,6 @@ impl Screens {
             pointer,
             map_room_shown,
             loading: None,
-            corner: false,
         }
     }
 
@@ -501,15 +498,23 @@ impl Screens {
         self.pointer.set_shape(shape, self.login.pointers.len());
     }
 
-    /// The pointer moved to `at` in a mission view: entering a corner shows the
-    /// corner shape, leaving it the arrow (`ui_sitroom_corner_on_mouse`,
-    /// `ui_console_corner_on_mouse`, on the dispatcher's enter and leave bits).
-    fn corner_hover(&mut self, at: (u16, u16)) {
-        let over = self.mission.over_corner(&self.mission_assets, at);
-        if over != self.corner {
-            self.corner = over;
-            self.set_shape(if over { CORNER } else { ARROW });
-        }
+    /// The pointer moved to `at` in a mission view: the shape the view's handlers
+    /// set there ([`MissionState::pointer_shape`], by the picture's pixel under it).
+    fn mission_hover(&mut self, at: (u16, u16)) {
+        let colour = self
+            .screen
+            .file()
+            .and_then(|f| self.pictures.iter().find(|(n, _)| *n == f))
+            .and_then(|(_, p)| p.pixels.get(usize::from(at.1) * 320 + usize::from(at.0)))
+            .copied()
+            .unwrap_or(0);
+        // shortcut: the handlers test bit 0x2000 of the last key word, taken as Alt held
+        // (`DS:0x1bf1`'s writer is not traced); upgrade when T-133 traces it.
+        let alt = key_word(ScanCode(0), &self.keys).0 & ALT != 0;
+        let shape = self
+            .mission
+            .pointer_shape(&self.mission_assets, at, colour, alt);
+        self.set_shape(shape);
     }
 
     /// The scenario the last mission was started for (T-043, T-044 and T-051 load its
@@ -579,7 +584,6 @@ impl Screens {
                 Load::View(view) => self.show_view(view, fb),
             }
             self.set_shape(ARROW);
-            self.corner = false;
         }
         self.dac.retrace();
         if !self.dac.dirty()
@@ -659,7 +663,7 @@ impl Screens {
                             self.mission_request(request);
                         }
                     }
-                    (InputEvent::MouseMove { x, y }, Mission(_)) => self.corner_hover((x, y)),
+                    (InputEvent::MouseMove { x, y }, Mission(_)) => self.mission_hover((x, y)),
                     (InputEvent::MouseMove { x, y }, MapRoom) => {
                         let campaign = campaign(&self.player, &self.guest);
                         self.map.mouse_move((x, y), &self.map_assets, campaign);
@@ -1924,15 +1928,19 @@ pub(crate) mod tests {
         // back to the situation room.
         let mut log = presses(&[0x1c, 0x0f, 0x19, 0x39]);
         log.record(500, [InputEvent::MouseMove { x: 1, y: 1 }]);
-        log.record(510, [InputEvent::MouseMove { x: 50, y: 50 }]);
+        log.record(510, [InputEvent::MouseMove { x: 50, y: 60 }]);
         log.record(600, [down(0x01)]);
         log.record(601, [up(0x01)]);
-        // A third shape, so the corner's can be picked.
+        // Shapes up to 3, so the corner's and the 3D view's can be picked; the
+        // console's 3D view (colour 255) under (50, 60).
         let mut login = login::test_assets();
-        login.pointers.push(login.pointers[0].clone());
+        login.pointers.resize(4, login.pointers[0].clone());
         let missions = mission::tests::test_assets();
         let map = maproom::tests::test_assets();
-        let mut screens = Screens::new(pictures(), login, map, missions, Login);
+        let mut pictures = pictures();
+        let console = pictures.iter_mut().find(|(n, _)| *n == "humancon.m@l");
+        console.unwrap().1.pixels[60 * 320 + 50] = 255;
+        let mut screens = Screens::new(pictures, login, map, missions, Login);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut states = Vec::new();
         for r in 1..=610 {
@@ -1945,7 +1953,8 @@ pub(crate) mod tests {
         let (busy, shown) = ((true, BUSY), (true, ARROW));
         let changes: Vec<_> = states.iter().map(|&(_, s)| s).collect();
         // Hidden at the log-in; busy then the arrow for the map room, the situation
-        // room, the console (one retrace each) and back; the corner's shape.
+        // room, the console (one retrace each) and back; the corner's shape, the 3D
+        // view's.
         assert_eq!(
             changes,
             [
@@ -1956,8 +1965,8 @@ pub(crate) mod tests {
                 shown,
                 busy,
                 shown,
-                (true, CORNER),
-                shown,
+                (true, pointer::CORNER),
+                (true, 3),
                 busy,
                 shown
             ]

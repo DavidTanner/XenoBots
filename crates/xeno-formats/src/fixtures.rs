@@ -1259,6 +1259,11 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     );
     put(DISPLAY_DEVICES.0, &op(DISPLAY_DEVICES.1, 0x678));
     put(ds + 0x678, &[0x08, 0x10, 0x20, 0]);
+    put(MAIN_VIEW_SHAPES.0, &op(MAIN_VIEW_SHAPES.1, 0x6e0));
+    put(ds + 0x6e0, &words(&[0, 0, 3, 3, 0]));
+    for (at, shape) in CONSOLE_SHAPES.into_iter().zip([3, 4, 6, 4]) {
+        put(at, &op(&[0xb8], shape));
+    }
     for (kind, at) in DISPLAY_MAP_COLOURS.into_iter().enumerate() {
         let k = kind as u8;
         put(
