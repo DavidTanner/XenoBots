@@ -346,7 +346,10 @@ pub struct Robot {
     /// move, at or under a threshold in `xeno.exe` it goes at half speed. The name is
     /// a guess from that use.
     pub drive: u8,
-    pub unknown_52: Unknown<0x8a>,
+    pub unknown_52: Unknown<0x89>,
+    /// +0xdb: the robot's call sign, an index into a 64-entry table of names in
+    /// `xeno.exe` (`xeno_formats::sitroom`); a new robot draws a free one at random.
+    pub call_sign: u8,
     /// +0xdc: weapons damaged, bits 0 to 2 (the kind's first, second and third
     /// weapon). A second hit on a damaged weapon destroys it ([`Robot::systems`]).
     pub weapons: u8,
@@ -389,6 +392,13 @@ impl Robot {
     pub const PATH_NEXT: u8 = 0x40;
     /// [`Robot::path`]: the robot has a path.
     pub const ON_PATH: u8 = 0x80;
+
+    /// +0xf9 (in `unknown_f7`): its repair state; the roster's status icon is bits 4
+    /// to 6, and the situation room's detail panel says `IN REPAIR`, `WAIT REPAIR` or
+    /// `READY` from it. Not traced further.
+    pub fn repair(&self) -> u8 {
+        self.unknown_f7.0[2]
+    }
 }
 
 /// A base's bytes from +0x18 (0x172-byte objects). The loader clears the height and
@@ -438,11 +448,13 @@ pub struct Base {
 
 impl Base {
     /// [`Base::map_overlays`] bits (`docs/screens.md`, "The situation room's main
-    /// view"): the robots, drawn as sprites rather than dots, the relays, the grid,
-    /// the editor's paths, and the centre at [`Base::map_centre`] rather than on the
+    /// view"), as the map controls label them: the robots (UNITS), drawn as sprites
+    /// rather than dots (the icon button), MINES, the relays (NET), the GRID, the
+    /// editor's paths, and the centre at [`Base::map_centre`] rather than on the
     /// selected unit.
     pub const MAP_ROBOTS: u16 = 0x01;
     pub const MAP_SPRITES: u16 = 0x02;
+    pub const MAP_MINES: u16 = 0x04;
     pub const MAP_RELAYS: u16 = 0x08;
     pub const MAP_GRID: u16 = 0x10;
     pub const MAP_PATHS: u16 = 0x20;

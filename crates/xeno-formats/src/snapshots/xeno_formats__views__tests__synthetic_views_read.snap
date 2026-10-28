@@ -52,6 +52,7 @@ MissionViews {
                 area: None,
             },
         ],
+        nested: [],
         state_offset: 256,
         keys: [
             (
@@ -125,6 +126,7 @@ MissionViews {
                 area: None,
             },
         ],
+        nested: [],
         state_offset: 257,
         keys: [
             (
@@ -198,6 +200,7 @@ MissionViews {
                 area: None,
             },
         ],
+        nested: [],
         state_offset: 258,
         keys: [
             (
@@ -269,6 +272,56 @@ MissionViews {
                 kind: 324,
                 state: 6,
                 area: None,
+            },
+        ],
+        nested: [
+            Widget {
+                kind: 100,
+                state: 7,
+                area: Some(
+                    Rect {
+                        top: 91,
+                        left: 288,
+                        bottom: 100,
+                        right: 303,
+                    },
+                ),
+            },
+            Widget {
+                kind: 102,
+                state: 8,
+                area: Some(
+                    Rect {
+                        top: 99,
+                        left: 288,
+                        bottom: 108,
+                        right: 319,
+                    },
+                ),
+            },
+            Widget {
+                kind: 112,
+                state: 9,
+                area: Some(
+                    Rect {
+                        top: 142,
+                        left: 254,
+                        bottom: 150,
+                        right: 306,
+                    },
+                ),
+            },
+            Widget {
+                kind: 112,
+                state: 12,
+                area: Some(
+                    Rect {
+                        top: 150,
+                        left: 254,
+                        bottom: 158,
+                        right: 306,
+                    },
+                ),
             },
         ],
         state_offset: 259,
