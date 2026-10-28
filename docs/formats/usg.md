@@ -251,8 +251,8 @@ in `DS:0xe73f`).
 #### Object fields
 
 Offsets in the object, as in memory. `xeno_formats::usg::Object` names the first 0x18
-bytes, and `Body` the rest by kind (`Robot`, `Base`, `Relay`; anything else stays
-bytes). Unnamed bytes are kept as `unknown_XX` fields.
+bytes, and `Body` the rest by kind (`Robot`, with the kind's `Parts` from +0xfe,
+`Base`, `Relay`; anything else stays bytes). Unnamed bytes are kept as `unknown_XX` fields.
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
@@ -262,10 +262,10 @@ bytes). Unnamed bytes are kept as `unknown_XX` fields.
 | 0x08 | 4 | `y` | |
 | 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object. The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
 | 0x10 | 2 | `heading` | 65,536 to a turn. The editor's arrow keys step it by 0xb6 (a degree). The 3D view's render node copies it (`mxx.md`) |
-| 0x12 | 2 | `unknown_12` | The model's height above z in the 3D view, added to z's low word (`docs/render.md`): set per kind when an object is made (0x0a00 humanoid, 0x0a80 scorpion, 0x0c80 scout, 0 shots; a relay's from a table by its stage); humanoids and scouts bob it as they walk |
+| 0x12 | 2 | `model_height` | The model's height above z in the 3D view, added to z's low word (`docs/render.md`): set per kind when an object is made (0x0a00 humanoid, 0x0a80 scorpion, 0x0c80 scout, 0 shots; a relay's from a table by its stage); humanoids and scouts bob it as they walk |
 | 0x14 | 2 | `radius` | Set per kind when an object is made: base 35, scorpion 18, humanoid and scout 10, obstacle 13, relay 5 (as 8.8 numbers; the 3D view takes them as 1/65,536ths of a unit, like a z's low word, so a robot's radius is 10/256 of a unit there, `docs/render.md`). Contact checks take both radii off the distance; the render node keeps the whole part |
 | 0x16 | 1 | `flags` | Bits below |
-| 0x17 | 1 | `unknown_17` | More state bits: the scanners skip an object with bit 0; a robot's targeting sets bit 6. Not traced |
+| 0x17 | 1 | `status` | State bits below (T-107) |
 
 The flags at +0x16 (`usg::flag`):
 
@@ -280,43 +280,110 @@ The flags at +0x16 (`usg::flag`):
 | 6 (0x40) | `IN_FIELD` | Shots and contact checks only see objects with it. A robot loses it inside its base and gets it back when launched. Robots, bases, obstacles and set-up relays |
 | 7 (0x80) | | Not seen used |
 
-**Robots** (0x172 bytes, `usg::Robot`):
+The status bits at +0x17 (`usg::status`, T-107):
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 0 (0x01) | `CLOAKED` | A robot's sparkle cloak (F8, `1000:d95e`) is on while +0xe1 counts down: the scanners, the map (`1000:f989`), the A key and target locks (`1000:d8cc`) skip it. A removed object (kind 15) instead counts its last ticks here: removal sets the byte to 2 and the kind's tick (`1000:f5c1`) frees the slot at 0 |
+| 1 (0x02) | `ECM` | A robot's ECM (F7, `1000:d92e`) is on while +0xdf counts down: a lock on it is lost (`1000:d6a6`) |
+| 2 (0x04) | `SPOTTED` | The other side has seen it: set on enemy units within a robot's scanning range at each scan (`1000:dcba`) and on an object a robot locks (`1000:d8e7`). The map shows an object of the other side only with it (`1000:f983`, unless the developer flag `DS:0x6ffa`). Nothing found clears it |
+| 3, 4, 5, 7 (0xb8) | `SCAN_COUNT` | A robot's count to its next scan, a 4-bit counter with bit 7 lowest, then 5, 4, 3, stepped when the kind's tick table reaches `1000:dcba` (and +0x1a's top three bits are 0); when it comes round to 0 the robot scans: every unit of the other side within the kind's range (`DS:0x707f`) gets `SPOTTED`, and their number goes to +0xf7 |
+| 6 (0x40) | `TRACKING` | The robot's camera follows its target: set by a lock (`1000:d8b6`), cleared by the console's pan keys (X, Y, Z) and `1000:da32`; while set the humanoid's tick points the pan (+0xf4) at the target (`1000:b2d0`) |
+
+Bases and relays show only bit 2 in stock files.
+
+**Robots** (0x172 bytes, `usg::Robot`). Every routine named below takes the robot in
+`DI`. The kind's set-up routine (`DS:0xe73f`: humanoid `1000:ab8a`, scorpion `9293`,
+scout `c40e`) runs after the common one (`sim_init_new_object`, `1000:f812`), and
+gives the values called "when made". Up to +0xfd the kinds share a layout:
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x1a, 0x1b | 1, 1 | `tick`, `state` | A tick counter stepping by 2 (kept to 0..=0x1e for scorpions and scouts), and a state number; each picks a routine from the kind's table every tick. A scorpion steps its speed when the counter's low four bits are 0 (T-052, `docs/sim.md`, "Movement"). The state's routines are not traced |
+| 0x18 | 2 | `serial` | A random number 0 to 511 drawn when made. The robot's name is the kind's two letters, `-`, and its last three digits (`1fe6:7f38`); nothing else reads it |
+| 0x1a, 0x1b | 1, 1 | `tick`, `state` | A tick counter stepping by 2 (kept to 0..=0x1e for scorpions and scouts), and a state number; each picks a routine from the kind's table every tick (the tables at `DS:0x6ac0` humanoid, `0x6720` scorpion, `0x6eb0` scout hold the scan, the lock warning and the contact check below). A scorpion steps its speed when the counter's low four bits are 0 (T-052, `docs/sim.md`, "Movement"). The state's routines are not traced |
+| 0x1c | 2 | `eye_height` | The camera's height above z (`docs/render.md`, "The camera"): when made 0x0f80 humanoid, 0x0b80 scorpion, 0x0a00 scout (its stance moves it) |
 | 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths). Worked out from the heading and speed only when either changes: `speed * sin(heading)`, `speed * cos(heading)` |
-| 0x23 | 1 | `mode` | Bit 7: named manual by T-043, but set when the **program** drives (T-052: the script steps every tick only with it; starting a program sets it, the drive keys clear it; T-111); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 0: the alien base gives it no path |
+| 0x22 | 1 | `program_panel` | The console's program panel (`1000:d2d1`, `d34c`): bit 7 while a program is being picked, bit 0 flips which half of the kind's programs it shows; cleared once one is picked (`DS:0x7183` by kind) |
+| 0x23 | 1 | `mode` | Bit 7: named manual by T-043, but set when the **program** drives (T-052: the script steps every tick only with it; starting a program sets it, the drive keys clear it; T-111); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 1 (`BUMPED`): it ran into something (below); bit 0: the alien base gives it no path |
 | 0x24 | 1 | `helm` | 0 to 100; a hit can take 0 to 7 off |
+| 0x25 | 1 | | Cleared when made (`1000:d2b6`); nothing reads it |
 | 0x26 | 2 | `speed` | Steps by one towards `target_speed`, limited by the drive, the helm and (scorpions) a speed table: every tick, or every 8 ticks for a scorpion. In 1/65,536ths of a unit a tick |
 | 0x28 | 2 | `target_speed` | |
 | 0x2a | 2 | `target_heading` | Every tick `heading` turns towards it by at most the kind's step (read from `xeno.exe`; the same for the three kinds). The editor writes the same value here and at +0x10 |
 | 0x2c | 1 | `path` | The robot's path: slot and flags ("How paths are used") |
 | 0x2d | 1 | `path_point` | The point it heads for; 0xff its base |
 | 0x2e | 1 | `program_given` | A number in `xeno.exe`'s program table (T-043) |
+| 0x2f | 1 | | Nothing reads or writes it |
 | 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
-| 0x31 | 1 | | The script's stack pointer: 10 empty, stepping down by 1 or 2 a push; the stack is the bytes from +0x44 (T-053, `docs/sim.md`, "Orders") |
-| 0x33 | 1 | | The script's flags: bits 0, 6 and 7 the carry, zero and sign of its last test; bit 5 runs the script every tick and holds events off (an event's handler sets it) |
-| 0x38 | 2 | | The ticks the script waits before its next opcode; a program starts with a staggered wait (T-053) |
-| 0x32 | 1 | `goal` | What the robot heads for: bit 1 the point at `destination` (0x22 from a path, 2 from the hold order), bit 0 an object (slot or pointer at +0x3a, a reference held), bit 2 its own base, bit 3 its target (+0xe6), bit 4 a point the script worked out; 0 nothing (T-053) |
+| 0x31 | 1 | `stack_pointer` | The script's stack pointer: 10 empty, stepping down by 1 or 2 a push (T-053, `docs/sim.md`, "Orders") |
+| 0x32 | 1 | `goal` | What the robot heads for: bit 1 the point at `destination` (0x22 from a path, 2 from the hold order), bit 0 an object (`goal_object`, a reference held), bit 2 its own base, bit 3 its target (+0xe6), bit 4 a point the script worked out; 0 nothing (T-053) |
+| 0x33 | 1 | `script_flags` | Bits 0, 6 and 7 the carry, zero and sign of the script's last test; bit 5 runs the script every tick and holds events off (an event's handler sets it) |
 | 0x34 | 2 | `script` | The script pointer (a data-segment offset in `DS:0x5034..0x5670`), saved as `0xa000` + its offset from the program table; flag bits in the top nibble restart the program given, or program 9, at load (`order_unpack_script_pointer`) |
-| 0x36 | 2 | | Events waiting for the script, a bit each (event n is bit n): 5 a hold point set, 7 hit, 0xa and 0xb the program or the pilot took over, others not traced (T-053) |
-| 0x44 | 10 | | The script's stack (T-053) |
+| 0x36 | 2 | `events` | Events waiting for the script, a bit each (event n is bit n): 3 a lock on it (below), 5 a hold point set, 7 hit, 9 something close ahead (the contact check), 0xa and 0xb the program or the pilot took over, 0xc crippled; others not traced (T-053) |
+| 0x38 | 2 | `wait` | The ticks the script waits before its next opcode; a program starts with a staggered wait (T-053) |
+| 0x3a | 2 | `goal_object` | The object of `goal` bit 0: a pointer in memory, its slot in a file (0xffff none) |
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
+| 0x44 | 10 | `stack` | The script's stack (T-053) |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
-| 0x51 | 1 | `drive` | 0xff in nearly every stock robot. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed. A guessed name; +0x4f and +0x50 are reset to 0xff with it |
+| 0x4f | 1 | `signal` | The net's signal (`2000:8087`, run from the kind's tick): 0xff within 0x578 (in 1/256ths of a unit) of the nearest relay or base of its side with flag bit 4, falling by 4 a 1/256th to 0 at 0x5b8 (`2000:7d16`, through `1000:cfd8`). Over 0x40 the robot runs off the net and `energy` gains one each run; at or under it, it is on its battery |
+| 0x50 | 1 | `energy` | The battery, 0 to 0xff: recharged off the net (above; the humanoid's tick also adds one now and then, `1000:b306`), drained on the battery by firing (10 or 22) and the devices (ECM 1, cloak 2, `1000:d1b0`); "insufficient power" when short |
+| 0x51 | 1 | `drive` | The power the drive gets (`2000:8087`): `signal`, or `energy` on the battery, ANDed with `DS:0x70a5[power >> 4]`. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed |
 | 0x52..0xda | 0x89 | `panel`, `panel_length`, `panel_queue`, `panel_text` | The message panel (`docs/screens.md`, "The message panel (T-104)"): +0x52 its line count (bits 0 to 3) and bits 6 (a line ended) and 7 (redraw from the top); +0x53 the text's length; +0x54 five words, the messages waiting as string-segment offsets; +0x5e the text, NUL-terminated. Stock robots have empty texts and nothing waiting |
-| 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile). A humanoid's bit 7 is a fire request (script opcode 0x7d) and bits 5 and 6 its first and second weapon about to fire (T-054) |
-| 0xdd | 1 | | A humanoid's selected weapon, 0 or 1 (script opcodes 0x7b, 0x7c; T-054) |
+| 0xdb | 1 | `call_sign` | An index into the 64 call signs (T-103) |
+| 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile). Bit 7 a fire request (script opcode 0x7d, the Space key; the scorpion's burst repeats it); bits 5 and 6 a humanoid's first and second weapon about to fire (T-054); bit 3 set when a scorpion deploys a relay |
+| 0xdd | 1 | `weapon` | The weapon selected, 0 or 1 (script opcodes 0x7b, 0x7c; F5, F6; T-054); a scorpion's 1 is its tail missile |
+| 0xde, 0xdf | 1, 1 | `ecm`, `ecm_time` | ECM charges (0xff when made) and the ticks it stays on: F7 (`1000:d92e`) takes one and the energy, sets 20 and `ECM`; each tick counts it down and clears `ECM` at 0 (humanoid `1000:b08a`, scorpion `972e`, scout `c8ab`) |
+| 0xe0, 0xe1 | 1, 1 | `cloaks`, `cloak_time` | Sparkle cloaks (humanoid 10, scout 4 when made; scorpions none) and the ticks one lasts: F8 (`1000:d95e`) takes one and the energy, sets 120 and `CLOAKED`, and makes the sparkle (kind 14); counted down as `ecm_time` |
+| 0xe2..0xe5 | 1 each | `mines`, `alarm_buoys`, `ecm_buoys`, `decoys` | What keys 1 to 4 drop (`1000:d5e7`..`d64d`): proximity mines (kind 9), alarm buoys (11), ECM buoys (12) and EMI decoys (10) left. Scorpion 20, 8, 8, 4; scout 6, 2, 2, 6; humanoid none |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
-| 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged. Bit 2 is set in stock robots; the other bits are not traced |
-| 0xef..0xf5 | 7 | `display`, `zoom`, `map_zoom`, `zoom_label`, `pan` | The console's second display (`docs/screens.md`, "The second display (T-104)"): +0xef the display mode (0 the camera, 1 thermal, 2 the map, 3 the scorpion's missile camera; bit 2 set every tick while that mode's device is damaged), +0xf0 not traced, +0xf1 and +0xf2 the camera's and the map's zoom steps (0 to 4), +0xf3 the ticks left (in 16s) to show the zoom's name, +0xf4 the camera's pan (a word added to the heading) |
-| 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
-| 0xfd | 1 | | Bit 7: a scorpion's relay deployer damaged (a hit can set it; with it the relay count reads 0). Bit 0: firing takes energy from +0x50; bit 5: the no-energy message was shown (T-054) |
-| 0x108, 0x109 | 1, 1 | | A humanoid's first and second weapon's cool-down, counted down every 8 ticks (T-054); a scout's +0x109 is its speed gear (T-105, `docs/sim.md`, "The cockpit keys") |
-| 0x10b, 0x10c | 1, 1 | `stance`, `stance_target` | A scout's stance and the one it is rising or sinking to (0x30 standing; it moves only standing); a humanoid's speed gear (+0x10b, twice an index into its gears; T-105, `docs/sim.md`, "The cockpit keys") |
-| 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
-| 0x118 | 1 | `speed_table` | A scorpion's speed goes through `xeno.exe`'s speed table `speed_table / 2` (0x0c, the last, in stock scorpions; other kinds hold other values and do not use it) |
+| 0xe8 | 2 | `target_distance` | The target's distance in whole units (the middle word of the 16.16), worked out every tick the lock holds (`1000:d6e6`, from the kind's tick through `1000:d66f` with the kind's arc and range) |
+| 0xea | 2 | `target_bearing` | The bearing to the target (`1000:0545`) |
+| 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged (no lock holds). Bit 1: the target is closer than the range given (`DS:0x7203`); bit 2: within the arc (`DS:0x7201`) of the heading, or no target (stock robots have bit 2). The weapons fire only with bit 2 |
+| 0xed | 1 | `locked_on` | Another robot holds a lock on this one: its tick sets 0xff (`1000:d6ad`) unless this robot's ECM is on (then the lock is lost); this robot's tick halves it (`1000:dc95`), setting `systems` bit 5 and posting event 3 when it starts, clearing bit 5 at 0. The humanoid's console sounds an alarm while it is not 0 |
+| 0xee | 1 | `blink` | Steps by 2 (`1000:b318`); times the console's blinking and the lock alarm |
+| 0xef..0xf5 | 7 | `display`, `display_before`, `zoom`, `map_zoom`, `zoom_label`, `pan` | The console's second display (`docs/screens.md`, "The second display (T-104)"): +0xef the display mode (0 the camera, 1 thermal, 2 the map, 3 the scorpion's missile camera; bit 2 set every tick while that mode's device is damaged), +0xf0 the mode a scorpion's display goes back to once its missile is gone (saved when it fires one), +0xf1 and +0xf2 the camera's and the map's zoom steps (0 to 4), +0xf3 the ticks left (in 16s) to show the zoom's name, +0xf4 the camera's pan (a word added to the heading) |
+| 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed; bit 5 while `locked_on` |
+| 0xf7 | 1 | `contacts` | Enemy units found by the last scan (`1000:dd58`; see `SCAN_COUNT`); cleared when launched from the base (`1000:6745`). The consoles show it |
+| 0xf8 | 1 | `flash` | Ticks left of the screen's flash after a hit (20; `1000:d16b` counts it down) |
+| 0xf9 | 1 | `damage` | The damage added up, 0 to 100, every tick (humanoid `1000:afee`, scorpion `94e9`, scout `c6fd`): a quarter of the power lost and of the helm lost, plus weights for each damaged part. At 50 (humanoid; 40 the others) `CRIPPLED` is set and event 12 posted; at 70 / 35 (humanoid, human / alien), 75 / 40 (scorpion), 55 / 30 (scout) the robot is destroyed (`sim_destroy_robot`). Bits 4 to 6 pick the roster's status icon, and the situation room's detail panel its repair state |
+| 0xfa | 1 | `clock` | Steps by one (`1000:b35f`, scout `cb37`); a humanoid's or scout's console light (+0x10a, +0x108) steps each time its low five bits are 0. S sets it to 0 (T-139). A scorpion keeps only bit 7, flipped by a console key (`1000:9a45`) |
+| 0xfb | 1 | `bump_wait` | The contact check (`1000:d464`, from the tick tables): while it counts down nothing is checked; otherwise every other object in the field (not its own base) whose distance less both radii is under 0x6400 in the distance routine's units (`1000:08ec`) is a contact: one ahead (`1000:45f2`) posts event 9, and one closer than both radii makes it bump: `BUMPED`, the speed reversed, the target speed 0, the kind's bump routine (`DS:0x7209`), 1 point of damage, and 4 here. A robot in its base clears `BUMPED` and is not checked |
+| 0xfc | 1 | | Nothing reads or writes it |
+| 0xfd | 1 | `equipment` | Bit 0 `ON_BATTERY` (the signal is 0x40 or under; firing and the devices then take `energy`); bits 1 and 2 entering and in the base (`1000:6439`..`6457`, T-115); bit 4 `DUMPING` (a scorpion's cargo dump, D: a relay every 10 steps of +0x11c); bit 5 the no-energy message was shown, and a scorpion's missile is out; bit 6 `CRIPPLED`; bit 7 a scorpion's relay deployer is damaged (a hit can set it; with it the relay count reads 0) |
+
+From +0xfe each kind has its own layout (`usg::Parts`). The frame bytes from +0xfe are
+the model's animations (`docs/render.md`, "Frame numbers"); the widget state is the
+console's (T-043).
+
+| Offset | Humanoid (`HumanoidParts`) | Scorpion (`ScorpionParts`) | Scout (`ScoutParts`) |
+|---|---|---|---|
+| 0xfe.. | `frames`, 5: body, arms, legs | `frames`, 12: body, legs, tail, claws | `frames`, 7: body, legs |
+| 0x103, 0x104 | `arms_raised`: counted up while a weapon fires (`1000:ae23`, `ae8a`) | frames | frames |
+| 0x105, 0x106 | +0x105 `step`, the walking counter; +0x106 unused | frames (the claws, stepped every 4 ticks unless damaged) | `cooldowns`: plasma gun 8, cannon 3 after a shot (the weapon step from `1000:c8ab`) |
+| 0x107 | unused | frames | `shells`: cannon shells, 80 when made ("out of cannon shells") |
+| 0x108, 0x109 | `cooldowns` of the two weapons, counted down every 8 ticks (T-054) | frames (the weapons' flashes from +0x11d) | +0x108 `light`; +0x109 `gear` (4 when made) |
+| 0x10a | `light`: the console light's step, 0 to 3 (`1000:a93e`) | `grid` to +0x114: the relay-net orders' line of cells (T-113) | `step`, the walking counter |
+| 0x10b | `gear` (4 when made) | | `stance` (0x2f when made) |
+| 0x10c | widget state to +0x140 | | `stance_target` (0x30) |
+| 0x10d | | | widget state to +0x148 |
+| 0x115 | | unused | |
+| 0x116 | | `step`, the walking counter | |
+| 0x117 | | `static_time`: 5 ticks of static once the missile camera's missile is gone (`1000:99a6`) | |
+| 0x118 | | `relays` carried, 12 when made and in stock files: the cargo bay. U deploys one (`1000:9b01`), L loads one within reach (`9b34`, under 12, moving slower than 16), D dumps them; `relays / 2` picks the speed table, so a full bay is slowest | |
+| 0x119 | | Cleared when made and added into the cargo gauge (`1000:9a6d`); nothing else | |
+| 0x11a, 0x11b | | `gauges`: the cargo gauges' last drawn values | |
+| 0x11c | | `dump_wait`, 10 between the cargo dump's relays | |
+| 0x11d | | `fired`: bits 0 and 1 a weapon fired, shown in the frames (`1000:96ab`) | |
+| 0x11e | | `burst`: the trigger (`1000:98f1`) sets 5; each tick sets the fire request and counts it down | |
+| 0x11f | | `cooldown`, the cannon's | |
+| 0x120 | | `rounds`, 2 bytes: cannon rounds, 2000 when made ("rounds exhausted") | |
+| 0x122 | | `missiles`: tail missiles, 6 when made | |
+| 0x123 | | `missile`, 2 bytes: the missile in flight (kind 5); 0xffff none, and when it is gone (`1000:9743`) | |
+| 0x125 | | `reload`, 2 bytes: ticks before the next missile, 400 after a launch (`1000:978e`) | |
+| 0x127 | | widget state to +0x16b | |
+
+The bytes after each kind's widget state (+0x141, +0x16c, +0x149) and the humanoid's
++0x106 and +0x107 are never used; stock files have them 0.
 
 **How robots take damage** (`sim_damage_object`, `1000:f84d`, calls the kind's routine
 in the table at `DS:0xe783` with the damage in `AL`): a robot hit for more than 80 is
@@ -325,7 +392,8 @@ picks one of the kind's components by chance from a table (`DS:0x6856` humanoid,
 `0x659a` scorpion, `0x6c06` scout; three-byte entries of a chance out of 256 and a
 routine) and damages it: the helm or the power percentage drops, or a bit above is
 set (a second hit on a damaged weapon destroys it). The message panel reports each.
-Robots have no hit points: a robot hit for 80 or less survives. T-054 traced the
+A robot hit for 80 or less is worn down, and destroyed when the damage it has
+added up (+0xf9) reaches its kind's limit (above, T-107). T-054 traced the
 details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 
 **Bases** (0x172 bytes, `usg::Base`):
@@ -559,9 +627,10 @@ paragraph as the writer's buffer is. `xeno-tool inspect` prints a save's campaig
 
 ## Open questions
 
-- The object bytes still unnamed: +0x12 and +0x17, most of a robot's 0x172 bytes
-  (sensors, weapons, the script's working bytes), the relay's set-up state and links,
-  and anything in an obstacle past +0x18 (T-107).
+- The object bytes still unnamed: the relay's set-up state and links, the kinds made
+  during play (5 to 15), and anything in an obstacle past +0x18 (T-107). A robot's
+  unnamed bytes (+0x25, +0x2f, +0xfc, the humanoid's +0x106, +0x107, a scorpion's
+  +0x115, +0x119 and the tails after the widget state) are never used.
 - Whether `pool_index` matters once loaded, given that stock files repeat some.
 
 ## Parser

@@ -168,6 +168,23 @@ pub mod flag {
     pub const IN_FIELD: u8 = 0x40;
 }
 
+/// The bits of an object's status byte (+0x17).
+pub mod status {
+    /// A robot's sparkle cloak is on: the scanners, the map and target locks skip it.
+    /// (A removed object, kind 15, counts its last two ticks here instead.)
+    pub const CLOAKED: u8 = 0x01;
+    /// A robot's ECM is on: locks on it are lost.
+    pub const ECM: u8 = 0x02;
+    /// Spotted by the other side (in a robot's scan or locked): the map shows an
+    /// enemy object only with it.
+    pub const SPOTTED: u8 = 0x04;
+    /// A robot's camera follows its target (set by a lock, cleared by the pan keys).
+    pub const TRACKING: u8 = 0x40;
+    /// Bits 7, 5, 4, 3 (lowest first): a robot's count to its next scan for enemies,
+    /// stepped when the kind's tick table reaches `1000:dcba`; it scans at 0.
+    pub const SCAN_COUNT: u8 = 0xb8;
+}
+
 /// One `DCBS` record: an object as the game keeps it in memory, behind a short header
 /// that says where it goes. Offsets in field docs are in the in-memory object, which
 /// starts with the kind. The first 0x18 bytes are the same for every kind; the rest is
@@ -203,17 +220,17 @@ pub struct Object {
     /// +0x10: heading, 65,536 to a turn. The 3D view draws the model's facing from it
     /// (`docs/formats/mxx.md`); a robot turns it towards [`Robot::target_heading`].
     pub heading: u16,
-    /// +0x12: set per kind when an object is made (8.8: humanoid 10, scorpion 10.5,
-    /// scout 12.5; a relay's from a table by its state). Meaning unknown.
-    pub unknown_12: u16,
+    /// +0x12: the model's height above z, added to z's low word in the 3D view
+    /// (`docs/render.md`): set per kind when an object is made (humanoid 0x0a00,
+    /// scorpion 0x0a80, scout 0x0c80; a relay's by its stage); walking bobs it.
+    pub model_height: u16,
     /// +0x14: radius, 8.8 fixed point, set per kind when an object is made. Contact
     /// checks subtract both objects' radii from their distance.
     pub radius: u16,
     /// +0x16: the [`flag`] bits.
     pub flags: u8,
-    /// +0x17: more state bits; the scanners skip an object with bit 0 set, and a
-    /// robot's targeting sets bit 6. Not traced.
-    pub unknown_17: u8,
+    /// +0x17: the [`status`] bits.
+    pub status: u8,
     /// +0x18 to the end.
     #[br(args(u16::from(kind), size))]
     pub body: Body,
@@ -268,7 +285,7 @@ impl Object {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
     #[br(pre_assert(kind <= 2 && size == Object::BIG))]
-    Robot(Robot),
+    Robot(#[br(args(kind))] Robot),
     #[br(pre_assert(kind == 3 && size == Object::BIG))]
     Base(Base),
     #[br(pre_assert(kind == 4 && size == Object::SMALL))]
@@ -279,32 +296,40 @@ pub enum Body {
 
 /// A humanoid's, scorpion's or scout's bytes from +0x18 (0x172-byte objects). The
 /// loader keeps them all, except that it restarts the program given (`program_given`)
-/// and drops `target`.
+/// and drops `target`. Up to +0xfd the three kinds share a layout; the rest is the
+/// kind's [`Parts`]. `docs/formats/usg.md`, "Object fields", says who uses each.
 #[binrw]
 #[brw(little)]
+#[br(import(kind: u16))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Robot {
-    pub unknown_18: Unknown<2>,
+    /// +0x18: a number drawn when the robot is made (0 to 511); its name is the
+    /// kind's two letters and the last three digits of it (`1fe6:7f38`).
+    pub serial: u16,
     /// +0x1a: counts the robot's ticks in twos; each value picks a routine from the
     /// kind's table, and a scorpion steps its speed when the low four bits are 0
     /// (`docs/sim.md`, "Movement").
     pub tick: u8,
     /// +0x1b: a state number, picking another routine each tick. Not traced.
     pub state: u8,
-    pub unknown_1c: Unknown<2>,
+    /// +0x1c: the camera's height above z, 1/65536ths (`docs/render.md`).
+    pub eye_height: u16,
     /// +0x1e: velocity, added to `x` every tick (1/65536ths).
     pub velocity_x: i16,
     /// +0x20: added to `y` every tick.
     pub velocity_y: i16,
-    pub unknown_22: u8,
-    /// +0x23: [`Robot::MANUAL`], [`Robot::RECALL`]; bits 4 and 5 turn the target
-    /// heading one way or the other every tick (the pilot's turn keys).
+    /// +0x22: the console's program panel: bit 7 while a program is being picked,
+    /// bit 0 the half shown; 0 once one is picked (`1000:d34c`).
+    pub program_panel: u8,
+    /// +0x23: [`Robot::MANUAL`], [`Robot::RECALL`], [`Robot::BUMPED`]; bits 4 and 5
+    /// turn the target heading one way or the other every tick (the pilot's turn keys).
     pub mode: u8,
     /// +0x24: the helm, 0 to 100 (100 in stock files); hits lower it.
     pub helm: u8,
+    /// +0x25: cleared when the robot is made; nothing reads it.
     pub unknown_25: u8,
     /// +0x26: speed; it steps by one towards `target_speed` (limited by the drive,
-    /// the helm and, for a scorpion, [`Robot::speed_table`]) every tick, or every 8
+    /// the helm and, for a scorpion, the relays it carries) every tick, or every 8
     /// ticks for a scorpion (`docs/sim.md`, "Movement").
     pub speed: i16,
     /// +0x28: the speed asked for.
@@ -321,30 +346,40 @@ pub struct Robot {
     pub path_point: u8,
     /// +0x2e: the program given, a number in `xeno.exe`'s program table.
     pub program_given: u8,
+    /// +0x2f: nothing reads or writes it.
     pub unknown_2f: u8,
     /// +0x30: the program running: the one given, or a state the script entered.
     pub program_running: u8,
-    /// +0x31: the script's timing (10 when a program starts).
-    pub unknown_31: u8,
+    /// +0x31: the script's stack pointer, 10 when empty; the stack is `stack`.
+    pub stack_pointer: u8,
     /// +0x32: what the robot heads for: 0x22 the point at `destination`; bit 0 an
-    /// object (its slot at +0x3a); 0 nothing.
+    /// object (`goal_object`); 0 nothing.
     pub goal: u8,
-    /// +0x33: more of the script's timing.
-    pub unknown_33: u8,
+    /// +0x33: the script's flags (`docs/sim.md`, "Orders").
+    pub script_flags: u8,
     /// +0x34: the script pointer, saved as `0xa000` + its offset from the program
     /// table.
     pub script: u16,
-    /// +0x36: event bits (the message panel's), +0x38: the script's start phase.
-    pub unknown_36: Unknown<6>,
+    /// +0x36: events waiting for the script, bit n for event n.
+    pub events: u16,
+    /// +0x38: ticks before the script's next opcode.
+    pub wait: u16,
+    /// +0x3a: the object goal (`goal` bit 0): its slot, 0xffff for none.
+    pub goal_object: u16,
     /// +0x3c: where the robot is heading, 16.16; a path point or its base.
     pub destination: Point,
-    pub unknown_44: Unknown<0xa>,
+    /// +0x44: the script's stack.
+    pub stack: [u8; 10],
     /// +0x4e: power systems, 0 to 100; hits lower it.
     pub power: u8,
-    pub unknown_4f: Unknown<2>,
-    /// +0x51: the drive, 0 to 0xff (0xff in nearly every stock robot): at 0 the robot cannot
-    /// move, at or under a threshold in `xeno.exe` it goes at half speed. The name is
-    /// a guess from that use.
+    /// +0x4f: the net's signal, 0 to 0xff from the nearest linked relay of its side
+    /// (`2000:7d16`); at 0x40 or under the robot runs on `energy`.
+    pub signal: u8,
+    /// +0x50: the battery, 0 to 0xff: recharged while the signal is good, drained by
+    /// firing and the devices while it is not ([`Robot::ON_BATTERY`]).
+    pub energy: u8,
+    /// +0x51: the power the drive gets: `signal`, or `energy` on the battery, masked
+    /// by a table by `power`. At 0 the robot cannot move, low it goes at half speed.
     pub drive: u8,
     /// +0x52: the message panel's lines (bits 0 to 3, up to 5 after the first), a
     /// line ended (bit 6) and a redraw from the top (bit 7); +0x53 the text's length;
@@ -359,40 +394,77 @@ pub struct Robot {
     pub call_sign: u8,
     /// +0xdc: weapons damaged, bits 0 to 2 (the kind's first, second and third
     /// weapon). A second hit on a damaged weapon destroys it ([`Robot::systems`]).
+    /// Bit 7 asks the weapon step to fire; bit 3 a relay was deployed.
     pub weapons: u8,
-    pub unknown_dd: Unknown<9>,
+    /// +0xdd: the weapon selected, 0 or 1.
+    pub weapon: u8,
+    /// +0xde: ECM charges left (0xff when made); F7 spends one.
+    pub ecm: u8,
+    /// +0xdf: ticks the ECM stays on (20 a charge; [`status::ECM`] meanwhile).
+    pub ecm_time: u8,
+    /// +0xe0: sparkle cloaks left (humanoid 10, scout 4); F8 spends one.
+    pub cloaks: u8,
+    /// +0xe1: ticks the cloak lasts (120; [`status::CLOAKED`] meanwhile).
+    pub cloak_time: u8,
+    /// +0xe2..=+0xe5: what keys 1 to 4 drop: proximity mines (kind 9), alarm buoys
+    /// (11), ECM buoys (12) and EMI decoys (10) left.
+    pub mines: u8,
+    pub alarm_buoys: u8,
+    pub ecm_buoys: u8,
+    pub decoys: u8,
     /// +0xe6: the robot's target, saved as its object slot (0xffff: none). The loader
     /// clears it.
     pub target: u16,
-    pub unknown_e8: Unknown<4>,
-    /// +0xec: bit 0, the targeting computer is damaged.
+    /// +0xe8: the target's distance in whole units, worked out every tick the lock
+    /// holds (`1000:d6e6`).
+    pub target_distance: u16,
+    /// +0xea: the bearing to the target (65,536 to a turn).
+    pub target_bearing: u16,
+    /// +0xec: bit 0, the targeting computer is damaged; bit 1 the target is close,
+    /// bit 2 it is ahead (both by the kind's limits, or bit 2 with no target).
     pub targeting: u8,
-    pub unknown_ed: Unknown<2>,
+    /// +0xed: someone holds a lock on this robot: 0xff every tick they do, halved
+    /// every tick ([`Robot::systems`] bit 5 and event 3 while not 0).
+    pub locked_on: u8,
+    /// +0xee: steps by 2; times the console's blinking and the lock alarm.
+    pub blink: u8,
     /// +0xef: the console's display mode (0 the camera, 1 thermal, 2 the map, 3 the
-    /// scorpion's missile camera; bit 2 while that device is damaged); +0xf1 and
-    /// +0xf2 the camera's and the map's zoom steps (0 to 4); +0xf3 the ticks left to
-    /// show the zoom's name (in 16s); +0xf4 the camera's pan, added to the heading
-    /// (`docs/screens.md`, "The second display (T-104)").
+    /// scorpion's missile camera; bit 2 while that device is damaged); +0xf0 the mode
+    /// to go back to when the missile is gone; +0xf1 and +0xf2 the camera's and the
+    /// map's zoom steps (0 to 4); +0xf3 the ticks left to show the zoom's name (in
+    /// 16s); +0xf4 the camera's pan, added to the heading (`docs/screens.md`, "The
+    /// second display (T-104)").
     pub display: u8,
-    pub unknown_f0: u8,
+    pub display_before: u8,
     pub zoom: u8,
     pub map_zoom: u8,
     pub zoom_label: u8,
     pub pan: u16,
     /// +0xf6: systems damaged or destroyed: bits 0 visual camera, 1 thermal camera,
-    /// 2 map, 3 radar, 4 EMI sensors, 6 and 7 the first and second weapon destroyed.
+    /// 2 map, 3 radar, 4 EMI sensors, 6 and 7 the first and second weapon destroyed;
+    /// bit 5 while `locked_on`.
     pub systems: u8,
-    pub unknown_f7: Unknown<0x14>,
-    /// +0x10b: a scout's stance (0x30 standing; it moves only standing) and a
-    /// humanoid's speed gear (an index into its cockpit's speeds).
-    pub stance: u8,
-    /// +0x10c: the stance a scout is rising or sinking to; the humanoid console's
-    /// widget state starts here (+0x10c humanoid, +0x10d scout, +0x127 scorpion).
-    pub stance_target: u8,
-    pub unknown_10d: Unknown<0x0b>,
-    /// +0x118: which of `xeno.exe`'s speed tables a scorpion's speed goes through.
-    pub speed_table: u8,
-    pub unknown_119: Unknown<0x59>,
+    /// +0xf7: enemy units within the kind's range at the last scan (`1000:dcba`).
+    pub contacts: u8,
+    /// +0xf8: ticks left of the screen's flash after a hit.
+    pub flash: u8,
+    /// +0xf9: the damage added up, 0 to 100 (power and helm lost, damaged parts); at
+    /// 40 [`Robot::CRIPPLED`], at 75 (40 for aliens) the robot is destroyed. The
+    /// roster's icon and the detail panel's repair state come from it.
+    pub damage: u8,
+    /// +0xfa: a counter stepping by one; a humanoid's or scout's console light steps every 32
+    /// (S sets it to 0). A scorpion uses only bit 7, which a console key flips.
+    pub clock: u8,
+    /// +0xfb: ticks before the next contact check after bumping into something.
+    pub bump_wait: u8,
+    /// +0xfc: nothing reads or writes it.
+    pub unknown_fc: u8,
+    /// +0xfd: [`Robot::ON_BATTERY`], [`Robot::IN_BASE`], [`Robot::CRIPPLED`],
+    /// [`Robot::DEPLOYER_DAMAGED`] and the other `Robot` bits for it.
+    pub equipment: u8,
+    /// +0xfe to the end, by kind.
+    #[br(args(kind))]
+    pub parts: Parts,
 }
 
 impl Robot {
@@ -404,19 +476,136 @@ impl Robot {
     /// [`Robot::mode`]: the situation room recalled the robot; its next tick gives it
     /// program 4 and clears the bit.
     pub const RECALL: u8 = 0x08;
+    /// [`Robot::mode`]: it bumped into something and backs off (`1000:d464`).
+    pub const BUMPED: u8 = 0x02;
     /// [`Robot::path`]: walking the path from its last point back to its first.
     pub const PATH_BACKWARDS: u8 = 0x20;
     /// [`Robot::path`]: the script asked for the next point.
     pub const PATH_NEXT: u8 = 0x40;
     /// [`Robot::path`]: the robot has a path.
     pub const ON_PATH: u8 = 0x80;
+    /// [`Robot::equipment`]: the signal is too weak; firing and the devices take
+    /// `energy`.
+    pub const ON_BATTERY: u8 = 0x01;
+    /// [`Robot::equipment`]: bit 1 is set with bit 2 by the base taking it in (T-115).
+    pub const ENTERING_BASE: u8 = 0x02;
+    /// [`Robot::equipment`]: inside its base, off the field.
+    pub const IN_BASE: u8 = 0x04;
+    /// [`Robot::equipment`]: a scorpion dumping its cargo, a relay every 10 steps.
+    pub const DUMPING: u8 = 0x10;
+    /// [`Robot::equipment`]: the "no energy" message was shown.
+    pub const TOLD_NO_ENERGY: u8 = 0x20;
+    /// [`Robot::equipment`]: `damage` reached 40 (script event 12 when it does).
+    pub const CRIPPLED: u8 = 0x40;
+    /// [`Robot::equipment`]: a scorpion's relay deployer is damaged.
+    pub const DEPLOYER_DAMAGED: u8 = 0x80;
+}
 
-    /// +0xf9 (in `unknown_f7`): its repair state; the roster's status icon is bits 4
-    /// to 6, and the situation room's detail panel says `IN REPAIR`, `WAIT REPAIR` or
-    /// `READY` from it. Not traced further.
-    pub fn repair(&self) -> u8 {
-        self.unknown_f7.0[2]
-    }
+/// A robot's bytes from +0xfe, by kind: its animations' frames (`docs/render.md`,
+/// "Frame numbers"), its weapons' state and its console's widget state.
+#[binrw]
+#[brw(little)]
+#[br(import(kind: u16))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Parts {
+    #[br(pre_assert(kind == 0))]
+    Humanoid(HumanoidParts),
+    #[br(pre_assert(kind == 1))]
+    Scorpion(ScorpionParts),
+    #[br(pre_assert(kind == 2))]
+    Scout(ScoutParts),
+}
+
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanoidParts {
+    /// +0xfe: frames: body, arms, legs.
+    pub frames: [u8; 5],
+    /// +0x103, +0x104: the arms raised to fire, counted up and down.
+    pub arms_raised: [u8; 2],
+    /// +0x105: the walking step counter.
+    pub step: u8,
+    /// +0x106: nothing uses them.
+    pub unknown_106: [u8; 2],
+    /// +0x108, +0x109: the two weapons' cool-downs, counted down every 8 ticks.
+    pub cooldowns: [u8; 2],
+    /// +0x10a: the console light's step, 0 to 3.
+    pub light: u8,
+    /// +0x10b: the speed gear, twice an index into the gear table.
+    pub gear: u8,
+    /// +0x10c: the console's widget state.
+    pub widgets: Unknown<0x35>,
+    /// +0x141: nothing uses it.
+    pub unknown_141: Unknown<0x31>,
+}
+
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScorpionParts {
+    /// +0xfe: frames: body, six legs, tail and claws.
+    pub frames: [u8; 12],
+    /// +0x10a: the relay-net orders' line of grid cells (T-113).
+    pub grid: Unknown<0x0b>,
+    /// +0x115: nothing uses it.
+    pub unknown_115: u8,
+    /// +0x116: the walking step counter.
+    pub step: u8,
+    /// +0x117: ticks of static on the missile camera once its missile is gone.
+    pub static_time: u8,
+    /// +0x118: relays in the cargo bay, up to 12; half of it picks the speed table.
+    pub relays: u8,
+    /// +0x119: cleared when made and added to the cargo gauge; nothing else.
+    pub unknown_119: u8,
+    /// +0x11a, +0x11b: what the cargo gauges last drew.
+    pub gauges: [u8; 2],
+    /// +0x11c: steps before the cargo dump's next relay (10).
+    pub dump_wait: u8,
+    /// +0x11d: weapons that just fired (bits 0 and 1), for the frames.
+    pub fired: u8,
+    /// +0x11e: shots left in the cannon's burst (5 a trigger).
+    pub burst: u8,
+    /// +0x11f: the cannon's cool-down.
+    pub cooldown: u8,
+    /// +0x120: cannon rounds left (2000 when made).
+    pub rounds: u16,
+    /// +0x122: tail missiles left (6 when made).
+    pub missiles: u8,
+    /// +0x123: the tail missile in flight (kind 5), its slot; 0xffff for none.
+    pub missile: u16,
+    /// +0x125: ticks before the next missile (400 after a launch).
+    pub reload: u16,
+    /// +0x127: the console's widget state.
+    pub widgets: Unknown<0x45>,
+    /// +0x16c: nothing uses it.
+    pub unknown_16c: Unknown<6>,
+}
+
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScoutParts {
+    /// +0xfe: frames: body and legs.
+    pub frames: [u8; 7],
+    /// +0x105, +0x106: the plasma gun's and the cannon's cool-downs.
+    pub cooldowns: [u8; 2],
+    /// +0x107: cannon shells left (80 when made).
+    pub shells: u8,
+    /// +0x108: the console light's step, 0 to 3.
+    pub light: u8,
+    /// +0x109: the speed gear, twice an index into the gear table.
+    pub gear: u8,
+    /// +0x10a: the walking step counter.
+    pub step: u8,
+    /// +0x10b: the stance (0x30 standing; it moves only standing).
+    pub stance: u8,
+    /// +0x10c: the stance it is rising or sinking to.
+    pub stance_target: u8,
+    /// +0x10d: the console's widget state.
+    pub widgets: Unknown<0x3c>,
+    /// +0x149: nothing uses it.
+    pub unknown_149: Unknown<0x29>,
 }
 
 /// A base's bytes from +0x18 (0x172-byte objects). The loader clears the height and
@@ -1138,6 +1327,9 @@ mod tests {
         let scout = &objects[4];
         assert_eq!((scout.side(), scout.heading), (Side::Alien, 0x7000));
         assert!(scout.base().is_none() && scout.robot().is_some());
+        // The parts after +0xfe follow the kind.
+        assert!(matches!(robot.parts, Parts::Humanoid(_)));
+        assert!(matches!(scout.robot().unwrap().parts, Parts::Scout(_)));
         // A robot kind in a small object, or an unknown kind, is kept as bytes.
         let mut small = humanoid.clone();
         small.size = Object::SMALL;
@@ -1456,6 +1648,19 @@ mod tests {
                         // Percentages, and a script pointer in its saved form.
                         assert!(r.helm <= 100 && r.power <= 100, "{at}");
                         assert_eq!(r.script & 0xf800, 0xa000, "{at}");
+                        // As each kind's set-up routine makes them.
+                        assert_eq!(r.ecm, 0xff, "{at}");
+                        match (&r.parts, o.kind) {
+                            (Parts::Humanoid(_), ObjectKind::Humanoid) => {}
+                            (Parts::Scorpion(p), ObjectKind::Scorpion) => {
+                                let made = (p.relays, p.rounds, p.missiles, p.missile);
+                                assert_eq!(made, (12, 2000, 6, 0xffff), "{at}");
+                            }
+                            (Parts::Scout(p), ObjectKind::Scout) => {
+                                assert_eq!(p.shells, 80, "{at}")
+                            }
+                            (parts, kind) => panic!("{at}: {kind:?} with {parts:?}"),
+                        }
                     }
                     (Body::Base(b), ObjectKind::Base) => assert!(b.damage < 300, "{at}"),
                     (Body::Relay(r), ObjectKind::Relay) => assert!(r.damage < 20, "{at}"),

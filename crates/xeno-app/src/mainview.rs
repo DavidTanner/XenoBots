@@ -235,7 +235,7 @@ pub fn roster_bytes(scenario: Option<&Scenario>) -> [(u8, u8); 240] {
         if let (Some(b), xeno_formats::usg::Body::Robot(r)) =
             (bytes.get_mut(usize::from(o.slot)), &o.body)
         {
-            *b = (r.call_sign, r.repair());
+            *b = (r.call_sign, r.damage);
         }
     }
     bytes
@@ -275,7 +275,7 @@ pub fn flags(scenario: Option<&Scenario>) -> Flags {
     let mut flags = [(0, 0); 240];
     for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
         if let Some(f) = flags.get_mut(usize::from(o.slot)) {
-            *f = (o.flags, o.unknown_17);
+            *f = (o.flags, o.status);
         }
     }
     flags

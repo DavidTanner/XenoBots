@@ -160,13 +160,19 @@ impl Movement {
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
-    fn of(r: &usg::Robot, kind: ObjectKind) -> Movement {
-        // +0xf7 and +0x10d onwards, by kind.
-        let (f7, l) = (&r.unknown_f7.0, &r.unknown_10d.0);
-        let (stride, legs) = match kind {
-            ObjectKind::Humanoid => (f7[0xe], [f7[0xa], f7[0xb]]),
-            ObjectKind::Scorpion => (l[9], [0; 2]),
-            _ => (f7[0x13], [f7[0xc], f7[0xd]]),
+    fn of(r: &usg::Robot) -> Movement {
+        use usg::Parts;
+        // (gear, stride, legs, stance and its target, relays) by kind.
+        let (gear, stride, legs, stance, relays) = match &r.parts {
+            Parts::Humanoid(p) => (p.gear, p.step, [p.frames[3], p.frames[4]], (0, 0), 0),
+            Parts::Scorpion(p) => (0, p.step, [0; 2], (0, 0), p.relays),
+            Parts::Scout(p) => (
+                p.gear,
+                p.step,
+                [p.frames[5], p.frames[6]],
+                (p.stance, p.stance_target),
+                0,
+            ),
         };
         Movement {
             tick: r.tick,
@@ -183,20 +189,16 @@ impl Movement {
                 y: Fixed(r.destination.y),
             },
             drive: r.drive,
-            gear: match kind {
-                ObjectKind::Humanoid => r.stance,
-                ObjectKind::Scout => f7[0x12],
-                _ => 0,
-            },
-            weapon: r.unknown_dd.0[0],
-            stance: r.stance,
-            stance_target: r.stance_target,
-            speed_table: r.speed_table,
+            gear,
+            weapon: r.weapon,
+            stance: stance.0,
+            stance_target: stance.1,
+            speed_table: relays,
             stride,
             legs,
             // The rest is set when loading starts the program anew.
             script: Script {
-                events: u16::from_le_bytes([r.unknown_36.0[0], r.unknown_36.0[1]]),
+                events: r.events,
                 ..Script::default()
             },
             panel: Panel {
@@ -213,7 +215,7 @@ impl State {
     /// The movement state `object`'s layout records.
     pub fn of(object: &Object) -> State {
         match &object.body {
-            Body::Robot(r) => State::Robot(Movement::of(r, object.kind)),
+            Body::Robot(r) => State::Robot(Movement::of(r)),
             Body::Base(b) => State::Base {
                 tick: b.tick,
                 kills: b.kills,
@@ -334,7 +336,7 @@ impl Damage {
                 weapons: r.weapons,
                 targeting: r.targeting,
                 systems: r.systems,
-                equipment: r.unknown_f7.0[6],
+                equipment: r.equipment,
             }),
             Body::Base(b) => Damage::Taken(b.damage),
             Body::Relay(r) => Damage::Taken(u16::from(r.damage)),

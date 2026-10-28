@@ -534,8 +534,10 @@ already was, destroyed at +0xf6 bit 6 or 7; the targeting computer at +0xec bit 
 the cameras, map, radar at +0xf6 bits 0 to 3; the scorpion's relay deployer at +0xfd
 bit 7; the scout's weapons have no second bit); **nothing** (the last entry of each
 table, 255, which takes the rest of the chance). Each part that changes something
-shows a message in the robot's message panel (T-104). There are no hit points: a
-robot hit for 80 or less always survives, worn down.
+shows a message in the robot's message panel (T-104). A robot hit for 80 or less
+survives the hit, worn down; but every tick it adds its damage up (+0xf9) and is
+destroyed when that reaches its kind's limit (T-107, `docs/formats/usg.md`, "Object
+fields"; not ported, T-140).
 
 **Destroying a robot** (`sim_destroy_robot`, `1000:de51`; also the developer key
 Ctrl+D):
