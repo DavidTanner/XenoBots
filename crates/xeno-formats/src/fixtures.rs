@@ -1195,6 +1195,7 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
                 widget(UNIT_BUTTON_TYPE, 4, [185, 273, 200, 318]),
                 widget(CONSOLE_CORNER_TYPE, 5, [0, 0, 2, 2]),
                 widget(KEY_TYPE, 6, NONE),
+                widget(MESSAGE_PANEL_TYPE, 7, [7, 7, 36, 102]),
             ]
         } else {
             vec![
@@ -1247,6 +1248,10 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     }
     put(PANEL_AUTOMATIC.0, &[PANEL_AUTOMATIC.1, 6]);
     put(UNIT_LABEL.0, &[op(&[0xb8], 191), op(&[0xbb], 279)].concat());
+    put(MESSAGE_FONT.0, &op(MESSAGE_FONT.1, 4));
+    put(MESSAGE_COLOURS.0, &op(MESSAGE_COLOURS.1, 0x660));
+    put(ds + 0x660, &words(&[0x3020, 0x3121, 0x3222]));
+    put(MESSAGE_HIGH.0, &[MESSAGE_HIGH.1, 0x3f]);
 
     // The training menu.
     let (set, template) = (0x1a800, 0x1a900);

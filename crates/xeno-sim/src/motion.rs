@@ -594,6 +594,10 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 events.push(Event::HillHit(id));
                 crate::damage::hit(world, id, 0, tables, random, &mut events);
             }
+            // `1fe6:826d` comes after the move.
+            if let Some(m) = movement(world, id) {
+                m.panel.type_one(&tables.strings);
+            }
             let ticks = world.ticks;
             if let Some(e) = world.get_mut(id)
                 && let State::Robot(m) = &mut e.state
@@ -668,5 +672,6 @@ pub(crate) fn synthetic_tables() -> Tables {
         scripts: crate::script::tests::scripts(&[0x0a]),
         damage: xeno_formats::fixtures::synthetic_damage_tables(),
         walk: synthetic_walk(),
+        strings: xeno_formats::motion::Strings(b"\0AB\r\xc3\0".to_vec()),
     }
 }

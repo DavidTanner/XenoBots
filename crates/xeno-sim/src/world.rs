@@ -13,6 +13,7 @@ use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, Side};
 use crate::clock::Clock;
 use crate::hash::{StateHash, StateHasher};
 use crate::orders::OrderBook;
+use crate::panel::Panel;
 use crate::terrain::{Paths, Terrain};
 
 /// A 16.16 fixed-point number, as the original keeps positions.
@@ -123,6 +124,7 @@ pub struct Movement {
     pub stride: u8,
     pub legs: [u8; 2],
     pub script: Script,
+    pub panel: Panel,
 }
 
 /// A robot's script state (`docs/sim.md`, "Orders"); the program running is in the
@@ -183,6 +185,12 @@ impl Movement {
                 events: u16::from_le_bytes([r.unknown_36.0[0], r.unknown_36.0[1]]),
                 ..Script::default()
             },
+            panel: Panel {
+                flags: r.panel,
+                length: r.panel_length,
+                queue: r.panel_queue,
+                text: r.panel_text.0,
+            },
         }
     }
 }
@@ -227,6 +235,10 @@ impl StateHash for State {
                 h.bytes(&[s.sp, s.flags]);
                 h.bytes(&s.stack);
                 h.u16(s.events);
+                let p = m.panel;
+                h.bytes(&[p.flags, p.length]);
+                p.queue.iter().for_each(|&q| h.u16(q));
+                h.bytes(&p.text);
             }
             State::Base {
                 tick,

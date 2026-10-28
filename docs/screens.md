@@ -492,8 +492,8 @@ on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
 | Type | Humanoid | Scorpion | Scout | What |
 |---|---|---|---|---|
 | `0x154` | (91, 126, 98, 194) | (154, 4, 161, 56) | (112, 18, 119, 59) | **The program panel**: the robot's program, see "Orders" |
-| `0x156` | (185, 273, 200, 318) | the same | the same | The unit-name button: the robot's call sign in font 0, colour 0, at (279, 191); left or right release: next or previous unit (pressed look: slot `0x536`, the rectangle's frame XORed with 8) |
-| `0x152` | (7, 7, 36, 102) | (20, 112, 51, 208) | (5, 5, 34, 100) | The robot's message panel (object +0x5e), framed and filled when it changes |
+| `0x156` | (185, 273, 200, 318) | the same | the same | The unit-name button (`1000:7d55`): the robot's call sign (`1fe6:7fd5`, as in the roster) in font 0, colour 0, at (279, 191), transparent; left or right release: next or previous unit (pressed look: slot `0x536`, the rectangle's frame XORed with 8) |
+| `0x152` | (7, 7, 36, 102) | (20, 112, 51, 208) | (5, 5, 34, 100) | The robot's message panel (object +0x5e; below, "The message panel (T-104)") |
 | `0x158` | (0, 0, 2, 2) | the same | the same | Back to the situation room |
 
 The rest are the robot's instruments, weapons, cargo and scanner, drawn from the
@@ -509,6 +509,55 @@ ESC and Alt+Q the situation room; Tab and Alt+Tab the next and previous unit; F1
 to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys 1 to
 5 (mines and buoys), `=` and `-`, and per robot letters drive and fight (T-056);
 Ctrl+P and Ctrl+Alt+S are developer keys.
+
+### The message panel (T-104)
+
+Every robot has a panel of text (object +0x52 to +0xda, `usg::Robot::panel` and the
+fields after it) whether or not its console is open.
+
+**Messages.** `1000:d2a2` puts a message (a string-segment offset) in the first free
+of the four words at +0x54 (a fifth, +0x5c, is only the queue's end); with none free
+it is dropped. The scripts' opcode 0x74 does it for the robot itself (for a base,
+`1000:d53f` writes the base's log instead); 0x75 writes the side's base log
+(`1000:65a6`: the sender's name from `1fe6:7f38`, the clock from `DS:0x7d46`, the text;
+the oldest of seven lines dropped when full; +0xb4 set, the "new message" mode button);
+0x76 writes the log and then queues, for every robot of the sender's side, a header of
+the sender's name between `-` and `:` with bit 7 set on every byte (so drawn in the high
+colour), built in the string segment at 0x1714, and then the text. No stock script uses
+0x76. Messages are also queued by `1000:8d8c`, `9b28`, `9b82` and `d801`, and through
+`d53f` and `65a6` by other routines (hits, the bases); those are T-129.
+
+**Typing** (`1fe6:826d`, every tick right after the robot moves, all three kinds): with
+a message waiting, one byte of it from the string segment (`ES` = the word at
+`DS:0x6fec`, the same segment as `DS:0x60`):
+- If +0x52 bit 6 is set (a line ended), a new line starts first (`1fe6:8142`): the bit
+  is cleared and, with fewer than five lines counted (+0x52 bits 0 to 3), the count goes
+  up by one (the whole byte is written, so bit 7 goes too); at five, the first line is
+  dropped: bit 7 is set, the length (+0x53) loses the first line's bytes up to and with
+  its 0x0c, and 100 bytes from after it are copied to +0x5e. So the panel holds six
+  lines.
+- A NUL ends the message: a 0x0c (the font's new line) and a NUL are written at the
+  length (one byte back if the length is 0x7c or more), the length moves past the
+  0x0c, bit 6 is set and the queue moves up a word, +0x5c becoming 0.
+- A CR or 0x0c is written as 0x0c and sets bit 6; any other byte is written as it is,
+  bit 7 included; a NUL follows it and the length moves on.
+
+Whenever a byte was typed or a message ended, the routine returns with carry and the
+kind's tick (`1000:b2b7` humanoid, `997d` scorpion, `cac0` scout) sets the panel
+widget's state to 3, so the open console redraws it on the next two draw passes: the
+text appears a byte a tick.
+
+**Drawing.** A console's opener calls `1000:d1f3`: the panel's text state is the block
+at `DS:0x7188` (selected with slot `0x488`), font 2, the colours from the word table
+`DS:0x71b0` by kind (the high byte the text's colour, the low byte the fill and the
+text's background), the high colour (codes with bit 7) 0xff, the typed count `DS:0x71ae`
+0 and +0x52 bit 7 set. The panel's draw handler (`1000:d241`) fills the rectangle in the
+fill colour when bit 7 is set (clearing it) and moves the cursor to the rectangle's
+top-left corner, then types the text from `DS:0x71ae` to its NUL through slot `0x594`
+(transparent) and remembers where it stopped. So the panel always shows the whole
+text. The port fills the rectangle and types the whole text every frame
+(`xeno-app`'s `mission`), which gives the same pixels. Font 2's six lines run a few
+rows below the rectangle in the original too.
 
 ### The situation room's main view (T-103)
 
@@ -1158,8 +1207,9 @@ original.
   pressed widget does nothing and leaves its pressed look, as in the original. Each
   change of orders is logged. Placeholders, the port's own: the pixels of colour 255 (and 253, 254 in the
   consoles) where the mission would draw are hatched black with a "T-056" label; the
-  roster rows show each robot's number and program, the selected one framed; the
-  unit-name button shows the robot's number. `--screen humancon`, `scorpcon` and
+  roster rows show each robot's number and program, the selected one framed. The
+  unit-name button shows the robot's call sign and the message panel the robot's text
+  (T-104, "The message panel (T-104)"). `--screen humancon`, `scorpcon` and
   `scoutcon` open the first training mission, in the menu's order, with one of the
   player's robots of that kind, on that robot; `--screen sit-room` the first training
   mission.

@@ -305,6 +305,7 @@ The flags at +0x16 (`usg::flag`):
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
 | 0x51 | 1 | `drive` | 0xff in nearly every stock robot. At 0 the robot cannot move; at or under a level read from `xeno.exe` it goes at half speed. A guessed name; +0x4f and +0x50 are reset to 0xff with it |
+| 0x52..0xda | 0x89 | `panel`, `panel_length`, `panel_queue`, `panel_text` | The message panel (`docs/screens.md`, "The message panel (T-104)"): +0x52 its line count (bits 0 to 3) and bits 6 (a line ended) and 7 (redraw from the top); +0x53 the text's length; +0x54 five words, the messages waiting as string-segment offsets; +0x5e the text, NUL-terminated. Stock robots have empty texts and nothing waiting |
 | 0xdc | 1 | `weapons` | Weapons damaged: bits 0, 1, 2 for the kind's first, second and third weapon (the third is the scorpion's tail missile). A humanoid's bit 7 is a fire request (script opcode 0x7d) and bits 5 and 6 its first and second weapon about to fire (T-054) |
 | 0xdd | 1 | | A humanoid's selected weapon, 0 or 1 (script opcodes 0x7b, 0x7c; T-054) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |

@@ -31,13 +31,13 @@ use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{self, Scenario, Side};
 use xeno_formats::view3d::{self, View3d};
 use xeno_formats::views::{
-    self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
-    TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
+    self, CONSOLE_CORNER_TYPE, MESSAGE_PANEL_TYPE, MissionViews, PROGRAM_PANEL_TYPE,
+    SITUATION_CORNER_TYPE, TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
 use xeno_formats::{editor, lzexe, map, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
-use xeno_sim::{EntityId, Parked, Random, Sim, World};
+use xeno_sim::{EntityId, Parked, Random, Sim, State, World};
 
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
@@ -1350,16 +1350,27 @@ impl Mission {
                 }
             }
         }
-        // The call sign is not traced (T-056): the port prints the unit's number.
-        if let Some(font) = assets.fonts.get(&UNIT_FONT) {
+        // `1000:d241`: the panel filled, then the robot's text typed from its corner.
+        if let (Some(area), Some(State::Robot(m))) = (
+            tables.find(MESSAGE_PANEL_TYPE).and_then(|w| w.area),
+            self.world().get(EntityId(slot)).map(|e| &e.state),
+        ) {
+            let style = assets.views.message_panel;
+            let [background, colour] = style.colours[robot.kind.index()];
+            fill(fb, area, background);
+            if let Some(font) = assets.fonts.get(&style.font) {
+                let mut cursor = TextCursor::at(area.left.into(), area.top.into(), colour);
+                cursor.high_colour = style.high;
+                fb.draw_text(font, &mut cursor, m.panel.shown(), TextMode::Transparent);
+            }
+        }
+        // `1000:7d55`: the call sign (`1fe6:7fd5`) at the button's place.
+        if let (Some(font), Some(room)) = (assets.fonts.get(&UNIT_FONT), &assets.sitroom) {
             let (x, y) = assets.views.unit_label;
             let mut cursor = TextCursor::at(x.into(), y.into(), UNIT_COLOUR);
-            fb.draw_text(
-                font,
-                &mut cursor,
-                format!("#{slot}").as_bytes(),
-                TextMode::Transparent,
-            );
+            let bytes = mainview::roster_bytes(self.scenario.as_ref());
+            let call_sign = room.call_sign(bytes[usize::from(slot) % bytes.len()].0);
+            fb.draw_text(font, &mut cursor, call_sign, TextMode::Transparent);
         }
         if self.unit_pressed
             && let Some(area) = tables.find(UNIT_BUTTON_TYPE).and_then(|w| w.area)
@@ -1549,6 +1560,7 @@ pub mod tests {
                     scout_legs: [[0; motion::STEPS]; 2],
                     scout_crouch: [0; motion::CROUCHES],
                 },
+                strings: motion::Strings::default(),
             },
         }
     }
@@ -1885,6 +1897,34 @@ pub mod tests {
         m.mouse_down(RIGHT, Some((300, 190)), &assets);
         m.draw(&mut fb, &assets);
         assert_eq!(fb.get(273, 185), Some(8));
+    }
+
+    #[test]
+    fn the_console_shows_the_robot_s_messages_and_call_sign() {
+        let mut assets = test_assets();
+        // Every call sign is the string `A` at offset 1.
+        assets.sitroom = Some(crate::mainview::tests::room());
+        let mut m = mission(&assets);
+        m.view_robot(2);
+        if let Run::Running(sim) = &mut m.run
+            && let Some(State::Robot(r)) = sim.world.get_mut(EntityId(2)).map(|e| &mut e.state)
+        {
+            r.panel.text[..3].copy_from_slice(b"A\x0cA");
+        }
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        m.draw(&mut fb, &assets);
+        // The panel filled with the humanoid's fill (0x20), `A` in its text colour
+        // (0x30) at the corner and again a line lower.
+        assert_eq!(fb.get(101, 35), Some(0x20));
+        let inked = |rows: std::ops::Range<usize>| {
+            rows.flat_map(|y| (7..12).map(move |x| (x, y)))
+                .any(|(x, y)| fb.get(x, y) == Some(0x30))
+        };
+        assert!(inked(7..9) && inked(10..12));
+        // The call sign in colour 0 from the button's place.
+        let (x, y) = assets.views.unit_label;
+        let signed = (y..y + 6).any(|y| (x..x + 6).any(|x| fb.get(x.into(), y.into()) == Some(0)));
+        assert!(signed);
     }
 
     #[test]

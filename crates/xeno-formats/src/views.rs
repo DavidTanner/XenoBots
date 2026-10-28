@@ -38,6 +38,13 @@ pub(crate) const PANEL_FONTS: (usize, &[u8]) = (0xd2df, &[0x8b, 0x84]);
 pub(crate) const PANEL_COLOURS: (usize, &[u8]) = (0xd2ea, &[0x8b, 0x84]);
 pub(crate) const PANEL_PRESSED: (usize, &[u8]) = (0xd31f, &[0x8b, 0x84]);
 pub(crate) const PANEL_AUTOMATIC: (usize, u8) = (0xd2f6, 0xb0);
+/// The message panel, as a console's opener sets it up (`1000:d1f3`): the font
+/// (`mov ax, font` at `1000:d20d`), the colours by robot kind (`mov ax, [si + table]`
+/// at `1000:d221`) and the colour of codes with bit 7 (`mov al, colour` at
+/// `1000:d22c`).
+pub(crate) const MESSAGE_FONT: (usize, &[u8]) = (0xd20d, &[0xb8]);
+pub(crate) const MESSAGE_COLOURS: (usize, &[u8]) = (0xd221, &[0x8b, 0x84]);
+pub(crate) const MESSAGE_HIGH: (usize, u8) = (0xd22c, 0xb0);
 /// Where the console's unit-name button prints (`mov ax, y; mov bx, x` at
 /// `1000:7d5d`).
 pub(crate) const UNIT_LABEL: (usize, &[u8]) = (0x7d5d, &[0xb8]);
@@ -54,6 +61,8 @@ pub(crate) const TRAINING_ACTIONS: (usize, &[u8]) = (0x6e41, &[0xff, 0xa7]);
 /// Widget types (offsets into the host's handler tables) the port gives a meaning to.
 pub const PROGRAM_PANEL_TYPE: u16 = 0x154;
 pub const UNIT_BUTTON_TYPE: u16 = 0x156;
+/// A console's message panel (`1000:d241`).
+pub const MESSAGE_PANEL_TYPE: u16 = 0x152;
 /// A 2 by 2 hot spot in the top-left corner: back to the situation room from a
 /// console, the end of the mission from the situation room.
 pub const CONSOLE_CORNER_TYPE: u16 = 0x158;
@@ -159,6 +168,18 @@ pub struct MissionViews {
     pub automatic_text: u8,
     /// Where the unit-name button prints, (x, y).
     pub unit_label: (u16, u16),
+    pub message_panel: MessageStyle,
+}
+
+/// How a console's message panel looks (`docs/screens.md`, "The message panel
+/// (T-104)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageStyle {
+    pub font: u16,
+    /// By robot kind: the fill (and the text's background) and the text's colour.
+    pub colours: [[u8; 2]; 3],
+    /// The colour of codes with bit 7 set.
+    pub high: u8,
 }
 
 impl MissionViews {
@@ -334,6 +355,22 @@ impl Exe<'_> {
         }
         Ok((styles, automatic))
     }
+
+    fn message_panel(&self) -> Result<MessageStyle, FormatError> {
+        let high = match self.bytes(MESSAGE_HIGH.0, 2)? {
+            &[op, colour] if op == MESSAGE_HIGH.1 => colour,
+            _ => return Err(invalid(MESSAGE_HIGH.0, "not the message panel's colour")),
+        };
+        let mut colours = [[0; 2]; 3];
+        for (kind, c) in colours.iter_mut().enumerate() {
+            *c = self.table_word(MESSAGE_COLOURS, 2 * kind)?.to_le_bytes();
+        }
+        Ok(MessageStyle {
+            font: self.op(MESSAGE_FONT)?,
+            colours,
+            high,
+        })
+    }
 }
 
 /// Reads the mission's views from a load image whose data segment starts at `ds`;
@@ -372,6 +409,7 @@ pub fn read_image(
             operand(image, UNIT_LABEL.0 + 3, &[0xbb])?,
             exe.op(UNIT_LABEL)?,
         ),
+        message_panel: exe.message_panel()?,
     })
 }
 
@@ -534,6 +572,8 @@ mod tests {
         }
         assert!(corrupt(ROSTER_COUNT.0, 0x90).0);
         assert!(corrupt(PANEL_AUTOMATIC.0, 0x90).0);
+        assert!(corrupt(MESSAGE_HIGH.0, 0x90).0);
+        assert!(corrupt(MESSAGE_COLOURS.0, 0x90).0);
         for (at, _) in [
             TRAINING_WIDGETS,
             TRAINING_KEYS,
@@ -582,10 +622,17 @@ mod tests {
         assert_eq!(counts(&views.situation), (30, 32));
         for kind in RobotKind::ALL {
             let view = views.console(kind);
-            for t in [PROGRAM_PANEL_TYPE, UNIT_BUTTON_TYPE, CONSOLE_CORNER_TYPE] {
+            for t in [
+                PROGRAM_PANEL_TYPE,
+                UNIT_BUTTON_TYPE,
+                CONSOLE_CORNER_TYPE,
+                MESSAGE_PANEL_TYPE,
+            ] {
                 assert!(view.find(t).is_some(), "{kind:?} {t:#x}");
             }
         }
+        // The message panel: one of the four fonts (0, 2, 4, 6).
+        assert!(views.message_panel.font <= 6 && views.message_panel.font.is_multiple_of(2));
         // Six buttons and three rows of left and right arrows.
         assert_eq!(views.situation_buttons.len(), 12);
         assert_eq!(views.roster_rows.len(), 5);

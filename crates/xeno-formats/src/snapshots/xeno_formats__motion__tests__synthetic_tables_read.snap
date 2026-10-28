@@ -1297,4 +1297,5 @@ Motion {
             3,
         ],
     },
+    strings: Strings(7168 bytes),
 }

@@ -353,3 +353,15 @@ fn the_conditional_jumps_follow_the_flags() {
         }
     }
 }
+
+#[test]
+fn a_message_waits_in_the_panel_and_is_typed_after_the_move() {
+    // Message 1 ("AB", a CR and a high-colour C in the synthetic strings), then halt.
+    let (mut world, tables) = setup(&[0x74, 0x01, 0x00, 0x0a]);
+    let mut random = Random::seeded(1);
+    crate::motion::tick(&mut world, &tables, &mut random);
+    assert_eq!(m(&world).panel.shown(), b"A");
+    (0..5).for_each(|_| _ = crate::motion::tick(&mut world, &tables, &mut random));
+    assert_eq!(m(&world).panel.shown(), b"AB\x0c\xc3\x0c");
+    assert_eq!(m(&world).panel.queue, [0; 5]);
+}
