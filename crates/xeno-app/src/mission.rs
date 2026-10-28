@@ -1111,14 +1111,13 @@ impl Mission {
             (c.x.0, c.y.0) = (c.x.0.wrapping_add(x), c.y.0.wrapping_add(y));
         }
         if effect == Effect::SaveTerrain {
-            let world = scenario.terrain.as_ref().map(|t| t.features.as_slice());
-            let saved = map::editor_save(world.unwrap_or_default());
+            // The terrain editor starts with no circles (T-109): left at once, it
+            // saves the closing block alone.
+            let saved = map::save_circles(&[]);
             let path = dir.join(SAVED_TERRAIN);
             match std::fs::write(&path, map::write(&saved)) {
                 Ok(()) => log::info!(
-                    "editor: the terrain editor needs the 3D view (T-109); left at once, \
-                     {} circles saved to {}",
-                    saved.features.len() - 1,
+                    "editor: the terrain editor entered and left at once (T-109), {} written",
                     path.display()
                 ),
                 Err(e) => log::warn!("editor: cannot write {}: {e}", path.display()),
@@ -2120,7 +2119,7 @@ pub mod tests {
         assert_eq!(relays(&m), 0);
         m.key(terrain.0, &assets);
         let saved = map::parse(&std::fs::read(dir.join(SAVED_TERRAIN)).unwrap()).unwrap();
-        assert_eq!(saved.features.last(), Some(&map::closing_block()));
+        assert_eq!(saved.features, [map::closing_block()]);
         m.save_scenario(&dir.join(SAVED_SCENARIO));
         // It reads back as saved (the terrain filled to a paragraph, as the game's).
         let bytes = std::fs::read(dir.join(SAVED_SCENARIO)).unwrap();

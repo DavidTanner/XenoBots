@@ -25,8 +25,8 @@ pointer probe (below) and moves on to the list for the **view mode**, the byte a
 | 6 | `DS:0x3928` | camera, reuse, ground, sky, draw, static, end | A console's second display, mode 0 |
 | 8 | `DS:0x3936` | camera, build, ground, sky, draw, `1000:4164`, slot `0x5f0`, static, end | The second display, mode 3 |
 | 0xa | `DS:0x3948` | as 6, plus `4164` and slot `0x5f0` | The second display, mode 1 |
-| 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps | The second display, mode 2; the situation room's map (T-103) |
-| 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room and the editors (T-103, T-109) |
+| 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps | The second display, mode 2; the situation room's map (T-103); 0xe the terrain editor (T-109) |
+| 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room (T-103) |
 | 0x18 | `DS:0x3988` | other | Not the 3D view |
 | 0x1a | `DS:0x398c` | camera, clear, one node at a time, end | The review (below, "The review's view") |
 
@@ -98,8 +98,10 @@ when there are no more. The chain:
    sets `DS:0x152e` and jumps to the word slot `DS:0x152a`.
 2. `DS:0x152a` is set by whoever runs the view: the mission (`1000:f437`) points it at
    **the objects** (`gfx_emit_object_render_nodes`, `1000:f85b`); the review points it
-   at its one node (`1000:7a5f`, T-047); the terrain editor (`mapdvr.dvr`) replaces
-   `DS:0x1528` itself (T-109).
+   at its one node (`1000:7a5f`, T-047); the terrain editor (`ui_run_map_editor`) points
+   `DS:0x1528` at `1000:44ed` instead: the driver's circles and origin mark (slot
+   `0x1500`), then `DS:0x152a`, with no terrain nodes (`docs/screens.md`, "The
+   scenario editor (T-048)", T-109).
 
 The objects' producer is a small state machine (state `DS:0xe873`, routines at
 `DS:0xe875`). Starting, it points at the object table (`DS:0xe86f` = `0xe2c4`, 240
