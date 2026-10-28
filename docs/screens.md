@@ -1653,10 +1653,10 @@ original.
   display, Ctrl+E's flag and Ctrl+Alt+R (remove the relays). After each key the status
   rows are logged, built from the user's template and names as the original prints them
   on its debug screen. Ctrl+M opens the terrain editor (below). Ctrl+Alt+P (no
-  unlock, as in the original) writes the scenario with `usg::write` as `EDITED.USG`, a
-  fixed name until the file dialogs (T-110). Both go to `--save-dir`, by default the
-  game directory, where the original writes them. Not done: placing on the map,
-  Ctrl+D, the map scroll (T-108), Ctrl+Alt+O and B (T-110), Ctrl+C (T-103). The edits
+  unlock, as in the original) opens the SAVE GAME dialog and writes the scenario with
+  `usg::write` to the name chosen (`EDITED.USG` if the port cannot read the dialogs
+  from `xeno.exe`); Ctrl+Alt+O opens the open dialog and reads the chosen file as the
+  orders. Not done: Ctrl+Alt+B (T-110), Ctrl+C (T-103). The edits
   change the scenario copy, not the sim's world (which does not run yet).
 - **The terrain editor** (T-109, `crates/xeno-app/src/terrain.rs`): Ctrl+M, with the
   key table read from the user's `mapdvr.dvr` (`xeno_formats::mapdvr`; without it
@@ -1672,6 +1672,16 @@ original.
   closes it. The status is logged at debug level. Not done: Alt+L and Alt+S (the file
   dialogs, T-110), Shift+`*` (a screenshot), the grid (T-143); the point under the
   pointer is worked out from the camera now rather than the last frame's.
+- **The file dialogs** (T-110, `crates/xeno-app/src/dialog.rs`): drawn from the
+  scripts, widgets and patterns read from the user's `xeno.exe`, over the screen, with
+  pointer shape 0 and the sim stopped: the name field (typing upper-cased, Backspace,
+  80 characters), the lists, the scroll arrows (held, they repeat) and tracks (page,
+  drag), OK, CANCEL, Enter, ESC, double clicks and the error box. They start in
+  `--save-dir` (the game directory by default) and return a path there or in a
+  directory below it, the name as typed or the file found in any case. Shortcuts: the
+  lists are sorted (DOS gives directory order), names that are not 8.3 are left out,
+  there are no drives, a path with a drive or from a root shows the error box, and
+  the directory line shows the host path's parts as `C:` and DOS's form.
 - **Saves** (T-057): the log-in loads `<NAME>.LOG` from `--save-dir` (else the game
   directory), any case, into the campaign, the map room's selection and the loaded
   mission (parked, so playing the loaded scenario resumes it); a file that does not

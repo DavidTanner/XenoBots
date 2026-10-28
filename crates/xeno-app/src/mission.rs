@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use xeno_formats::ban::Sky;
 use xeno_formats::ban::{self, Sprite};
+use xeno_formats::filedialog::FileDialogs;
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::orders;
@@ -34,11 +35,12 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MESSAGE_PANEL_TYPE, MissionViews, PROGRAM_PANEL_TYPE,
     SITUATION_CORNER_TYPE, TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, lzexe, map, mapdvr, mgavideo, motion, sitroom};
+use xeno_formats::{editor, filedialog, lzexe, map, mapdvr, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
 
+use crate::dialog::{self, FileDialog, Outcome};
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, MouseButton};
@@ -264,10 +266,28 @@ pub struct Assets {
     pub sitroom: Option<SitRoom>,
     /// `msprite0`, the map's sprites, from handle 0.
     pub map_sprites: Vec<Sprite>,
+    /// The file dialogs (T-110), if the user's `xeno.exe` has them where the port
+    /// reads them; without them Ctrl+Alt+P saves under a fixed name.
+    pub file_dialogs: Option<FileDialogs>,
 }
 
-/// The names the port saves under until it has the original's file dialogs (T-110):
-/// the scenario (Ctrl+Alt+P), and the terrain editor's leave file.
+/// What a file dialog was opened for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    /// Ctrl+Alt+P (`ui_save_scenario_with_dialog`): the scenario written there.
+    SaveScenario,
+    /// Ctrl+Alt+O: the file read as the orders.
+    Orders,
+}
+
+/// The most Ctrl+Alt+O reads of a file (`mov cx, 0x320` at `1000:6d8e`).
+const ORDERS_FILE_MAX: usize = 800;
+
+/// The pointer's shape while a file dialog runs (`ui_run_file_dialog`, slot `0x1496`).
+const DIALOG_SHAPE: u8 = 0;
+
+/// The name Ctrl+Alt+P saves under without the file dialogs, and the terrain editor's
+/// leave file.
 pub const SAVED_SCENARIO: &str = "EDITED.USG";
 pub const SAVED_TERRAIN: &str = "BACKUP.MAP";
 
@@ -344,6 +364,9 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .inspect_err(|e| log::warn!("no terrain editor: {e}"))
             .ok(),
         save_dir: files.dir().path.clone(),
+        file_dialogs: filedialog::read(&exe)
+            .inspect_err(|e| log::warn!("xeno.exe: no file dialogs this port can read: {e}"))
+            .ok(),
         view3d: view3d::read(&exe)
             .inspect_err(|e| log::warn!("xeno.exe: no 3D view tables this port can read: {e}"))
             .ok(),
@@ -519,6 +542,11 @@ pub struct Mission {
     editor: Editor,
     /// The terrain editor while it is open (Ctrl+M): the sim stands still.
     terrain: Option<TerrainEditor>,
+    /// A file dialog while one is open (T-110), and what for: the sim stands still, as
+    /// the callers put the game clock back after it.
+    dialog: Option<(FileDialog, Purpose)>,
+    /// The dialogs' name field, which each leaves for the next (none: the first's).
+    dialog_name: Option<Vec<u8>>,
 }
 
 impl Mission {
@@ -589,6 +617,8 @@ impl Mission {
             scenario: None,
             editor: Editor::default(),
             terrain: None,
+            dialog: None,
+            dialog_name: None,
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
@@ -703,7 +733,8 @@ impl Mission {
 
     /// Whether the view needs drawing again; clears it.
     pub fn take_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.dirty)
+        let dialog = self.dialog.as_mut().is_some_and(|(d, _)| d.take_dirty());
+        std::mem::take(&mut self.dirty) | dialog
     }
 
     fn reset_looks(&mut self) {
@@ -793,6 +824,9 @@ impl Mission {
     /// One retrace in the situation room: in the orders mode, one more byte of the
     /// briefing, until its end (one per pass of the original's mission loop).
     pub fn retrace(&mut self) {
+        if let Some((dialog, _)) = &mut self.dialog {
+            dialog.retrace();
+        }
         if self.viewed == Viewed::Base && self.mode == ORDERS_MODE && self.typed < self.orders_end()
         {
             self.typed += 1;
@@ -846,8 +880,8 @@ impl Mission {
     /// parked mission waits). What it did goes to the log. `Some(won)` once a
     /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
     pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Option<bool> {
-        // `ui_run_map_editor`'s loop never ticks the mission.
-        let (Run::Running(sim), None) = (&mut self.run, &self.terrain) else {
+        // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
+        let (Run::Running(sim), None, None) = (&mut self.run, &self.terrain, &self.dialog) else {
             return None;
         };
         let mut over = None;
@@ -985,6 +1019,11 @@ impl Mission {
 
     /// The key word `word` went down in the view shown.
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
+        if let Some((dialog, _)) = &mut self.dialog {
+            let outcome = dialog.key(crate::screens::KeyWord(word));
+            self.close_dialog(outcome);
+            return None;
+        }
         if self.terrain.is_some() {
             let keys = assets.map_driver.iter().flat_map(|d| &d.keys);
             if let Some(&(_, handler)) = keys.into_iter().find(|&&(w, _)| w == word) {
@@ -1042,7 +1081,12 @@ impl Mission {
             }
             (Viewed::Base, handler::END) => (word == ALT_Q).then_some(Request::End),
             (Viewed::Base, handler::SAVE) => {
-                self.save_scenario(&assets.save_dir.join(SAVED_SCENARIO));
+                match &assets.file_dialogs {
+                    Some(tables) => {
+                        self.open_dialog(Purpose::SaveScenario, tables, &assets.save_dir)
+                    }
+                    None => self.save_scenario(&assets.save_dir.join(SAVED_SCENARIO)),
+                }
                 None
             }
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
@@ -1141,6 +1185,9 @@ impl Mission {
         }
         if effect == Effect::DestroySelected {
             self.destroy_selected();
+        }
+        if let (Effect::Orders, Some(dialogs)) = (effect, &assets.file_dialogs) {
+            self.open_dialog(Purpose::Orders, dialogs, &assets.save_dir);
         }
     }
 
@@ -1243,6 +1290,10 @@ impl Mission {
 
     /// The pointer moved to `at`: in the terrain editor, the ground point under it.
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
+        if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
+            dialog.mouse_move(at, tables);
+            return;
+        }
         if let Some(point) = self.terrain_point(at, assets)
             && let Some(editor) = &mut self.terrain
         {
@@ -1334,6 +1385,96 @@ impl Mission {
     }
 
     /// Ctrl+Alt+P: writes the mission's scenario as the original's writer does.
+    /// Opens a file dialog in `dir` (`ui_run_file_dialog`), its field as the last one
+    /// left it.
+    fn open_dialog(&mut self, purpose: Purpose, tables: &FileDialogs, dir: &Path) {
+        let name = self
+            .dialog_name
+            .clone()
+            .unwrap_or_else(|| tables.first_name.clone());
+        let kind = match purpose {
+            Purpose::SaveScenario => dialog::Kind::Save,
+            Purpose::Orders => dialog::Kind::Open,
+        };
+        let dialog = FileDialog::open(kind, dir.to_path_buf(), name, tables);
+        self.dialog = Some((dialog, purpose));
+        self.dirty = true;
+    }
+
+    /// A dialog's key or click ended it (or not, with `None`): its caller goes on with
+    /// the path chosen.
+    fn close_dialog(&mut self, outcome: Option<Outcome>) {
+        let Some(outcome) = outcome else { return };
+        let Some((dialog, purpose)) = self.dialog.take() else {
+            return;
+        };
+        self.dialog_name = Some(dialog.name().to_vec());
+        self.dirty = true;
+        let path = match outcome {
+            Outcome::Chosen(path) => path,
+            Outcome::Cancelled => return log::info!("mission: file dialog cancelled"),
+        };
+        match purpose {
+            Purpose::SaveScenario => self.save_scenario(&path),
+            Purpose::Orders => self.load_orders(&path),
+        }
+    }
+
+    /// Ctrl+Alt+O's file (`1000:6d75`): its first 800 bytes over the briefing buffer's,
+    /// whatever was after them kept, then the orders mode, typed from the start. A file
+    /// that does not open changes nothing.
+    fn load_orders(&mut self, path: &Path) {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) => return log::warn!("editor: cannot read {}: {e}", path.display()),
+        };
+        let bytes = &bytes[..bytes.len().min(ORDERS_FILE_MAX)];
+        let over = |buffer: &mut Vec<u8>| {
+            if buffer.len() < bytes.len() {
+                buffer.resize(bytes.len(), 0);
+            }
+            buffer[..bytes.len()].copy_from_slice(bytes);
+        };
+        over(&mut self.orders);
+        if let Some(scenario) = &mut self.scenario {
+            over(scenario.briefing.get_or_insert_with(Vec::new));
+        }
+        self.set_mode(ORDERS_MODE);
+        log::info!("editor: the orders read from {}", path.display());
+    }
+
+    pub fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    /// A character typed, for an open file dialog's name field.
+    pub fn typed(&mut self, c: char) {
+        if let Some((dialog, _)) = &mut self.dialog {
+            dialog.typed(c);
+        }
+    }
+
+    /// A mouse button went down or up at `at` with a file dialog open; whether one is.
+    pub fn dialog_mouse(
+        &mut self,
+        button: MouseButton,
+        down: bool,
+        at: Option<(u16, u16)>,
+        assets: &Assets,
+    ) -> bool {
+        let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) else {
+            return false;
+        };
+        let Some(at) = at else { return true };
+        if down {
+            dialog.mouse_down(button, at, tables);
+        } else {
+            let outcome = dialog.mouse_up(button, at, tables);
+            self.close_dialog(outcome);
+        }
+        true
+    }
+
     fn save_scenario(&self, path: &Path) {
         let Some(scenario) = &self.scenario else {
             log::info!("mission: nothing loaded to save");
@@ -1357,6 +1498,9 @@ impl Mission {
     /// held its own. Anywhere else the arrow, as those handlers set it when the pointer
     /// leaves them or their region.
     pub fn pointer_shape(&self, assets: &Assets, (x, y): (u16, u16), colour: u8, alt: bool) -> u8 {
+        if self.dialog.is_some() {
+            return DIALOG_SHAPE;
+        }
         if let Some(editor) = &self.terrain {
             return editor.pointer_shape();
         }
@@ -1588,6 +1732,13 @@ impl Mission {
 
     /// Draws the view's own parts over its picture, which `fb` already shows.
     pub fn draw(&self, fb: &mut Framebuffer, assets: &Assets) {
+        self.draw_under_dialog(fb, assets);
+        if let (Some((dialog, _)), Some(tables)) = (&self.dialog, &assets.file_dialogs) {
+            dialog.draw(fb, tables, &assets.fonts, &assets.map_sprites);
+        }
+    }
+
+    fn draw_under_dialog(&self, fb: &mut Framebuffer, assets: &Assets) {
         if self.draw_terrain_editor(fb, assets) {
             return;
         }
@@ -2040,6 +2191,22 @@ fn frame_pixels(area: Rect) -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
+/// Slot `0x52a` (`gfx_frame_rect`): the rectangle's frame in `colour`.
+pub fn frame(fb: &mut Framebuffer, area: Rect, colour: u8) {
+    for at in frame_pixels(area) {
+        set(fb, at, colour);
+    }
+}
+
+/// Slot `0x526` (`mgavideo.dvr` 0x0f34): the rectangle's pixels XORed with `value`.
+pub fn xor_fill(fb: &mut Framebuffer, area: Rect, value: u8) {
+    for (x, y) in pixels(area) {
+        if let Some(p) = fb.get(x, y) {
+            set(fb, (x, y), p ^ value);
+        }
+    }
+}
+
 /// Slot `0x536` (`gfx_xor_rect_frame`): the rectangle's frame XORed with `value`.
 pub fn xor_frame(fb: &mut Framebuffer, area: Rect, value: u8) {
     for (x, y) in frame_pixels(area) {
@@ -2077,6 +2244,7 @@ pub fn hatch(fb: &mut Framebuffer, colour: u8, font: Option<&Font>, label: &str)
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::editor::handler as editor_handler;
     use xeno_formats::fixtures::{synthetic_mission_usg, synthetic_programs, synthetic_views};
     use xeno_render::Size;
     use xeno_sim::orders::Orders;
@@ -2165,6 +2333,7 @@ pub mod tests {
             skies: BTreeMap::new(),
             sitroom: None,
             map_sprites: Vec::new(),
+            file_dialogs: None,
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -2322,6 +2491,80 @@ pub mod tests {
         let back = usg::parse(&bytes).unwrap();
         assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
         assert_eq!(usg::write(&back).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ctrl+Alt+P saves through the SAVE GAME dialog and Ctrl+Alt+O (with unlock word
+    /// 9) reads the orders through the open dialog; the sim stands still meanwhile.
+    #[test]
+    fn the_file_dialogs_save_the_scenario_and_read_the_orders() {
+        let dir = std::env::temp_dir().join(format!("xeno-dialogs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ord.txt"), b"HELLO").unwrap();
+        let mut assets = test_assets();
+        let (save, orders) = ((0x3019, handler::SAVE), (0x3018, editor_handler::ORDERS));
+        assets.views.situation.keys.push(save);
+        assets.editor = Some(editor::Editor {
+            keys: vec![orders],
+            kind_names: vec![None; editor::KINDS],
+            side_names: [b"H".to_vec(), b"A".to_vec()],
+            show_names: [b"N".to_vec(), b"Y".to_vec()],
+            mission_names: vec![b"M".to_vec(); 8],
+            mission_defaults: vec![[0; 4]; 7],
+            mix_percent: vec![0; 11],
+            status: b"T:\r".to_vec(),
+            made_parts: [(0x10c, vec![1]), (0x127, vec![2]), (0x10d, vec![3])],
+            program_table: 0,
+        });
+        assets.editor_unlocked = true;
+        assets.save_dir = dir.clone();
+        assets.file_dialogs = Some(dialog::test_tables());
+        let mut m = mission(&assets);
+        let type_in = |m: &mut Mission, text: &str| text.chars().for_each(|c| m.typed(c));
+        let enter = 0x1c;
+
+        m.key(save.0, &assets);
+        assert!(m.dialog_open());
+        assert_eq!(m.pointer_shape(&assets, (0, 0), 0, false), DIALOG_SHAPE);
+        let Run::Running(sim) = &m.run else {
+            unreachable!()
+        };
+        let before = sim.retrace();
+        m.tick(&[]);
+        let Run::Running(sim) = &m.run else {
+            unreachable!()
+        };
+        assert_eq!(sim.retrace(), before, "the sim stands still");
+        // The field starts as `*.*`; Enter on it only lists again.
+        m.key(enter, &assets);
+        assert!(m.dialog_open());
+        (0..3).for_each(|_| assert!(m.key(0x0e, &assets).is_none()));
+        type_in(&mut m, "t.usg");
+        m.key(enter, &assets);
+        assert!(!m.dialog_open());
+        let back = usg::parse(&std::fs::read(dir.join("T.USG")).unwrap()).unwrap();
+        assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
+
+        // The open dialog starts on `*.USG`; ESC cancels it.
+        m.key(orders.0, &assets);
+        assert!(m.dialog_open());
+        m.key(0x01, &assets);
+        assert!(!m.dialog_open());
+        m.key(orders.0, &assets);
+        (0..5).for_each(|_| assert!(m.key(0x0e, &assets).is_none()));
+        type_in(&mut m, "ord.txt");
+        m.key(enter, &assets);
+        assert!(m.orders.starts_with(b"HELLO"));
+        assert_eq!((m.mode, m.typed), (ORDERS_MODE, 0));
+        assert!(
+            m.scenario
+                .as_ref()
+                .unwrap()
+                .briefing
+                .as_ref()
+                .unwrap()
+                .starts_with(b"HELLO")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2993,6 +3236,33 @@ pub mod tests {
         assert_eq!(m.typed, 1);
         m.key(0x01, &assets);
         assert_eq!(m.typed, 0);
+    }
+
+    /// Draws the SAVE GAME dialog from the user's files over the situation room: the
+    /// box in 12, the title bar in 6 with the title in colour 0 on it.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_save_dialog_draws() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let mut assets = load(&files, 13).unwrap();
+        assets.save_dir = std::env::temp_dir();
+        let tables = assets.file_dialogs.clone().unwrap();
+        let mut m = Mission::empty();
+        m.open_dialog(Purpose::SaveScenario, &tables, &assets.save_dir);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.clear(0xff);
+        m.draw(&mut fb, &assets);
+        assert_eq!(fb.get(77, 27), Some(12));
+        let bar: Vec<u8> = (147..200).filter_map(|x| fb.get(x, 32)).collect();
+        assert!(bar.contains(&6) && bar.contains(&0), "the title on its bar");
+        assert_eq!(fb.get(10, 10), Some(0xff));
     }
 
     /// Types every stock scenario's briefing from the user's files to its end in the

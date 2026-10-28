@@ -541,7 +541,8 @@ impl Screens {
     /// Whether the screen shown uses ESC: its key table binds it.
     pub fn claims_escape(&self) -> bool {
         match self.screen {
-            Mission(view) => self.mission_assets.claims_escape(view),
+            // An open file dialog takes ESC as cancel.
+            Mission(view) => self.mission.dialog_open() || self.mission_assets.claims_escape(view),
             Training => self
                 .mission_assets
                 .training
@@ -603,6 +604,7 @@ impl Screens {
             if self.next.is_none() && self.loading.is_none() && !self.quit {
                 match (*event, self.screen) {
                     (InputEvent::Text(c), Login) => self.entry.typed(c),
+                    (InputEvent::Text(c), Mission(_)) => self.mission.typed(c),
                     (InputEvent::KeyDown { code, .. }, Login) => {
                         if let Some(outcome) = self.entry.key(key_word(code, &self.keys)) {
                             self.logged_in(outcome);
@@ -634,11 +636,19 @@ impl Screens {
                     }
                     (InputEvent::KeyDown { code, .. }, Mission(_)) => {
                         let word = key_word(code, &self.keys);
-                        if let Some(action) = self.screen.lookup(word) {
+                        let dialog = self.mission.dialog_open();
+                        if let (Some(action), false) = (self.screen.lookup(word), dialog) {
                             self.act(action);
                         } else if let Some(request) = self.mission.key(word.0, &self.mission_assets)
                         {
                             self.mission_request(request);
+                        }
+                        // A file dialog shows shape 0 while it runs, then the old comes
+                        // back.
+                        if dialog != self.mission.dialog_open()
+                            && let Some(at) = self.mouse.position
+                        {
+                            self.mission_hover(at);
                         }
                     }
                     (InputEvent::KeyDown { code, .. }, screen) => {
@@ -651,6 +661,26 @@ impl Screens {
                     }
                     (InputEvent::MouseUp { button }, Training) => {
                         self.training_mouse(button, false, fb);
+                    }
+                    (InputEvent::MouseDown { button }, Mission(_))
+                        if self.mission.dialog_mouse(
+                            button,
+                            true,
+                            self.mouse.position,
+                            &self.mission_assets,
+                        ) => {}
+                    (InputEvent::MouseUp { button }, Mission(_))
+                        if self.mission.dialog_mouse(
+                            button,
+                            false,
+                            self.mouse.position,
+                            &self.mission_assets,
+                        ) =>
+                    {
+                        if let (false, Some(at)) = (self.mission.dialog_open(), self.mouse.position)
+                        {
+                            self.mission_hover(at);
+                        }
                     }
                     (InputEvent::MouseDown { button }, Mission(_)) => {
                         let at = self.mouse.position;
