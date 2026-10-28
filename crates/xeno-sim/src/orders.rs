@@ -99,8 +99,8 @@ impl OrderBook {
         OrderBook { robots }
     }
 
-    #[cfg(test)]
-    pub(crate) fn insert(&mut self, slot: u16, robot: Robot) {
+    /// A robot made in play (the editor's) joins the book.
+    pub fn insert(&mut self, slot: u16, robot: Robot) {
         self.robots.insert(slot, robot);
     }
 

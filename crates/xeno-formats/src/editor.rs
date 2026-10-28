@@ -26,6 +26,13 @@ const TEMPLATE_AT: usize = 0x692f;
 /// `mov ax, [bx + table]` in `1000:6ce3`: the four default header bytes by mission.
 const DEFAULTS_AT: usize = 0x6cf1;
 
+/// `mov ax, block; add di, offset; call 1000:2485` in each robot kind's set-up
+/// routine (`DS:0xe73f`: humanoid `1000:ab8a`, scorpion `9293`, scout `c40e`): the
+/// block's bytes are copied over the new robot from that offset.
+const PARTS_AT: [usize; 3] = [0xabbf, 0x92e8, 0xc463];
+/// `sub ax, table` in `1000:4826`, which packs a script pointer for a save.
+const PACK_AT: usize = 0x4829;
+
 /// No status template is longer (the stock one is under 200 bytes).
 const MAX_TEMPLATE: usize = 512;
 /// Kinds with a name slot: the path (-1), then 0 to 16.
@@ -53,6 +60,13 @@ pub struct Editor {
     pub mix_percent: Vec<u8>,
     /// The status rows' labels: CR between rows, printed from row 20, column 1.
     pub status: Vec<u8>,
+    /// What a new humanoid, scorpion and scout get copied over their parts: the
+    /// offset in the object and the bytes (a block of the load image whose
+    /// paragraph, +4, and length, +8, the block's header gives).
+    pub made_parts: [(u16, Vec<u8>); 3],
+    /// The program table (`DS:0x4ff4` in the stock game): a script pointer is saved as
+    /// its offset from it with 0xa000 set.
+    pub program_table: u16,
 }
 
 fn table(image: &[u8], ds: usize, at: usize, op: &[u8]) -> Result<usize, FormatError> {
@@ -114,6 +128,16 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Editor, FormatError> {
         .chunks(4)
         .map(|c| [c[0], c[1], c[2], c[3]])
         .collect();
+    let parts = |at: usize| -> Result<(u16, Vec<u8>), FormatError> {
+        let block = usize::from(operand(image, at, &[0xb8])?) * 16;
+        let offset = operand(image, at + 3, &[0x81, 0xc7])?;
+        let start = usize::from(word(image, block + 4)?) * 16;
+        let length = usize::from(word(image, block + 8)?);
+        if usize::from(offset) + length > usize::from(crate::usg::Object::BIG) {
+            return Err(crate::maproom::invalid(at, "parts past the robot's end"));
+        }
+        Ok((offset, bytes(start, length)?.to_vec()))
+    };
     Ok(Editor {
         keys,
         kind_names,
@@ -123,6 +147,12 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Editor, FormatError> {
         mission_defaults,
         mix_percent: bytes(mix, 11)?.to_vec(),
         status: template(image, table(image, ds, TEMPLATE_AT, &[0xbe])?)?,
+        made_parts: [
+            parts(PARTS_AT[0])?,
+            parts(PARTS_AT[1])?,
+            parts(PARTS_AT[2])?,
+        ],
+        program_table: operand(image, PACK_AT, &[0x2d])?,
     })
 }
 
@@ -145,7 +175,7 @@ mod tests {
     /// A made-up editor: two keys, names for the path and kind 0 only, made-up
     /// strings and tables in the data segment.
     fn synthetic() -> Vec<u8> {
-        let mut image = vec![0u8; DS + 0x400];
+        let mut image = vec![0u8; 0xd000];
         put(&mut image, KEYS_AT, &[0xbb, 0x00, 0x01, 0xb9, 2, 0]);
         put(
             &mut image,
@@ -173,6 +203,22 @@ mod tests {
         put(&mut image, DS + 0x220, &[1, 2, 3, 5]);
         put(&mut image, TEMPLATE_AT, &[0xbe, 0x00, 0x03]);
         put(&mut image, DS + 0x300, b"KIND:\rSIDE:\0");
+        // Three part blocks at paragraphs 0xc80, 0xc90 and 0xca0, their bytes from
+        // 0xcc0, 0xcd0 and 0xce0, two, three and one byte long.
+        for (i, at) in PARTS_AT.into_iter().enumerate() {
+            let block = 0xc80 + 0x10 * i as u16;
+            put(
+                &mut image,
+                at,
+                &[0xb8, block as u8, (block >> 8) as u8, 0x81, 0xc7],
+            );
+            put(&mut image, at + 5, &(0x10c + i as u16).to_le_bytes());
+            let data = 0xcc0 + 0x10 * i as u16;
+            put(&mut image, usize::from(block) * 16 + 4, &data.to_le_bytes());
+            put(&mut image, usize::from(block) * 16 + 8, &[[2, 3, 1][i], 0]);
+            put(&mut image, usize::from(data) * 16, &[0x41 + i as u8; 3]);
+        }
+        put(&mut image, PACK_AT, &[0x2d, 0xf4, 0x4f]);
         image
     }
 
@@ -189,6 +235,8 @@ mod tests {
         assert_eq!(editor.mission_defaults[0], [1, 2, 3, 5]);
         assert_eq!(editor.mix_percent[10], 99);
         assert_eq!(editor.status, b"KIND:\rSIDE:");
+        assert_eq!(editor.made_parts[1], (0x10d, vec![0x42; 3]));
+        assert_eq!(editor.program_table, 0x4ff4);
         insta::assert_debug_snapshot!(editor);
     }
 
@@ -199,6 +247,9 @@ mod tests {
         assert!(read_image(&image, DS).is_err());
         let mut image = synthetic();
         image[MIX_AT + 1] = 0x86;
+        assert!(read_image(&image, DS).is_err());
+        let mut image = synthetic();
+        image[PARTS_AT[2] + 3] = 0x83;
         assert!(read_image(&image, DS).is_err());
     }
 
@@ -224,5 +275,9 @@ mod tests {
         assert_eq!(editor.mission_defaults.len(), MISSIONS);
         assert_eq!(editor.mix_percent[0], 0);
         assert_eq!(editor.status.iter().filter(|&&b| b == b'\r').count(), 4);
+        // The parts start at the humanoid's +0x10c, scorpion's +0x127, scout's +0x10d.
+        let offsets = editor.made_parts.each_ref().map(|p| p.0);
+        assert_eq!(offsets, [0x10c, 0x127, 0x10d]);
+        assert!(editor.made_parts.iter().all(|p| !p.1.is_empty()));
     }
 }

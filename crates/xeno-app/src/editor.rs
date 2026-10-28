@@ -179,9 +179,16 @@ impl Editor {
 
     /// A Ctrl+left press on the map in mode M (`ui_editor_place_at_pointer`,
     /// `1000:6be8`) at `at`, with the picked kind and side: a path point goes on the
-    /// side's current path, an obstacle is made, the side's base moved. Returns
+    /// side's current path, a robot or an obstacle is made, the side's base moved
+    /// (relays are part 3 of T-108). Returns
     /// whether the status changed (only a point redraws it).
-    pub fn place(&self, at: Position, scenario: &mut Scenario, sim: &mut Sim) -> bool {
+    pub fn place(
+        &self,
+        at: Position,
+        scenario: &mut Scenario,
+        sim: &mut Sim,
+        tables: &Tables,
+    ) -> bool {
         let side = if self.alien { Side::Alien } else { Side::Human };
         let what = match self.kind {
             -1 => {
@@ -200,6 +207,11 @@ impl Editor {
                 sim.set_paths(Paths::from_scenario(scenario));
                 return true;
             }
+            0..=2 => Place::Robot {
+                kind: ObjectKind::from(self.kind as u16),
+                side,
+                heading: self.heading,
+            },
             3 => Place::Base(side),
             16 => Place::Obstacle,
             kind => {
@@ -208,14 +220,14 @@ impl Editor {
             }
         };
         let objects = scenario.objects.get_or_insert_with(Vec::new);
-        match sim.place(what, at) {
+        match sim.place(what, at, tables) {
             Some(Placed::Made(o)) => objects.push(*o),
             Some(Placed::Moved(id)) => {
                 if let Some(o) = objects.iter_mut().find(|o| o.slot == id.0) {
                     (o.x, o.y) = (at.x.0, at.y.0);
                 }
             }
-            None => log::info!("editor: nothing placed (no free slot or no base)"),
+            None => log::info!("editor: nothing placed (no free slot, sign or base)"),
         }
         false
     }
@@ -329,6 +341,12 @@ mod tests {
             mission_defaults: (0..7).map(|i| [i, 1, 2, 7]).collect(),
             mix_percent: (0..11).map(|i| i * 10).collect(),
             status: name("KIND:\rSIDE:\rHEAD:\rSHOW:\r"),
+            made_parts: [
+                (0x10c, Vec::new()),
+                (0x127, Vec::new()),
+                (0x10d, Vec::new()),
+            ],
+            program_table: 0,
         }
     }
 

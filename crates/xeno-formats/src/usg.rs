@@ -246,6 +246,11 @@ impl Object {
     /// Entries in the game's object table.
     pub const SLOTS: usize = 240;
 
+    /// One `DCBS` record (size, slot, reference count, then the object's bytes).
+    pub fn from_record(record: &[u8]) -> Result<Object, FormatError> {
+        Ok(Object::read(&mut std::io::Cursor::new(record))?)
+    }
+
     /// Bit 3 of the flags: the scenario editor writes 0 for human, 8 for alien.
     pub fn side(&self) -> Side {
         if self.flags & flag::ALIEN == 0 {

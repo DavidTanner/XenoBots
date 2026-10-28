@@ -1154,7 +1154,7 @@ impl Mission {
             return true;
         };
         let point = mainview::pointer_to_world(&camera, view, at);
-        if self.editor.place(point, scenario, sim) {
+        if self.editor.place(point, scenario, sim, tables) {
             for row in self.editor.status(scenario, tables) {
                 log::info!("editor: {row}");
             }
@@ -2066,6 +2066,8 @@ pub mod tests {
             mission_defaults: vec![[0; 4]; 7],
             mix_percent: vec![0; 11],
             status: b"T:\r".to_vec(),
+            made_parts: [(0x10c, vec![1]), (0x127, vec![2]), (0x10d, vec![3])],
+            program_table: 0,
         };
         // Ctrl+Alt+R removes the relays; Ctrl+M saves the terrain.
         let (remove, terrain) = ((0x3013, 0x6ac8), (0x1032, 0x448c));
@@ -2107,6 +2109,7 @@ pub mod tests {
             (0x1019, 0x6afb), // Ctrl+P: path points
             (0x1052, 0x6b0f), // Ctrl+Ins: a new path
             (0x304b, 0x6dde), // Ctrl+Alt+Left
+            (0x1023, 0x6ad8), // Ctrl+H: humanoids
         ];
         assets.editor = Some(editor::Editor {
             keys: keys.clone(),
@@ -2117,6 +2120,8 @@ pub mod tests {
             mission_defaults: vec![[0; 4]; 7],
             mix_percent: vec![0; 11],
             status: b"T:\r".to_vec(),
+            made_parts: [(0x10c, vec![1]), (0x127, vec![2]), (0x10d, vec![3])],
+            program_table: 0,
         });
         assets.view3d = Some(mainview::tests::view());
         let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
@@ -2169,6 +2174,22 @@ pub mod tests {
             (made.kind, made.position.x, made.position.y),
             (o.kind, unit(5), unit(3))
         );
+        // A humanoid, the player's, with its orders and in the roster.
+        key(&mut m, 0x1023);
+        press(&mut m, (160, 70));
+        let h = m
+            .scenario
+            .as_ref()
+            .unwrap()
+            .objects
+            .as_ref()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!((h.kind, h.x, h.y), (usg::ObjectKind::Humanoid, 0, 0));
+        assert!(m.book().get(h.slot).is_some_and(|r| r.side == Side::Human));
+        assert!(m.robots().contains(&h.slot));
         // The base moves to the point; a path point needs a path first.
         key(&mut m, 0x1030);
         press(&mut m, (150, 80));
@@ -2874,6 +2895,64 @@ pub mod tests {
                     .any(|(x, y)| fb.get(x.into(), y.into()) == Some(mainview::OBSTACLE_DOT));
                 assert!(near, "{name} zoom {zoom}");
             }
+        }
+    }
+
+    /// Robots of each kind and side made by the editor in every stock scenario are
+    /// saved as the original saves a robot (script and target in the save's form),
+    /// read back, load and run.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_made_robots_save_load_and_run() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_sim::editor::{Place, Placed};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let tables = assets.editor.as_ref().unwrap();
+        let program = assets.motion.scripts.program(9);
+        for (name, scenario) in &assets.scenarios {
+            let mut sim = Sim::load(scenario, Random::seeded(1), assets.motion.clone());
+            let mut edited = scenario.clone();
+            for kind in [
+                usg::ObjectKind::Humanoid,
+                usg::ObjectKind::Scorpion,
+                usg::ObjectKind::Scout,
+            ] {
+                for side in [Side::Human, Side::Alien] {
+                    let what = Place::Robot {
+                        kind,
+                        side,
+                        heading: 0x4000,
+                    };
+                    let at = xeno_sim::Position::default();
+                    let Some(Placed::Made(o)) = sim.place(what, at, tables) else {
+                        panic!("{name}: nothing made");
+                    };
+                    let r = o.robot().unwrap();
+                    assert_eq!(r.script & 0xf800, 0xa000, "{name}");
+                    assert_eq!(
+                        (r.script & 0x7ff).wrapping_add(tables.program_table),
+                        program
+                    );
+                    assert_eq!((r.program_given, r.target), (9, 0xffff), "{name}");
+                    edited.objects.as_mut().unwrap().push(*o);
+                }
+            }
+            let back = usg::parse(&usg::write(&edited).unwrap()).unwrap();
+            assert_eq!(back.objects, {
+                let mut o = edited.objects.clone().unwrap();
+                o.sort_by_key(|o| o.slot);
+                Some(o)
+            });
+            let mut again = Sim::load(&back, Random::seeded(1), assets.motion.clone());
+            assert_eq!(again.world.len(), sim.world.len(), "{name}");
+            (0..200).for_each(|_| _ = again.tick(&[]));
         }
     }
 

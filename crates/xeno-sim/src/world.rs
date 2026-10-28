@@ -391,6 +391,11 @@ pub struct World {
     pub ticks: u16,
     /// The mission clock (`DS:0x7d46`), from the scenario's `SHDR`.
     pub clock: Clock,
+    /// The call signs taken (`DS:0x72c5`, bit n for sign n): cleared when a
+    /// scenario's objects are read (`scen_read_dcbs`), so only robots made since hold
+    /// one. shortcut: a destroyed robot does not give its sign back (`1000:dfc9`) until
+    /// the sim keeps loaded robots' signs.
+    pub call_signs: u64,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -482,6 +487,7 @@ impl World {
             // only the settling legs read it (every 8 passes).
             ticks: 0,
             clock: Clock::from_start(&scenario.header.start),
+            call_signs: 0,
         }
     }
 
@@ -599,6 +605,7 @@ impl StateHash for World {
         }
         h.u8(self.stagger);
         h.u16(self.ticks);
+        h.u64(self.call_signs);
         let c = self.clock;
         for n in [c.hour, c.minute, c.second, c.tick] {
             h.u8(n);
