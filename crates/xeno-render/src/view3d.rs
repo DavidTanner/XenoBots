@@ -142,6 +142,12 @@ pub fn focal(f: Float) -> GameFloat {
 
 /// The focal factor at a zoom (`DS:0x1452`, a factor above 1 multiplies the word).
 pub fn focal_zoomed(f: Float, zoom: u8) -> GameFloat {
+    focal_shifted(f, zoom, 0)
+}
+
+/// The focal factor at a zoom and a zoom shift (`DS:0x1454`, which halves it per
+/// step: the second display's is 1).
+pub fn focal_shifted(f: Float, zoom: u8, shift: u8) -> GameFloat {
     let mut v = u32::from(f.mantissa) * u32::from(zoom.max(1));
     let mut n = 0i8;
     if v != 0 {
@@ -151,6 +157,7 @@ pub fn focal_zoomed(f: Float, zoom: u8) -> GameFloat {
         while v >> 31 == 0 {
             (v, n) = (v << 1, n + 1);
         }
+        n = n.wrapping_add(shift as i8);
         v >>= n & 7;
     }
     GameFloat {
@@ -505,6 +512,10 @@ mod tests {
         };
         assert_eq!(focal_zoomed(map, 4), f(1308, -16));
         assert_eq!(focal_zoomed(map, 0), focal(map));
+        // A zoom shift of 1 halves the factor.
+        let (half, whole) = (focal_shifted(map, 4, 1), focal_zoomed(map, 4));
+        let value = |g: GameFloat| f64::from(g.mantissa) * 2f64.powi(g.exponent.into());
+        assert_eq!(value(half) * 2.0, value(whole));
         let c = Camera {
             focal: focal_zoomed(map, 4),
             ..camera(0)

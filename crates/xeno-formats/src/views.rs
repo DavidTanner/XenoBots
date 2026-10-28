@@ -45,6 +45,16 @@ pub(crate) const PANEL_AUTOMATIC: (usize, u8) = (0xd2f6, 0xb0);
 pub(crate) const MESSAGE_FONT: (usize, &[u8]) = (0xd20d, &[0xb8]);
 pub(crate) const MESSAGE_COLOURS: (usize, &[u8]) = (0xd221, &[0x8b, 0x84]);
 pub(crate) const MESSAGE_HIGH: (usize, u8) = (0xd22c, 0xb0);
+/// A console's second display (the colour-254 region): its view mode by display mode
+/// (`mov al, [bx + table]` at `1000:dbf2`), the device each display mode needs
+/// (`mov al, [bx + table]` at `1000:db6e`, tested against +0xf6), and per robot kind
+/// the map's clear and hill colours (`mov byte [0x1457], clear; mov byte [0x1458],
+/// hill` in the kinds' draw handlers).
+pub(crate) const DISPLAY_VIEW_MODES: (usize, &[u8]) = (0xdbf2, &[0x8a, 0x87]);
+pub(crate) const DISPLAY_DEVICES: (usize, &[u8]) = (0xdb6e, &[0x8a, 0x87]);
+pub(crate) const DISPLAY_MAP_COLOURS: [usize; 3] = [0x9e14, 0x812d, 0xb5cc];
+const SET_MAP_CLEAR: [u8; 4] = [0xc6, 0x06, 0x57, 0x14];
+const SET_MAP_HILL: [u8; 4] = [0xc6, 0x06, 0x58, 0x14];
 /// Where the console's unit-name button prints (`mov ax, y; mov bx, x` at
 /// `1000:7d5d`).
 pub(crate) const UNIT_LABEL: (usize, &[u8]) = (0x7d5d, &[0xb8]);
@@ -169,6 +179,19 @@ pub struct MissionViews {
     /// Where the unit-name button prints, (x, y).
     pub unit_label: (u16, u16),
     pub message_panel: MessageStyle,
+    pub second_display: SecondDisplay,
+}
+
+/// A console's second display (`docs/screens.md`, "The second display (T-104)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecondDisplay {
+    /// The view mode (`docs/render.md`, "The step lists") by display mode (+0xef, its
+    /// bit 2 set while the mode's device is damaged).
+    pub view_modes: [u8; 8],
+    /// The +0xf6 bit of the device each display mode needs (0: none).
+    pub devices: [u8; 4],
+    /// By robot kind: the map's clear and hill colours.
+    pub map_colours: [[u8; 2]; 3],
 }
 
 /// How a console's message panel looks (`docs/screens.md`, "The message panel
@@ -356,6 +379,28 @@ impl Exe<'_> {
         Ok((styles, automatic))
     }
 
+    fn second_display(&self) -> Result<SecondDisplay, FormatError> {
+        let table = |entry, len| -> Result<&[u8], FormatError> {
+            self.bytes(self.ds + usize::from(self.op(entry)?), len)
+        };
+        let mut map_colours = [[0; 2]; 3];
+        for (colours, at) in map_colours.iter_mut().zip(DISPLAY_MAP_COLOURS) {
+            match self.bytes(at, 10)? {
+                &[a, b, c, d, clear, e, f, g, h, hill]
+                    if [a, b, c, d] == SET_MAP_CLEAR && [e, f, g, h] == SET_MAP_HILL =>
+                {
+                    *colours = [clear, hill]
+                }
+                _ => return Err(invalid(at, "not the second display's map colours")),
+            }
+        }
+        Ok(SecondDisplay {
+            view_modes: table(DISPLAY_VIEW_MODES, 8)?.try_into().expect("8 bytes"),
+            devices: table(DISPLAY_DEVICES, 4)?.try_into().expect("4 bytes"),
+            map_colours,
+        })
+    }
+
     fn message_panel(&self) -> Result<MessageStyle, FormatError> {
         let high = match self.bytes(MESSAGE_HIGH.0, 2)? {
             &[op, colour] if op == MESSAGE_HIGH.1 => colour,
@@ -410,6 +455,7 @@ pub fn read_image(
             exe.op(UNIT_LABEL)?,
         ),
         message_panel: exe.message_panel()?,
+        second_display: exe.second_display()?,
     })
 }
 
@@ -574,6 +620,8 @@ mod tests {
         assert!(corrupt(PANEL_AUTOMATIC.0, 0x90).0);
         assert!(corrupt(MESSAGE_HIGH.0, 0x90).0);
         assert!(corrupt(MESSAGE_COLOURS.0, 0x90).0);
+        assert!(corrupt(DISPLAY_DEVICES.0, 0x90).0);
+        assert!(corrupt(DISPLAY_MAP_COLOURS[2] + 5, 0x90).0);
         for (at, _) in [
             TRAINING_WIDGETS,
             TRAINING_KEYS,

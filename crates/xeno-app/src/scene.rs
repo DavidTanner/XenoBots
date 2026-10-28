@@ -8,7 +8,9 @@ use xeno_formats::mxx;
 use xeno_formats::usg::{ObjectKind, Scenario, TerrainFeature};
 use xeno_formats::view3d::View3d;
 use xeno_render::shape::Shape;
-use xeno_render::view3d::{Camera, RenderNode, TERRAIN, Trig, focal, sort_far_to_near};
+use xeno_render::view3d::{
+    Camera, RenderNode, TERRAIN, Trig, focal, focal_shifted, sort_far_to_near,
+};
 use xeno_render::{Framebuffer, LoadedModel};
 use xeno_sim::motion::{Tables, sine};
 use xeno_sim::script::bearing;
@@ -86,6 +88,27 @@ fn frames(e: &Entity) -> Vec<u8> {
         (_, State::Explosion { frame, .. }) => vec![frame],
         _ => Vec::new(),
     }
+}
+
+/// The second display's camera in the camera mode (`1000:dbe8`): the main view's,
+/// turned by the pan (+0xf4), at a zoom of `1 << zoom` (+0xf1) and a zoom shift of 1.
+pub fn second_camera(
+    world: &World,
+    id: EntityId,
+    view: &View3d,
+    tables: &Tables,
+    heights: &Heights,
+    (zoom, pan): (u8, u16),
+) -> Option<Camera> {
+    let main = camera(world, id, view, tables, heights)?;
+    let heading = main.heading.wrapping_add(pan);
+    Some(Camera {
+        heading,
+        sin: trig(tables, heading),
+        cos: trig(tables, 0x4000u16.wrapping_sub(heading)),
+        focal: focal_shifted(view.focal[0], 1u8.checked_shl(zoom.into()).unwrap_or(0), 1),
+        ..main
+    })
 }
 
 /// The objects' nodes in slot order, each kind's model and node type from `view`,
@@ -172,9 +195,27 @@ pub fn draw(
     let Some(camera) = camera(world, id, view, tables, heights) else {
         return false;
     };
-    let nodes = nodes(world, view, &camera, &tables.atan, heights, terrain);
-    buffer.draw_view(view, &camera, &nodes, models, sky);
+    draw_from(
+        buffer, world, &camera, view, tables, heights, terrain, models, sky,
+    );
     true
+}
+
+/// The view from `camera` into `buffer`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_from(
+    buffer: &mut Framebuffer,
+    world: &World,
+    camera: &Camera,
+    view: &View3d,
+    tables: &Tables,
+    heights: &Heights,
+    terrain: &[TerrainFeature],
+    models: &[Option<LoadedModel>],
+    sky: Option<&Sky>,
+) {
+    let nodes = nodes(world, view, camera, &tables.atan, heights, terrain);
+    buffer.draw_view(view, camera, &nodes, models, sky);
 }
 
 /// Every model as `gfx_load_all_models` loads it (`docs/formats/mxx.md`, "Loading"),

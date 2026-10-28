@@ -54,8 +54,8 @@ colour-255 region (slot `0x5a4`, `docs/screens.md`) and reads the pointer probe.
 it draws the second display (`DS:0x1450` = 2, rectangle `DS:0x683e` for the
 scorpion, `1000:dbe8`): the mode is `DS:0x70ae[+0xef]` (the console's display mode:
 0, 1, 2, 3 give 6, 0xa, 0xc, 8), from the same camera position, so modes 6 and 0xa
-draw the main view's list again. That display, its zoom and pan, and its map are
-T-104's.
+draw the main view's list again. That display, its zoom and pan, and its map are in
+`docs/screens.md`, "The second display (T-104)".
 
 ## The camera
 

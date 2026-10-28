@@ -559,6 +559,71 @@ text. The port fills the rectangle and types the whole text every frame
 (`xeno-app`'s `mission`), which gives the same pixels. Font 2's six lines run a few
 rows below the rectangle in the original too.
 
+### The second display (T-104)
+
+Each console has a second display in its colour-254 region (built with slot `0x59c`
+into `DS:0x683e` for the humanoid, `0x654c` for the scorpion, `0x6bc8` for the scout;
+the colour-253 region, `0x684a`, `0x6558`, `0x6bd4`, is a third display of each kind's
+own, T-130 to T-132). Its draw handler (humanoid `0x86`, `1000:9df2`; scorpion `0xbe`,
+`80ee`; scout `0x108`, `b5ad`) starts a frame (`DS:0x1450` = 2) with the map's clear
+and hill colours of its kind (`DS:0x1457`, `0x1458`) and `1000:dbe8` (the scorpion sets
+the same up itself, then calls through `DS:0x6722` by mode):
+
+- The view mode is `DS:0x70ae[+0xef]`: display modes 0, 1, 2, 3 give view modes 6
+  (the camera, reusing the main view's render list), 0xa (the same, then slot `0x5f0`
+  remaps the buffer through a 256-byte table: thermal), 0xc (the map) and 8 (the
+  scorpion's missile camera); modes 4 to 7 (bit 2, the device damaged) give 0x18, which
+  is no 3D view (the scorpion's damaged modes go to `1000:81d0`). A map frame is drawn
+  only every few passes (`DS:0x62ee`).
+- The camera: the robot's position and eye height as the main view's, a zoom shift of 1
+  (`DS:0x1454`, halving the focal factor), and in the camera modes the heading plus the
+  pan (+0xf4) at a zoom of `1 << +0xf1`; in the map mode heading 0, a zoom of
+  `1 << +0xf2` and the map's objects filter `DS:0x62ea` = 0x0f (robots as sprites, mines,
+  relays; no grid). The 3D modes set the clear colour to 0x20.
+- When the frame is done: the overlay of the mode (`DS:0x6abf` for the humanoid: the
+  target's name blinking in modes 0 and 1 while +0x17 bit 6, the zoom's name from
+  `DS:0x70e7` or `0x7105` while +0xf3 is not 0), the copy through the region, the
+  pointer probe into the console's own word (`DS:0x6a7a` humanoid), the colour records
+  of the mode (`1000:d9ca`: `DS:0x70b6[+0xef]`, started with `1000:140b` after stopping
+  the last), and the noise check below.
+
+`1000:db5c` (every tick, in each robot's tick, and when the mode is set) clears +0xef bit
+2 and sets it again when `DS:0x70be[+0xef]` (the camera, thermal camera and map bits of
++0xf6; none for the missile camera) is damaged; it leaves a mode of 7 alone.
+
+**Keys.** V, T and M (each kind's table: humanoid `1000:b415`, `b41b`, `b421`; scorpion
+`9c5a`, `9c60`, `9c66`; scout `cbed`, `cbf3`, `cbf9`) set +0xef to 0, 1 or 2 (through
+`b3e9`, `99c7`, `cbc1`): the mode buttons and their widgets are marked for a redraw,
++0xf3 = 6, `db5c` runs and sound event 10 plays, whatever the mode was. = and keypad +
+(`1000:da0e`), - and keypad - (`da37`) step +0xf2 in the map mode (exactly 2) and +0xf1
+otherwise, up to 4 or down to 0 (a value out of range steps on and wraps), set +0xf3 = 6
+and clear +0x17 bit 6. Each console's first widget group also holds the mode buttons
+(humanoid `0x8e`, `0x90`, `0x92`: sprite 0x4e0 and on, the next one for the current mode;
+a release sets the mode) and the pan buttons (`0x88`: held, +0x1b = 1), T-134.
+
+**Noise** (`1000:daa2`, after each frame): when the mode byte (`DS:0x70ac`, bit 2
+included) differs from the last (`DS:0x70ad`), it is kept, and event 28 plays if bit 2
+is set; otherwise `1000:eeb1` gives the event's voice silence, queued, so the noise
+finishes. Leaving the console (`1000:dac0`) does the same and sets `DS:0x70ad` to 0.
+
+**Under the pointer** (the mouse handlers `1000:9d83` for the main view and `9eea` for
+the second display, the others alike): a move over the region shows pointer shape 3 (4
+over the second display; 6 there in the map mode with the key flag 0x2000) and marks
+the view; a left release with the probe's object (`1000:41b7`, read after the frame)
+locks it as the target (`1000:d8a7`); a right release opens that object's console
+(`1000:7eac`). In the map mode with 0x2000 a left press sets +0x23 bit 2, which the next
+frame acts on (`1000:466b`, presumably moving the robot's destination; T-133).
+
+**In the port** (`xeno-app`'s `mission`): each robot's display (mode, zoom steps and pan)
+starts as its file has it and changes with V, T, M, =, -, keypad + and -; the camera
+mode draws the 3D view from `scene::second_camera`, the map mode the situation room's
+map (`mainview::draw_map` without its zoom label) in the kind's colours from
+`mainview::console_map`; the thermal and missile camera modes and a damaged device keep
+a "T-134" placeholder. Event 10 plays on a mode key; event 28 and its silence follow the
+noise check after each retrace and on leaving the console. Not ported (T-133, T-134): the
+overlays, the colour records, the remap, the static, the frame-skipping of the map, the
+target lock and the right click, the buttons and the zoom's name.
+
 ### The situation room's main view (T-103)
 
 From a Ghidra pass over the main view's routines (`ui_draw_sitroom_main_view`,

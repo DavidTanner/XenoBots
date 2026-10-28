@@ -371,13 +371,23 @@ impl ReviewState {
 /// Slot `0x5a4`: `buffer` copied with its top-left at (`left`, `top`) onto `fb`'s
 /// colour-255 pixels only.
 pub fn copy_through(fb: &mut Framebuffer, buffer: &Framebuffer, left: usize, top: usize) {
+    copy_through_colour(fb, buffer, (left, top), 255);
+}
+
+/// [`copy_through`] for the pixels of `colour`.
+pub fn copy_through_colour(
+    fb: &mut Framebuffer,
+    buffer: &Framebuffer,
+    (left, top): (usize, usize),
+    region: u8,
+) {
     let width = buffer.surface().width;
     let stride = fb.surface().width;
     let pixels = fb.pixels_mut();
     for (y, row) in buffer.pixels().chunks(width).enumerate() {
         let start = (top + y) * stride + left;
         for (p, &colour) in pixels[start..start + width].iter_mut().zip(row) {
-            if *p == 255 {
+            if *p == region {
                 *p = colour;
             }
         }
@@ -388,9 +398,19 @@ pub fn copy_through(fb: &mut Framebuffer, buffer: &Framebuffer, left: usize, top
 /// top, width, height): when the width is odd, the left edge moves down to an even
 /// column and the right edge up to one.
 pub fn region(fb: &Framebuffer) -> Option<(usize, usize, usize, usize)> {
+    region_of(fb, 255)
+}
+
+/// [`region`] for the pixels of `colour`.
+pub fn region_of(fb: &Framebuffer, colour: u8) -> Option<(usize, usize, usize, usize)> {
     let width = fb.surface().width;
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
-    for (i, _) in fb.pixels().iter().enumerate().filter(|&(_, &p)| p == 255) {
+    for (i, _) in fb
+        .pixels()
+        .iter()
+        .enumerate()
+        .filter(|&(_, &p)| p == colour)
+    {
         let (x, y) = (i % width, i / width);
         (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
     }

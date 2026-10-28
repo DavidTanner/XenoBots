@@ -10,7 +10,7 @@ use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
 use xeno_formats::views::Widget;
 use xeno_render::shape::fill_polygon;
-use xeno_render::view3d::{Camera, focal_zoomed};
+use xeno_render::view3d::{Camera, focal_shifted, focal_zoomed};
 use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::motion::Tables;
 use xeno_sim::{Damage, Entity, Position, State, World};
@@ -312,6 +312,38 @@ pub fn camera(
     }
 }
 
+/// A console's map (`1000:dbe8` in display mode 2): on the robot, heading 0, at a zoom
+/// of `1 << map_zoom` (+0xf2) and a zoom shift of 1, showing the robots as sprites,
+/// the mines and the relays (`DS:0x62ea` = 0x0f).
+pub fn console_map(
+    at: Position,
+    map_zoom: u8,
+    view: &View3d,
+    tables: &Tables,
+) -> (Camera, MapState) {
+    let camera = Camera {
+        x: at.x.0,
+        y: at.y.0,
+        z: 0,
+        heading: 0,
+        sin: trig(tables, 0),
+        cos: trig(tables, 0x4000),
+        focal: focal_shifted(
+            view.focal[2],
+            1u8.checked_shl(map_zoom.into()).unwrap_or(0),
+            1,
+        ),
+        viewer: u16::MAX,
+    };
+    let overlays = Base::MAP_ROBOTS | Base::MAP_SPRITES | Base::MAP_MINES | Base::MAP_RELAYS;
+    let map = MapState {
+        overlays,
+        zoom: map_zoom,
+        centre: at,
+    };
+    (camera, map)
+}
+
 /// A position's pixel in the buffer (`1000:3ad8`): rows up with x, columns right
 /// with y, from the middle.
 fn pixel(camera: &Camera, buffer: &Framebuffer, x: i32, y: i32) -> (i32, i32) {
@@ -350,7 +382,7 @@ fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colou
 /// `gfx_draw_hill_outline_on_map` (`1000:39fb`, `3a27`): a hill as an octagon in the
 /// hill colour, at its radius on the axes and two thirds of it on the diagonals,
 /// filled by the 3D view's polygon fill.
-fn hill(buffer: &mut Framebuffer, camera: &Camera, f: &TerrainFeature) {
+fn hill(buffer: &mut Framebuffer, camera: &Camera, f: &TerrainFeature, colour: u8) {
     let r = i32::from(f.radius) << 8;
     let d = (r as u32 * 2 / 3) as i32;
     let r = i32::from(camera.map_offset(r, r).1);
@@ -367,7 +399,7 @@ fn hill(buffer: &mut Framebuffer, camera: &Camera, f: &TerrainFeature) {
         (x + d, y - d),
     ]
     .map(|(x, y)| (x as i16, y as i16));
-    fill_polygon(buffer, &corners, MAP_HILL);
+    fill_polygon(buffer, &corners, colour);
 }
 
 /// What the main view needs to draw.
@@ -386,7 +418,9 @@ impl Inputs<'_> {
 }
 
 /// The map (view modes 0xc and 0xe, `1000:3877`): cleared, then the hills, the
-/// selected unit's destination and the objects in slot order, then the zoom label.
+/// selected unit's destination and the objects in slot order, then the zoom label (the
+/// situation room's, drawn only with a font). `colours`: the clear and hill colours
+/// (`DS:0x1457`, `0x1458`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_map(
     buffer: &mut Framebuffer,
@@ -397,10 +431,11 @@ pub fn draw_map(
     flags: &Flags,
     selected: Option<&Entity>,
     inputs: &Inputs,
+    [clear, hill_colour]: [u8; 2],
 ) {
-    buffer.clear(MAP_BACKGROUND);
+    buffer.clear(clear);
     for f in terrain.iter().filter(|f| f.shape.first() == Some(&HILL_OP)) {
-        hill(buffer, camera, f);
+        hill(buffer, camera, f, hill_colour);
     }
     // `1000:f914`: the selected robot's destination (+0x32 bit 1). shortcut: bit 0,
     // a target object (+0x3a, sprite 0x1a0), is not kept by the sim, so not shown.
@@ -743,6 +778,7 @@ pub(crate) mod tests {
             &flags,
             selected,
             &inputs,
+            [MAP_BACKGROUND, MAP_HILL],
         );
         buffer
     }
