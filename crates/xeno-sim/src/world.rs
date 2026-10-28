@@ -129,6 +129,11 @@ pub struct Movement {
     /// scout +0x103 and +0x104; `docs/render.md`, "Walking").
     pub stride: u8,
     pub legs: [u8; 2],
+    /// +0x17: the status bits (`usg::status`): cloak, ECM, spotted, tracking and the
+    /// count to the next scan.
+    pub status: u8,
+    /// +0xf7: the enemy units the last scan found (`docs/sim.md`, "Sensing").
+    pub contacts: u8,
     pub script: Script,
     pub panel: Panel,
 }
@@ -160,7 +165,7 @@ impl Movement {
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
-    fn of(r: &usg::Robot) -> Movement {
+    fn of(r: &usg::Robot, status: u8) -> Movement {
         use usg::Parts;
         // (gear, stride, legs, stance and its target, relays) by kind.
         let (gear, stride, legs, stance, relays) = match &r.parts {
@@ -196,6 +201,8 @@ impl Movement {
             speed_table: relays,
             stride,
             legs,
+            status,
+            contacts: r.contacts,
             // The rest is set when loading starts the program anew.
             script: Script {
                 events: r.events,
@@ -215,7 +222,7 @@ impl State {
     /// The movement state `object`'s layout records.
     pub fn of(object: &Object) -> State {
         match &object.body {
-            Body::Robot(r) => State::Robot(Movement::of(r)),
+            Body::Robot(r) => State::Robot(Movement::of(r, object.status)),
             Body::Base(b) => State::Base {
                 tick: b.tick,
                 kills: b.kills,
@@ -246,6 +253,7 @@ impl StateHash for State {
                 h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
                 h.u8(m.speed_table);
                 h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
+                h.bytes(&[m.status, m.contacts]);
                 let s = m.script;
                 h.u16(s.pointer);
                 h.u16(s.wait);

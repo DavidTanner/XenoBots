@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -423,6 +423,148 @@ area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
 paths and the human robots on ENGAGE halt at the weapons check (T-114), and an alien
 scorpion on DENSE NET halts at once (T-113).
+
+## Sensing (T-112)
+
+A T-090 pass on `xeno.exe` read the sensing routines, the opcodes that use them, the
+lock and its upkeep, and the object goal. The ranges and where each kind's tick table
+runs the routines are read from the user's `xeno.exe` by `xeno_formats::sensing`
+(`Motion::sensing`).
+
+**The tick tables.** After the move (step 6 of "A robot's tick") a robot's tick steps
++0x1a by 2 and calls entry `(+0x1a & 0x1e) / 2` of its kind's table of 16 routines
+(humanoid `DS:0x6acf`, scorpion `0x6732`, scout `0x6ebf`, through the `call` at
+`1000:abfb`, `9322`, `c4a0`). Every kind has the scan at entry 15, the lock's upkeep at
+entry 5 (scorpion 6) and the lock warning's decay right after it; the contact check
+(T-141), the weapons (T-114) and the console's routines fill the rest. So each runs
+once every 16 ticks.
+
+**Ranges** (8.8 units, by kind; humanoid, scorpion, scout in the stock build): the
+*scanning* range (`DS:0x707f`: 8.6, 12.5, 9.8) and the *locking* range (`DS:0x7079`:
+9.8, 13.7, 10.6). Distances are the original's `max + min/2` (`1000:08ec`, "Movement")
+unless named otherwise, counted only under 256 units, and in range at or under the
+range.
+
+**The scan** (`1000:dcba`). Only while +0x1a's top three bits are clear (so every
+time for a scorpion or scout, whose counter stays under 0x20, and one pass in eight
+for a humanoid), it steps the 4-bit count in +0x17 (`SCAN_COUNT`: bit 7 lowest, then
+5, 4, 3). When the count comes round to 0, every **unit** (+0x16 bit 5, the robots) of
+the other side within the scanning range gets `SPOTTED` (+0x17 bit 2), and their
+number goes to `contacts` (+0xf7). There is no check for a cloak or the field. If the
+number changed: from none, **event 1** is posted; to none, **event 2**. So a
+scorpion or scout scans every 256 ticks and a humanoid every 2048.
+
+**Looking for enemies** (opcode 0x71, `1000:d757`; time 30). The nearest object with
++0x16 bit 2 (`SCANNED`: robots and bases) of the other side, not the robot itself, not
+`CLOAKED` (+0x17 bit 0), within the **locking** range (strictly nearer wins, slot
+order) is locked (below), and the carry is cleared; with none, the "no enemies"
+message goes to the robot's panel and the carry is set. A refused lock still clears
+the carry.
+
+**Steering for the nearest enemy** (opcode 0x63, `1000:d165` calling `2000:8005`,
+then `1000:49fd`). The same search with the **scanning** range, without the self and
+cloak checks (`2000:8005` returns the nearest or none). With one, the target heading
+(+0x2a) becomes the coarse bearing to it and the carry is cleared; with none, the
+carry is set. It does not lock the object.
+
+**The lock** (`sim_lock_target`, `1000:d8af`; the A key and T-133's pointer reach it
+too), with the object to lock:
+
+1. Targeting computer damaged (+0xec bit 0): a message, nothing else.
+2. +0x17 bit 6 (`TRACKING`) is set.
+3. The robot itself, or its target already: a message, nothing else.
+4. Not `TARGETABLE` (+0x16 bit 1), or `CLOAKED`: nothing.
+5. The true distance (below) at or past the locking range: an "out of range" message.
+6. Of its own side: a message, and the lock goes on.
+7. The upkeep's bearing, distance and bits are worked out (with the last arc and range
+   any robot's upkeep used, `DS:0x7201`, `0x7203`), the object gets `SPOTTED`, it
+   becomes the target (+0xe6), a kind routine marks the console's target panels for
+   redrawing (`DS:0x7239`), a message ("target locked", or another when it replaces
+   one) and sound event 26 for the robot whose console is open.
+
+**The lock's upkeep** (`1000:d66f`, from each kind's tick table entry with that kind's
+arc and range; humanoid 30 degrees and 9.8 units, scorpion 40 and 13.7, scout 35 and
+10.6, either side of the heading). With no target, +0xec bit 2 is set. A target that
+is `GONE` (+0x16 bit 0) is dropped with a "destroyed" message. With the targeting
+computer damaged, or the last distance (+0xe8) past the locking range, or a unit
+target whose ECM time (+0xdf) is running, the target is dropped with a "lost"
+message and **event 4** is posted. Otherwise a unit target gets `locked_on` (+0xed)
+0xff, and the bearing and distance are worked out (`1000:d6e6`): +0xec bits 1 and 2
+are cleared; the bearing (`1000:0545`, the fine one) goes to +0xea, and bit 2 is set
+when it less the heading is under the arc either way (unsigned compares with the arc
+and its negation); the true distance (`1000:0942`: the square root of the sum of the
+squares of x, y and z) as 8.8 (its middle word, the top byte dropped) goes to +0xe8,
+and bit 1 is set when it is under the range. When it drops the target the kind's
+routine marks the console's panels (not the sim's concern).
+
+**The lock warning** (`1000:dc95`): `locked_on` is halved each pass; while it is not 0,
+`systems` bit 5 is set, and setting it posts **event 3**; at 0 the bit is cleared. So
+a lock warns its target within 16 ticks and the warning fades 128 ticks after the
+lock goes.
+
+**The target opcodes.** 0x6b pushes the distance to the target (as 0x5e does, 0xffff
+with none or past 256 units). 0x6c steers to it: +0x32 is set to 8 for the steering
+and put back, so the target heading becomes the coarse bearing to the target, carry
+clear; with none, carry set. 0x73 sets the carry unless the target is a base (kind 3).
+The scripts test the target as the word field +0xe6 (opcode 0x37 with 0xffff): 0 is
+none.
+
+**Goals, bit by bit.** The distance (`order_push_goal_distance`, `1000:4f80`, opcodes
+0x5d, 0x5e) and the steering (`order_steer_to_goal`, `1000:4ff1`, 0x5f to 0x61) take
+the first of: bit 4, the worked-out point; bit 3, the target; bit 1, the destination
+(+0x3c); bit 0, the object goal (+0x3a). Then they differ: with none of those, the
+distance takes the destination if bit 2 is set and the robot's own base otherwise;
+the steering takes the own base if bit 2 is set and nothing otherwise (carry set).
+An object goal whose slot is empty, a target of 0, or a goal object of 0xffff count
+as nothing (distance 0xffff).
+
+**Object goals.** +0x3a is an object's **slot** (0xffff none), not a pointer
+(`1000:f691` turns a slot into the object, `f6a6` and `f6bb` take and release a
+reference on it). `1000:4685` sets one: the old one is dropped, the slot taken, the
+destination becomes the robot's position **less** the object's (an offset), +0x32
+becomes 1, a message and event 5. Only the consoles' map-mode press reaches it
+(`1000:466b`, T-133). `sim_drop_object_goal` (`1000:473d`) clears +0x32 and +0x3a.
+After every opcode, and every 64th tick without the program bit, the step drops an
+object goal (+0x32 = 0) whose slot is 0xffff.
+
+**The worked-out point** (`DS:0x4da4`, one for every robot): opcode 0x66 sets it to
+the goal object's position plus the offset in +0x3c, or to 0xffff in every word
+with no goal object; 0x67 compares the distance to it with a word (past 256 units,
+the flags of the distance's whole units less 1), 0x68 steers to it, 0x6d pushes the
+distance to it, 0x6e steers to it as goal bit 4 (carry with none, as 0x6c). It starts
+at 0 in the image.
+
+**Events.** Posted by sensing: 1 and 2 by the scan, 3 by the lock warning, 4 when the
+upkeep loses a lock, 5 by an object goal (and the hold order). The others: 7 by
+hits, 9 by the contact check (`1000:d4df`, T-141), 0xa and 0xb by the switches, 0xc
+when crippled (the damage totals, T-140). Nothing posts 0, 6 or 8 (FIRE ALL's
+handler for 8 is never run).
+
+**The weapon state** (opcodes 0x78 to 0x7a, survey for T-114). A kind's routine for
+each weapon (tables at `1000:d107`, `d12b`) gives a word: the weapon's number, and
+bits for present (not damaged), cooling down, selected, short of drive, the
+scorpion's cannon out of rounds; `1000:d0e9` and `d10d` add +0xec bits 2 and 1 (in arc,
+in range). 0x78 clears the carry if either weapon is present with neither short of
+drive nor out of rounds; 0x79 and 0x7a push the first's or the second's word.
+
+**What the stock programs do with it.** ENGAGING (24) checks the weapons (0x78),
+looks for an enemy if it has no target, steers for the nearest in scanning range if
+it still has none, and gives up if there is none; with a target it steers to it,
+drives at high speed while 2 units or more away, stops closer and backs off slowly
+under 0.8 units, fires what is ready (T-114) and loops. PATROL's and the nets' event 1
+(a scan found enemies) and event 7 (hit) run ENGAGING; ENGAGE's event 4 (lock lost)
+restarts it. DETECT steers for the nearest enemy every 10 seconds. SHADOWING keeps
+within 0.2 units of the worked-out point off its goal object. COMMANDO holds, looks
+and steers for enemies and fires at bases.
+
+### The port (T-112)
+
+`xeno_sim::sense::step` runs after each robot's move, its panel's typing and before
+its walk, at the entries of its kind's tick table that `Motion::sensing` names.
+`Movement` keeps +0x17 (`status`) and +0xf7 (`contacts`), loaded from the file and
+hashed. Part 1 (`t-112`): the scan, with its events 1 and 2. A unit is a robot by
+kind: every stock robot has +0x16 bit 5 and nothing else does, and the port keeps
+no flags byte.
 
 ## The cockpit keys (T-105)
 

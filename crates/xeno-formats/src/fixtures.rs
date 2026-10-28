@@ -1476,6 +1476,13 @@ pub fn synthetic_damage_tables() -> crate::damage::Damage {
     crate::damage::read_image(&image, 0x1_0000).expect("synthetic damage tables")
 }
 
+/// [`synthetic_sensing`]'s tables, read.
+pub fn synthetic_sensing_tables() -> crate::sensing::Sensing {
+    let mut image = vec![0; 0x1_9c00];
+    synthetic_sensing(&mut image, 0x1_0000);
+    crate::sensing::read_image(&image, 0x1_0000).expect("synthetic sensing tables")
+}
+
 /// Writes made-up walking tables (`crate::motion::Walk`) at 0xa100 up, with the
 /// instructions that read them: legs `step & 3` and `(step + 2) & 3` (humanoid, then
 /// scout), crouched legs `stance / 16`.
@@ -1545,6 +1552,39 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_damage(image, ds);
     synthetic_gears(image, ds);
     synthetic_weapon_keys(image, ds);
+    synthetic_sensing(image, ds);
+}
+
+/// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
+/// `0x9720`, `0x9740` with the scan at entry 15, the lock's upkeep at 5, 6, 5 (code
+/// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320) and the
+/// lock warning's decay after it; scanning ranges 0x500, 0x600, 0x700 and locking
+/// ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`).
+pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
+    use crate::sensing::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(SCAN.0, SCAN.1);
+    put(LOCKED_ON.0, LOCKED_ON.1);
+    put(KEEP_LOCK, &[0xa3, 0x01, 0x72, 0x89, 0x1e]);
+    put(SCAN_RANGE_AT, &op(&[0x8b, 0x87], 0x9760));
+    put(LOCK_RANGE_AT, &op(&[0x8b, 0x87], 0x9766));
+    put(ds + 0x9760, &[0, 5, 0, 6, 0, 7, 0, 8, 0, 9, 0, 10]);
+    for (kind, lock) in [5usize, 6, 5].into_iter().enumerate() {
+        let (table, routine) = (0x9700 + 0x20 * kind as u16, 0xa200 + 0x10 * kind as u16);
+        put(TICKS_AT[kind], &op(&[0xff, 0x97], table));
+        let t = ds + usize::from(table);
+        put(t + 2 * lock, &routine.to_le_bytes());
+        put(t + 2 * (lock + 1), &(LOCKED_ON.0 as u16).to_le_bytes());
+        put(t + 30, &(SCAN.0 as u16).to_le_bytes());
+        let (arc, range) = (0x1000 + 0x100 * kind as u16, 0x300 + 0x10 * kind as u16);
+        let call = (KEEP_LOCK as u16).wrapping_sub(routine + 9);
+        let r = usize::from(routine);
+        put(
+            r,
+            &[op(&[0xb8], arc), op(&[0xbb], range), op(&[0xe8], call)].concat(),
+        );
+    }
 }
 
 /// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0xb180

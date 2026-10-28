@@ -1261,6 +1261,41 @@ Motion {
             last_step: 36,
         },
     },
+    sensing: Sensing {
+        scan_range: [
+            1280,
+            1536,
+            1792,
+        ],
+        lock_range: [
+            2048,
+            2304,
+            2560,
+        ],
+        ticks: [
+            KindTicks {
+                scan: 15,
+                lock: 5,
+                arc: 4096,
+                range: 768,
+                locked_on: 6,
+            },
+            KindTicks {
+                scan: 15,
+                lock: 6,
+                arc: 4352,
+                range: 784,
+                locked_on: 7,
+            },
+            KindTicks {
+                scan: 15,
+                lock: 5,
+                arc: 4608,
+                range: 800,
+                locked_on: 6,
+            },
+        ],
+    },
     walk: Walk {
         humanoid_legs: [
             [
