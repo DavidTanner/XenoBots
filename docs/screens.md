@@ -470,9 +470,9 @@ draw handler, which also starts colour records 0, 1, 16 and 17):
 | `0x52` | (14, 2, 70, 78) | The roster: five rows (rectangles from the table at `DS:0x5957`) of units from the base's list at +0x42, scrolled by +0x4c. A left press selects the row's unit (+0x3e), a right release opens its console |
 | `0x54`, `0x56` | (73, 13, 81, 20), (73, 21, 81, 28) | Sprite buttons: scroll the roster up and down |
 | `0x58` | (73, 29, 81, 69) | Sprite button: open the selected unit's console |
-| `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | Panels drawn from the selected unit and the clock (status, detail); not traced |
-| `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | Left arrow, value, right arrow: while an arrow is held, the base's +0x2d is 1, 3 or 5 for the row (presumably the camera; not traced) |
-| `0x04` x2 | (89, 284, 131, 318), (142, 254, 182, 306) | Groups of widgets (types `0x64`-`0x70`) shown in map mode only: zoom (+ and -, base +0x36, 0 to 6) and map overlays (bits of +0x32) |
+| `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | The clock (`1000:61a5`), the status counts (`5979`: the base's +0x20 to +0x27 as two digits each, font 2, colour 0x1d), the selected unit's detail (`5a0e`) and the reserve bar (`614e`, +0x38); T-127 |
+| `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | The power rows (NET, REP, CON): left arrow (sprite 0x3f8 plus the pressed look), bar (`6047`, `60a0`, `60f7`: the base's +0x39, +0x3a, +0x3b over 8), right arrow (0x408); while an arrow is held the base's +0x2d is 1, 3 or 5 (left) or 2, 4 or 6 (right) for the row; T-127 |
+| `0x04` x2 | (89, 284, 131, 318), (142, 254, 182, 306) | Groups: their members are the widgets after the list, up to a zero type (the group's state names its first and last); the map controls and the mode buttons (below, "The roster, map controls and mode buttons (T-103)") |
 | `0x5a`, `0x5c`, `0x5e` | (170, 29, 178, 66), 8 rows lower each | Sprite buttons: launch the selected unit from the base (`1000:6716`, only for a unit in the base: it is put at the base's position and marked in the field), recall it (sets its +0x23 bit 3), and end the mission (the quit flag `DS:0xe87e`) |
 
 A sprite button is drawn opaque with handle `base + [+0x40]`: a press or release on
@@ -532,8 +532,8 @@ most every 4 ticks for the map); modes O, S and C draw on the screen.
 Texts go through slot `0x594` (transparent). The map's and mode R's labels set no
 colour: they use whatever the last text left in the text state (`DS:0x644` +0x16).
 
-**The map** (`1fe6:6c05`): view mode 0xc, or 0xe with the grid overlay (+0x32 bit 4,
-step `1000:3760`: dots every 2 units; not drawn by the port yet); clear colour 0x43
+**The map** (`1fe6:6c05`): view mode 0xc, or 0xe with the GRID overlay (+0x32 bit 4,
+step `1000:3760`, not traced; not drawn by the port yet); clear colour 0x43
 (`DS:0x1457`), hill colour 0x42 (`DS:0x1458`); zoom `1 << +0x36`; heading 0; the
 camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left press on the map
 off a unit sets it and moves the centre to the pointer, `1000:57d2`; every stock base
@@ -573,6 +573,39 @@ The nodes, in order:
 | 13 to 15 | | Nothing |
 
 The pointer over the main view takes shape `DS:0x5a14[mode]` (3 in M and R; T-106).
+
+### The roster, map controls and mode buttons (T-103)
+
+**The roster** (`1000:57e3`): font 0 with an x step of 3 (`1fe6:4908`), then five rows
+from the base's +0x42 (`1fe6:6d87`), each 11 pixels below the last. A unit's row: its
+call sign at (0x18, 0x12), opaque (slot `0x598`), colour 0x0f on 0x42 or 0x0c for the
+selected unit (+0x3c); its status icon (`DS:0x5991` by +0xf9 bits 4 to 6: 0x430 to
+0x468) at (5, 0x10) and its kind icon (`DS:0x59a9` in the field, `0x59af` at its base,
++0xfd bit 2: 0x480 to 0x4a8) at (0x0e, 0x10), both keyed. An empty row: eight spaces
+(`DS:0x5a4f`) at x 6 and sprite 0x478 at both icons. A call sign (`1fe6:7fd5`) is six
+bytes from the string segment at the word `DS:0x7245[+0xdb]`; a new robot takes a free
+index 0 to 63 at random (`1000:dfaf`, the used flags at `DS:0x72c5`) and gives it back
+when destroyed.
+
+**The map controls** (the first group: `1000:5c59` to `5f4b`), live only in mode M; in
+other modes each shows its idle sprite and ignores the mouse. All draw opaque a pixel in
+from their corner:
+
+| Type | Place | Sprite (off, on / idle) | Mouse and keys |
+|---|---|---|---|
+| `0x64` | (91, 288) | 0x300 plus the pressed look / 0x310 | A press or release flips the shared look (+0x40); a left release zooms in (+0x36 up to 6), a right release out (down to 0). `=` and keypad + (`1000:5cc7`), `-` and keypad - (`5cd7`) |
+| `0x68` | (91, 303) | 0x318, 0x320 / 0x328 | Icons (+0x32 bit 1): a release, left or right (after `1000:dfd5`), flips it; key I |
+| `0x66` | (99, 288) | 0x330, 0x338 / 0x340 | UNITS (bit 0); key U |
+| `0x6a` | (107, 288) | 0x348, 0x350 / 0x358 | MINES (bit 2); key B |
+| `0x6c` | (115, 288) | 0x360, 0x368 / 0x370 | NET (bit 3, the relays); key N |
+| `0x6e` | (123, 288) | 0x378, 0x380 / 0x388 | GRID (bit 4); key G |
+
+**The mode buttons** (the second group, five type `0x70`, `1000:5efd`, `5f4b`): each
+one's mode is its state's second byte (0, 2, 4, 6, 8 top to bottom in every stock
+base). Its label `DS:0x5a0a[mode]` (0x3a0 to 0x3e0, the next sprite for the current
+mode; 0x3f0 for C while the base's +0xb4 says a message is new) at (+0x0e, +2), then
+the frame 0x390 plus the pressed look at its corner, both opaque. A press or release
+flips the look; a left release sets the mode (`ui_sitroom_set_view_mode`).
 
 ### Orders (T-043)
 
@@ -1149,6 +1182,13 @@ original.
   path overlays are not drawn, the log is the base's as loaded (the sim posts no
   messages), the rule's line routine (slot `0x558`) is not traced. Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
+- **Roster and controls** (`crates/xeno-app/src/mainview.rs`, T-103 part 2): as "The
+  roster, map controls and mode buttons (T-103)" above, from `xeno_formats::sitroom`
+  and the view's nested widgets (`views::View::nested`). Shortcuts: a robot's call sign
+  and repair state are the scenario's as loaded (robots made since show call sign 0);
+  the C button's new-message look is not shown (the sim posts no messages). Not yet:
+  the status, detail, reserve and clock panels and the power rows (T-127), and a left
+  press on the map to move its centre or select a unit (T-128).
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the

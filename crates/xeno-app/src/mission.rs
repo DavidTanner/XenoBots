@@ -64,6 +64,17 @@ mod handler {
     pub const PREVIOUS_SELECTED: u16 = 0x680c;
     /// Situation room: Ctrl+Alt+P, save the mission as a `.usg` (no unlock needed).
     pub const SAVE: u16 = 0xefd5;
+    /// Situation room, mode M only: = and keypad + zoom in, - and keypad - out; U, I,
+    /// B, N and G flip the map's overlay bits 0 to 4.
+    pub const ZOOM_IN: u16 = 0x5cc7;
+    pub const ZOOM_OUT: u16 = 0x5cd7;
+    pub const OVERLAYS: [(u16, u16); 5] = [
+        (0x5daa, 0x01),
+        (0x5d3e, 0x02),
+        (0x5e82, 0x04),
+        (0x5eee, 0x08),
+        (0x5e16, 0x10),
+    ];
     /// Situation room: the main view's modes, by key (O, S, M, R, C), and the mode each
     /// sets (`ui_sitroom_set_view_mode`).
     pub const MODES: [(u16, u8); 5] = [
@@ -350,6 +361,8 @@ enum Target {
     Corner,
     Roster(usize),
     Button(usize),
+    /// A map control or mode button: its index among the view's nested widgets.
+    Control(usize),
 }
 
 /// The mission's sim: running, with the run's random word, or parked without it.
@@ -790,14 +803,16 @@ impl Mission {
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
                 let mode = handler::MODES.iter().find(|&&(m, _)| m == h)?.1;
-                log::debug!("situation room: main view mode {mode}");
-                if mode == UNTINTED_MODE {
-                    log::debug!("situation room: the status view (S) is not drawn yet (T-126)");
-                }
-                self.mode = mode;
-                self.typed = 0;
-                self.tint = None;
-                self.dirty = true;
+                self.set_mode(mode);
+                None
+            }
+            (Viewed::Base, handler::ZOOM_IN | handler::ZOOM_OUT) => {
+                self.zoom(handler == handler::ZOOM_IN);
+                None
+            }
+            (Viewed::Base, h) if handler::OVERLAYS.iter().any(|&(o, _)| o == h) => {
+                let bit = handler::OVERLAYS.iter().find(|&&(o, _)| o == h)?.1;
+                self.flip_overlay(bit);
                 None
             }
             (Viewed::Base, handler::NEXT_SELECTED | handler::PREVIOUS_SELECTED) => {
@@ -816,6 +831,40 @@ impl Mission {
                 );
                 None
             }
+        }
+    }
+
+    /// The situation room's main view mode (`ui_sitroom_set_view_mode`).
+    fn set_mode(&mut self, mode: u8) {
+        log::debug!("situation room: main view mode {mode}");
+        if mode == UNTINTED_MODE {
+            log::debug!("situation room: the status view (S) is not drawn yet (T-126)");
+        }
+        self.mode = mode;
+        self.typed = 0;
+        self.tint = None;
+        self.dirty = true;
+    }
+
+    /// The map's zoom up or down a step, within 0 to 6, in mode M only.
+    fn zoom(&mut self, closer: bool) {
+        if self.mode == MAP_MODE {
+            // `1000:5cc7`, `5cd7`: up only below 6, down only above 0.
+            let z = self.map.zoom;
+            if closer && z < mainview::MAX_ZOOM {
+                self.map.zoom = z + 1;
+            } else if !closer && z > 0 {
+                self.map.zoom = z - 1;
+            }
+            self.dirty = true;
+        }
+    }
+
+    /// An overlay bit of the map flipped, in mode M only.
+    fn flip_overlay(&mut self, bit: u16) {
+        if self.mode == MAP_MODE {
+            self.map.overlays ^= bit;
+            self.dirty = true;
         }
     }
 
@@ -887,6 +936,16 @@ impl Mission {
             {
                 return Some(Target::Button(i));
             }
+            // The map controls answer only in mode M; the mode buttons always.
+            if let Some(i) = tables.nested.iter().position(|w| {
+                w.area.is_some_and(|a| a.contains(x, y))
+                    && (w.kind == mainview::MODE_BUTTON_TYPE
+                        || (self.mode == MAP_MODE
+                            && (w.kind == mainview::ZOOM_TYPE
+                                || mainview::toggle_bit(w.kind).is_some())))
+            }) {
+                return Some(Target::Control(i));
+            }
             return assets
                 .views
                 .roster_rows
@@ -919,6 +978,13 @@ impl Mission {
             }
             Target::UnitButton => self.unit_pressed = !self.unit_pressed,
             Target::Button(_) => self.button_look = !self.button_look,
+            // The zoom and the mode buttons share the buttons' pressed look.
+            Target::Control(i)
+                if mainview::toggle_bit(assets.views.situation.nested[i].kind).is_none() =>
+            {
+                self.button_look = !self.button_look;
+            }
+            Target::Control(_) => {}
             // The roster selects on the press (`ui_sitroom_roster_on_mouse`).
             Target::Roster(row) if button == MouseButton::Left => {
                 let slot = self.robots().get(self.roster_top + row).copied();
@@ -983,6 +1049,24 @@ impl Mission {
             Target::Button(i) => {
                 self.button_look = !self.button_look;
                 self.situation_button(assets.views.situation_buttons[i].kind)
+            }
+            Target::Control(i) => {
+                let widget = assets.views.situation.nested[i];
+                if let Some(bit) = mainview::toggle_bit(widget.kind) {
+                    self.flip_overlay(bit);
+                    return None;
+                }
+                self.button_look = !self.button_look;
+                match widget.kind {
+                    mainview::ZOOM_TYPE => self.zoom(!right),
+                    _ if !right => {
+                        if let Some(mode) = self.mode_of(&widget) {
+                            self.set_mode(mode);
+                        }
+                    }
+                    _ => {}
+                }
+                None
             }
         }
     }
@@ -1193,29 +1277,47 @@ impl Mission {
                 None => log::warn!("situation room: no sprite {handle:#x} in msprite1"),
             }
         }
-        // The roster's rows: the port's placeholder (unit number and program); the
-        // original's rows are drawn by untraced code (T-056).
-        let Some(font) = assets.fonts.get(&UNIT_FONT) else {
+        let (Some(room), Some(font)) = (&assets.sitroom, assets.fonts.get(&UNIT_FONT)) else {
             return;
         };
+        let sprite = |h| assets.sprite(h);
+        mainview::draw_controls(
+            fb,
+            &assets.views.situation.nested,
+            |w| self.mode_of(w),
+            &self.map,
+            self.mode,
+            self.button_look,
+            room,
+            sprite,
+        );
+        let bytes = mainview::roster_bytes(self.scenario.as_ref());
+        let world = self.world();
         let robots = self.robots();
-        for (row, area) in assets.views.roster_rows.iter().enumerate() {
-            let Some(&slot) = robots.get(self.roster_top + row) else {
-                break;
-            };
-            let program = self.book().get(slot).map_or(0, |r| r.orders.program);
-            let mut text = format!("{slot:>3} ").into_bytes();
-            text.extend(assets.programs.name(program));
-            let mut cursor = TextCursor::at(
-                i32::from(area.left) + 1,
-                i32::from(area.top) + 1,
-                PLACEHOLDER,
-            );
-            fb.draw_text(font, &mut cursor, &text, TextMode::Transparent);
-            if self.selected == Some(slot) {
-                frame(fb, *area, PLACEHOLDER);
-            }
-        }
+        let rows: Vec<_> = (0..mainview::ROSTER_ROWS)
+            .map(|row| {
+                let &slot = robots.get(self.roster_top + row)?;
+                let e = world.get(EntityId(slot));
+                let (call_sign, repair) = bytes[usize::from(slot) % bytes.len()];
+                Some(mainview::RosterUnit {
+                    call_sign,
+                    repair,
+                    kind: self.book().get(slot).map_or(0, |r| r.kind.index()),
+                    in_base: e.is_some_and(mainview::in_base),
+                    selected: self.selected == Some(slot),
+                })
+            })
+            .collect();
+        mainview::draw_roster(fb, &rows, room, font, sprite);
+    }
+
+    /// A mode button's mode: the second byte of its state in the base's view state.
+    fn mode_of(&self, widget: &views::Widget) -> Option<u8> {
+        let base = mainview::base_of(self.scenario.as_ref(), Side::Human)?;
+        base.view_state
+            .0
+            .get(usize::from(widget.state) + 1)
+            .copied()
     }
 
     fn draw_console(&self, fb: &mut Framebuffer, assets: &Assets, slot: u16) {
@@ -1331,12 +1433,6 @@ pub fn xor_frame(fb: &mut Framebuffer, area: Rect, value: u8) {
         if let Some(p) = fb.get(x, y) {
             set(fb, (x, y), p ^ value);
         }
-    }
-}
-
-fn frame(fb: &mut Framebuffer, area: Rect, colour: u8) {
-    for at in frame_pixels(area) {
-        set(fb, at, colour);
     }
 }
 
@@ -1707,6 +1803,65 @@ pub mod tests {
         assert_eq!(fb.get(13, 73), Some(1));
     }
 
+    /// The zoom, the overlay toggles and their keys act in mode M only; a mode
+    /// button's left release picks its mode, from the base's view state.
+    #[test]
+    fn the_map_controls_zoom_flip_overlays_and_pick_modes() {
+        let mut assets = test_assets();
+        let (u, i) = (handler::OVERLAYS[0], handler::OVERLAYS[1]);
+        assets.views.situation.keys.extend([
+            (0x0d, handler::ZOOM_IN),
+            (0x0c, handler::ZOOM_OUT),
+            (0x16, u.0),
+            (0x17, i.0),
+        ]);
+        let mut m = mission(&assets);
+        let state = &mut m.scenario.as_mut().unwrap().objects.as_mut().unwrap()[0].body;
+        let usg::Body::Base(base) = state else {
+            unreachable!()
+        };
+        (base.view_state.0[10], base.view_state.0[13]) = (8, 6);
+        m.set_mode(ORDERS_MODE);
+        m.map.zoom = 2;
+        let (zoom, overlays) = (m.map.zoom, m.map.overlays);
+        click(&mut m, &assets, (292, 95), LEFT);
+        click(&mut m, &assets, (292, 103), LEFT);
+        m.key(0x0d, &assets);
+        m.key(0x16, &assets);
+        assert_eq!((m.map.zoom, m.map.overlays), (zoom, overlays));
+        m.set_mode(MAP_MODE);
+        click(&mut m, &assets, (292, 95), LEFT);
+        assert_eq!(m.map.zoom, zoom + 1);
+        click(&mut m, &assets, (292, 95), RIGHT);
+        assert_eq!(m.map.zoom, zoom);
+        for _ in 0..10 {
+            m.key(0x0d, &assets);
+        }
+        assert_eq!(m.map.zoom, mainview::MAX_ZOOM);
+        m.key(0x0c, &assets);
+        assert_eq!(m.map.zoom, mainview::MAX_ZOOM - 1);
+        m.map.zoom = 0;
+        m.key(0x0c, &assets);
+        assert_eq!(m.map.zoom, 0);
+        m.map.zoom = zoom;
+        click(&mut m, &assets, (292, 103), RIGHT);
+        assert_eq!(m.map.overlays, overlays ^ u.1);
+        m.key(0x16, &assets);
+        m.key(0x17, &assets);
+        assert_eq!(m.map.overlays, overlays ^ i.1);
+        // The mode buttons: the press shows the shared pressed look, the release
+        // takes it back; a right release picks nothing.
+        m.mouse_down(LEFT, Some((260, 145)), &assets);
+        assert!(m.button_look);
+        m.mouse_up(LEFT, Some((260, 145)), &assets);
+        assert!(!m.button_look);
+        assert_eq!(m.mode, 8);
+        click(&mut m, &assets, (260, 153), RIGHT);
+        assert_eq!(m.mode, 8);
+        click(&mut m, &assets, (260, 153), LEFT);
+        assert_eq!(m.mode, 6);
+    }
+
     #[test]
     fn the_console_draws_the_program_and_its_pressed_look() {
         let mut assets = test_assets();
@@ -1814,12 +1969,22 @@ pub mod tests {
                 m.retrace();
             }
             assert!(m.typed > 0, "{name}");
-            let mut fb = Framebuffer::new(Size::MODE_13H);
-            let (w, h) = (area.right - area.left, area.bottom - area.top);
-            let rect =
-                xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
-            fb.fill_rect(rect, 255);
-            m.draw(&mut fb, &assets);
+            // What the typing adds to the screen, against the same view untyped (the
+            // roster and controls have those colours too).
+            let draw = |m: &Mission| {
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                let (w, h) = (area.right - area.left, area.bottom - area.top);
+                let rect =
+                    xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
+                fb.fill_rect(rect, 255);
+                m.draw(&mut fb, &assets);
+                fb
+            };
+            let fb = draw(&m);
+            let untyped = draw(&Mission {
+                typed: 0,
+                ..m.clone()
+            });
             let mut inked = 0;
             for (x, y) in pixels(Rect {
                 top: 0,
@@ -1827,7 +1992,9 @@ pub mod tests {
                 bottom: 200,
                 right: 320,
             }) {
-                if fb.get(x, y).is_some_and(|p| (0x1d..=0x1f).contains(&p)) {
+                if fb.get(x, y) != untyped.get(x, y)
+                    && fb.get(x, y).is_some_and(|p| (0x1d..=0x1f).contains(&p))
+                {
                     assert!(area.contains(x as u16, y as u16), "{name}: ({x}, {y})");
                     inked += 1;
                 }

@@ -30,6 +30,26 @@ pub(crate) const TIME_AT: usize = 0x16bcc;
 /// Mode R (`1000:5630`): `mov si, text` in the string segment, for a unit at its base.
 pub(crate) const AT_BASE_AT: usize = 0x5699;
 
+/// The roster's rows (`1fe6:6d87`): `mov ax, [bx + table]` for the status icons and
+/// the kind icons at the base and in the field, `mov bx, rect` for the icons' places,
+/// `mov si, text` for an empty row.
+pub(crate) const STATUS_ICONS_AT: usize = 0x16c2e;
+pub(crate) const BASE_ICONS_AT: usize = 0x16c45;
+pub(crate) const FIELD_ICONS_AT: usize = 0x16c4b;
+pub(crate) const STATUS_RECT_AT: usize = 0x16c32;
+pub(crate) const KIND_RECT_AT: usize = 0x16c4f;
+pub(crate) const EMPTY_ROW_AT: usize = 0x16c6c;
+/// `mov si, [bx + table]` in `1fe6:7fd5`: the call signs, by +0xdb.
+pub(crate) const CALL_SIGNS_AT: usize = 0x17e3d;
+/// `mov ax, [bx + table]` in the mode buttons' draw (`1000:5efd`): labels by mode.
+pub(crate) const MODE_LABELS_AT: usize = 0x5f05;
+
+/// The call signs' count and length.
+pub const CALL_SIGNS: usize = 64;
+pub const CALL_SIGN_LEN: usize = 6;
+/// The main view's modes, 0 to 8 by two.
+pub const MODES: usize = 5;
+
 /// The map's zooms, 0 to 6 (the zoom keys' range).
 pub const ZOOMS: usize = 7;
 /// How much of the string segment is kept for the messages.
@@ -54,6 +74,16 @@ pub struct SitRoom {
     pub time_digits: [usize; 2],
     /// Mode R's text for a unit at its base.
     pub at_base: Vec<u8>,
+    /// The roster's status icons (by +0xf9 bits 4 to 6) and kind icons at the base
+    /// and in the field; the icons' left edges (status, kind) and an empty row's text.
+    pub status_icons: [u16; 8],
+    pub kind_icons: [[u16; 3]; 2],
+    pub icon_lefts: [u16; 2],
+    pub empty_row: Vec<u8>,
+    /// The call signs: string segment offsets, by +0xdb.
+    pub call_signs: Vec<u16>,
+    /// The mode buttons' labels, by mode / 2 (the next sprite is the current mode's).
+    pub mode_labels: [u16; MODES],
     /// The string segment, from its start.
     pub strings: Vec<u8>,
 }
@@ -62,6 +92,17 @@ impl SitRoom {
     /// The NUL-terminated string at `offset` in the string segment.
     pub fn string(&self, offset: u16) -> &[u8] {
         let s = self.strings.get(usize::from(offset)..).unwrap_or_default();
+        &s[..s.iter().position(|&b| b == 0).unwrap_or(s.len())]
+    }
+
+    /// Call sign `index` (+0xdb): six bytes, `1fe6:7fd5` copies no more.
+    pub fn call_sign(&self, index: u8) -> &[u8] {
+        let at = self
+            .call_signs
+            .get(usize::from(index))
+            .map_or(usize::MAX, |&o| usize::from(o));
+        let s = self.strings.get(at..).unwrap_or_default();
+        let s = &s[..s.len().min(CALL_SIGN_LEN)];
         &s[..s.iter().position(|&b| b == 0).unwrap_or(s.len())]
     }
 
@@ -96,6 +137,11 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
     let names = at_ds(ZOOM_NAMES_AT, &[0x8b, 0xb7])?;
     let rule = at_ds(LOG_RULE_AT, &[0xbb])?;
     let time = operand(image, TIME_AT, &[0xbe])?;
+    let words = |table: usize, n: usize| -> Result<Vec<u16>, FormatError> {
+        (0..n).map(|i| word(image, table + 2 * i)).collect()
+    };
+    let table = |at| at_ds(at, &[0x8b, 0x87]);
+    let left = |at| -> Result<u16, FormatError> { word(image, at_ds(at, &[0xbb])? + 2) };
     let digit = |at| -> Result<usize, FormatError> {
         let d = operand(image, at, &[0xa3])?.wrapping_sub(time);
         (d < 8)
@@ -132,6 +178,23 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             image,
             strings + usize::from(operand(image, AT_BASE_AT, &[0xbe])?),
         )?,
+        status_icons: words(table(STATUS_ICONS_AT)?, 8)?
+            .try_into()
+            .unwrap_or_default(),
+        kind_icons: [
+            words(table(FIELD_ICONS_AT)?, 3)?
+                .try_into()
+                .unwrap_or_default(),
+            words(table(BASE_ICONS_AT)?, 3)?
+                .try_into()
+                .unwrap_or_default(),
+        ],
+        icon_lefts: [left(STATUS_RECT_AT)?, left(KIND_RECT_AT)?],
+        empty_row: string(image, at_ds(EMPTY_ROW_AT, &[0xbe])?)?,
+        call_signs: words(at_ds(CALL_SIGNS_AT, &[0x8b, 0xb7])?, CALL_SIGNS)?,
+        mode_labels: words(table(MODE_LABELS_AT)?, MODES)?
+            .try_into()
+            .unwrap_or_default(),
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
             .ok_or_else(|| invalid(strings, "no string segment"))?
@@ -188,6 +251,25 @@ pub(crate) mod tests {
         put(MINUTES_AT, &op(&[0xa3], 0x324));
         put(TIME_AT, &op(&[0xbe], 0x320));
         put(DS + 0x320, b"[00-00]\0");
+        put(STATUS_ICONS_AT, &op(&[0x8b, 0x87], 0x400));
+        put(FIELD_ICONS_AT, &op(&[0x8b, 0x87], 0x410));
+        put(BASE_ICONS_AT, &op(&[0x8b, 0x87], 0x416));
+        put(MODE_LABELS_AT, &op(&[0x8b, 0x87], 0x420));
+        for i in 0..21u16 {
+            put(
+                DS + 0x400 + 2 * usize::from(i),
+                &(0x100 + 8 * i).to_le_bytes(),
+            );
+        }
+        put(STATUS_RECT_AT, &op(&[0xbb], 0x440));
+        put(KIND_RECT_AT, &op(&[0xbb], 0x448));
+        put(DS + 0x442, &[5, 0]);
+        put(DS + 0x44a, &[14, 0]);
+        put(EMPTY_ROW_AT, &op(&[0xbe], 0x450));
+        put(DS + 0x450, b"  \0");
+        put(CALL_SIGNS_AT, &op(&[0x8b, 0xb7], 0x500));
+        put(DS + 0x502, &0x50u16.to_le_bytes());
+        put(STRINGS + 0x50, b"AB-123XYZ\0");
         put(AT_BASE_AT, &op(&[0xbe], 0x40));
         put(STRINGS + 0x40, b"HOME\0HELLO\0");
         image
@@ -201,6 +283,17 @@ pub(crate) mod tests {
         assert_eq!(room.time_of(9, 45), b"[09-45]");
         assert_eq!(room.string(0x45), b"HELLO");
         assert_eq!(room.string(0xffff), b"");
+        // Call sign 1 is six bytes; 0 points at the start of the segment (empty).
+        assert_eq!(room.call_sign(1), b"AB-123");
+        assert_eq!(room.call_sign(0), b"");
+        assert_eq!(room.call_sign(200), b"");
+        assert_eq!(room.status_icons[7], 0x138);
+        assert_eq!(
+            room.kind_icons,
+            [[0x140, 0x148, 0x150], [0x158, 0x160, 0x168]]
+        );
+        assert_eq!(room.mode_labels, [0x180, 0x188, 0x190, 0x198, 0x1a0]);
+        assert_eq!(room.icon_lefts, [5, 14]);
         insta::assert_debug_snapshot!(SitRoom {
             strings: Vec::new(),
             ..room
@@ -221,6 +314,14 @@ pub(crate) mod tests {
             MINUTES_AT + 2,
             TIME_AT,
             AT_BASE_AT,
+            STATUS_ICONS_AT,
+            BASE_ICONS_AT + 1,
+            FIELD_ICONS_AT,
+            STATUS_RECT_AT,
+            KIND_RECT_AT,
+            EMPTY_ROW_AT,
+            CALL_SIGNS_AT + 1,
+            MODE_LABELS_AT,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -252,5 +353,22 @@ pub(crate) mod tests {
         assert_eq!(room.time_digits, [2, 5]);
         assert_eq!(room.time_of(14, 7)[2..7], *b"14:07");
         assert!(room.at_base.starts_with(b"UNIT IS AT BASE"));
+        assert_eq!(room.status_icons[0], 0x430);
+        assert_eq!(
+            room.kind_icons,
+            [[0x480, 0x488, 0x490], [0x498, 0x4a0, 0x4a8]]
+        );
+        assert_eq!(room.icon_lefts, [5, 14]);
+        assert_eq!(room.mode_labels, [0x3a0, 0x3b0, 0x3c0, 0x3d0, 0x3e0]);
+        assert_eq!(room.empty_row, b"        ");
+        // Every call sign is six printable bytes (names like `EAGLE `).
+        for i in 0..CALL_SIGNS as u8 {
+            let sign = room.call_sign(i);
+            assert!(
+                sign.len() == CALL_SIGN_LEN
+                    && sign.iter().all(|&b| b == b' ' || b.is_ascii_graphic()),
+                "{i}: {sign:?}"
+            );
+        }
     }
 }

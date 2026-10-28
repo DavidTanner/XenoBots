@@ -96,6 +96,9 @@ pub struct Widget {
 pub struct View {
     /// The top-level widgets, in order.
     pub widgets: Vec<Widget>,
+    /// The widgets after them, up to a zero type: the members of the groups (type
+    /// 0x04, whose state names its first and last member by their offsets in the set).
+    pub nested: Vec<Widget>,
     /// Where the view's state block starts in the viewed object.
     pub state_offset: u16,
     /// (key word, handler offset in segment `1000`), searched in order.
@@ -105,6 +108,14 @@ pub struct View {
 impl View {
     pub fn find(&self, kind: u16) -> Option<&Widget> {
         self.widgets.iter().find(|w| w.kind == kind)
+    }
+
+    /// Every widget of `kind`, top-level or nested, in order.
+    pub fn all(&self, kind: u16) -> impl Iterator<Item = &Widget> {
+        self.widgets
+            .iter()
+            .chain(&self.nested)
+            .filter(move |w| w.kind == kind)
     }
 }
 
@@ -263,8 +274,17 @@ impl Exe<'_> {
         let end = operand(self.image, at + 10, &[0xba])?;
         let widgets = self.widgets(set, first, end)?;
         let keys = self.keys(&widgets)?;
+        let nested = (set + usize::from(end)..)
+            .step_by(WIDGET_SIZE)
+            .take(MAX_ENTRIES)
+            .map_while(|at| match word(self.image, at) {
+                Ok(0) | Err(_) => None,
+                Ok(_) => self.widgets(at, 0, WIDGET_SIZE as u16).ok()?.pop(),
+            })
+            .collect();
         Ok(View {
             widgets,
+            nested,
             state_offset,
             keys,
         })
@@ -549,6 +569,14 @@ mod tests {
         // situation room; 33, 38, 40 and 32 keys.
         let counts = |v: &View| (v.widgets.len(), v.keys.len());
         assert_eq!(counts(&views.humanoid), (27, 33));
+        // The situation room's two groups: the map controls and the mode buttons.
+        let nested: Vec<u16> = views.situation.nested.iter().map(|w| w.kind).collect();
+        assert_eq!(
+            nested,
+            [
+                0x64, 0x68, 0x66, 0x6a, 0x6c, 0x6e, 0x70, 0x70, 0x70, 0x70, 0x70
+            ]
+        );
         assert_eq!(counts(&views.scorpion), (37, 38));
         assert_eq!(counts(&views.scout), (39, 40));
         assert_eq!(counts(&views.situation), (30, 32));

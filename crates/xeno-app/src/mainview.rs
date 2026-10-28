@@ -8,6 +8,7 @@ use xeno_formats::maproom::HANDLE_STEP;
 use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
+use xeno_formats::views::Widget;
 use xeno_render::shape::fill_polygon;
 use xeno_render::view3d::{Camera, focal_zoomed};
 use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
@@ -16,6 +17,8 @@ use xeno_sim::{Damage, Entity, Position, State, World};
 
 use crate::scene::trig;
 
+/// The main view's map mode.
+const MAP_MODE: u8 = 4;
 /// The map's colours (`1fe6:6c05`): the background the clear step fills (`DS:0x1457`)
 /// and the hills (`DS:0x1458`). Short code constants, kept here.
 pub const MAP_BACKGROUND: u8 = 0x43;
@@ -62,6 +65,181 @@ const LOG_STEP: i32 = 0x0c;
 const LOG_NAME_X: i32 = 0x60;
 const LOG_TEXT_X: i32 = 0x9c;
 const LOG_TEXT_COLOUR: u8 = 0x13;
+
+/// The map controls (`1000:5c59` to `5f4b`), shown live in mode M only: the zoom
+/// button (0x300 plus the shared pressed look, 0x310 in other modes) and the overlay
+/// toggles (type, bit, sprite when off, the next when on, and other modes' sprite),
+/// all drawn opaque a pixel in from their corner. Short code constants, kept here.
+pub const ZOOM_TYPE: u16 = 0x64;
+const ZOOM_SPRITES: [u16; 2] = [0x300, 0x310];
+const TOGGLES: [(u16, u16, u16, u16); 5] = [
+    (0x66, Base::MAP_ROBOTS, 0x330, 0x340),
+    (0x68, Base::MAP_SPRITES, 0x318, 0x328),
+    (0x6a, Base::MAP_MINES, 0x348, 0x358),
+    (0x6c, Base::MAP_RELAYS, 0x360, 0x370),
+    (0x6e, Base::MAP_GRID, 0x378, 0x388),
+];
+/// The highest zoom.
+pub const MAX_ZOOM: u8 = 6;
+/// The mode buttons (`1000:5efd`): the mode's label at (+0xe, +2) and the button's
+/// frame, 0x390 plus the pressed look, at the corner.
+pub const MODE_BUTTON_TYPE: u16 = 0x70;
+const MODE_LABEL_AT: (i32, i32) = (0x0e, 2);
+const MODE_FRAME: u16 = 0x390;
+/// The roster's rows (`1000:57e3`, `1fe6:6d87`): font 0 with an x step of 3, the call
+/// sign at (0x18, 0x12) in 0x0f (0x0c selected) on 0x42, icons from y 0x10, a row
+/// every 11 pixels; an empty row's text at x 6 and the blank icon.
+const ROSTER_STEP_X: i32 = 3;
+const ROSTER_TEXT: (i32, i32) = (0x18, 0x12);
+const ROSTER_EMPTY_X: i32 = 6;
+const ROSTER_ICON_TOP: i32 = 0x10;
+const ROSTER_ROW: i32 = 0x0b;
+const ROSTER_COLOUR: u8 = 0x0f;
+const ROSTER_SELECTED: u8 = 0x0c;
+const ROSTER_BACKGROUND: u8 = 0x42;
+const BLANK_ICON: u16 = 0x478;
+pub const ROSTER_ROWS: usize = 5;
+
+/// The overlay bit a toggle's widget type flips.
+pub fn toggle_bit(kind: u16) -> Option<u16> {
+    TOGGLES.iter().find(|t| t.0 == kind).map(|t| t.1)
+}
+
+fn opaque(fb: &mut Framebuffer, sprite: Option<&Sprite>, x: i32, y: i32) {
+    if let Some(sprite) = sprite {
+        fb.blit_sprite(sprite, x, y, SpriteBlit::default());
+    }
+}
+
+/// The map controls and the mode buttons, from the view's nested widgets; `modes`
+/// gives each mode button's mode (its state's second byte).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_controls<'a>(
+    fb: &mut Framebuffer,
+    widgets: &[Widget],
+    modes: impl Fn(&Widget) -> Option<u8>,
+    map: &MapState,
+    mode: u8,
+    pressed: bool,
+    room: &SitRoom,
+    sprite: impl Fn(u16) -> Option<&'a Sprite>,
+) {
+    let live = mode == MAP_MODE;
+    let look = if pressed { HANDLE_STEP } else { 0 };
+    for w in widgets {
+        let Some(area) = w.area else { continue };
+        let (x, y) = (i32::from(area.left), i32::from(area.top));
+        let toggle = TOGGLES.iter().find(|t| t.0 == w.kind);
+        let handle = match (w.kind, toggle) {
+            (ZOOM_TYPE, _) if live => ZOOM_SPRITES[0] + look,
+            (ZOOM_TYPE, _) => ZOOM_SPRITES[1],
+            (_, Some(&(_, bit, off, _))) if live => {
+                off + if map.overlays & bit != 0 {
+                    HANDLE_STEP
+                } else {
+                    0
+                }
+            }
+            (_, Some(&(_, _, _, idle))) => idle,
+            (MODE_BUTTON_TYPE, _) => {
+                let Some(m) = modes(w) else { continue };
+                if let Some(&label) = room.mode_labels.get(usize::from(m / 2)) {
+                    let current = if m == mode { HANDLE_STEP } else { 0 };
+                    opaque(
+                        fb,
+                        sprite(label + current),
+                        x + MODE_LABEL_AT.0,
+                        y + MODE_LABEL_AT.1,
+                    );
+                }
+                opaque(fb, sprite(MODE_FRAME + look), x, y);
+                continue;
+            }
+            _ => continue,
+        };
+        opaque(fb, sprite(handle), x + 1, y + 1);
+    }
+}
+
+/// A roster row's unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RosterUnit {
+    /// +0xdb, +0xf9, the kind (0 to 2), at its base, the selected unit.
+    pub call_sign: u8,
+    pub repair: u8,
+    pub kind: usize,
+    pub in_base: bool,
+    pub selected: bool,
+}
+
+/// The roster's five rows: each unit's call sign, status icon and kind icon, or an
+/// empty row.
+pub fn draw_roster<'a>(
+    fb: &mut Framebuffer,
+    rows: &[Option<RosterUnit>],
+    room: &SitRoom,
+    font: &Font,
+    sprite: impl Fn(u16) -> Option<&'a Sprite>,
+) {
+    let keyed = SpriteBlit {
+        mode: BlitMode::Keyed,
+        ..SpriteBlit::default()
+    };
+    let [status_x, kind_x] = room.icon_lefts.map(i32::from);
+    for (i, row) in rows.iter().take(ROSTER_ROWS).enumerate() {
+        let (text_y, icon_y) = (
+            ROSTER_TEXT.1 + ROSTER_ROW * i as i32,
+            ROSTER_ICON_TOP + ROSTER_ROW * i as i32,
+        );
+        let (x, colour, text, icons) = match row {
+            Some(u) => (
+                ROSTER_TEXT.0,
+                if u.selected {
+                    ROSTER_SELECTED
+                } else {
+                    ROSTER_COLOUR
+                },
+                room.call_sign(u.call_sign),
+                [
+                    room.status_icons[usize::from(u.repair >> 4) & 7],
+                    room.kind_icons[usize::from(u.in_base)]
+                        .get(u.kind)
+                        .copied()
+                        .unwrap_or(BLANK_ICON),
+                ],
+            ),
+            None => (
+                ROSTER_EMPTY_X,
+                ROSTER_COLOUR,
+                room.empty_row.as_slice(),
+                [BLANK_ICON; 2],
+            ),
+        };
+        let mut cursor = TextCursor::at(x, text_y, colour);
+        cursor.background = ROSTER_BACKGROUND;
+        cursor.spacing_x = ROSTER_STEP_X - i32::from(font.header.step_x);
+        fb.draw_text(font, &mut cursor, text, TextMode::Opaque);
+        for (handle, x) in icons.into_iter().zip([status_x, kind_x]) {
+            if let Some(s) = sprite(handle) {
+                fb.blit_sprite(s, x, icon_y, keyed);
+            }
+        }
+    }
+}
+
+/// The roster's bytes the sim does not keep: +0xdb and +0xf9 by slot.
+/// shortcut: the scenario's as loaded; robots made since have call sign 0.
+pub fn roster_bytes(scenario: Option<&Scenario>) -> [(u8, u8); 240] {
+    let mut bytes = [(0, 0); 240];
+    for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
+        if let (Some(b), xeno_formats::usg::Body::Robot(r)) =
+            (bytes.get_mut(usize::from(o.slot)), &o.body)
+        {
+            *b = (r.call_sign, r.repair());
+        }
+    }
+    bytes
+}
 
 /// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -406,6 +584,12 @@ mod tests {
             time: b"[00-00]".to_vec(),
             time_digits: [1, 4],
             at_base: b"A".to_vec(),
+            status_icons: [0x100, 0x108, 0x110, 0x118, 0x120, 0x128, 0x130, 0x138],
+            kind_icons: [[0x140, 0x148, 0x150], [0x158, 0x160, 0x168]],
+            icon_lefts: [5, 14],
+            empty_row: b"A".to_vec(),
+            call_signs: vec![1; 64],
+            mode_labels: [0x170, 0x178, 0x180, 0x188, 0x190],
             strings: b"\0A\0".to_vec(),
         }
     }
@@ -707,5 +891,100 @@ mod tests {
         label_robot_view(&mut buffer, &e, &inputs);
         assert_eq!(buffer.get(0, 0), Some(0));
         assert!(buffer.pixels().contains(&LABEL_COLOUR));
+    }
+
+    fn roster_font() -> Font {
+        xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
+            .unwrap()
+            .remove(0)
+    }
+
+    #[test]
+    fn roster_rows_show_call_signs_and_icons() {
+        let (room, sprites) = (room(), sprites());
+        let unit = |selected, in_base| RosterUnit {
+            call_sign: 0,
+            repair: 0x25,
+            kind: 1,
+            in_base,
+            selected,
+        };
+        let rows = [Some(unit(false, false)), Some(unit(true, true)), None];
+        let mut fb = Framebuffer::new(xeno_render::Size::MODE_13H);
+        let sprite = |h: u16| sprites.get(usize::from(h / HANDLE_STEP));
+        draw_roster(&mut fb, &rows, &room, &roster_font(), sprite);
+        let at = |x, y| fb.get(x, y).unwrap();
+        // The status icon by bits 4 to 6 of +0xf9 (2: 0x110), the kind icon in the
+        // field (0x148) and at the base (0x160), each row 11 pixels down.
+        assert_eq!([at(5, 0x10), at(14, 0x10)], [colour(0x110), colour(0x148)]);
+        assert_eq!(at(14, 0x1b), colour(0x160));
+        // The call sign's first glyph (`A`, a bar) at (0x18, 0x12) in 0x0f on 0x42,
+        // the selected row's in 0x0c.
+        assert_eq!(
+            [at(0x18, 0x12), at(0x19, 0x13)],
+            [ROSTER_COLOUR, ROSTER_BACKGROUND]
+        );
+        assert_eq!(at(0x18, 0x12 + 11), ROSTER_SELECTED);
+        // An empty row: its text at x 6, no icons (the blank one is not in the bank).
+        assert_eq!(at(6, 0x12 + 22), ROSTER_COLOUR);
+        assert_eq!(at(5, 0x10 + 22), 0);
+    }
+
+    #[test]
+    fn map_controls_are_live_in_mode_m_only() {
+        use xeno_formats::maproom::Rect;
+        let room = room();
+        // A 3x3 sprite for every handle up to 0x400, coloured by its number.
+        let bank: Vec<Sprite> = (0..0x80u16)
+            .map(|n| Sprite {
+                pixels: vec![n as u8; 9],
+                ..sprites()[0].clone()
+            })
+            .collect();
+        let widget = |kind, state, top: u16, left: u16| Widget {
+            kind,
+            state,
+            area: Some(Rect {
+                top,
+                left,
+                bottom: top + 8,
+                right: left + 8,
+            }),
+        };
+        let widgets = [
+            widget(ZOOM_TYPE, 0, 0, 0),
+            widget(0x66, 1, 0, 10),
+            widget(0x68, 2, 0, 20),
+            widget(MODE_BUTTON_TYPE, 3, 0, 30),
+            widget(MODE_BUTTON_TYPE, 6, 0, 40),
+        ];
+        let map = MapState {
+            overlays: Base::MAP_ROBOTS,
+            ..MapState::default()
+        };
+        let sprite = |h: u16| bank.get(usize::from(h / HANDLE_STEP));
+        let draw = |mode, pressed| {
+            let mut fb = Framebuffer::new(xeno_render::Size::new(60, 20));
+            let modes = |w: &Widget| Some(if w.state == 3 { 4 } else { 8 });
+            draw_controls(&mut fb, &widgets, modes, &map, mode, pressed, &room, sprite);
+            fb
+        };
+        let c = |h: u16| (h / HANDLE_STEP) as u8;
+        let b = draw(MAP_MODE, true);
+        assert_eq!(b.get(1, 1), Some(c(0x308)), "the zoom, pressed");
+        assert_eq!(b.get(0, 0), Some(0), "a pixel in from the corner");
+        assert_eq!(b.get(11, 1), Some(c(0x338)), "UNITS on");
+        assert_eq!(b.get(21, 1), Some(c(0x318)), "icons off");
+        // A mode button: its label at (+0xe, +2), the next sprite for the current
+        // mode (M); then its frame at the corner, pressed.
+        assert_eq!(b.get(30 + 14, 2), Some(c(0x180 + 8)));
+        assert_eq!(b.get(40 + 14, 2), Some(c(0x190)));
+        assert_eq!(b.get(30, 0), Some(c(0x398)));
+        let b = draw(8, false);
+        assert_eq!(
+            [b.get(1, 1), b.get(11, 1)],
+            [Some(c(0x310)), Some(c(0x340))]
+        );
+        assert_eq!(b.get(40 + 14, 2), Some(c(0x190 + 8)));
     }
 }

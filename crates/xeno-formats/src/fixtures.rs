@@ -1208,6 +1208,16 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
         let end = 0x10 + 12 * list.len() as u16;
         put(set, &words(&[0x100, (set / 16) as u16]));
         put(set + 0x10, &list.concat());
+        // The situation room's group members: the zoom, a toggle and two mode buttons.
+        if kind == 3 {
+            let nested = [
+                widget(0x64, 7, [91, 288, 100, 303]),
+                widget(0x66, 8, [99, 288, 108, 319]),
+                widget(0x70, 9, [142, 254, 150, 306]),
+                widget(0x70, 12, [150, 254, 158, 306]),
+            ];
+            put(set + usize::from(end), &nested.concat());
+        }
         put(ds + 0x100 + 2 * usize::from(kind), &words(&[opener as u16]));
         put(
             opener,
