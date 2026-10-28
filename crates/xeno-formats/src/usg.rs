@@ -346,7 +346,14 @@ pub struct Robot {
     /// move, at or under a threshold in `xeno.exe` it goes at half speed. The name is
     /// a guess from that use.
     pub drive: u8,
-    pub unknown_52: Unknown<0x89>,
+    /// +0x52: the message panel's lines (bits 0 to 3, up to 5 after the first), a
+    /// line ended (bit 6) and a redraw from the top (bit 7); +0x53 the text's length;
+    /// +0x54 the messages waiting, string-segment offsets (0 for none); +0x5e the
+    /// text, NUL-terminated (`docs/screens.md`, "The message panel (T-104)").
+    pub panel: u8,
+    pub panel_length: u8,
+    pub panel_queue: [u16; 5],
+    pub panel_text: Unknown<0x7d>,
     /// +0xdb: the robot's call sign, an index into a 64-entry table of names in
     /// `xeno.exe` (`xeno_formats::sitroom`); a new robot draws a free one at random.
     pub call_sign: u8,

@@ -86,6 +86,27 @@ pub struct Motion {
     /// What damage does (`xeno_formats::damage`).
     pub damage: Damage,
     pub walk: Walk,
+    /// The string segment, where the scripts' messages are.
+    pub strings: Strings,
+}
+
+/// The string segment from its start to the image's end. The message panel's typing
+/// (`1fe6:826d`) reads it through the word at `DS:0x6fec`, which holds the same
+/// segment as `DS:0x60` in the stock build.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Strings(pub Vec<u8>);
+
+impl Strings {
+    /// The byte at `offset`; 0 past the end.
+    pub fn byte(&self, offset: u16) -> u8 {
+        self.0.get(usize::from(offset)).copied().unwrap_or(0)
+    }
+}
+
+impl std::fmt::Debug for Strings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Strings({} bytes)", self.0.len())
+    }
 }
 
 /// The leg frames of the walking animations that make footsteps, by step
@@ -195,6 +216,12 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
                 .try_into()
                 .expect("4 bytes"),
         },
+        strings: Strings(
+            image
+                .get(strings..)
+                .ok_or_else(|| invalid(strings, "no string segment"))?
+                .to_vec(),
+        ),
     })
 }
 
@@ -336,6 +363,8 @@ mod tests {
         assert_eq!(motion.script_speeds[4], [20, 35, -15]);
         assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
         assert_eq!(motion.walk.scout_crouch[3], 3);
+        assert_eq!(motion.strings.byte(0x201), 0x02);
+        assert_eq!(motion.strings.byte(0xffff), 0);
         insta::assert_debug_snapshot!(motion);
     }
 

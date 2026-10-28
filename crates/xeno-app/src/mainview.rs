@@ -565,7 +565,7 @@ pub fn base_of(scenario: Option<&Scenario>, side: Side) -> Option<&Base> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use xeno_formats::ban::SpriteHeader;
     use xeno_formats::usg::{Message, Point};
@@ -573,7 +573,7 @@ mod tests {
     use xeno_sim::{Components, EntityId, Fixed, Movement};
 
     /// Made-up tables: dots 0x30, 0x31, 0x32; small sprites from 0x10, large from 0x40.
-    fn room() -> SitRoom {
+    pub(crate) fn room() -> SitRoom {
         SitRoom {
             robot_dots: [0x30, 0x31, 0x32],
             robot_sprites: [[0x10, 0x20, 0x30], [0x40, 0x50, 0x60]],

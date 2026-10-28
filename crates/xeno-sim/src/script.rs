@@ -638,8 +638,10 @@ fn run(
                 set_flags(m, damaged, u16::from(!damaged).wrapping_neg(), false);
             }
         }
-        // shortcut: messages are shown by the consoles (T-104).
-        (0x74..=0x76, _) => {}
+        (0x74, &Operand::Word(text)) => m.panel.post(text),
+        // shortcut: the base's message log (0x75, and 0x76's too) and 0x76's copy to
+        // every robot of the side are T-129's; no stock script uses 0x76.
+        (0x75 | 0x76, _) => {}
         (0x77, &Operand::Byte(command)) => match command {
             4 => m.path |= Movement::NEXT,
             8 => m.path |= 0x10,

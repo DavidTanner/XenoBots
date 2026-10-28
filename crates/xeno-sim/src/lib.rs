@@ -9,6 +9,7 @@ pub mod hash;
 pub mod input;
 pub mod motion;
 pub mod orders;
+pub mod panel;
 pub mod random;
 pub mod rate;
 pub mod script;

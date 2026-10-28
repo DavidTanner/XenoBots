@@ -51,6 +51,18 @@ MissionViews {
                 state: 6,
                 area: None,
             },
+            Widget {
+                kind: 338,
+                state: 7,
+                area: Some(
+                    Rect {
+                        top: 7,
+                        left: 7,
+                        bottom: 36,
+                        right: 102,
+                    },
+                ),
+            },
         ],
         nested: [],
         state_offset: 256,
@@ -125,6 +137,18 @@ MissionViews {
                 state: 6,
                 area: None,
             },
+            Widget {
+                kind: 338,
+                state: 7,
+                area: Some(
+                    Rect {
+                        top: 7,
+                        left: 7,
+                        bottom: 36,
+                        right: 102,
+                    },
+                ),
+            },
         ],
         nested: [],
         state_offset: 257,
@@ -198,6 +222,18 @@ MissionViews {
                 kind: 324,
                 state: 6,
                 area: None,
+            },
+            Widget {
+                kind: 338,
+                state: 7,
+                area: Some(
+                    Rect {
+                        top: 7,
+                        left: 7,
+                        bottom: 36,
+                        right: 102,
+                    },
+                ),
             },
         ],
         nested: [],
@@ -412,4 +448,22 @@ MissionViews {
         279,
         191,
     ),
+    message_panel: MessageStyle {
+        font: 4,
+        colours: [
+            [
+                32,
+                48,
+            ],
+            [
+                33,
+                49,
+            ],
+            [
+                34,
+                50,
+            ],
+        ],
+        high: 63,
+    },
 }

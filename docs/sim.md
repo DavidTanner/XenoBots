@@ -335,7 +335,7 @@ return. Return (opcode 0x06) restores the pointer and the flags, clearing bit 5 
 | 0x71 | Look for enemies (sensing, `1000:d757`; time 30) |
 | 0x72 | Carry if the targeting computer is damaged (time 15) |
 | 0x73 | Carry unless the target is a kind 3 object (a base) (time 30) |
-| 0x74, 0x75, 0x76 | Show a message (a word: the text's number) in the message panel, or other panels |
+| 0x74, 0x75, 0x76 | Messages (a word: the text's string-segment offset): to the robot's message panel; to its side's base log; to the log and every robot of the side (`docs/screens.md`, "The message panel (T-104)") |
 | 0x77 | A path command, a byte (`order_run_path_command`, table `DS:0x7d14`): 4 ask for the next point (+0x2c bit 6), 8 set +0x2c bit 4, 10 step a point back and head for it; 0, 2 and 6 do nothing |
 | 0x78 to 0x7d | Weapons: their state as flags or pushed; fire (time 30) |
 | 0x7e to 0x83 | The relay net: walk a line of grid cells from the robot to its destination (state at +0x10a..+0x114), the cell as the point, whether a relay stands there, deploy one |
@@ -409,8 +409,9 @@ events dispatch to the header's or the tables' handlers.
 
 Shortcuts, each named in the code: an opcode not ported (sensing and object goals,
 T-112; the gear steps 0x51 and 0x52, T-105; weapons, T-114; the relay net, T-113)
-**halts the script on itself**, so a robot keeps its speed and heading; messages do
-nothing (T-104); the 64-tick object-goal
+**halts the script on itself**, so a robot keeps its speed and heading; opcode 0x74
+puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
+log and 0x76's copies are T-129); the 64-tick object-goal
 check is skipped (no object goals yet); the gear bytes are not kept; field opcodes
 read 0 at other offsets; return addresses are pushed as offsets from the script
 area, not the program table; the stagger starts at 0 each mission.
