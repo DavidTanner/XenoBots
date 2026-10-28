@@ -1,7 +1,7 @@
 //! The robots' orders (`docs/screens.md`, "Orders"): the program each was given, the
-//! one it runs, and whether its pilot drives it by hand. All three are in a `.usg`
+//! one it runs, and whether the program or its pilot drives it. All three are in a `.usg`
 //! file's `DCBS` objects (`docs/formats/usg.md`, `usg::Robot`): the program given at
-//! +0x2e, the one running at +0x30 and the manual switch in bit 7 of +0x23.
+//! +0x2e, the one running at +0x30 and the program bit (it drives) in bit 7 of +0x23.
 //!
 //! [`OrderBook`] is mission state the player changes, so it lives in the sim. The
 //! program table it consults is game data read from the user's `xeno.exe`, so
@@ -25,17 +25,19 @@ pub struct Orders {
     /// The console shows this one, and the next and previous programs are counted from
     /// it.
     pub program: u8,
-    /// Its pilot drives it; the program waits.
-    pub manual: bool,
+    /// +0x23 bit 7: the program drives (its script steps every tick); clear, the pilot
+    /// drives and the script waits.
+    pub program_drives: bool,
 }
 
 impl Orders {
-    /// Program `program`, just given, in automatic.
+    /// Program `program`, just given, with the pilot driving: the panel and F4 call
+    /// `order_switch_to_manual` before picking it.
     pub fn given(program: u8) -> Orders {
         Orders {
             ordered: program,
             program,
-            manual: false,
+            program_drives: false,
         }
     }
 
@@ -46,7 +48,7 @@ impl Orders {
         Some(Orders {
             ordered: robot.program_given,
             program: robot.program_running,
-            manual: robot.mode & usg::Robot::MANUAL != 0,
+            program_drives: robot.mode & usg::Robot::PROGRAM != 0,
         })
     }
 }
@@ -75,7 +77,7 @@ pub struct OrderBook {
 
 impl OrderBook {
     /// The robots of `scenario` with their orders as loading leaves them: the saved
-    /// program given and manual switch, and the program given running (the loader
+    /// program given and program bit, and the program given running (the loader
     /// gives each robot its program anew, `docs/formats/usg.md`, "Loading"). Robots
     /// without the stock layout are left out.
     pub fn from_scenario(scenario: &Scenario) -> OrderBook {
@@ -156,7 +158,7 @@ impl OrderBook {
     pub fn set_program(&mut self, slot: u16, program: u8) -> Option<Change> {
         self.change(slot, |r| {
             Some(Orders {
-                manual: r.orders.manual,
+                program_drives: r.orders.program_drives,
                 ..Orders::given(program)
             })
         })
@@ -173,8 +175,13 @@ impl OrderBook {
     }
 
     /// Hands the robot to its pilot or back to its program (F3, F2).
-    pub fn set_manual(&mut self, slot: u16, manual: bool) -> Option<Change> {
-        self.change(slot, |r| Some(Orders { manual, ..r.orders }))
+    pub fn set_program_drives(&mut self, slot: u16, program_drives: bool) -> Option<Change> {
+        self.change(slot, |r| {
+            Some(Orders {
+                program_drives,
+                ..r.orders
+            })
+        })
     }
 }
 
@@ -185,12 +192,12 @@ impl StateHash for OrderBook {
             let Orders {
                 ordered,
                 program,
-                manual,
+                program_drives,
             } = robot.orders;
             h.u16(slot);
             h.u8(robot.kind.index() as u8);
             h.u8(side_code(robot.side));
-            h.bytes(&[ordered, program, u8::from(manual)]);
+            h.bytes(&[ordered, program, u8::from(program_drives)]);
         }
     }
 }
@@ -213,7 +220,7 @@ mod tests {
         let programs = programs();
         let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
         let mut book = OrderBook::from_scenario(&scenario);
-        // Slots 2 (humanoid, program 1, manual), 5 (scorpion, program 2) and 7 (scout,
+        // Slots 2 (humanoid, program 1, the program driving), 5 (scorpion, program 2) and 7 (scout,
         // alien); the base and the relay are not robots.
         let slots: Vec<_> = book.side(Side::Human).map(|(s, _)| s).collect();
         assert_eq!(slots, [2, 5]);
@@ -222,7 +229,7 @@ mod tests {
             Orders {
                 ordered: 1,
                 program: 1,
-                manual: true
+                program_drives: true
             }
         );
         // A robot saved running a state starts on the program it was given.
@@ -240,8 +247,17 @@ mod tests {
         assert_eq!(change.after, Orders::given(2));
         assert_eq!(book.select_next(5, &programs).unwrap().after.program, 3);
         assert_eq!(book.select_previous(5, &programs).unwrap().after.program, 2);
-        assert!(book.set_manual(5, true).unwrap().after.manual);
-        assert_eq!(book.set_manual(5, true), None, "no change, no report");
+        assert!(
+            book.set_program_drives(5, true)
+                .unwrap()
+                .after
+                .program_drives
+        );
+        assert_eq!(
+            book.set_program_drives(5, true),
+            None,
+            "no change, no report"
+        );
         // Other robots keep theirs; unknown slots change nothing.
         assert_eq!(book.get(7).unwrap().orders.program, 2);
         assert_eq!(book.select_next(99, &programs), None);
@@ -253,7 +269,7 @@ mod tests {
             h.finish()
         };
         let before = hash(&book);
-        book.set_manual(2, true);
+        book.set_program_drives(2, true);
         assert_ne!(hash(&book), before);
     }
 

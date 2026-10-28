@@ -218,7 +218,7 @@ impl Sim {
             },
         );
         let orders = Orders {
-            manual: true,
+            program_drives: true,
             ..Orders::given(NEW_PROGRAM)
         };
         self.world.orders.insert(
@@ -436,7 +436,7 @@ mod tests {
         );
         // In the world: its side's unit, with orders, the sign taken.
         assert_eq!(sim.world.units(Side::Alien).last(), Some(&EntityId(1)));
-        assert!(sim.world.orders.get(1).unwrap().orders.manual);
+        assert!(sim.world.orders.get(1).unwrap().orders.program_drives);
         assert_eq!(sim.world.call_signs, 1 << sign);
         let e = sim.world.get(EntityId(1)).unwrap();
         assert_eq!(

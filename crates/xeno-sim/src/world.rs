@@ -177,7 +177,7 @@ impl Movement {
         Movement {
             tick: r.tick,
             velocity: (r.velocity_x, r.velocity_y),
-            mode: r.mode & !usg::Robot::MANUAL,
+            mode: r.mode & !usg::Robot::PROGRAM,
             speed: r.speed,
             target_speed: r.target_speed,
             target_heading: r.target_heading,

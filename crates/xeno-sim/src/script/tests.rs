@@ -100,7 +100,7 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
             kind: RobotKind::Humanoid,
             side: Side::Alien,
             orders: Orders {
-                manual: true,
+                program_drives: true,
                 ..Orders::given(8)
             },
         },
@@ -152,7 +152,7 @@ fn an_opcode_waits_its_time_and_only_the_program_steps_the_script() {
     assert_eq!(m(&world).script.pointer, 0x102, "halted on itself");
     // With the pilot driving, the script stands still.
     let (mut world, tables) = setup(&[0x50, 0x55]);
-    world.orders.set_manual(1, false);
+    world.orders.set_program_drives(1, false);
     steps(&mut world, &tables, 5);
     assert_eq!(m(&world).script.pointer, 0x100);
 }
@@ -228,7 +228,7 @@ fn an_event_runs_the_program_s_handler_and_returns() {
 fn the_program_taking_over_posts_its_event() {
     let (mut world, tables) = setup(&[0x1f, 0x0a]);
     let events = steps(&mut world, &tables, 1);
-    assert!(!world.orders.get(1).unwrap().orders.manual);
+    assert!(!world.orders.get(1).unwrap().orders.program_drives);
     assert!(matches!(events[..], [Event::Program(_)]));
     assert_eq!(m(&world).script.events, 1 << EVENT_PILOT);
 }

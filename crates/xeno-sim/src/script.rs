@@ -76,8 +76,7 @@ fn restart(world: &mut World, id: EntityId, program: u8, tables: &Tables) {
 /// The program (`true`) or the pilot takes robot `id` over (`order_switch_to_*`):
 /// with a change, the turn keys are released (to the program) and its event posted.
 pub fn switch(world: &mut World, id: EntityId, program: bool, events: &mut Vec<Event>) {
-    // `Orders::manual` is +0x23 bit 7, set when the program drives (T-111 renames it).
-    let Some(change) = world.orders.set_manual(id.0, program) else {
+    let Some(change) = world.orders.set_program_drives(id.0, program) else {
         return;
     };
     events.push(Event::Program(change));
@@ -95,7 +94,10 @@ pub fn post(m: &mut Movement, n: u8) {
 }
 
 fn program_drives(world: &World, id: EntityId) -> bool {
-    world.orders.get(id.0).is_some_and(|r| r.orders.manual)
+    world
+        .orders
+        .get(id.0)
+        .is_some_and(|r| r.orders.program_drives)
 }
 
 fn running(world: &World, id: EntityId) -> u8 {
@@ -276,7 +278,7 @@ fn field(world: &World, id: EntityId, at: u8) -> u8 {
 
 fn set_field(world: &mut World, id: EntityId, at: u8, v: u8) {
     if at == 0x23 {
-        world.orders.set_manual(id.0, v & 0x80 != 0);
+        world.orders.set_program_drives(id.0, v & 0x80 != 0);
     }
     let Some(m) = movement(world, id) else {
         return;

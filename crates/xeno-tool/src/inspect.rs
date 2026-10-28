@@ -790,8 +790,8 @@ fn usg_details(bytes: &[u8]) -> Details {
                 "program {} running {}{}, helm {}, power {}, damage bits {:#04x} {:#04x} {:#04x}",
                 r.program_given,
                 r.program_running,
-                if r.mode & usg::Robot::MANUAL != 0 {
-                    " manual"
+                if r.mode & usg::Robot::PROGRAM != 0 {
+                    ", program drives"
                 } else {
                     ""
                 },

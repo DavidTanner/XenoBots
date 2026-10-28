@@ -206,13 +206,13 @@ impl Screen {
                 "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end; Ctrl+W/L destroy alien/own base, Ctrl+C campaign"
             }
             Mission(View::Humanoid) => {
-                "Mission, humanoid console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
+                "Mission, humanoid console: click program (L next, R previous), F4 next, F2 pilot, F3 program, Tab unit, ESC back"
             }
             Mission(View::Scorpion) => {
-                "Mission, scorpion console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
+                "Mission, scorpion console: click program (L next, R previous), F4 next, F2 pilot, F3 program, Tab unit, ESC back"
             }
             Mission(View::Scout) => {
-                "Mission, scout console: click program (L next, R previous), F4 next, F2 auto, F3 manual, Tab unit, ESC back"
+                "Mission, scout console: click program (L next, R previous), F4 next, F2 pilot, F3 program, Tab unit, ESC back"
             }
             Cutscene(Ending::Won) => "Mission won: any key but P skips, P pauses",
             Cutscene(Ending::Lost) => "Mission lost: any key but P skips, P pauses",
@@ -2214,7 +2214,7 @@ pub(crate) mod tests {
                 screens.retrace(&[InputEvent::MouseUp { button }], &mut fb);
             }
             let after = screens.mission().book().get(slot).unwrap().orders;
-            assert!(!after.manual, "{view:?}");
+            assert!(!after.program_drives, "{view:?}");
             assert_ne!(after.program, before.program, "{view:?}");
             // ESC to the situation room and back with Space keeps them.
             for code in [0x01, 0x39] {
