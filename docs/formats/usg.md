@@ -428,7 +428,12 @@ The game shows it in one place only: the situation room's main view in its order
 mode (key O, mode 0 in the base's +0x37), which types it one byte per pass from (96,
 30) in font 4, CR LF taken as the font's control codes, until a NUL or 0x1a, with no
 wrapping or paging (`docs/screens.md`, "The briefing (T-044)"). The base's +0x34 is the
-typing position, and +0x37 the mode the mission starts in.
+typing position, and +0x37 the mode the mission starts in. The other main view modes
+read more of the base (`usg::Base`, T-103): +0x32 the map's overlay bits, +0x36 its
+zoom, +0x4f its centre (16.16 x and y) and +0x59 seven 13-byte log messages (name,
+hour, minute, two unknown bytes, a string-segment text offset); stock bases save their
+logs, with the texts of the build that wrote them (`docs/screens.md`, "The situation
+room's main view (T-103)").
 
 ### `BGND` (64 bytes): sky picture
 

@@ -334,7 +334,8 @@ are shared with the mission's 3D view (T-101), which still needs the projection 
 ## Not traced here
 
 - The ground's `GROUND.BIN` (`1000:435c`, drawn by `1fe6:67d3`; not in a stock
-  install); the map marks (types 0xa, 0xc, 0xe) and the map table (T-103).
+  install). The map marks (types 0xa, 0xc, 0xe, 0x12) and the map table are in
+  `docs/screens.md`, "The situation room's main view (T-103)".
 - The second display's extra steps (`1000:4164`, slot `0x5f0`) and the static (T-104).
 - Explosions' height: the end script lowers each by `random & 0x7ff` (`docs/sim.md`,
   "The mission's end"); with the model height that gives its z, which the sim does

@@ -1,7 +1,9 @@
 //! A mission's views (T-043): the situation room, the view of the player's base, and
 //! the console of each robot, as `ui_open_view_of_object` and their widgets run them
 //! (`docs/screens.md`, "The mission's views", "Orders"). A console's main view is the
-//! viewed robot's 3D view (T-101, [`crate::scene`]); what else the running mission
+//! viewed robot's 3D view (T-101, [`crate::scene`]), and the situation room's main
+//! view draws its map, the selected unit's view and the message log in modes M, R and
+//! C (T-103, [`crate::mainview`]); what else the running mission
 //! would draw (scanners, instruments, the roster's contents) is a labelled
 //! placeholder; switching views and setting
 //! orders work. So does the briefing (T-044): the scenario's `ORDR` text, typed into the
@@ -25,13 +27,14 @@ use xeno_formats::ban::{self, Sprite};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::orders;
+use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{self, Scenario, Side};
 use xeno_formats::view3d::{self, View3d};
 use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MissionViews, PROGRAM_PANEL_TYPE, SITUATION_CORNER_TYPE,
     TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, lzexe, map, mgavideo, motion};
+use xeno_formats::{editor, lzexe, map, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Random, Sim, World};
@@ -39,6 +42,7 @@ use xeno_sim::{EntityId, Parked, Random, Sim, World};
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, MouseButton};
+use crate::mainview::{self, MapState};
 use crate::maproom::{Campaign, scenario_file};
 use crate::screens::View;
 use crate::{review, scene};
@@ -85,6 +89,11 @@ const ORDERS_CURSOR: (i32, i32) = (96, 30);
 /// The main view's mode 2 (S), whose routine (`1fe6:704a`) sets `DS:0x7d4d`: no
 /// time-of-day tint while it is shown.
 const UNTINTED_MODE: u8 = 2;
+/// The main view's modes 4 (M, the map), 6 (R, the selected unit's view) and 8 (C,
+/// the message log).
+const MAP_MODE: u8 = 4;
+const ROBOT_VIEW_MODE: u8 = 6;
+const LOG_MODE: u8 = 8;
 /// `mgavideo.dvr`'s blend records over colours 49..=63 and 128..=252 that
 /// `pal_tint_for_time_of_day` (`1000:ed70`) starts.
 pub const TINT_RECORDS: [u8; 2] = [5, 6];
@@ -142,6 +151,12 @@ pub struct Assets {
     pub models: Vec<Option<LoadedModel>>,
     /// Each scenario's sky strip, by file name; none is the flat sky.
     pub skies: BTreeMap<String, Sky>,
+    /// The situation room's main view tables (T-103), if the user's `xeno.exe` has
+    /// them where the port reads them; without them modes M, R and C keep the
+    /// placeholder.
+    pub sitroom: Option<SitRoom>,
+    /// `msprite0`, the map's sprites, from handle 0.
+    pub map_sprites: Vec<Sprite>,
 }
 
 /// The names the port saves under until it has the original's file dialogs (T-110):
@@ -164,18 +179,20 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
     let training = views::read_training(&exe).map_err(|e| no("training menu", e))?;
     let programs = orders::read(&exe).map_err(|e| no("program table", e))?;
     let motion = motion::read(&exe).map_err(|e| no("movement tables", e))?;
-    let sprites = ban::parse_sprites(&read("msprite1.b@n")?)
-        .map_err(|e| format!("msprite1.b@n: {e}"))?
-        .sprites;
+    let bank = |name: &str| {
+        ban::parse_sprites(&read(name)?)
+            .map(|b| b.sprites)
+            .map_err(|e| format!("{name}: {e}"))
+    };
+    let sprites = bank("msprite1.b@n")?;
     let video =
         mgavideo::parse(&read("mgavideo.dvr")?).map_err(|e| format!("mgavideo.dvr: {e}"))?;
     let mut fonts = BTreeMap::new();
-    for id in views
-        .program_panel
-        .iter()
-        .map(|s| s.font)
-        .chain([UNIT_FONT, ORDERS_FONT])
-    {
+    for id in views.program_panel.iter().map(|s| s.font).chain([
+        UNIT_FONT,
+        ORDERS_FONT,
+        mainview::LOG_FONT,
+    ]) {
         let font = video
             .font(id)
             .ok_or(format!("mgavideo.dvr: no font {id}"))?;
@@ -221,6 +238,14 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .ok(),
         models: scene::load_models(files),
         skies,
+        sitroom: sitroom::read(&exe)
+            .inspect_err(|e| {
+                log::warn!("xeno.exe: no situation room tables this port can read: {e}")
+            })
+            .ok(),
+        map_sprites: bank("msprite0.b@n")
+            .inspect_err(|e| log::warn!("situation room: no map sprites: {e}"))
+            .unwrap_or_default(),
     })
 }
 
@@ -368,6 +393,8 @@ pub struct Mission {
     dirty: bool,
     /// The tint's last weight (`DS:0x7d4c`); none (0xff) restarts it.
     tint: Option<u8>,
+    /// What the situation room's map shows (base +0x32, +0x36, +0x4f).
+    map: MapState,
     /// The scenario as loaded, which the editor's keys change and Ctrl+Alt+P saves
     /// (and a save writes; T-116 for saving the running sim's world).
     scenario: Option<Scenario>,
@@ -389,15 +416,10 @@ impl Mission {
         let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
         mission.scenario = Some(scenario.clone());
-        // The mission starts in the mode saved in the player's base.
-        let base = scenario
-            .objects
-            .iter()
-            .flatten()
-            .find(|o| o.kind == usg::ObjectKind::Base && o.side() == Side::Human);
-        mission.mode = base
-            .and_then(|o| o.base())
-            .map_or(ORDERS_MODE, |b| b.view_mode);
+        // The mission starts in the mode and map saved in the player's base.
+        let base = mainview::base_of(Some(scenario), Side::Human);
+        mission.mode = base.map_or(ORDERS_MODE, |b| b.view_mode);
+        mission.map = base.map(MapState::of).unwrap_or_default();
         log::debug!(
             "mission: the situation room starts in view mode {} ({} briefing bytes)",
             mission.mode,
@@ -429,6 +451,7 @@ impl Mission {
             capture: None,
             dirty: true,
             tint: None,
+            map: MapState::default(),
             scenario: None,
             editor: Editor::default(),
         };
@@ -768,8 +791,8 @@ impl Mission {
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
                 let mode = handler::MODES.iter().find(|&&(m, _)| m == h)?.1;
                 log::debug!("situation room: main view mode {mode}");
-                if mode != ORDERS_MODE {
-                    log::debug!("situation room: mode {mode} needs the running mission (T-056)");
+                if mode == UNTINTED_MODE {
+                    log::debug!("situation room: the status view (S) is not drawn yet (T-126)");
                 }
                 self.mode = mode;
                 self.typed = 0;
@@ -1009,7 +1032,13 @@ impl Mission {
             if colour == 255 && self.draw_view(fb, assets) {
                 continue;
             }
-            hatch(fb, colour, font, "T-056");
+            // The status view (S) is T-126; the consoles' instruments T-104.
+            let task = if view == View::SitRoom {
+                "T-126"
+            } else {
+                "T-056"
+            };
+            hatch(fb, colour, font, task);
         }
         match self.viewed {
             Viewed::Base => self.draw_situation(fb, assets),
@@ -1017,35 +1046,115 @@ impl Mission {
         }
     }
 
-    /// A console's main view (T-101): the viewed robot's 3D view, drawn in a buffer the
-    /// size of the colour-255 region and copied through it; `false` (nothing drawn) in
-    /// the situation room, without the 3D tables or when the robot is gone.
+    /// The colour-255 region's view, drawn in a buffer the size of the region and
+    /// copied through it: a console's 3D view (T-101), or the situation room's main
+    /// view in modes M, R and C (T-103, [`mainview`]). `false` (nothing drawn) without
+    /// the tables, when the robot is gone, and in the other modes.
     fn draw_view(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
-        let (Viewed::Robot(slot), Some(view)) = (self.viewed, &assets.view3d) else {
+        let Some(view) = &assets.view3d else {
             return false;
         };
         let Some((left, top, width, height)) = review::region(fb) else {
             return false;
         };
+        let terrain = self
+            .scenario
+            .as_ref()
+            .and_then(|s| s.terrain.as_ref())
+            .map_or(&[][..], |t| &t.features);
+        let robot_view = |buffer: &mut Framebuffer, slot: u16| {
+            scene::draw(
+                buffer,
+                self.world(),
+                EntityId(slot),
+                view,
+                &assets.motion,
+                &scene::heights(self.scenario.as_ref()),
+                terrain,
+                &assets.models,
+                assets.skies.get(&self.file),
+            )
+        };
         let mut buffer = Framebuffer::new(Size::new(width, height));
-        let drawn = scene::draw(
-            &mut buffer,
-            self.world(),
-            EntityId(slot),
-            view,
-            &assets.motion,
-            &scene::heights(self.scenario.as_ref()),
-            self.scenario
-                .as_ref()
-                .and_then(|s| s.terrain.as_ref())
-                .map_or(&[], |t| &t.features),
-            &assets.models,
-            assets.skies.get(&self.file),
-        );
+        let drawn = match (self.viewed, self.mode, &assets.sitroom) {
+            (Viewed::Robot(slot), _, _) => robot_view(&mut buffer, slot),
+            (Viewed::Base, MAP_MODE | ROBOT_VIEW_MODE | LOG_MODE, Some(room)) => {
+                let inputs = mainview::Inputs {
+                    room,
+                    view,
+                    sprites: &assets.map_sprites,
+                    font: assets.fonts.get(&UNIT_FONT),
+                };
+                let world = self.world();
+                let selected = self.selected.and_then(|s| world.get(EntityId(s)));
+                match self.mode {
+                    MAP_MODE => {
+                        let base = world
+                            .iter()
+                            .find(|(_, e)| e.kind == usg::ObjectKind::Base && e.side == Side::Human)
+                            .map(|(_, e)| e.position)
+                            .unwrap_or_default();
+                        let camera =
+                            mainview::camera(base, selected, &self.map, view, &assets.motion);
+                        let flags = mainview::flags(self.scenario.as_ref());
+                        mainview::draw_map(
+                            &mut buffer,
+                            world,
+                            &camera,
+                            &self.map,
+                            terrain,
+                            &flags,
+                            selected,
+                            &inputs,
+                        );
+                        true
+                    }
+                    ROBOT_VIEW_MODE => match (self.selected, selected) {
+                        (Some(slot), Some(e)) if robot_view(&mut buffer, slot) => {
+                            mainview::label_robot_view(&mut buffer, e, &inputs);
+                            true
+                        }
+                        // `1000:55f6`: no unit, the view is cleared to 0.
+                        _ => {
+                            recolour(fb, self.main_view(assets), 255, 0);
+                            return true;
+                        }
+                    },
+                    _ => {
+                        recolour(fb, self.main_view(assets), 255, mainview::LOG_CLEAR);
+                        let base = mainview::base_of(self.scenario.as_ref(), Side::Human);
+                        let fonts = (
+                            assets.fonts.get(&UNIT_FONT),
+                            assets.fonts.get(&mainview::LOG_FONT),
+                        );
+                        if let (Some(base), (Some(heading), Some(rows))) = (base, fonts) {
+                            mainview::draw_log(fb, base, room, heading, rows);
+                        }
+                        return true;
+                    }
+                }
+            }
+            _ => false,
+        };
         if drawn {
             review::copy_through(fb, &buffer, left, top);
         }
         drawn
+    }
+
+    /// The situation room's main view (widget type 0x50).
+    fn main_view(&self, assets: &Assets) -> Rect {
+        assets
+            .views
+            .situation
+            .find(MAIN_VIEW_TYPE)
+            .and_then(|w| w.area)
+            .unwrap_or(Rect {
+                top: 0,
+                left: 0,
+                bottom: 0,
+                right: 0,
+            })
     }
 
     /// The orders mode: the main view's colour-255 pixels cleared to 0x10 (slot `0x5b4`,
@@ -1322,6 +1431,8 @@ pub mod tests {
             view3d: None,
             models: Vec::new(),
             skies: BTreeMap::new(),
+            sitroom: None,
+            map_sprites: Vec::new(),
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -1722,6 +1833,51 @@ pub mod tests {
                 }
             }
             assert!(inked > 100, "{name}: {inked} pixels inked");
+        }
+    }
+
+    /// Modes M, R and C fill the whole main view in every stock scenario: the map's
+    /// background, the robot's view, the log's clear colour.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_every_main_view_mode_fills_the_view() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        assert!(assets.sitroom.is_some() && assets.map_sprites.len() == 64);
+        let area = assets
+            .views
+            .situation
+            .find(MAIN_VIEW_TYPE)
+            .and_then(|w| w.area)
+            .unwrap();
+        for (name, scenario) in &assets.scenarios {
+            for mode in [MAP_MODE, ROBOT_VIEW_MODE, LOG_MODE] {
+                let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+                m.mode = mode;
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                let (w, h) = (area.right - area.left, area.bottom - area.top);
+                let rect =
+                    xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
+                fb.fill_rect(rect, 255);
+                m.draw(&mut fb, &assets);
+                let left = pixels(area)
+                    .filter(|&(x, y)| fb.get(x, y) == Some(255))
+                    .count();
+                assert_eq!(left, 0, "{name} mode {mode}");
+                if mode == MAP_MODE {
+                    let background = pixels(area)
+                        .filter(|&(x, y)| fb.get(x, y) == Some(mainview::MAP_BACKGROUND))
+                        .count();
+                    assert!(background > 1000, "{name}: {background}");
+                }
+            }
         }
     }
 

@@ -1,0 +1,87 @@
+---
+source: crates/xeno-formats/src/sitroom.rs
+expression: "SitRoom { strings: Vec::new(), ..room }"
+---
+SitRoom {
+    robot_dots: [
+        1,
+        2,
+        3,
+    ],
+    robot_sprites: [
+        [
+            16,
+            24,
+            32,
+        ],
+        [
+            64,
+            72,
+            80,
+        ],
+    ],
+    zoom_prefix: [
+        90,
+    ],
+    zoom_names: [
+        [
+            122,
+            48,
+        ],
+        [
+            122,
+            49,
+        ],
+        [
+            122,
+            50,
+        ],
+        [
+            122,
+            51,
+        ],
+        [
+            122,
+            52,
+        ],
+        [
+            122,
+            53,
+        ],
+        [
+            122,
+            54,
+        ],
+    ],
+    log_heading: [
+        76,
+        79,
+        71,
+    ],
+    log_rule: [
+        5,
+        6,
+        5,
+        60,
+    ],
+    time: [
+        91,
+        48,
+        48,
+        45,
+        48,
+        48,
+        93,
+    ],
+    time_digits: [
+        1,
+        4,
+    ],
+    at_base: [
+        72,
+        79,
+        77,
+        69,
+    ],
+    strings: [],
+}

@@ -510,6 +510,70 @@ to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys
 5 (mines and buoys), `=` and `-`, and per robot letters drive and fight (T-056);
 Ctrl+P and Ctrl+Alt+S are developer keys.
 
+### The situation room's main view (T-103)
+
+From a Ghidra pass over the main view's routines (`ui_draw_sitroom_main_view`,
+`1000:5551`, which calls the mode's routine from the word table `DS:0x5ae0` by the
+base's +0x37 and then clears bit 14 of +0x32). The base's fields: +0x32 the map's
+overlay bits, +0x36 its zoom (0 to 6), +0x37 the mode, +0x3c the selected unit, +0x4f
+and +0x53 the map's centre (16.16), +0x59 the message log (`usg::Base`). Modes M and R
+draw a 3D-view frame into the view's buffer (`DS:0x1470`, the colour-255 region of
+`DS:0x5680`, as a console does) and copy it through the region when it is ready (at
+most every 4 ticks for the map); modes O, S and C draw on the screen.
+
+| Mode | Key | Routine | What it draws |
+|---|---|---|---|
+| 0 | O | `1fe6:6fc1` | The briefing (T-044) |
+| 2 | S | `1fe6:704a` | The selected unit's status: no time-of-day tint; on a redraw (+0x32 bit 14) the view cleared to 0, the kind's picture (slot `0x5d8`, handles from `DS:0x5694`/`0x569a`) and `1fe6:6b4b`; then its name at (0x70, 0x7b) and the kind's routine from `DS:0x5858`. `NO UNITS` (string segment 0x80d) without one. Not traced further (T-126) |
+| 4 | M | `1000:5590`, frame `1fe6:6c05` | The map (below) |
+| 6 | R | `1000:55d6`, frame `1fe6:6b84` | The selected unit's own 3D view: the console's camera (`1000:dbe8`'s: eye height, zoom `1 << +0xf1`, heading plus the pan +0xf4), view mode `DS:0x59b5[+0xef]` (4, 8, 4, 4 for the console's display modes; 0x18 when mode 4 and its camera is damaged, +0xf6 bit 0). Over it (`1000:5630`) its heading in degrees in font 0 at (0x0c, 0x60) of the buffer, three digits (`1000:02b7` prints five) and code 0x17; a unit at its base (+0xfd bit 2) gets the buffer cleared to 0 and the string-segment text at 0x855 at (0x30, 0x28) instead. No unit: the view cleared to 0 |
+| 8 | C | `1000:56a7` | The log: the view cleared to 0x10; font 0, colours 0x14 / 0xff, `UNIT TIME MESSAGE` (`DS:0x5a83`) at (0x60, 0x1e) and a rule in 0x14 (slot `0x558`, `DS:0x5a95`: (36, 95) to (36, 288)); then (`1fe6:6d02`) for each of the base's seven 13-byte messages up to the first with no text: in font 2, colour 0x14 on 0x10, the unit's name at (0x60, y) and its time (`DS:0x5a9d`, `"  00:00  "`, hours and minutes from bytes 7 and 8), then the text (a string-segment offset at byte 11) in 0x13 at (0x9c, y); y from 0x28, 12 a row |
+
+Texts go through slot `0x594` (transparent). The map's and mode R's labels set no
+colour: they use whatever the last text left in the text state (`DS:0x644` +0x16).
+
+**The map** (`1fe6:6c05`): view mode 0xc, or 0xe with the grid overlay (+0x32 bit 4,
+step `1000:3760`: dots every 2 units; not drawn by the port yet); clear colour 0x43
+(`DS:0x1457`), hill colour 0x42 (`DS:0x1458`); zoom `1 << +0x36`; heading 0; the
+camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left press on the map
+off a unit sets it and moves the centre to the pointer, `1000:57d2`; every stock base
+has it set), else on the selected unit unless it is at its base, else on the base. The
+steps (`DS:0x395a`): the camera with the focal factor `DS:0x4d32` (327, exponent -16),
+the clear, the pointer probe and `1000:3877`, which asks the producers for one node at
+a time (no sorting) and draws each through `DS:0x39ae` by type, with the sprite anchor
+centred (slot `0x5c0`). A position becomes a pixel by `1000:3eb9`: the offset from the
+camera turned as the 3D view turns it (`1000:12b9`), each 48-bit sum to a float by
+whole bytes (`1000:0ced`), times 2^-24 and the focal factor, to an integer; the row is
+`H/2 - X`, the column `W/2 + Z` (`1000:3ad8`), so x runs up and y right, about 1.28
+pixels a unit at zoom 0. The zoom label (`1fe6:6cb9`): `DS:0x5ada` (a space, three
+scale-bar glyphs and a new line) then the zoom's name (`DS:0x7140`: `3.2 K` to `50 M`)
+in font 0 at (8, 0x5a) of the buffer.
+
+The nodes, in order:
+- **Terrain** (type 8, `1000:39fb`): only records whose program starts with op 0x14,
+  as type 0x12 (`1000:3a27`): an octagon filled in the hill colour by the polygon fill
+  (`1fe6:4d7d`, the 3D view's), corners at the radius (+0x10, 8.8) on the axes and two
+  thirds of it on the diagonals, each length scaled as an offset (`(len, len)`'s `Z`).
+- The editor's path points (type 0xe lines, `1000:6d27`, with the path display; not in
+  the port yet).
+- **The selected robot's goal** (`1000:f914`, `4714`): with its +0x32 bit 1, sprite
+  0x198 at its destination (+0x3c); with bit 0, sprite 0x1a0 on its target object
+  (+0x3a).
+- **The objects** in slot order by kind (`DS:0xe7fa`; type 0xc a pixel, type 0xa a
+  sprite from `msprite0` then a pixel of the node's colour unless 0):
+
+| Kind | Routine | Shown |
+|---|---|---|
+| Robots 0 to 2 (10 after `1000:e5fe`) | `1000:f976` | Not alien and undetected (+0x17 bit 2, unless the editor's Ctrl+E), not +0x17 bit 0, and only with overlay bit 0. Without bit 1 a pixel in the model's colour (`DS:0xe86c`: 0x30, 0x0e, 0x0d); with it a sprite, the eight headings a handle step apart from `DS:0xe866` (zoom factor under 8: 0xc0, 0x100, 0x140) or `DS:0xe860` (0, 0x40, 0x80), octant `(heading + 0x1000) >> 13`, with a 0xfd pixel for an alien |
+| Base 3 | `f9e5` | Always: sprite 0x1b8; with bit 1, 0x1a8 (human) or 0x1b0 (alien) |
+| Relay 4 | `fa04` | With overlay bit 3: a pixel 0xfe (0xfd alien), 7 if not linked (+0x16 bit 4); with bit 1 sprite 0x188 (0x190 alien), 0x180 if not linked |
+| Shots 5 to 8 | `fa4d` | Only with the developer's Ctrl+Alt+S (`DS:0x62ec` bit 6): a 0x0f pixel |
+| 9, 12 / 11 | `fa6a` / `fa5c` | A 0x0f pixel / 0x0f, or 0xff with +0x16 bit 4 |
+| Obstacle 16 | `fa47` | A pixel in colour 1 |
+| 13 to 15 | | Nothing |
+
+The pointer over the main view takes shape `DS:0x5a14[mode]` (3 in M and R; T-106).
+
 ### Orders (T-043)
 
 A robot's **orders** are a program, one of 31 scripts in `xeno.exe`, and a switch
@@ -1072,9 +1136,19 @@ original.
   original's handlers) set the mode; in the orders mode the main view's colour-255
   pixels are recoloured to 0x10 and the text is typed from (96, 30) in the user's font
   4, colour 0x1d, one byte per retrace, until its NUL or 0x1a, CR LF as the font's
-  control codes. O, and coming back to the situation room, start it again. The other
-  modes keep the T-056 placeholder. The speed (one byte a retrace) is the port's
+  control codes. O, and coming back to the situation room, start it again. Mode S keeps
+  the placeholder (T-126). The speed (one byte a retrace) is the port's
   reading of "one per pass of the mission loop"; check it in DOSBox.
+- **Main view** (`crates/xeno-app/src/mainview.rs`, T-103 part 1): modes M, R and C
+  as "The situation room's main view (T-103)" above, from the tables
+  `xeno_formats::sitroom` reads and `msprite0`. The map starts with the overlays, zoom
+  and centre saved in the player's base and is drawn each frame (not every 4 ticks);
+  the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
+  `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection and relay
+  link bits are the scenario's as loaded, a target object's marker and the grid and
+  path overlays are not drawn, the log is the base's as loaded (the sim posts no
+  messages), the rule's line routine (slot `0x558`) is not traced. Mode R uses the
+  console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the
@@ -1131,6 +1205,14 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 | `1000:796e` | `ui_run_review_screen` | Review, nested in the map room |
 | `1000:2343` | `ui_open_widget_set` | Opens a screen's widget list |
 | `1000:24a9` | `ui_dispatch_event_to_widgets` | Hands an input event to the widgets |
+| `1000:3877` | `gfx_draw_map_nodes` | The maps' draw step: one node at a time through `DS:0x39ae` (T-103, created) |
+| `1000:3e6c` | `gfx_project_map_offset` | A position less the camera's, scaled to map pixels (T-103) |
+| `1000:3eb9` | `gfx_scale_map_offset` | An offset turned and scaled by the focal factor to map pixels (T-103) |
+| `1000:f976` | `gfx_emit_robot_map_node` | A robot's map node: a dot or a sprite by heading (T-103, created) |
+| `1000:5630` | `ui_label_sitroom_robot_view` | Mode R's heading or at-base text (T-103) |
+| `1fe6:6b84` | `ui_start_sitroom_robot_view_frame` | Mode R's camera on the selected unit (T-103) |
+| `1fe6:6c05` | `ui_start_sitroom_map_frame` | Mode M's camera, zoom and colours (T-103) |
+| `1fe6:6cb9` | `ui_draw_map_zoom_label` | The map's zoom label (T-103) |
 
 ## Open questions
 
