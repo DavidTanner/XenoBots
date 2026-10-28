@@ -507,8 +507,8 @@ Console keys (the three tables share most entries): F2 the robot's program
 (automatic), F3 its pilot (manual), F4 automatic and the next program (see "Orders");
 ESC and Alt+Q the situation room; Tab and Alt+Tab the next and previous unit; F1, F5
 to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys 1 to
-5 (mines and buoys), `=` and `-`, and per robot letters drive and fight (T-056);
-Ctrl+P and Ctrl+Alt+S are developer keys.
+4 (mines and buoys), `=` and `-`, and per robot letters drive and fight (`docs/sim.md`,
+"The cockpit keys (T-105)"); Ctrl+P and Ctrl+Alt+S are developer keys.
 
 ### The message panel (T-104)
 

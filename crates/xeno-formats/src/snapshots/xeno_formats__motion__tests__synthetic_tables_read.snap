@@ -724,6 +724,24 @@ Motion {
             -15,
         ],
     ],
+    gears: Gears {
+        humanoid: [
+            -20,
+            -10,
+            0,
+            10,
+            20,
+        ],
+        scout: [
+            -30,
+            0,
+            30,
+        ],
+        scorpion_step: 5,
+        scorpion_top: 25,
+        scorpion_bottom: -15,
+        turn: 128,
+    },
     scripts: Scripts {
         start: 39488,
         bytes: [

@@ -313,8 +313,8 @@ The flags at +0x16 (`usg::flag`):
 | 0xef..0xf5 | 7 | `display`, `zoom`, `map_zoom`, `zoom_label`, `pan` | The console's second display (`docs/screens.md`, "The second display (T-104)"): +0xef the display mode (0 the camera, 1 thermal, 2 the map, 3 the scorpion's missile camera; bit 2 set every tick while that mode's device is damaged), +0xf0 not traced, +0xf1 and +0xf2 the camera's and the map's zoom steps (0 to 4), +0xf3 the ticks left (in 16s) to show the zoom's name, +0xf4 the camera's pan (a word added to the heading) |
 | 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
 | 0xfd | 1 | | Bit 7: a scorpion's relay deployer damaged (a hit can set it; with it the relay count reads 0). Bit 0: firing takes energy from +0x50; bit 5: the no-energy message was shown (T-054) |
-| 0x108, 0x109 | 1, 1 | | A humanoid's first and second weapon's cool-down, counted down every 8 ticks (T-054) |
-| 0x10b, 0x10c | 1, 1 | `stance`, `stance_target` | A scout's stance and the one it is rising or sinking to (0x30 standing; it moves only standing); a humanoid's speed gear (+0x10b, an index into its cockpit's speeds, updated when it hits a hill) |
+| 0x108, 0x109 | 1, 1 | | A humanoid's first and second weapon's cool-down, counted down every 8 ticks (T-054); a scout's +0x109 is its speed gear (T-105, `docs/sim.md`, "The cockpit keys") |
+| 0x10b, 0x10c | 1, 1 | `stance`, `stance_target` | A scout's stance and the one it is rising or sinking to (0x30 standing; it moves only standing); a humanoid's speed gear (+0x10b, twice an index into its gears; T-105, `docs/sim.md`, "The cockpit keys") |
 | 0x10c, 0x127, 0x10d | 0x35, 0x45, 0x3c | | The humanoid, scorpion and scout console's widget state (T-043) |
 | 0x118 | 1 | `speed_table` | A scorpion's speed goes through `xeno.exe`'s speed table `speed_table / 2` (0x0c, the last, in stock scorpions; other kinds hold other values and do not use it) |
 

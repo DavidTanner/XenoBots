@@ -207,6 +207,60 @@ pub fn steer_and_speed(
     }
 }
 
+/// A humanoid's or scout's gears; a scorpion has none.
+fn gears(tables: &Tables, kind: ObjectKind) -> Option<&[i16]> {
+    match kind {
+        ObjectKind::Humanoid => Some(&tables.gears.humanoid),
+        ObjectKind::Scout => Some(&tables.gears.scout),
+        _ => None,
+    }
+}
+
+/// One gear up or down: the speed keys (`1000:acda`, `ace0` and the other kinds')
+/// and the scripts' opcodes 0x51 and 0x52 (the routines at `DS:0x722d`, `0x7233`). A
+/// humanoid or scout takes the next gear's speed; a scorpion's speed asked for moves
+/// by a step within its range. Returns false at the end (the routine's carry).
+pub fn shift(tables: &Tables, kind: ObjectKind, m: &mut Movement, up: bool) -> bool {
+    let g = &tables.gears;
+    if kind == ObjectKind::Scorpion {
+        let s = m.target_speed;
+        m.target_speed = match up {
+            true if s < g.scorpion_top => s.saturating_add(g.scorpion_step).min(g.scorpion_top),
+            false if s > g.scorpion_bottom => {
+                s.saturating_sub(g.scorpion_step).max(g.scorpion_bottom)
+            }
+            _ => return false,
+        };
+        return true;
+    }
+    let Some(gears) = gears(tables, kind) else {
+        return false;
+    };
+    let top = 2 * (gears.len() as u8 - 1);
+    let gear = match up {
+        true if m.gear != top => m.gear.wrapping_add(2),
+        false if m.gear != 0 => m.gear.wrapping_sub(2),
+        _ => return false,
+    };
+    // shortcut: an odd or out-of-range gear from a file reads past the original's
+    // table; the port leaves the speed asked for. None in the stock files.
+    if let Some(&speed) = gears.get(usize::from(gear / 2)) {
+        m.gear = gear;
+        m.target_speed = speed;
+    }
+    true
+}
+
+/// The kind's bounce routine (`DS:0x7209`; the hill bounce, the stop opcode 0x53 and
+/// the `.` key): a humanoid's or scout's gear becomes the first whose speed is at
+/// least the speed asked for (the top gear past them all). A scorpion's does nothing.
+pub fn match_gear(tables: &Tables, kind: ObjectKind, m: &mut Movement) {
+    if let Some(gears) = gears(tables, kind) {
+        let i = gears.iter().position(|&s| m.target_speed <= s);
+        m.gear = 2 * i.unwrap_or(gears.len() - 1) as u8;
+    }
+}
+
 /// The move, the hill bounce and the tick counter's step: `sim_move_*` after the
 /// script. Returns whether the robot ended inside a hill.
 pub fn travel(
@@ -591,6 +645,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 && let State::Robot(m) = &mut e.state
                 && travel(terrain, e.kind, &mut e.position, m)
             {
+                match_gear(tables, e.kind, m);
                 events.push(Event::HillHit(id));
                 crate::damage::hit(world, id, 0, tables, random, &mut events);
             }
@@ -662,6 +717,14 @@ pub(crate) fn synthetic_tables() -> Tables {
         atan: (0..xeno_formats::motion::ATAN_ENTRIES)
             .map(|i| ((i as f64 / 256.0).atan() / std::f64::consts::FRAC_PI_4 * 65536.0) as u16)
             .collect(),
+        gears: xeno_formats::motion::Gears {
+            humanoid: vec![-43, -23, 0, 28, 56, 95],
+            scout: vec![-71, -35, 0, 39, 85, 113],
+            scorpion_step: 21,
+            scorpion_top: 63,
+            scorpion_bottom: -42,
+            turn: 0x100,
+        },
         script_speeds: [
             [95, 63, 113],
             [56, 42, 85],

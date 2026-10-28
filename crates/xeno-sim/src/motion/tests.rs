@@ -630,3 +630,75 @@ fn real_assets_stock_scenarios_tick() {
         assert_ne!(run(true), run(false), "{name}");
     }
 }
+
+#[test]
+fn gears_step_within_their_tables_and_follow_the_speed_asked_for() {
+    let tables = synthetic_tables();
+    let mut m = Movement::default();
+    // A humanoid stopped (gear 2, speed 0) goes up to its top gear, and no further.
+    match_gear(&tables, ObjectKind::Humanoid, &mut m);
+    assert_eq!(m.gear, 4);
+    let ups: Vec<_> = (0..4)
+        .map(|_| {
+            (
+                shift(&tables, ObjectKind::Humanoid, &mut m, true),
+                m.target_speed,
+            )
+        })
+        .collect();
+    assert_eq!(ups, [(true, 28), (true, 56), (true, 95), (false, 95)]);
+    assert_eq!(m.gear, 10);
+    // A scout down to its fastest reverse.
+    let mut s = Movement::default();
+    match_gear(&tables, ObjectKind::Scout, &mut s);
+    let downs: Vec<_> = (0..3)
+        .map(|_| {
+            (
+                shift(&tables, ObjectKind::Scout, &mut s, false),
+                s.target_speed,
+            )
+        })
+        .collect();
+    assert_eq!(downs, [(true, -35), (true, -71), (false, -71)]);
+    assert_eq!(s.gear, 0);
+    // A scorpion steps its speed asked for, kept to its range; it has no gear.
+    let mut c = Movement {
+        target_speed: 50,
+        ..Movement::default()
+    };
+    assert!(shift(&tables, ObjectKind::Scorpion, &mut c, true));
+    assert_eq!(c.target_speed, 63);
+    assert!(!shift(&tables, ObjectKind::Scorpion, &mut c, true));
+    c.target_speed = -30;
+    assert!(shift(&tables, ObjectKind::Scorpion, &mut c, false));
+    assert_eq!((c.target_speed, c.gear), (-42, 0));
+    // The bounce routine: the first gear at or over the speed asked for, else the top.
+    for (speed, gear) in [(-50, 0), (-23, 2), (1, 6), (95, 10), (200, 10)] {
+        m.target_speed = speed;
+        match_gear(&tables, ObjectKind::Humanoid, &mut m);
+        assert_eq!(m.gear, gear, "{speed}");
+    }
+    c.target_speed = 5;
+    match_gear(&tables, ObjectKind::Scorpion, &mut c);
+    assert_eq!(c.gear, 0);
+}
+
+#[test]
+fn a_hill_puts_a_humanoid_s_gear_at_stop() {
+    let mut world = World::default();
+    world.terrain.features.push(Feature {
+        kind: TerrainFeature::HILL,
+        centre: at(0, 0),
+        z: Fixed(0),
+        radius: 0x0a00,
+        diagonal: 0x0600,
+        height: 0x0300,
+    });
+    world.insert(EntityId(2), robot(ObjectKind::Humanoid, Side::Human, 0, 0));
+    set(&mut world, 2, |m| (m.gear, m.target_speed) = (10, 95));
+    tick(&mut world, &synthetic_tables(), &mut Random::seeded(1));
+    assert_eq!(
+        (moving(&world, 2).target_speed, moving(&world, 2).gear),
+        (0, 4)
+    );
+}

@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -19,10 +19,14 @@ tested headless in CI. It depends only on `xeno-formats`.
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
   `InputLog`. A tick counts the retrace, tracks held keys and buttons (nothing acts on
-  them yet: the cockpit keys are T-105) and runs every object's tick
+  them: the host turns the keys into orders and `Sim::pilot` calls) and runs every object's tick
   (`motion::tick`, below, "Movement"); it returns the `motion::Event`s it made,
   `MissionOver` among them once a destroyed base's end is over ("The mission's
   end").
+- **`Sim::pilot(id, key)`** is a cockpit key's action on a robot (`Pilot`: turn left
+  or right, a gear up or down, stop, a scout's stance; "The cockpit keys" below), as
+  `Sim::change_orders` is the program panel's: the host calls it between ticks for
+  the robot whose console is open, and it returns the events it made.
 - **`Sim::state_hash()`** is a 64-bit hash of everything in the state.
 - **`input`**: `ScanCode`, `InputEvent`, `Keys`, `Mouse` and `InputLog`, moved from
   `xeno-app` (`docs/game-loop.md`, "Input"). `xeno-app` still names them
@@ -218,8 +222,8 @@ move each robot walks (`motion::walk`, `docs/render.md`, "Walking"): its step co
 and footstep legs step, and its footsteps are `Event::Sound`s (13 to 15) for it.
 
 The scripts (T-053, below) call `head_for_path_point` and
-`join_nearest_path_point`. Left out until their tasks: the recall (bit 3), the
-bounce routines' console gear (T-104/T-105), the scout's height at +0x1c
+`join_nearest_path_point`. Left out until their tasks: the recall (bit 3, T-105
+part 2), the scout's height at +0x1c
 (T-101), the path census (`sim_count_units_on_paths`) and the base's other phases.
 Where the original reads past a table (a scorpion speed table or entry past the
 last, a path slot over 7, a mission over 6) the port takes the last entry or does
@@ -402,22 +406,83 @@ event 0xa); `Sim::change_orders` does the same for the player's choices (the pro
 panel, F2, F3). `script::bearing` is the coarse bearing. Ported: the flow, call and
 return, halt, flags, waits, random, switching, states, the stack and field opcodes
 (the fields the stock scripts touch: the kind, +0x23, the speeds, target heading,
-path, point and goal), the jumps, turning, the set-speed opcodes, the goal's distance
+path, point and goal), the jumps, turning, the set-speed and gear opcodes (T-105), the goal's distance
 and bearing (the destination and the robot's own base), zigzag, random turns, stop,
 hold here, joining the nearest path point, the targeting check and the path commands;
 events dispatch to the header's or the tables' handlers.
 
 Shortcuts, each named in the code: an opcode not ported (sensing and object goals,
-T-112; the gear steps 0x51 and 0x52, T-105; weapons, T-114; the relay net, T-113)
+T-112; weapons, T-114; the relay net, T-113)
 **halts the script on itself**, so a robot keeps its speed and heading; opcode 0x74
 puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
 log and 0x76's copies are T-129); the 64-tick object-goal
-check is skipped (no object goals yet); the gear bytes are not kept; field opcodes
+check is skipped (no object goals yet); field opcodes
 read 0 at other offsets; return addresses are pushed as offsets from the script
 area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
 paths and the human robots on ENGAGE halt at the weapons check (T-114), and an alien
 scorpion on DENSE NET halts at once (T-113).
+
+## The cockpit keys (T-105)
+
+A pass over the consoles' key tables (`docs/formats/key.md`; humanoid `DS:0x6b07`,
+scorpion `DS:0x676a`, scout `DS:0x6efa`). Each handler runs with DI on the viewed
+robot. Keys are set 1 make codes; the arrows' `E0` prefix is dropped, so the keypad's
+arrows act the same, and the keyboard's repeat repeats them.
+
+| Key | Humanoid | Scorpion | Scout | What it does |
+|---|---|---|---|---|
+| Left, Right | `1000:acc0`, `accd` | `9420`, `942d` | `c5e3`, `c5f0` | The pilot takes over (`order_switch_to_manual`, `1000:d446`: +0x23 bit 7 cleared, event 0xb), then the heading asked for is the **heading** less or plus `Gears::turn` (0x100, 1/256 of a turn, in the stock build). A held key repeats from the heading as it turns |
+| Up, Down | `acda`, `ace0` | `943a`, `9440` | `c5fd`, `c603` | The pilot takes over, then a gear up or down (below) |
+| `.` | `d0a0` | the same | the same | Opcode 0x53's routine: the speed asked for 0 and the bounce routine (the gear matches). The program keeps driving |
+| Q, W, E | | | `c33d`, `c2f8`, `c2b3` | The stance the scout rises or sinks to (+0x10c): 0x60, 0x30 (standing), 0 |
+| F2, F3, F4 | `d446`, `d42c`, `d3a2` | the same | the same | The pilot or the program takes over; the next program ("Orders"; T-111 names these the right way round) |
+| F5, F6 | `d131`, `d142`: weapon 0 or 1, by kind through `cs:0xd13c` (`b214`, `98a9`, `ca1d`) | | | The selected weapon (+0xdd) changes, with a message and sound 27 (`docs/formats/dsounds.md`) |
+| F9 | `b20c` | | | The humanoid's weapon flips (+0xdd XOR 1), as F5/F6 |
+| Space | `d0da`: fire, by kind through `cs:0xd0e3` (`b242`, `98f1`, `ca46`) | | | T-114 |
+| F7 | `d92d` (humanoid, scout) | | | Launch a missile: with one left (+0xde) and the energy (`1000:d1b0`), one fewer, +0xdf = 20, +0x17 bit 1, a message; else a message |
+| F8 | `d95e` (humanoid, scout) | | | With one left (+0xe0): one fewer, +0xe1 = 120, +0x17 bit 0, and a kind 0xe object made (`1000:f4b1`, `dfff`); a message |
+| 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine or buoy: with one left (+0xe2, +0xe4, +0xe3, +0xe5), an object of kind 9, 12, 11 or 10 is made (`1000:f4b1`) and set up (`e5ab`, `e63d`, `e602`, `e5e8`); else a message |
+| A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
+| R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
+| C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays: C a message on the cargo (+0x118); D flips +0xfd bit 4 with a message; L apparently loads one (fewer than 12 carried, moving slower than 16) and U deploys one (+0x118 counts them, and picks the speed table; U sets +0xdc bit 3 and plays sound 25); not traced further (T-113) |
+| S | `ddb0` | | the same | +0xfa = 0 (not traced) |
+| X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4; T-134) |
+| F1 | `cff3` | the same | the same | A box over the view until a key (not traced) |
+| Ctrl+P | `d193` | the same | the same | With unlock word 8 (`key.md`): power (+0x4e) 100 and +0x4f, +0x50, +0x51 (the drive) 0xff |
+| Ctrl+Alt+S | `d177` | the same | the same | Flips `DS:0x62ec` bit 6 (a developer switch) |
+
+The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
+Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).
+
+**Gears.** The up and down keys and the scripts' opcodes 0x51 and 0x52 call the same
+routines, by kind (`DS:0x722d`, `0x7233`; `xeno_formats::motion::Gears`):
+
+- A humanoid's gear (+0x10b) and a scout's (+0x109) is twice an index into a table of
+  speeds asked for (`DS:0x68ec`, `0x6df8`; six gears, from fast reverse through stop to
+  top speed, the same speeds as the opcodes 0x54 to 0x58). Up adds 2 unless it is at the
+  top (10), down takes 2 unless it is 0; the speed asked for becomes the new gear's.
+  The opcodes 0x54 to 0x58 set their gear by number with its speed.
+- A scorpion has no gear: up adds 21 to the speed asked for, at most 63; down takes 21,
+  at least -42 (refused at the limits). Its routines start with an `int 3`.
+- At a limit a routine sets the carry, but the interpreter does not keep the opcode's
+  flags, so the scripts never see it.
+- **The bounce routine** (`DS:0x7209`), run by the hill bounce and the stop (opcode
+  0x53, `.`): a humanoid's or scout's gear becomes the first whose speed is at or over
+  the speed asked for, the top gear past them all; a scorpion's does nothing. The
+  console redraws its speed panel (+0x12b, +0x132).
+
+**Recall.** The kind routines run with the recall (`1000:b365`, `9b87`, `cb3d`) only
+mark the console's panels for redrawing.
+
+### The port (T-105, part 1)
+
+`Sim::pilot` does the arrows, `.` and the scout's stances; `motion::shift` and
+`motion::match_gear` the gears, used by the keys, the opcodes 0x51 to 0x58 and the hill
+bounce. `Movement::gear` is loaded from +0x10b (humanoid) or +0x109 (scout) and hashed.
+`xeno-app` maps each console's handlers to `Pilot` (`mission::handler::PILOT`) and
+calls the sim for the viewed robot. The opcodes 0x54 to 0x58 find their gear with the
+bounce routine, which gives the routines' gear because every script speed is a gear's.
 
 ## Damage (T-054)
 

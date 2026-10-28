@@ -182,6 +182,44 @@ impl Sim {
         Some(change)
     }
 
+    /// A cockpit key acts on robot `id` (`docs/sim.md`, "The cockpit keys"), as the
+    /// open console's handler does between ticks. Returns what it did. Without tables
+    /// or a robot, nothing.
+    pub fn pilot(&mut self, id: EntityId, key: Pilot) -> Vec<Event> {
+        let mut events = Vec::new();
+        let Some(tables) = &self.tables else {
+            return events;
+        };
+        let Some(e) = self.world.get(id) else {
+            return events;
+        };
+        let (kind, heading) = (e.kind, e.heading);
+        if matches!(
+            key,
+            Pilot::Left | Pilot::Right | Pilot::Faster | Pilot::Slower
+        ) {
+            // `order_switch_to_manual`: the pilot takes over first.
+            script::switch(&mut self.world, id, false, &mut events);
+        }
+        let Some(m) = motion::movement(&mut self.world, id) else {
+            return events;
+        };
+        let turn = tables.gears.turn;
+        match key {
+            Pilot::Left => m.target_heading = heading.wrapping_sub(turn),
+            Pilot::Right => m.target_heading = heading.wrapping_add(turn),
+            Pilot::Faster | Pilot::Slower => {
+                motion::shift(tables, kind, m, key == Pilot::Faster);
+            }
+            Pilot::Stop => {
+                m.target_speed = 0;
+                motion::match_gear(tables, kind, m);
+            }
+            Pilot::Stance(stance) => m.stance_target = stance,
+        }
+        events
+    }
+
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
     pub fn run(&mut self, log: &InputLog, retrace: u64) {
         while self.retrace < retrace {
@@ -199,6 +237,24 @@ impl Sim {
         self.world.state_hash(&mut h);
         h.finish()
     }
+}
+
+/// A cockpit key's action on the robot whose console is open (`Sim::pilot`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pilot {
+    /// The left and right arrows: the pilot takes over and the heading asked for is
+    /// the heading turned by `Tables::gears.turn`.
+    Left,
+    Right,
+    /// The up and down arrows: the pilot takes over and the speed goes a gear up or
+    /// down (`motion::shift`).
+    Faster,
+    Slower,
+    /// `.`: the speed asked for is 0 and the gear matches it (opcode 0x53's routine);
+    /// the program keeps driving.
+    Stop,
+    /// A scout's Q, W and E: the stance it rises or sinks to (+0x10c).
+    Stance(u8),
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -339,5 +395,50 @@ mod tests {
         assert_eq!((resumed.retrace(), resumed.mouse()), (1, sim.mouse()));
         assert_eq!(resumed.world, sim.world);
         assert_eq!(resumed.end(), random);
+    }
+
+    #[test]
+    fn the_cockpit_keys_take_over_and_drive_the_viewed_robot() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let (id, robot) = (EntityId(2), |sim: &Sim| match sim.world.get(EntityId(2)) {
+            Some(Entity {
+                state: State::Robot(m),
+                heading,
+                ..
+            }) => (*m, *heading),
+            other => panic!("{other:?}"),
+        });
+        assert!(
+            sim.world.orders.get(2).unwrap().orders.manual,
+            "program drives"
+        );
+        // `.` stops it and leaves the program driving.
+        assert!(sim.pilot(id, Pilot::Stop).is_empty());
+        assert_eq!((robot(&sim).0.target_speed, robot(&sim).0.gear), (0, 4));
+        assert!(sim.world.orders.get(2).unwrap().orders.manual);
+        // An arrow: the pilot takes over (its event waits) and the speed goes up a gear.
+        let events = sim.pilot(id, Pilot::Faster);
+        assert!(matches!(events[..], [Event::Program(_)]));
+        assert!(!sim.world.orders.get(2).unwrap().orders.manual);
+        assert_ne!(robot(&sim).0.script.events & 1 << script::EVENT_PILOT, 0);
+        assert_eq!((robot(&sim).0.target_speed, robot(&sim).0.gear), (28, 6));
+        sim.pilot(id, Pilot::Slower);
+        sim.pilot(id, Pilot::Slower);
+        assert_eq!(robot(&sim).0.target_speed, -23);
+        // Turning is from the heading, not the heading asked for.
+        let heading = robot(&sim).1;
+        sim.pilot(id, Pilot::Left);
+        sim.pilot(id, Pilot::Left);
+        assert_eq!(robot(&sim).0.target_heading, heading.wrapping_sub(0x100));
+        sim.pilot(id, Pilot::Right);
+        assert_eq!(robot(&sim).0.target_heading, heading.wrapping_add(0x100));
+        sim.pilot(id, Pilot::Stance(0x60));
+        assert_eq!(robot(&sim).0.stance_target, 0x60);
+        // The keys are part of the state, and nothing acts on a slot without a robot.
+        let before = sim.state_hash();
+        assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());
+        assert_eq!(sim.state_hash(), before);
     }
 }

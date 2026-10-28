@@ -35,6 +35,15 @@ pub(crate) const ATAN_AT: (usize, &[u8]) = (0x0835, &[0x36, 0x8b, 0x87]);
 /// `jmp [bx + table]` for the script's opcodes 0x54 to 0x58: each a table of three
 /// routines, by kind, that set the speed asked for.
 pub(crate) const SPEED_OPS: [usize; 5] = [0xd08c, 0xd084, 0xd07c, 0xd06c, 0xd074];
+/// `jmp [bx + table]` for the script's opcodes 0x51 and 0x52 (`1000:d090`, `d098`):
+/// each a table of three routines, by kind, that step the speed asked for up or down
+/// a gear. The cockpit's up and down arrows call the same routines.
+pub(crate) const GEAR_OPS: [usize; 2] = [0xd094, 0xd09c];
+/// `sub ax, turn` in the humanoid's left arrow (`1000:acc0`: the pilot takes over,
+/// then the heading asked for is the heading less `turn`).
+pub(crate) const KEY_TURN: (usize, &[u8]) = (0xacc6, &[0x2d]);
+/// No more gears than this (the stock build has 6).
+const MAX_GEARS: usize = 16;
 
 /// `mov al, cs:[bx + table]` in the walking animations: the humanoid's legs (+0x101,
 /// +0x102), the scout's (+0x103, +0x104) and the scout's crouched legs.
@@ -81,6 +90,8 @@ pub struct Motion {
     pub atan: Vec<u16>,
     /// The speed the script's opcodes 0x54 to 0x58 ask for, by opcode and kind.
     pub script_speeds: [[i16; 3]; 5],
+    /// The speed keys' and gear opcodes' steps.
+    pub gears: Gears,
     /// The robots' scripts (`xeno_formats::script`).
     pub scripts: Scripts,
     /// What damage does (`xeno_formats::damage`).
@@ -107,6 +118,25 @@ impl std::fmt::Debug for Strings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Strings({} bytes)", self.0.len())
     }
+}
+
+/// What the cockpit's arrow keys and the scripts' opcodes 0x51 and 0x52 step
+/// (`docs/sim.md`, "The cockpit keys"). A humanoid and a scout step through gears,
+/// each a speed asked for; a scorpion steps its speed asked for itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gears {
+    /// The speed asked for in each of a humanoid's gears (`DS:0x68ec` in the stock
+    /// build), slowest first. The gear (+0x10b) is kept as twice its index.
+    pub humanoid: Vec<i16>,
+    /// The scout's (`DS:0x6df8`; its gear is at +0x109).
+    pub scout: Vec<i16>,
+    /// A scorpion's speed asked for goes up or down by `scorpion_step`, within
+    /// `scorpion_bottom..=scorpion_top`.
+    pub scorpion_step: i16,
+    pub scorpion_top: i16,
+    pub scorpion_bottom: i16,
+    /// What the left and right arrows take from or add to the heading.
+    pub turn: u16,
 }
 
 /// The leg frames of the walking animations that make footsteps, by step
@@ -201,6 +231,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         mission_programs,
         atan,
         script_speeds,
+        gears: gears(image, ds)?,
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
         walk: Walk {
@@ -246,6 +277,72 @@ fn script_speed(image: &[u8], ds: usize, at: usize) -> Result<i16, FormatError> 
         }
         _ => Err(invalid(at, "not a set-speed routine")),
     }
+}
+
+/// The gear steps, through the opcodes' routine tables: the humanoid's and scout's
+/// up routines (`mov bl, [di + gear]`, `cmp bl, top`, ..., `add bx, 2`, `call set`,
+/// where `set` is `mov [di + gear], bl`, `mov ax, [bx + table]`), and the scorpion's
+/// (`mov ax, [di + 0x28]`, `cmp ax, limit`, `j..`, `add`/`sub ax, step`; the stock
+/// build puts an `int 3` before each).
+fn gears(image: &[u8], ds: usize) -> Result<Gears, FormatError> {
+    let routine = |op: usize, kind: usize| -> Result<usize, FormatError> {
+        let table = ds + usize::from(operand(image, op, &[0xff, 0xa7])?);
+        Ok(usize::from(word(image, table + 2 * kind)?))
+    };
+    let gear_table = |kind: usize| -> Result<Vec<i16>, FormatError> {
+        let up = routine(GEAR_OPS[0], kind)?;
+        let down = routine(GEAR_OPS[1], kind)?;
+        let b = bytes(image, up, 17)?;
+        let d = bytes(image, down, 7)?;
+        let shape = b[..2] == [0x8a, 0x9d]
+            && b[4..6] == [0x80, 0xfb]
+            && b[9..15] == [0x32, 0xff, 0x83, 0xc3, 0x02, 0xe8]
+            && d[..4] == b[..4]
+            && d[4..] == [0x80, 0xfb, 0x00];
+        let top = usize::from(b[6]);
+        if !shape || top % 2 != 0 || top >= 2 * MAX_GEARS {
+            return Err(invalid(up, "not a gear step routine"));
+        }
+        let set = (up as u16)
+            .wrapping_add(17)
+            .wrapping_add(u16::from_le_bytes([b[15], b[16]]));
+        let set = usize::from(set);
+        if bytes(image, set, 4)? != [0x88, 0x9d, b[2], b[3]] {
+            return Err(invalid(set, "not a gear setter"));
+        }
+        let at = ds + usize::from(operand(image, set + 4, &[0x8b, 0x87])?);
+        (0..=top / 2)
+            .map(|i| Ok(word(image, at + 2 * i)? as i16))
+            .collect()
+    };
+    let scorpion = |op: usize, test: u8, step: u8| -> Result<(i16, i16), FormatError> {
+        let mut at = routine(op, 1)?;
+        if image.get(at) == Some(&0xcc) {
+            at += 1;
+        }
+        let b = bytes(image, at, 11)?;
+        if b[..4] != [0x8b, 0x45, 0x28, 0x3d] || b[6] != test || b[8] != step {
+            return Err(invalid(at, "not the scorpion's speed step"));
+        }
+        let w = |i: usize| i16::from_le_bytes([b[i], b[i + 1]]);
+        Ok((w(4), w(9)))
+    };
+    let (scorpion_top, scorpion_step) = scorpion(GEAR_OPS[0], 0x7d, 0x05)?;
+    let (scorpion_bottom, down_step) = scorpion(GEAR_OPS[1], 0x7e, 0x2d)?;
+    if down_step != scorpion_step {
+        return Err(invalid(
+            GEAR_OPS[1],
+            "the scorpion steps down by another step",
+        ));
+    }
+    Ok(Gears {
+        humanoid: gear_table(0)?,
+        scout: gear_table(2)?,
+        scorpion_step,
+        scorpion_top,
+        scorpion_bottom,
+        turn: operand(image, KEY_TURN.0, KEY_TURN.1)?,
+    })
 }
 
 /// Reads the tables from an unpacked `xeno.exe`.
@@ -298,6 +395,7 @@ mod tests {
         crate::fixtures::synthetic_scripts(&mut image, DS);
         crate::fixtures::synthetic_damage(&mut image, DS);
         crate::fixtures::synthetic_walk(&mut image);
+        crate::fixtures::synthetic_gears(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
@@ -363,6 +461,13 @@ mod tests {
         assert_eq!(motion.script_speeds[4], [20, 35, -15]);
         assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
         assert_eq!(motion.walk.scout_crouch[3], 3);
+        assert_eq!(motion.gears.humanoid, [-20, -10, 0, 10, 20]);
+        assert_eq!(motion.gears.scout, [-30, 0, 30]);
+        let g = &motion.gears;
+        assert_eq!(
+            (g.scorpion_step, g.scorpion_bottom, g.scorpion_top, g.turn),
+            (5, -15, 25, 0x80)
+        );
         assert_eq!(motion.strings.byte(0x201), 0x02);
         assert_eq!(motion.strings.byte(0xffff), 0);
         insta::assert_debug_snapshot!(motion);
@@ -386,6 +491,14 @@ mod tests {
             (HUMANOID_LEGS_AT[1], 0x3e),
             (SCOUT_LEGS_AT[0] + 2, 0x86),
             (SCOUT_CROUCH_AT + 1, 0x8b),
+            (GEAR_OPS[1] + 1, 0xa6),
+            (0xb100 + 6, 7),
+            (0xb118 + 6, 2),
+            (0xb120 + 14, 0xe9),
+            (0xb148 + 2, 0x0b),
+            (0xb150 + 9, 0x2d),
+            (0xb160 + 9, 4),
+            (KEY_TURN.0, 0x05),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -432,5 +545,15 @@ mod tests {
         let scout = w.scout_legs.iter().flatten().chain(&w.scout_crouch);
         assert!(scout.into_iter().all(|&f| f < 12));
         assert!(w.scout_legs.iter().all(|legs| legs.contains(&0)));
+        // Gears rise from reverse through a stop, and the scripts' speeds are gears;
+        // the scorpion's steps meet its script speeds' ends.
+        let g = &motion.gears;
+        for (k, gears) in [(0, &g.humanoid), (2, &g.scout)] {
+            assert!(gears.windows(2).all(|w| w[0] < w[1]) && gears.contains(&0));
+            assert!(motion.script_speeds.iter().all(|s| gears.contains(&s[k])));
+        }
+        assert_eq!(g.scorpion_top, motion.script_speeds[0][1]);
+        assert_eq!(g.scorpion_bottom, motion.script_speeds[4][1]);
+        assert!(g.turn > 0 && g.turn < 0x4000);
     }
 }

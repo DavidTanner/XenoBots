@@ -1538,6 +1538,55 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     }
     synthetic_walk(image);
     synthetic_damage(image, ds);
+    synthetic_gears(image, ds);
+}
+
+/// Writes made-up gear steps (`crate::motion::Gears`) with the routines that read
+/// them, code at 0xb100 up and tables at `DS:0x9640` up: humanoid gears -20, -10, 0,
+/// 10, 20; scout gears -30, 0, 30; a scorpion step of 5 within -15..=25 (its up
+/// routine after an `int 3`, as the stock build's); turns of 0x80.
+pub fn synthetic_gears(image: &mut [u8], ds: usize) {
+    use crate::motion::{GEAR_OPS, KEY_TURN};
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    let words = |w: &[i16]| w.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<_>>();
+    put(GEAR_OPS[0], &op(&[0xff, 0xa7], 0x9640));
+    put(GEAR_OPS[1], &op(&[0xff, 0xa7], 0x9646));
+    let (up, down) = ([0xb100u16, 0xb150, 0xb120], [0xb118u16, 0xb160, 0xb138]);
+    let routines: Vec<i16> = up.iter().chain(&down).map(|&r| r as i16).collect();
+    put(ds + 0x9640, &words(&routines));
+    for (kind, field, top, set, table, gears) in [
+        (
+            0,
+            0x0b,
+            8,
+            0xb140u16,
+            0x9660u16,
+            &[-20i16, -10, 0, 10, 20][..],
+        ),
+        (2, 0x09, 4, 0xb148, 0x9680, &[-30, 0, 30]),
+    ] {
+        let at = usize::from(up[kind]);
+        let call = set.wrapping_sub(up[kind] + 17);
+        put(at, &[0x8a, 0x9d, field, 0x01, 0x80, 0xfb, top, 0x74, 0x0a]);
+        put(at + 9, &op(&[0x32, 0xff, 0x83, 0xc3, 0x02, 0xe8], call));
+        put(
+            usize::from(down[kind]),
+            &[0x8a, 0x9d, field, 1, 0x80, 0xfb, 0],
+        );
+        put(usize::from(set), &[0x88, 0x9d, field, 0x01, 0x8b, 0x87]);
+        put(usize::from(set) + 6, &table.to_le_bytes());
+        put(ds + usize::from(table), &words(gears));
+    }
+    put(
+        0xb150,
+        &[0xcc, 0x8b, 0x45, 0x28, 0x3d, 25, 0, 0x7d, 0x10, 0x05, 5, 0],
+    );
+    put(
+        0xb160,
+        &[0x8b, 0x45, 0x28, 0x3d, 0xf1, 0xff, 0x7e, 0x10, 0x2d, 5, 0],
+    );
+    put(KEY_TURN.0, &op(KEY_TURN.1, 0x80));
 }
 
 #[cfg(test)]
