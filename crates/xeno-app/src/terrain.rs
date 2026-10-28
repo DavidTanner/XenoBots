@@ -68,6 +68,11 @@ pub enum Effect {
     Apply,
     /// Alt+Q: save `BACKUP.MAP` and leave (`0x06cf`).
     Leave,
+    /// Alt+L: the open dialog, then the file as the terrain and its circles imported
+    /// (`0x066f`).
+    Load,
+    /// Alt+S: the SAVE GAME dialog, then the circles written there (`0x0705`).
+    Save,
     /// A key the port does not run yet, with what it does.
     Later(&'static str),
 }
@@ -152,22 +157,24 @@ impl TerrainEditor {
             handler::PREVIOUS => self.selected = self.selected.saturating_sub(1),
             handler::NEXT => self.selected = self.selected.saturating_add(1),
             handler::POINTER => self.shape = self.shape.wrapping_add(1),
-            handler::CLEAR | handler::IMPORT => {
-                self.circles.clear();
-                if handler == handler::IMPORT {
-                    self.circles = map::import_circles(terrain);
-                    self.circles.truncate(CAPACITY);
-                }
-                self.selected = self.circles.len().saturating_sub(1);
-            }
+            handler::CLEAR => self.import(&[]),
+            handler::IMPORT => self.import(terrain),
             handler::APPLY => return Effect::Apply,
             handler::LEAVE => return Effect::Leave,
-            handler::LOAD => return Effect::Later("loads a .map through the open dialog (T-110)"),
-            handler::SAVE => return Effect::Later("saves a .map through the save dialog (T-110)"),
+            handler::LOAD => return Effect::Load,
+            handler::SAVE => return Effect::Save,
             handler::SCREENSHOT => return Effect::Later("takes a screenshot"),
             _ => log::debug!("terrain editor: handler {handler:#06x} not known"),
         }
         Effect::None
+    }
+
+    /// The circles cleared and imported from `terrain` (Alt+N with none, Alt+I, and
+    /// Alt+L after its load).
+    pub fn import(&mut self, terrain: &[TerrainFeature]) {
+        self.circles = map::import_circles(terrain);
+        self.circles.truncate(CAPACITY);
+        self.selected = self.circles.len().saturating_sub(1);
     }
 
     /// A left press at the ground point `at` with the event's key word's high byte

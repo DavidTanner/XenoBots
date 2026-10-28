@@ -278,6 +278,9 @@ enum Purpose {
     SaveScenario,
     /// Ctrl+Alt+O: the file read as the orders.
     Orders,
+    /// The terrain editor's Alt+L and Alt+S.
+    LoadMap,
+    SaveMap,
 }
 
 /// The most Ctrl+Alt+O reads of a file (`mov cx, 0x320` at `1000:6d8e`).
@@ -1027,7 +1030,7 @@ impl Mission {
         if self.terrain.is_some() {
             let keys = assets.map_driver.iter().flat_map(|d| &d.keys);
             if let Some(&(_, handler)) = keys.into_iter().find(|&&(w, _)| w == word) {
-                self.terrain_key(handler, &assets.save_dir);
+                self.terrain_key(handler, assets);
             }
             return None;
         }
@@ -1192,36 +1195,41 @@ impl Mission {
     }
 
     /// Runs a terrain editor key: Apply changes the mission's terrain through the sim,
-    /// Leave writes `BACKUP.MAP` in `dir` and closes the editor.
-    fn terrain_key(&mut self, handler: u16, dir: &Path) {
+    /// Leave writes `BACKUP.MAP` in `--save-dir` and closes the editor, Load and Save
+    /// open the file dialogs.
+    fn terrain_key(&mut self, handler: u16, assets: &Assets) {
+        let dir = &assets.save_dir;
         let Some(editor) = &mut self.terrain else {
             return;
         };
         let world = self.scenario.as_ref().and_then(|s| s.terrain.as_ref());
         let effect = editor.key(handler, world.map_or(&[][..], |t| &t.features));
+        let (saved, status) = (map::write(&editor.saved()), editor.status().to_string());
         self.dirty = true;
         match effect {
             terrain::Effect::None => {}
             terrain::Effect::Later(what) => log::info!("terrain editor: this key {what}"),
             terrain::Effect::Apply => {
                 // shortcut: the original writes `BACKUP.MAP`, loads it and deletes it;
-                // the port applies the same records without the file, and the buffer's
-                // leftover memory to a paragraph is zeros. Upgrade if a save's MAPP
-                // chunk must match DOSBox's byte for byte.
-                let saved = map::write(&editor.saved());
-                let mut world = map::to_world(&editor.saved());
-                world.padding = vec![0; saved.len().next_multiple_of(16) - saved.len()];
-                if let Run::Running(sim) = &mut self.run {
-                    sim.set_terrain(&world.features);
+                // the port applies the same records without the file. Upgrade if a
+                // save's MAPP chunk must match DOSBox's byte for byte.
+                if self.load_terrain(&saved).is_ok() {
+                    log::info!("terrain editor: applied");
                 }
-                if let Some(scenario) = &mut self.scenario {
-                    scenario.terrain = Some(world);
+            }
+            terrain::Effect::Load | terrain::Effect::Save => {
+                let purpose = match effect {
+                    terrain::Effect::Load => Purpose::LoadMap,
+                    _ => Purpose::SaveMap,
+                };
+                match &assets.file_dialogs {
+                    Some(tables) => self.open_dialog(purpose, tables, dir),
+                    None => log::info!("terrain editor: no file dialogs from xeno.exe"),
                 }
-                log::info!("terrain editor: applied");
             }
             terrain::Effect::Leave => {
                 let path = dir.join(SAVED_TERRAIN);
-                match std::fs::write(&path, map::write(&editor.saved())) {
+                match std::fs::write(&path, saved) {
                     Ok(()) => log::info!("terrain editor: left, {} written", path.display()),
                     Err(e) => log::warn!("terrain editor: cannot write {}: {e}", path.display()),
                 }
@@ -1229,7 +1237,48 @@ impl Mission {
                 return;
             }
         }
-        log::debug!("terrain editor: {}", editor.status());
+        log::debug!("terrain editor: {status}");
+    }
+
+    /// A `.map`'s bytes made the mission's terrain, through the sim and in the scenario
+    /// copy, as host slot `0x1506` loads one (the origin added; the buffer's leftover
+    /// memory to a paragraph taken as zeros).
+    fn load_terrain(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let mut world = map::to_world(&map::parse(bytes).map_err(|e| e.to_string())?);
+        world.padding = vec![0; bytes.len().next_multiple_of(16) - bytes.len()];
+        if let Run::Running(sim) = &mut self.run {
+            sim.set_terrain(&world.features);
+        }
+        if let Some(scenario) = &mut self.scenario {
+            scenario.terrain = Some(world);
+        }
+        Ok(())
+    }
+
+    /// Alt+L's file (`0x066f`): the terrain, then the circles imported from it. A file
+    /// that does not load changes nothing.
+    fn load_map(&mut self, path: &Path) {
+        let loaded = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| self.load_terrain(&bytes));
+        if let Err(e) = loaded {
+            return log::warn!("terrain editor: cannot load {}: {e}", path.display());
+        }
+        let world = self.scenario.as_ref().and_then(|s| s.terrain.as_ref());
+        let features = world.map_or(&[][..], |t| &t.features);
+        if let Some(editor) = &mut self.terrain {
+            editor.import(features);
+        }
+        log::info!("terrain editor: {} loaded", path.display());
+    }
+
+    /// Alt+S's file (`0x0705`): the circles written there.
+    fn save_map(&self, path: &Path) {
+        let Some(editor) = &self.terrain else { return };
+        match std::fs::write(path, map::write(&editor.saved())) {
+            Ok(()) => log::info!("terrain editor: {} written", path.display()),
+            Err(e) => log::warn!("terrain editor: cannot write {}: {e}", path.display()),
+        }
     }
 
     /// The terrain editor's view's camera and rectangle: the whole screen.
@@ -1393,8 +1442,8 @@ impl Mission {
             .clone()
             .unwrap_or_else(|| tables.first_name.clone());
         let kind = match purpose {
-            Purpose::SaveScenario => dialog::Kind::Save,
-            Purpose::Orders => dialog::Kind::Open,
+            Purpose::SaveScenario | Purpose::SaveMap => dialog::Kind::Save,
+            Purpose::Orders | Purpose::LoadMap => dialog::Kind::Open,
         };
         let dialog = FileDialog::open(kind, dir.to_path_buf(), name, tables);
         self.dialog = Some((dialog, purpose));
@@ -1417,6 +1466,8 @@ impl Mission {
         match purpose {
             Purpose::SaveScenario => self.save_scenario(&path),
             Purpose::Orders => self.load_orders(&path),
+            Purpose::LoadMap => self.load_map(&path),
+            Purpose::SaveMap => self.save_map(&path),
         }
     }
 
@@ -2503,9 +2554,14 @@ pub mod tests {
         std::fs::write(dir.join("ord.txt"), b"HELLO").unwrap();
         let mut assets = test_assets();
         let (save, orders) = ((0x3019, handler::SAVE), (0x3018, editor_handler::ORDERS));
+        let terrain = (0x1032, editor_handler::TERRAIN);
+        let (load_map, save_map, clear) = ((0x2026, 0x66f), (0x201f, 0x705), (0x2031, 0x694));
         assets.views.situation.keys.push(save);
+        assets.map_driver = Some(mapdvr::MapDriver {
+            keys: vec![load_map, save_map, clear],
+        });
         assets.editor = Some(editor::Editor {
-            keys: vec![orders],
+            keys: vec![orders, terrain],
             kind_names: vec![None; editor::KINDS],
             side_names: [b"H".to_vec(), b"A".to_vec()],
             show_names: [b"N".to_vec(), b"Y".to_vec()],
@@ -2565,6 +2621,46 @@ pub mod tests {
                 .unwrap()
                 .starts_with(b"HELLO")
         );
+
+        // The terrain editor's Alt+S writes its circles where the SAVE GAME dialog
+        // says; Alt+L loads a .map as the terrain and imports its circles.
+        m.key(terrain.0, &assets);
+        let at = |x: i32| xeno_sim::Position {
+            x: xeno_sim::Fixed(x << 16),
+            y: xeno_sim::Fixed(x << 16),
+        };
+        let editor = m.terrain.as_mut().unwrap();
+        editor.press(at(200), 0x11);
+        editor.hover(at(203));
+        assert!(editor.release());
+        m.key(save_map.0, &assets);
+        assert!(m.dialog_open());
+        (0..7).for_each(|_| assert!(m.key(0x0e, &assets).is_none()));
+        type_in(&mut m, "hill.map");
+        m.key(enter, &assets);
+        let saved = map::parse(&std::fs::read(dir.join("HILL.MAP")).unwrap()).unwrap();
+        assert_eq!(saved.features.len(), 2);
+        m.key(clear.0, &assets);
+        m.key(load_map.0, &assets);
+        (0..5).for_each(|_| assert!(m.key(0x0e, &assets).is_none()));
+        type_in(&mut m, "hill.map");
+        m.key(enter, &assets);
+        assert!(!m.dialog_open());
+        assert_eq!(
+            m.terrain.as_ref().unwrap().saved(),
+            saved,
+            "the circles imported"
+        );
+        let world = m.scenario.as_ref().unwrap().terrain.as_ref().unwrap();
+        assert_eq!(world.features.len(), 2);
+        assert_eq!(
+            map::save_circles(&map::import_circles(&world.features)),
+            saved
+        );
+        let Run::Running(sim) = &m.run else {
+            unreachable!()
+        };
+        assert!(sim.world.terrain.hill_at(at(201)).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
