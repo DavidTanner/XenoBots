@@ -30,7 +30,7 @@ pub fn heights(scenario: Option<&Scenario>) -> Heights {
     let mut heights = [(0, 0); 240];
     for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
         if let Some(h) = heights.get_mut(usize::from(o.slot)) {
-            *h = (o.z, o.unknown_12);
+            *h = (o.z, o.model_height);
         }
     }
     heights
