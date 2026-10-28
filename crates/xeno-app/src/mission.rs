@@ -1105,10 +1105,10 @@ impl Mission {
             return;
         };
         let effect = self.editor.key(handler, scenario, tables);
+        self.dirty = true;
         if let Effect::Scroll(x, y) = effect {
             let c = &mut self.map.centre;
             (c.x.0, c.y.0) = (c.x.0.wrapping_add(x), c.y.0.wrapping_add(y));
-            self.dirty = true;
         }
         if effect == Effect::SaveTerrain {
             let world = scenario.terrain.as_ref().map(|t| t.features.as_slice());
@@ -1126,6 +1126,38 @@ impl Mission {
         }
         for row in self.editor.status(scenario, tables) {
             log::info!("editor: {row}");
+        }
+        if effect == Effect::DestroySelected {
+            self.destroy_selected();
+        }
+    }
+
+    /// The situation room's map as drawn: the base's, with the editor's Ctrl+E.
+    fn shown_map(&self) -> MapState {
+        MapState {
+            reveal: self.editor.reveal(),
+            ..self.map
+        }
+    }
+
+    /// Ctrl+D: the selected unit is destroyed through the sim and leaves the scenario
+    /// a save writes.
+    fn destroy_selected(&mut self) {
+        let (Some(slot), Run::Running(sim)) = (self.selected, &mut self.run) else {
+            return;
+        };
+        for event in sim.destroy_robot(EntityId(slot)) {
+            Self::hear(self.viewed, &mut self.sounds, event);
+        }
+        if self.book().get(slot).is_none() {
+            if let Some(objects) = self.scenario.as_mut().and_then(|s| s.objects.as_mut()) {
+                objects.retain(|o| o.slot != slot);
+            }
+            // shortcut: which unit the roster picks next (`sim_remove_unit_from_list`,
+            // `1fe6:6e71`) is not traced: the first; upgrade with T-128.
+            self.selected = None;
+            let first = self.step_robot(None, 1);
+            self.select_unit(first);
         }
     }
 
@@ -1516,11 +1548,12 @@ impl Mission {
                             return false;
                         };
                         let flags = mainview::flags(self.scenario.as_ref());
+                        let map = self.shown_map();
                         mainview::draw_map(
                             &mut buffer,
                             world,
                             &camera,
-                            &self.map,
+                            &map,
                             terrain,
                             &flags,
                             selected,
@@ -1615,7 +1648,8 @@ impl Mission {
                 let (Some(room), Some(e)) = (&assets.sitroom, world.get(EntityId(slot))) else {
                     return false;
                 };
-                let (camera, map) = mainview::console_map(e.position, d.map_zoom, view, motion);
+                let (camera, mut map) = mainview::console_map(e.position, d.map_zoom, view, motion);
+                map.reveal = self.shown_map().reveal;
                 // No font: the zoom label is the situation room's.
                 let inputs = mainview::Inputs {
                     room,
@@ -2110,6 +2144,8 @@ pub mod tests {
             (0x1052, 0x6b0f), // Ctrl+Ins: a new path
             (0x304b, 0x6dde), // Ctrl+Alt+Left
             (0x1023, 0x6ad8), // Ctrl+H: humanoids
+            (0x1020, 0x6ab7), // Ctrl+D
+            (0x1012, 0x6be2), // Ctrl+E
         ];
         assets.editor = Some(editor::Editor {
             keys: keys.clone(),
@@ -2222,6 +2258,24 @@ pub mod tests {
         // Ctrl+Alt+Left moves the centre's x up by 0x7fff.
         key(&mut m, 0x304b);
         assert_eq!(m.map.centre.x, Fixed(0x7fff));
+        // Ctrl+D destroys the selected unit, through the sim and out of the save;
+        // Ctrl+E shows undetected aliens.
+        let gone = m.selected.unwrap();
+        key(&mut m, 0x1020);
+        assert!(m.world().get(EntityId(gone)).is_none() && m.book().get(gone).is_none());
+        assert!(
+            !m.scenario
+                .as_ref()
+                .unwrap()
+                .objects
+                .iter()
+                .flatten()
+                .any(|o| o.slot == gone)
+        );
+        assert_ne!(m.selected, Some(gone));
+        assert!(!m.shown_map().reveal);
+        key(&mut m, 0x1012);
+        assert!(m.shown_map().reveal);
         // The save holds the obstacle and the moved base.
         let back = usg::parse(&usg::write(m.scenario.as_ref().unwrap()).unwrap()).unwrap();
         let objects = back.objects.unwrap();

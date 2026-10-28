@@ -241,12 +241,14 @@ pub fn roster_bytes(scenario: Option<&Scenario>) -> [(u8, u8); 240] {
     bytes
 }
 
-/// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre.
+/// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre, and the
+/// editor's Ctrl+E (`DS:0x6ffa`): every alien robot, detected or not.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MapState {
     pub overlays: u16,
     pub zoom: u8,
     pub centre: Position,
+    pub reveal: bool,
 }
 
 impl MapState {
@@ -258,6 +260,7 @@ impl MapState {
                 x: xeno_sim::Fixed(base.map_centre.x),
                 y: xeno_sim::Fixed(base.map_centre.y),
             },
+            reveal: false,
         }
     }
 
@@ -340,6 +343,7 @@ pub fn console_map(
         overlays,
         zoom: map_zoom,
         centre: at,
+        reveal: false,
     };
     (camera, map)
 }
@@ -480,7 +484,7 @@ pub fn draw_map(
         match kind {
             // `1000:f976` (and 10 through `1000:e5fe`, not traced).
             0..=2 | 10 => {
-                let unseen = e.side == Side::Alien && f17 & DETECTED == 0;
+                let unseen = e.side == Side::Alien && f17 & DETECTED == 0 && !map.reveal;
                 if unseen || f17 & HIDDEN != 0 || map.overlays & Base::MAP_ROBOTS == 0 {
                     continue;
                 }
@@ -777,14 +781,19 @@ pub(crate) mod tests {
     }
 
     fn draw(overlays: u16, zoom: u8, selected: Option<u16>) -> Framebuffer {
-        let (world, flags, terrain) = world();
-        let tables = crate::mission::tests::test_assets().motion;
-        let (room, view, sprites) = (room(), view(), sprites());
         let map = MapState {
             overlays,
             zoom,
             centre: Position::default(),
+            ..MapState::default()
         };
+        draw_with(map, selected)
+    }
+
+    fn draw_with(map: MapState, selected: Option<u16>) -> Framebuffer {
+        let (world, flags, terrain) = world();
+        let tables = crate::mission::tests::test_assets().motion;
+        let (room, view, sprites) = (room(), view(), sprites());
         let selected = selected.and_then(|s| world.get(EntityId(s)));
         let base = world.get(EntityId(0)).unwrap().position;
         let camera = camera(base, selected, &map, &view, &tables);
@@ -834,6 +843,21 @@ pub(crate) mod tests {
         let b = draw(Base::MAP_RELAYS, 0, None);
         assert_eq!(b.get(25, 7), Some(MAP_BACKGROUND));
         assert_eq!(draw(0, 0, None).get(10, 10), Some(MAP_BACKGROUND));
+    }
+
+    /// The editor's Ctrl+E shows the undetected alien robot, at (0, 0) here.
+    #[test]
+    fn revealed_aliens_are_shown_undetected() {
+        let map = MapState {
+            overlays: Base::MAP_ROBOTS | Base::MAP_FREE,
+            ..MapState::default()
+        };
+        assert_eq!(draw_with(map, None).get(20, 10), Some(MAP_BACKGROUND));
+        let map = MapState {
+            reveal: true,
+            ..map
+        };
+        assert_eq!(draw_with(map, None).get(20, 10), Some(0x31));
     }
 
     /// The colour of the synthetic sprite a handle names.
@@ -886,6 +910,7 @@ pub(crate) mod tests {
             overlays: Base::MAP_FREE,
             zoom: 2,
             centre,
+            ..MapState::default()
         };
         let camera = camera(Position::default(), None, &map, &view(), &tables);
         let rect = Rect {

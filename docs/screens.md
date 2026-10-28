@@ -1063,8 +1063,8 @@ is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` headin
 | Ctrl+Space | `1000:6b90` | The current path's next mission (0 to 6, wrapping), with its weight and mix |
 | Ctrl+Backspace | `1000:6ba6` | Drop the current path's last point |
 | Ctrl+Z | `1000:6bdc` | Toggle the path display on the maps (`DS:0x5c47`; T-059) |
-| Ctrl+E | `1000:6be2` | Toggle `DS:0x6ffa`, which makes the scanner code (`1000:f976`) skip its check that an alien object has been detected (+0x17 bit 2): shows every alien object |
-| Ctrl+D | `1000:6ab7` | Destroy the robot whose pointer is at base +0x3c (`sim_destroy_robot`; not traced further: the roster's selection is +0x3e) |
+| Ctrl+E | `1000:6be2` | Toggle `DS:0x6ffa`, which makes the maps' robot routine (`1000:f976`) skip its check that an alien robot has been detected (+0x17 bit 2): the maps show every alien robot (T-108) |
+| Ctrl+D | `1000:6ab7` | Destroy the selected unit (`sim_destroy_robot`): base +0x3c is the selected unit's object, which the roster's selection writes (`1fe6:6f31`, with +0xc7 and +0xcd = 3 for redraws; T-108) |
 | Ctrl+C | `1000:6901` | Clear the base's seven message slots (`1fe6:6b2e`, as `sim_init_base` does) |
 | Ctrl+Alt+R | `1000:6ac8` | Remove every relay (`1000:f60f` with kind 4) |
 | Ctrl+M | `ui_run_map_editor` (`1000:448c`) | The terrain editor (`mapdvr.dvr`, below) |
@@ -1106,7 +1106,13 @@ By the picked kind (`DS:0x5c3f`):
 - **Relays** (4): the point is worked out into a scratch object at `DS:0x5cb4`, then
   `1000:49a1` and the relay check `1000:d15b`; only if it allows (carry) is a relay
   allocated, its x, y and z copied from the scratch and set up (`1000:cc2a`, `cca8`).
-  Not traced, not in the port yet.
+  Partly traced (T-142): `1000:49a1` rounds the point's whole x and y by the mask
+  `DS:0x4db2` (left by the last robot through `1000:49cc`: 0xfe for program 0xd,
+  else 0xfc) and the check is `2000:7faa` (not traced); the set-up `1000:cc2a`
+  clears +0x18 and +0x1f, sets radius 0x500 and `TARGETABLE`, a random byte at +0x1e,
+  +0x21/+0x22 = 0, the four links' words (+0x25, +0x29, +0x2d, +0x31) 0xffff, then
+  `1000:ccf0`; `1000:cca8` puts the relay on the lattice: x and y whole and even
+  (rounded up), and if their bit 1 differs, cleared in both. Not in the port yet.
 - **Obstacles** (16): allocated (`sim_alloc_object_slot`, `1000:f4b1`: the lowest free
   slot of the 240, the reference count 1, the lowest free entry of its pool, the bytes
   from +4 cleared, 0x30 of them for the small pool), then radius 13 (0x0d00) and
