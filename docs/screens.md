@@ -1656,7 +1656,7 @@ original.
   unlock, as in the original) opens the SAVE GAME dialog and writes the scenario with
   `usg::write` to the name chosen (`EDITED.USG` if the port cannot read the dialogs
   from `xeno.exe`); Ctrl+Alt+O opens the open dialog and reads the chosen file as the
-  orders. Not done: Ctrl+Alt+B (T-110), Ctrl+C (T-103). The edits
+  orders. Not done: Ctrl+Alt+B (T-145), Ctrl+C (T-103). The edits
   change the scenario copy, not the sim's world (which does not run yet).
 - **The terrain editor** (T-109, `crates/xeno-app/src/terrain.rs`): Ctrl+M, with the
   key table read from the user's `mapdvr.dvr` (`xeno_formats::mapdvr`; without it
@@ -1669,8 +1669,10 @@ original.
   Ctrl+`,` and `.`, Space, Alt+N and Alt+I work as traced; **Alt+E** makes the circles
   the mission's terrain through the sim (`Sim::set_terrain`; the scenario copy, so the
   views and a save, follows) and **Alt+Q** writes `BACKUP.MAP` to `--save-dir` and
-  closes it. The status is logged at debug level. Not done: Alt+L and Alt+S (the file
-  dialogs, T-110), Shift+`*` (a screenshot), the grid (T-143); the point under the
+  closes it. **Alt+L** loads a `.map` through the open dialog as the terrain (as
+  Apply) and imports its circles; **Alt+S** writes the circles through SAVE GAME. The
+  status is logged at debug level. Not done: Shift+`*` (a screenshot), the grid
+  (T-143); the point under the
   pointer is worked out from the camera now rather than the last frame's.
 - **The file dialogs** (T-110, `crates/xeno-app/src/dialog.rs`): drawn from the
   scripts, widgets and patterns read from the user's `xeno.exe`, over the screen, with
@@ -1681,7 +1683,8 @@ original.
   directory below it, the name as typed or the file found in any case. Shortcuts: the
   lists are sorted (DOS gives directory order), names that are not 8.3 are left out,
   there are no drives, a path with a drive or from a root shows the error box, and
-  the directory line shows the host path's parts as `C:` and DOS's form.
+  the directory line shows the host path's parts as `C:` and DOS's form. The map
+  room's and training menu's Alt+L and Alt+S are T-144.
 - **Saves** (T-057): the log-in loads `<NAME>.LOG` from `--save-dir` (else the game
   directory), any case, into the campaign, the map room's selection and the loaded
   mission (parked, so playing the loaded scenario resumes it); a file that does not
