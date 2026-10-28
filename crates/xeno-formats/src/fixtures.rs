@@ -1134,7 +1134,7 @@ impl SyntheticViews {
 /// key widget; every view's keys are F2, ESC, Space, Tab and Alt+Q, bound to the
 /// original's automatic, base, view-selected, next-unit and end handlers. The training menu has two buttons
 /// (action 0, a mission `ATRAIN.USG`, and action 2, back) and two keys (ESC back, A the
-/// mission). `image` must reach `ds + 0x700` and `0xd320`; it uses the code offsets
+/// mission). `image` must reach `ds + 0x700` and `0xdc00`; it uses the code offsets
 /// 0x1000 to 0x1440 and the image from 0x1a000 to 0x1a910, and leaves the other
 /// synthetic tables alone.
 pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
@@ -1252,6 +1252,31 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     put(MESSAGE_COLOURS.0, &op(MESSAGE_COLOURS.1, 0x660));
     put(ds + 0x660, &words(&[0x3020, 0x3121, 0x3222]));
     put(MESSAGE_HIGH.0, &[MESSAGE_HIGH.1, 0x3f]);
+    put(DISPLAY_VIEW_MODES.0, &op(DISPLAY_VIEW_MODES.1, 0x670));
+    put(
+        ds + 0x670,
+        &[0x0e, 0x04, 0x10, 0x04, 0x1c, 0x1c, 0x1c, 0x1c],
+    );
+    put(DISPLAY_DEVICES.0, &op(DISPLAY_DEVICES.1, 0x678));
+    put(ds + 0x678, &[0x08, 0x10, 0x20, 0]);
+    for (kind, at) in DISPLAY_MAP_COLOURS.into_iter().enumerate() {
+        let k = kind as u8;
+        put(
+            at,
+            &[
+                0xc6,
+                0x06,
+                0x57,
+                0x14,
+                0x40 + k,
+                0xc6,
+                0x06,
+                0x58,
+                0x14,
+                0x48 + k,
+            ],
+        );
+    }
 
     // The training menu.
     let (set, template) = (0x1a800, 0x1a900);

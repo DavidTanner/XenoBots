@@ -466,4 +466,36 @@ MissionViews {
         ],
         high: 63,
     },
+    second_display: SecondDisplay {
+        view_modes: [
+            14,
+            4,
+            16,
+            4,
+            28,
+            28,
+            28,
+            28,
+        ],
+        devices: [
+            8,
+            16,
+            32,
+            0,
+        ],
+        map_colours: [
+            [
+                64,
+                72,
+            ],
+            [
+                65,
+                73,
+            ],
+            [
+                66,
+                74,
+            ],
+        ],
+    },
 }

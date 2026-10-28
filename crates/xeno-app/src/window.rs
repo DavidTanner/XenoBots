@@ -394,8 +394,11 @@ impl App {
         match &mut self.front {
             FrontEnd::Screens(screens) => {
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
-                for event in screens.take_sounds() {
-                    self.music.effect(event);
+                for sound in screens.take_sounds() {
+                    match sound {
+                        crate::mission::Sound::Play(event) => self.music.effect(event),
+                        crate::mission::Sound::Stop(event) => self.music.stop(event),
+                    }
                 }
                 self.palette = screens.palette();
                 self.input.screen_claims_escape = screens.claims_escape();

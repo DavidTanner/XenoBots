@@ -367,7 +367,18 @@ pub struct Robot {
     pub unknown_e8: Unknown<4>,
     /// +0xec: bit 0, the targeting computer is damaged.
     pub targeting: u8,
-    pub unknown_ed: Unknown<9>,
+    pub unknown_ed: Unknown<2>,
+    /// +0xef: the console's display mode (0 the camera, 1 thermal, 2 the map, 3 the
+    /// scorpion's missile camera; bit 2 while that device is damaged); +0xf1 and
+    /// +0xf2 the camera's and the map's zoom steps (0 to 4); +0xf3 the ticks left to
+    /// show the zoom's name (in 16s); +0xf4 the camera's pan, added to the heading
+    /// (`docs/screens.md`, "The second display (T-104)").
+    pub display: u8,
+    pub unknown_f0: u8,
+    pub zoom: u8,
+    pub map_zoom: u8,
+    pub zoom_label: u8,
+    pub pan: u16,
     /// +0xf6: systems damaged or destroyed: bits 0 visual camera, 1 thermal camera,
     /// 2 map, 3 radar, 4 EMI sensors, 6 and 7 the first and second weapon destroyed.
     pub systems: u8,

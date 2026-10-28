@@ -84,6 +84,57 @@ mod handler {
         (0x67dc, 6),
         (0x67e2, 8),
     ];
+    /// Consoles: V, T and M set the display mode (+0xef) of each kind
+    /// (`ui_set_humanoid_display_mode`, the scorpion's `99c7`, the scout's `cbc1`);
+    /// = and keypad +, - and keypad - step the display's zoom (`1000:da0e`, `da37`).
+    pub const DISPLAY_MODES: [(u16, u8); 9] = [
+        (0xb415, 0),
+        (0xb41b, 1),
+        (0xb421, 2),
+        (0x9c5a, 0),
+        (0x9c60, 1),
+        (0x9c66, 2),
+        (0xcbed, 0),
+        (0xcbf3, 1),
+        (0xcbf9, 2),
+    ];
+    pub const DISPLAY_ZOOM_IN: u16 = 0xda0e;
+    pub const DISPLAY_ZOOM_OUT: u16 = 0xda37;
+}
+
+/// A robot console's second display (+0xef to +0xf5): the display mode (0 the
+/// camera, 1 thermal, 2 the map, 3 the scorpion's missile camera), the camera's and
+/// the map's zoom steps, and the camera's pan (`docs/screens.md`, "The second display
+/// (T-104)").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Display {
+    pub mode: u8,
+    pub zoom: u8,
+    pub map_zoom: u8,
+    pub pan: u16,
+}
+
+/// Display mode 2, the map, and bit 2: the mode's device is damaged. Mode 7 (the
+/// scorpion's lost missile camera) is left as it is by `1000:db5c`.
+const MAP_DISPLAY: u8 = 2;
+const DAMAGED: u8 = 4;
+const LOST_MISSILE_CAMERA: u8 = 7;
+/// The zoom steps go from 0 to 4 (`1000:da0e`, `da37`).
+const MAX_DISPLAY_ZOOM: u8 = 4;
+/// The second display's region, and its view modes: the camera (6) and the map (0xc).
+const SECOND_DISPLAY: u8 = 254;
+const CAMERA_VIEW: u8 = 6;
+const MAP_VIEW: u8 = 0xc;
+/// The sound events of a display mode key (10) and of a damaged display (28).
+const DISPLAY_SOUND: u8 = 10;
+const NOISE_SOUND: u8 = 28;
+
+/// A sound event to play, or to stop (`1000:eeb1`: the event's voice given silence
+/// with the event's flags).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sound {
+    Play(u8),
+    Stop(u8),
 }
 
 /// The situation room's main view (widget type 0x50) and its orders mode, and how
@@ -386,7 +437,12 @@ pub struct Mission {
     run: Run,
     viewed: Viewed,
     /// Sound events heard in the view shown since the last [`Mission::take_sounds`].
-    sounds: Vec<u8>,
+    sounds: Vec<Sound>,
+    /// Each robot's console display, as loaded and as its keys change it.
+    displays: BTreeMap<u16, Display>,
+    /// The open console's display mode when the noise was last checked
+    /// (`DS:0x70ad`).
+    noise_mode: u8,
     /// The situation room's roster: its selection (base +0x3e) and first row (+0x4c).
     selected: Option<u16>,
     roster_top: usize,
@@ -433,6 +489,18 @@ impl Mission {
         let base = mainview::base_of(Some(scenario), Side::Human);
         mission.mode = base.map_or(ORDERS_MODE, |b| b.view_mode);
         mission.map = base.map(MapState::of).unwrap_or_default();
+        for o in scenario.objects.iter().flatten() {
+            if let usg::Body::Robot(r) = &o.body {
+                let (mode, zoom, map_zoom, pan) = (r.display, r.zoom, r.map_zoom, r.pan);
+                let display = Display {
+                    mode,
+                    zoom,
+                    map_zoom,
+                    pan,
+                };
+                mission.displays.insert(o.slot, display);
+            }
+        }
         log::debug!(
             "mission: the situation room starts in view mode {} ({} briefing bytes)",
             mission.mode,
@@ -452,6 +520,8 @@ impl Mission {
             run,
             viewed: Viewed::Base,
             sounds: Vec::new(),
+            displays: BTreeMap::new(),
+            noise_mode: 0,
             selected: None,
             roster_top: 0,
             panel_pressed: false,
@@ -551,6 +621,7 @@ impl Mission {
             log::debug!("mission: cannot view the enemy's unit {slot}");
             return None;
         }
+        self.leave_console();
         self.viewed = Viewed::Robot(slot);
         self.reset_looks();
         Some(view_of(robot.kind))
@@ -591,6 +662,7 @@ impl Mission {
     }
 
     fn base(&mut self) -> Request {
+        self.leave_console();
         self.viewed = Viewed::Base;
         // Drawing the situation room's picture starts the orders again (`1000:54fc`).
         self.typed = 0;
@@ -716,17 +788,94 @@ impl Mission {
 
     /// Keeps a sound `event` that is heard everywhere, or only while its object's
     /// console is open and it is (`DS:0x7e16`; none in the situation room).
-    fn hear(viewed: Viewed, sounds: &mut Vec<u8>, event: xeno_sim::motion::Event) {
+    fn hear(viewed: Viewed, sounds: &mut Vec<Sound>, event: xeno_sim::motion::Event) {
         if let xeno_sim::motion::Event::Sound { event, only_for } = event
             && only_for.is_none_or(|id| viewed == Viewed::Robot(id.0))
         {
-            sounds.push(event);
+            sounds.push(Sound::Play(event));
         }
     }
 
     /// The sound events heard since the last call.
-    pub fn take_sounds(&mut self) -> Vec<u8> {
+    pub fn take_sounds(&mut self) -> Vec<Sound> {
         std::mem::take(&mut self.sounds)
+    }
+
+    /// Robot `slot`'s console display.
+    fn display(&self, slot: u16) -> Display {
+        self.displays.get(&slot).copied().unwrap_or_default()
+    }
+
+    /// Robot `slot`'s display mode as `1000:db5c` leaves it each tick: bit 2 set while
+    /// the mode's device (+0xf6) is damaged.
+    fn display_mode(&self, slot: u16, assets: &Assets) -> u8 {
+        let mode = self.display(slot).mode;
+        if mode == LOST_MISSILE_CAMERA {
+            return mode;
+        }
+        let mode = mode & !DAMAGED;
+        let systems = match self.world().get(EntityId(slot)).map(|e| e.damage) {
+            Some(xeno_sim::Damage::Robot(c)) => c.systems,
+            _ => 0,
+        };
+        let devices = &assets.views.second_display.devices;
+        let device = devices.get(usize::from(mode)).copied().unwrap_or(0);
+        if systems & device != 0 {
+            mode | DAMAGED
+        } else {
+            mode
+        }
+    }
+
+    /// `1000:daa2`, after each frame of the open console's second display: when its
+    /// display mode changed, the noise plays if the new one is damaged, else its voice
+    /// is given silence.
+    pub fn check_noise(&mut self, assets: &Assets) {
+        let Viewed::Robot(slot) = self.viewed else {
+            return;
+        };
+        let mode = self.display_mode(slot, assets);
+        if mode != self.noise_mode {
+            self.noise_mode = mode;
+            self.sounds.push(if mode & DAMAGED != 0 {
+                Sound::Play(NOISE_SOUND)
+            } else {
+                Sound::Stop(NOISE_SOUND)
+            });
+        }
+    }
+
+    /// A console's leave routine (`1000:dac0`): the noise's voice silenced.
+    fn leave_console(&mut self) {
+        if let Viewed::Robot(_) = self.viewed {
+            self.sounds.push(Sound::Stop(NOISE_SOUND));
+            self.noise_mode = 0;
+        }
+    }
+
+    /// A display mode key (`ui_set_humanoid_display_mode` and the other kinds'): the
+    /// mode set and its sound played, whatever the mode was.
+    // shortcut: the zoom's name (+0xf3) and the colour records the mode picks
+    // (`1000:d9ca`, `DS:0x70b6`) are T-134's.
+    fn set_display_mode(&mut self, slot: u16, mode: u8) {
+        self.displays.entry(slot).or_default().mode = mode;
+        self.sounds.push(Sound::Play(DISPLAY_SOUND));
+        self.dirty = true;
+    }
+
+    /// `1000:da0e`, `da37`: the map's zoom step in the map mode, the camera's in the
+    /// others, within 0 to 4.
+    fn zoom_display(&mut self, slot: u16, closer: bool, assets: &Assets) {
+        let map = self.display_mode(slot, assets) == MAP_DISPLAY;
+        let d = self.displays.entry(slot).or_default();
+        let step = if map { &mut d.map_zoom } else { &mut d.zoom };
+        // Only 4 and 0 stop it: a step out of range wraps on.
+        *step = match closer {
+            true if *step != MAX_DISPLAY_ZOOM => step.wrapping_add(1),
+            false if *step != 0 => step.wrapping_sub(1),
+            _ => *step,
+        };
+        self.dirty = true;
     }
 
     /// The port's stand-in for shots (T-114): `side`'s base takes hits until it is
@@ -788,6 +937,15 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::AUTOMATIC_NEXT) => {
                 self.change_orders(programs, |book| book.select_next(slot, programs));
+                None
+            }
+            (Viewed::Robot(slot), h) if handler::DISPLAY_MODES.iter().any(|&(m, _)| m == h) => {
+                let mode = handler::DISPLAY_MODES.iter().find(|&&(m, _)| m == h)?.1;
+                self.set_display_mode(slot, mode);
+                None
+            }
+            (Viewed::Robot(slot), handler::DISPLAY_ZOOM_IN | handler::DISPLAY_ZOOM_OUT) => {
+                self.zoom_display(slot, handler == handler::DISPLAY_ZOOM_IN, assets);
                 None
             }
             (Viewed::Robot(slot), handler::NEXT_UNIT | handler::PREVIOUS_UNIT) => {
@@ -1116,11 +1274,18 @@ impl Mission {
             if colour == 255 && self.draw_view(fb, assets) {
                 continue;
             }
-            // The status view (S) is T-126; the consoles' instruments T-104.
-            let task = if view == View::SitRoom {
-                "T-126"
-            } else {
-                "T-056"
+            if colour == SECOND_DISPLAY && self.draw_second(fb, assets) {
+                continue;
+            }
+            // The status view (S) is T-126; the consoles' other displays and
+            // instruments T-130 to T-132 and T-134.
+            let task = match (view, colour) {
+                (View::SitRoom, _) => "T-126",
+                (_, 255) => "T-101",
+                (_, SECOND_DISPLAY) => "T-134",
+                (View::Humanoid, _) => "T-130",
+                (View::Scorpion, _) => "T-131",
+                _ => "T-132",
             };
             hatch(fb, colour, font, task);
         }
@@ -1190,6 +1355,7 @@ impl Mission {
                             &flags,
                             selected,
                             &inputs,
+                            [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
                         );
                         true
                     }
@@ -1224,6 +1390,88 @@ impl Mission {
             review::copy_through(fb, &buffer, left, top);
         }
         drawn
+    }
+
+    /// The open console's second display (the colour-254 region, `1000:dbe8` and the
+    /// kinds' draw handlers): the camera turned by the pan at its zoom, or the map
+    /// around the robot. `false` (nothing drawn) in the other modes and without the
+    /// tables.
+    fn draw_second(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+        let Viewed::Robot(slot) = self.viewed else {
+            return false;
+        };
+        let (Some(view), Some((left, top, width, height)), Some(robot)) = (
+            &assets.view3d,
+            review::region_of(fb, SECOND_DISPLAY),
+            self.book().get(slot),
+        ) else {
+            return false;
+        };
+        let tables = &assets.views.second_display;
+        let d = self.display(slot);
+        let mode = self.display_mode(slot, assets);
+        let (world, motion) = (self.world(), &assets.motion);
+        let heights = scene::heights(self.scenario.as_ref());
+        let terrain = self
+            .scenario
+            .as_ref()
+            .and_then(|s| s.terrain.as_ref())
+            .map_or(&[][..], |t| &t.features);
+        let mut buffer = Framebuffer::new(Size::new(width, height));
+        match tables.view_modes.get(usize::from(mode)) {
+            Some(&CAMERA_VIEW) => {
+                let id = EntityId(slot);
+                let zoom_pan = (d.zoom, d.pan);
+                let Some(camera) =
+                    scene::second_camera(world, id, view, motion, &heights, zoom_pan)
+                else {
+                    return false;
+                };
+                let sky = assets.skies.get(&self.file);
+                let models = &assets.models;
+                scene::draw_from(
+                    &mut buffer,
+                    world,
+                    &camera,
+                    view,
+                    motion,
+                    &heights,
+                    terrain,
+                    models,
+                    sky,
+                );
+            }
+            Some(&MAP_VIEW) => {
+                let (Some(room), Some(e)) = (&assets.sitroom, world.get(EntityId(slot))) else {
+                    return false;
+                };
+                let (camera, map) = mainview::console_map(e.position, d.map_zoom, view, motion);
+                // No font: the zoom label is the situation room's.
+                let inputs = mainview::Inputs {
+                    room,
+                    view,
+                    sprites: &assets.map_sprites,
+                    font: None,
+                };
+                let flags = mainview::flags(self.scenario.as_ref());
+                let colours = tables.map_colours[robot.kind.index()];
+                let (map_ref, selected) = (&map, Some(e));
+                mainview::draw_map(
+                    &mut buffer,
+                    world,
+                    &camera,
+                    map_ref,
+                    terrain,
+                    &flags,
+                    selected,
+                    &inputs,
+                    colours,
+                );
+            }
+            _ => return false,
+        }
+        review::copy_through_colour(fb, &buffer, (left, top), SECOND_DISPLAY);
+        true
     }
 
     /// The situation room's main view (widget type 0x50).
@@ -1688,9 +1936,49 @@ pub mod tests {
         // The hit sound (event 21) is the robot's console's; destroyed (2), everyone's.
         assert_eq!(hit(&mut m, 0), []);
         m.view_robot(robot).unwrap();
-        assert_eq!(hit(&mut m, 0), [21]);
+        assert_eq!(hit(&mut m, 0), [Sound::Play(21)]);
+        // Leaving the console gives the display noise's voice silence (`1000:dac0`).
         m.base();
-        assert_eq!(hit(&mut m, 81), [2]);
+        assert_eq!(hit(&mut m, 81), [Sound::Stop(28), Sound::Play(2)]);
+    }
+
+    #[test]
+    fn display_keys_set_the_mode_and_zoom_and_a_damaged_device_makes_noise() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        m.view_robot(robot).unwrap();
+        m.set_display_mode(robot, MAP_DISPLAY);
+        assert_eq!(m.take_sounds(), [Sound::Play(DISPLAY_SOUND)]);
+        // In the map mode the keys step the map's zoom, up to 4.
+        m.displays.entry(robot).or_default().map_zoom = 0;
+        let camera_zoom = m.display(robot).zoom;
+        (0..6).for_each(|_| m.zoom_display(robot, true, &assets));
+        assert_eq!(
+            (m.display(robot).map_zoom, m.display(robot).zoom),
+            (4, camera_zoom)
+        );
+        m.zoom_display(robot, false, &assets);
+        assert_eq!(m.display(robot).map_zoom, 3);
+        // A changed mode with its device working silences the noise's voice.
+        m.check_noise(&assets);
+        assert_eq!(m.take_sounds(), [Sound::Stop(NOISE_SOUND)]);
+        m.check_noise(&assets);
+        assert_eq!(m.take_sounds(), []);
+        // The camera's device (synthetic: +0xf6 bit 3) damaged: the noise plays.
+        m.set_display_mode(robot, 0);
+        if let Run::Running(sim) = &mut m.run
+            && let Some(xeno_sim::Damage::Robot(c)) =
+                sim.world.get_mut(EntityId(robot)).map(|e| &mut e.damage)
+        {
+            c.systems |= 0x08;
+        }
+        m.check_noise(&assets);
+        assert_eq!(
+            m.take_sounds(),
+            [Sound::Play(DISPLAY_SOUND), Sound::Play(NOISE_SOUND)]
+        );
+        assert_eq!(m.display_mode(robot, &assets), DAMAGED);
     }
 
     #[test]
@@ -2083,6 +2371,64 @@ pub mod tests {
                         .filter(|&(x, y)| fb.get(x, y) == Some(mainview::MAP_BACKGROUND))
                         .count();
                     assert!(background > 1000, "{name}: {background}");
+                }
+            }
+        }
+    }
+
+    /// Every stock scenario's first robot of each kind: its console's second display
+    /// fills the colour-254 region in the camera and map modes.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_second_display_fills_its_region() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        for (name, scenario) in &assets.scenarios {
+            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+            for kind in RobotKind::ALL {
+                let Some(robot) = m
+                    .robots()
+                    .into_iter()
+                    .find(|&s| m.book().get(s).unwrap().kind == kind)
+                else {
+                    continue;
+                };
+                let view = m.view_robot(robot).unwrap();
+                let file = crate::screens::Screen::Mission(view).file().unwrap();
+                let picture = pictures.iter().find(|(n, _)| *n == file).unwrap();
+                for mode in [0, MAP_DISPLAY] {
+                    m.displays.entry(robot).or_default().mode = mode;
+                    let mut fb = Framebuffer::new(Size::MODE_13H);
+                    fb.pixels_mut().copy_from_slice(&picture.1.pixels);
+                    let region: Vec<bool> =
+                        fb.pixels().iter().map(|&p| p == SECOND_DISPLAY).collect();
+                    let before = region.iter().filter(|&&r| r).count();
+                    m.draw(&mut fb, &assets);
+                    let count = |colour| {
+                        fb.pixels()
+                            .iter()
+                            .zip(&region)
+                            .filter(|&(&p, &r)| r && p == colour)
+                            .count()
+                    };
+                    let left = count(SECOND_DISPLAY);
+                    assert!(
+                        before > 1000 && left < before / 10,
+                        "{name} {kind:?} mode {mode}: {left} of {before}"
+                    );
+                    // The map is mostly its kind's clear colour.
+                    let clear = assets.views.second_display.map_colours[kind.index()][0];
+                    if mode == MAP_DISPLAY {
+                        assert!(count(clear) > before / 2, "{name} {kind:?}");
+                    }
                 }
             }
         }

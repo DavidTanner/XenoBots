@@ -310,6 +310,7 @@ The flags at +0x16 (`usg::flag`):
 | 0xdd | 1 | | A humanoid's selected weapon, 0 or 1 (script opcodes 0x7b, 0x7c; T-054) |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
 | 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged. Bit 2 is set in stock robots; the other bits are not traced |
+| 0xef..0xf5 | 7 | `display`, `zoom`, `map_zoom`, `zoom_label`, `pan` | The console's second display (`docs/screens.md`, "The second display (T-104)"): +0xef the display mode (0 the camera, 1 thermal, 2 the map, 3 the scorpion's missile camera; bit 2 set every tick while that mode's device is damaged), +0xf0 not traced, +0xf1 and +0xf2 the camera's and the map's zoom steps (0 to 4), +0xf3 the ticks left (in 16s) to show the zoom's name, +0xf4 the camera's pan (a word added to the heading) |
 | 0xf6 | 1 | `systems` | Bits 0 visual camera, 1 thermal camera, 2 map, 3 radar, 4 EMI sensors damaged; 6 and 7 the first and second weapon destroyed |
 | 0xfd | 1 | | Bit 7: a scorpion's relay deployer damaged (a hit can set it; with it the relay count reads 0). Bit 0: firing takes energy from +0x50; bit 5: the no-energy message was shown (T-054) |
 | 0x108, 0x109 | 1, 1 | | A humanoid's first and second weapon's cool-down, counted down every 8 ticks (T-054) |

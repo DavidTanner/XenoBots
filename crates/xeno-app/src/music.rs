@@ -131,6 +131,16 @@ impl Jukebox {
             .play(e.voice, e.data.clone(), e.step, e.queued);
     }
 
+    /// Gives sound event `event`'s voice silence with the event's flags (`1000:eeb1`):
+    /// a queued event's sound finishes first.
+    pub fn stop(&mut self, event: u8) {
+        log::debug!("sound event {event} stopped");
+        let (Some(output), Some(e)) = (&self.output, self.effects.get(usize::from(event))) else {
+            return;
+        };
+        output.mixer().play(e.voice, None, e.step, e.queued);
+    }
+
     pub fn cue(&mut self, cue: Cue) {
         log::debug!("music: {cue:?}");
         self.playing = match cue {

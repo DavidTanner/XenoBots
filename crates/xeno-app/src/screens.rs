@@ -427,7 +427,7 @@ impl Screens {
     }
 
     /// The mission's sound events heard since the last call (`Mission::take_sounds`).
-    pub fn take_sounds(&mut self) -> Vec<u8> {
+    pub fn take_sounds(&mut self) -> Vec<crate::mission::Sound> {
         self.mission.take_sounds()
     }
 
@@ -703,6 +703,9 @@ impl Screens {
             && let Some(won) = self.mission.tick(events.iter().copied())
         {
             self.act(End(if won { Ending::Won } else { Ending::Lost }));
+        }
+        if matches!(self.screen, Mission(_)) && self.next.is_none() {
+            self.mission.check_noise(&self.mission_assets);
         }
         // The time-of-day tint, once no fade is pending or running (the records blend
         // from the shadow, and a fade's uploads would wipe them).
