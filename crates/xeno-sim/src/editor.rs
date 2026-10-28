@@ -8,10 +8,11 @@ use xeno_formats::editor::Editor;
 use xeno_formats::orders::RobotKind;
 use xeno_formats::usg::{Body, Object, ObjectKind, Side, flag};
 
+use crate::motion::Event;
 use crate::orders::{Orders, Robot};
 use crate::terrain::Paths;
 use crate::world::side_code;
-use crate::{Damage, Entity, EntityId, Position, Sim, State, World, script};
+use crate::{Damage, Entity, EntityId, Position, Sim, State, World, damage, script};
 
 /// What a press places.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +256,16 @@ impl Sim {
         record(&b).map(|o| Placed::Made(Box::new(o)))
     }
 
+    /// Ctrl+D (`1000:6ab7`): robot `id` is destroyed (`sim_destroy_robot`). Returns
+    /// what it did; without tables or a robot, nothing.
+    pub fn destroy_robot(&mut self, id: EntityId) -> Vec<Event> {
+        let mut events = Vec::new();
+        if let (Some(tables), Some(_)) = (&self.tables, self.world.orders.get(id.0)) {
+            damage::destroy(&mut self.world, id, tables, &mut events);
+        }
+        events
+    }
+
     /// The editor's path keys and points change a side's table in place
     /// (`DS:0x5cd1`); the host hands over the edited tables.
     pub fn set_paths(&mut self, paths: Paths) {
@@ -425,6 +436,11 @@ mod tests {
             &bytes[start + 0x107..start + 0x110],
             &[0x50, 0, 4, 0, 0x2f, 0x30, 0x31, 0x32, 0x33]
         );
+        // Ctrl+D: the scorpion is destroyed; a base is not a robot.
+        assert!(!sim.destroy_robot(EntityId(1)).is_empty());
+        assert!(sim.world.get(EntityId(1)).is_none());
+        assert!(sim.destroy_robot(EntityId(0)).is_empty());
+        assert!(sim.world.get(EntityId(0)).is_some());
         // Bases and obstacles are not robots.
         let what = Place::Robot {
             kind: ObjectKind::Base,

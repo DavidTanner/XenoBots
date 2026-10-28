@@ -39,6 +39,7 @@ mod handler {
     pub const DROP_POINT: u16 = 0x6ba6;
     pub const SHOW_PATHS: u16 = 0x6bdc;
     pub const REVEAL: u16 = 0x6be2;
+    pub const DESTROY: u16 = 0x6ab7;
     pub const REMOVE_RELAYS: u16 = 0x6ac8;
     pub const TERRAIN: u16 = 0x448c;
     pub const TOGGLE: u16 = 0x6bcf;
@@ -50,9 +51,8 @@ mod handler {
         (0x6dea, 0, -0x7fff),
         (0x6df0, 0, 0x7fff),
     ];
-    /// Ctrl+D, Ctrl+C, Ctrl+Alt+O and B: not in the port yet.
-    pub const LATER: [(u16, &str); 4] = [
-        (0x6ab7, "destroys the roster's robot (T-108)"),
+    /// Ctrl+C, Ctrl+Alt+O and B: not in the port yet.
+    pub const LATER: [(u16, &str); 3] = [
         (0x6901, "clears the base's messages (T-103)"),
         (0x6d67, "loads the orders from a file (T-110)"),
         (0x6dc3, "picks the sky from a file (T-110)"),
@@ -71,6 +71,9 @@ pub enum Effect {
     SaveTerrain,
     /// Ctrl+Alt+arrows: move the situation room's map centre by (x, y), 16.16.
     Scroll(i32, i32),
+    /// Ctrl+D (`1000:6ab7`): destroy the selected unit (base +0x3c, which the
+    /// roster's selection sets, `1fe6:6f31`) with `sim_destroy_robot`.
+    DestroySelected,
 }
 
 /// The editor's state (`DS:0x5c3f`..`0x5c47`), as `ui_reset_editor_state` leaves it.
@@ -165,6 +168,7 @@ impl Editor {
                 objects.retain(|o| o.kind != ObjectKind::Relay);
             }
             handler::TERRAIN => return Effect::SaveTerrain,
+            handler::DESTROY => return Effect::DestroySelected,
             handler::TOGGLE => {
                 self.flag = !self.flag;
                 log::info!("editor: Alt+F1 flag {} (nothing reads it)", self.flag);
@@ -230,6 +234,11 @@ impl Editor {
             None => log::info!("editor: nothing placed (no free slot, sign or base)"),
         }
         false
+    }
+
+    /// Ctrl+E's flag (`DS:0x6ffa`): the maps show undetected alien robots.
+    pub fn reveal(&self) -> bool {
+        self.reveal
     }
 
     /// The four status rows the original prints from row 20 of its debug screen
