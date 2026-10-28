@@ -37,7 +37,7 @@ use xeno_formats::views::{
 use xeno_formats::{editor, lzexe, map, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
-use xeno_sim::{EntityId, Parked, Random, Sim, State, World};
+use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
 
 use crate::editor::{Editor, Effect};
 use crate::game_dir::GameFiles;
@@ -50,6 +50,8 @@ use crate::{review, scene};
 /// Original handlers (offsets in `xeno.exe`'s segment `1000`) whose keys the port acts
 /// on; the key tables themselves are read from the user's copy.
 mod handler {
+    use xeno_sim::Pilot;
+
     /// Consoles: the side's base (ESC, Alt+Q).
     pub const BASE: u16 = 0x7ee7;
     pub const AUTOMATIC: u16 = 0xd446;
@@ -100,6 +102,27 @@ mod handler {
     ];
     pub const DISPLAY_ZOOM_IN: u16 = 0xda0e;
     pub const DISPLAY_ZOOM_OUT: u16 = 0xda37;
+    /// Consoles: the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
+    /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
+    /// W, E with the stance each sets (`docs/sim.md`, "The cockpit keys").
+    pub const PILOT: [(u16, Pilot); 16] = [
+        (0xacc0, Pilot::Left),
+        (0xaccd, Pilot::Right),
+        (0xacda, Pilot::Faster),
+        (0xace0, Pilot::Slower),
+        (0x9420, Pilot::Left),
+        (0x942d, Pilot::Right),
+        (0x943a, Pilot::Faster),
+        (0x9440, Pilot::Slower),
+        (0xc5e3, Pilot::Left),
+        (0xc5f0, Pilot::Right),
+        (0xc5fd, Pilot::Faster),
+        (0xc603, Pilot::Slower),
+        (0xd0a0, Pilot::Stop),
+        (0xc33d, Pilot::Stance(0x60)),
+        (0xc2f8, Pilot::Stance(0x30)),
+        (0xc2b3, Pilot::Stance(0)),
+    ];
 }
 
 /// A robot console's second display (+0xef to +0xf5): the display mode (0 the
@@ -768,6 +791,20 @@ impl Mission {
         (self.tint != Some(weight)).then(|| *self.tint.insert(weight))
     }
 
+    /// A cockpit key acts on robot `slot` through the running sim; a parked mission
+    /// changes nothing.
+    fn pilot(&mut self, slot: u16, key: Pilot) {
+        let Run::Running(sim) = &mut self.run else {
+            return;
+        };
+        log::debug!("mission: {key:?} on robot {slot}");
+        for event in sim.pilot(EntityId(slot), key) {
+            log::debug!("mission: {event:?}");
+            Self::hear(self.viewed, &mut self.sounds, event);
+        }
+        self.dirty = true;
+    }
+
     /// One retrace of the mission's world with that retrace's input, if it runs (a
     /// parked mission waits). What it did goes to the log. `Some(won)` once a
     /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
@@ -946,6 +983,11 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::DISPLAY_ZOOM_IN | handler::DISPLAY_ZOOM_OUT) => {
                 self.zoom_display(slot, handler == handler::DISPLAY_ZOOM_IN, assets);
+                None
+            }
+            (Viewed::Robot(slot), h) if handler::PILOT.iter().any(|&(p, _)| p == h) => {
+                let key = handler::PILOT.iter().find(|&&(p, _)| p == h)?.1;
+                self.pilot(slot, key);
                 None
             }
             (Viewed::Robot(slot), handler::NEXT_UNIT | handler::PREVIOUS_UNIT) => {
@@ -1796,6 +1838,14 @@ pub mod tests {
                 mission_programs: [[0; 3]; motion::MISSIONS],
                 atan: vec![0; motion::ATAN_ENTRIES],
                 script_speeds: [[0; 3]; 5],
+                gears: motion::Gears {
+                    humanoid: vec![-20, 0, 20],
+                    scout: vec![-30, 0, 30],
+                    scorpion_step: 5,
+                    scorpion_top: 25,
+                    scorpion_bottom: -15,
+                    turn: 0x80,
+                },
                 scripts: {
                     let mut image = vec![0; 0x29c00];
                     xeno_formats::fixtures::synthetic_scripts(&mut image, 0x20000);
@@ -1979,6 +2029,34 @@ pub mod tests {
             [Sound::Play(DISPLAY_SOUND), Sound::Play(NOISE_SOUND)]
         );
         assert_eq!(m.display_mode(robot, &assets), DAMAGED);
+    }
+
+    #[test]
+    fn the_cockpit_keys_drive_the_viewed_robot_through_the_sim() {
+        let mut assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        let view = m.view_robot(robot).unwrap();
+        let keys = match view {
+            View::Humanoid => &mut assets.views.humanoid.keys,
+            View::Scorpion => &mut assets.views.scorpion.keys,
+            _ => &mut assets.views.scout.keys,
+        };
+        // The humanoid's up arrow and `.`, wherever the table has them.
+        keys.extend([(0x48, 0xacda), (0x34, 0xd0a0)]);
+        let speed = |m: &Mission| match m.world().get(EntityId(robot)).map(|e| e.state) {
+            Some(State::Robot(r)) => (r.target_speed, r.gear),
+            other => panic!("{other:?}"),
+        };
+        m.key(0x34, &assets);
+        assert_eq!(speed(&m), (0, 2));
+        assert!(m.book().get(robot).unwrap().orders.manual);
+        m.key(0x48, &assets);
+        assert_eq!(speed(&m), (20, 4));
+        assert!(
+            !m.book().get(robot).unwrap().orders.manual,
+            "the pilot drives"
+        );
     }
 
     #[test]

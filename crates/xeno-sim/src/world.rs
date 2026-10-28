@@ -113,7 +113,11 @@ pub struct Movement {
     pub destination: Position,
     /// +0x51: the drive.
     pub drive: u8,
-    /// +0x10b, +0x10c: a scout's stance and the one it moves to.
+    /// A humanoid's (+0x10b) or scout's (+0x109) speed gear, twice an index into its
+    /// gears (`Tables::gears`); 0 for a scorpion.
+    pub gear: u8,
+    /// +0x10b, +0x10c: a scout's stance and the one it moves to (a humanoid's +0x10b
+    /// is its gear).
     pub stance: u8,
     pub stance_target: u8,
     /// +0x118: a scorpion's speed table.
@@ -175,6 +179,11 @@ impl Movement {
                 y: Fixed(r.destination.y),
             },
             drive: r.drive,
+            gear: match kind {
+                ObjectKind::Humanoid => r.stance,
+                ObjectKind::Scout => f7[0x12],
+                _ => 0,
+            },
             stance: r.stance,
             stance_target: r.stance_target,
             speed_table: r.speed_table,
@@ -227,7 +236,7 @@ impl StateHash for State {
                 h.bytes(&[m.path, m.path_point, m.goal]);
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
-                h.bytes(&[m.drive, m.stance, m.stance_target, m.speed_table]);
+                h.bytes(&[m.drive, m.gear, m.stance, m.stance_target, m.speed_table]);
                 h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
                 let s = m.script;
                 h.u16(s.pointer);

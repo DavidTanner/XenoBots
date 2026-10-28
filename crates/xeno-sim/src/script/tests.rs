@@ -365,3 +365,17 @@ fn a_message_waits_in_the_panel_and_is_typed_after_the_move() {
     assert_eq!(m(&world).panel.shown(), b"AB\x0c\xc3\x0c");
     assert_eq!(m(&world).panel.queue, [0; 5]);
 }
+
+#[test]
+fn the_gear_opcodes_step_the_gear_and_the_set_speeds_match_it() {
+    // High speed, a gear up, a gear down twice, stop, halt: each waits 30 ticks.
+    let (mut world, tables) = setup(&[0x55, 0x51, 0x52, 0x52, 0x53, 0x0a]);
+    let mut seen = Vec::new();
+    for _ in 0..5 {
+        steps(&mut world, &tables, 1);
+        seen.push((m(&world).target_speed, m(&world).gear));
+        steps(&mut world, &tables, 30);
+    }
+    assert_eq!(seen, [(56, 8), (95, 10), (56, 8), (28, 6), (0, 4)]);
+    assert_eq!(m(&world).script.pointer, 0x105, "past every gear opcode");
+}

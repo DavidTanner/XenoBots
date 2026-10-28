@@ -7,7 +7,8 @@
 use xeno_formats::script::{Instruction, Operand};
 
 use crate::motion::{
-    Event, Tables, base_position, head_for_path_point, join_nearest_path_point, movement, robot,
+    Event, Tables, base_position, head_for_path_point, join_nearest_path_point, match_gear,
+    movement, robot, shift,
 };
 use crate::orders::RobotKind;
 use crate::random::Random;
@@ -549,12 +550,18 @@ fn run(
         (0x4e, &Operand::ByteWord(at, v)) => write(world, id, at, v, true),
         (0x4f, &Operand::Word(turn)) => m.target_heading = heading.wrapping_add(turn),
         (0x50, _) => m.target_heading = heading,
-        // shortcut: the kind's bounce routine (the console's gear, T-104) is not run.
-        (0x53, _) => m.target_speed = 0,
-        // shortcut: the gear byte (+0x10b, +0x109) is not kept until T-105.
+        // The interpreter keeps the script's flags: the routines' carry is lost.
+        (0x51 | 0x52, _) => _ = shift(tables, kind, m, i.op == 0x51),
+        (0x53, _) => {
+            m.target_speed = 0;
+            match_gear(tables, kind, m);
+        }
         (0x54..=0x58, _) => {
             if let Some(k) = RobotKind::of(kind) {
                 m.target_speed = tables.script_speeds[usize::from(i.op - 0x54)][k.index()];
+                // The routines set their gear by number; the bounce routine finds the
+                // same one, as each script speed is a gear's.
+                match_gear(tables, kind, m);
             }
         }
         (0x59..=0x5c, _) => {
@@ -655,8 +662,7 @@ fn run(
             let result = u16::from(m.goal & bits);
             set_flags(m, false, result, false);
         }
-        // shortcut: sensing and object goals (T-112), the gear steps (T-105), weapons
-        // (T-114) and the relay net (T-113) are not ported: the script stays here.
+        // shortcut: sensing and object goals (T-112), weapons (T-114) and the relay net (T-113) are not ported: the script stays here.
         _ => m.script.pointer = i.at,
     }
 }
