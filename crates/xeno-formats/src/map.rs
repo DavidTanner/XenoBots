@@ -86,28 +86,49 @@ pub fn to_world(terrain: &Terrain) -> Terrain {
     }
 }
 
-/// What the terrain editor saves for the world terrain `world` when nothing is
-/// edited: it imports each hill and open hill as a circle (centre and radius;
-/// `scen_import_terrain_circles`, `0x080d`), skipping the rest, and writes each circle
-/// as a hill (`file_write_map_circles`, `0x078c`) with the origin taken off its
-/// centre, `diagonal` = `radius * 0xaaaa >> 16`, `height` = `diagonal >> 1` and `z` =
-/// `height` as 16.16, then [`closing_block`].
-pub fn editor_save(world: &[TerrainFeature]) -> Terrain {
-    let circles = world
+/// One of the terrain editor's circles (12 bytes in its buffer): centre and radius,
+/// all 16.16 in the world.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Circle {
+    pub x: i32,
+    pub y: i32,
+    pub radius: i32,
+}
+
+/// The terrain editor's Alt+I (`scen_import_terrain_circles`, `0x080d`): each hill and
+/// open hill of the world terrain `world`, in order, as a circle of its centre and its
+/// 8.8 radius shifted to a 16.16 (`0x0631`); the rest is skipped.
+pub fn import_circles(world: &[TerrainFeature]) -> Vec<Circle> {
+    world
         .iter()
-        .filter(|f| matches!(f.kind, TerrainFeature::HILL | TerrainFeature::OPEN_HILL));
+        .filter(|f| matches!(f.kind, TerrainFeature::HILL | TerrainFeature::OPEN_HILL))
+        .map(|f| Circle {
+            x: f.x,
+            y: f.y,
+            radius: i32::from(f.radius) << 8,
+        })
+        .collect()
+}
+
+/// What the terrain editor writes for `circles` (`file_write_map_circles`, `0x078c`):
+/// each a hill with the origin taken off its centre, its radius's bytes 1 and 2 as the
+/// 8.8 `radius`, `diagonal` = `radius * 0xaaaa >> 16`, `height` = `diagonal >> 1` and
+/// `z` = `height` as 16.16; then [`closing_block`].
+pub fn save_circles(circles: &[Circle]) -> Terrain {
     let mut features: Vec<TerrainFeature> = circles
-        .map(|f| {
-            let diagonal = ((u32::from(f.radius) * 0xaaaa) >> 16) as u16;
+        .iter()
+        .map(|c| {
+            let radius = (c.radius >> 8) as u16;
+            let diagonal = ((u32::from(radius) * 0xaaaa) >> 16) as u16;
             let height = diagonal >> 1;
             TerrainFeature {
                 size: 24,
                 kind: TerrainFeature::HILL,
                 point_slots: 0x10,
-                x: f.x.wrapping_sub(ORIGIN.x),
-                y: f.y.wrapping_sub(ORIGIN.y),
+                x: c.x.wrapping_sub(ORIGIN.x),
+                y: c.y.wrapping_sub(ORIGIN.y),
                 z: i32::from(height) << 8,
-                radius: f.radius,
+                radius,
                 diagonal,
                 height,
                 shape: vec![TerrainFeature::HILL, 0],
@@ -119,6 +140,12 @@ pub fn editor_save(world: &[TerrainFeature]) -> Terrain {
         features,
         padding: Vec::new(),
     }
+}
+
+/// What the terrain editor saves for the world terrain `world` after Alt+I and no
+/// edits: [`save_circles`] of [`import_circles`].
+pub fn editor_save(world: &[TerrainFeature]) -> Terrain {
+    save_circles(&import_circles(world))
 }
 
 #[cfg(test)]
@@ -228,6 +255,15 @@ mod tests {
             (-0x2_8000, 0x600, 0x3ff, 0x1ff)
         );
         assert_eq!(*last, closing_block());
+        // A drawn circle's radius keeps only its bytes 1 and 2.
+        let drawn = Circle {
+            x: 0x80_0000,
+            y: 0x81_0000,
+            radius: 0x123_4567,
+        };
+        let hill = &save_circles(&[drawn]).features[0];
+        assert_eq!((hill.x, hill.y, hill.radius), (0, 0x1_0000, 0x2345));
+        assert!(import_circles(&[closing_block()]).is_empty());
         // Saved and loaded again, nothing changes.
         let again = editor_save(&to_world(&saved).features);
         assert_eq!(again, saved);

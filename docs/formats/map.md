@@ -40,14 +40,20 @@ header) creates the file (`file_create_map`) and writes (T-048, exactly):
    the list but nothing needs it: every list ends at its 0 word anyway.
 3. The 0 end word (2 bytes).
 
-The circles come from the terrain on entry (`scen_import_terrain_circles`, `0x080d`):
-each record of kind 0x14 or 0x16, in order, becomes a circle of its centre and its
-+0x10 radius (`scen_import_terrain_circle`, `0x0631`); everything else is dropped. A
-circle drawn with the mouse gets the distance from its centre as its radius.
+The editor starts with **no circles** (T-109: entering only allocates an empty
+buffer). Alt+I (and loading a `.map`) imports them from the terrain
+(`scen_import_terrain_circles`, `0x080d`): each record of kind 0x14 or 0x16, in order,
+becomes a circle of its centre and its +0x10 radius shifted left 8 to a 16.16
+(`scen_import_terrain_circle`, `0x0631`); everything else is dropped. A circle drawn
+with the mouse gets the distance from its centre as its radius, a whole 16.16, of
+which only bytes 1 and 2 (the 8.8 radius) are saved. So entering and leaving at once
+(Ctrl+M, Alt+Q) writes a `BACKUP.MAP` of the closing block alone, which is exactly the
+stock `backup.map`.
 
 `xeno_formats::map::write` writes records and the end word, `to_world` adds the
-origin as loading does, and `editor_save` gives what the editor writes for a world
-terrain it imported and did not change. Both stock `.map` files round-trip byte for
+origin as loading does, `import_circles` and `save_circles` are the import and the
+save above (`map::Circle`, 16.16 x, y and radius), and `editor_save` gives what the
+editor writes for a world terrain it imported and did not change. Both stock `.map` files round-trip byte for
 byte, `backup.map` is `editor_save` of no terrain, and **every stock `.usg`'s terrain
 is exactly `editor_save` of itself, loaded back** (`real_assets_maps_round_trip`): all
 of them were made with this editor.
@@ -70,18 +76,21 @@ Only the editor touches `.map` files:
 - **Save** (Alt+S, `ui_save_map_with_dialog`, `0x0705`) gets a name from host slot `0x302`, the host's
   "SAVE GAME" file dialog. A path at `0x06dc`, which
   nothing in the driver calls directly, offers `DEFAULT.MAP`.
-- **Apply** (Alt+E, `0x06b5`) writes `BACKUP.MAP`, loads it as above and deletes it.
-  **Leave** (Alt+Q, `0x06cf`) writes `BACKUP.MAP` and keeps it, leaving the terrain
-  as it was.
+- **Apply** (Alt+E, `0x06b5`) writes `BACKUP.MAP` (the name is `BACKUP  .MAP` in the
+  driver, two spaces before the dot), loads it as above (the mission's whole terrain
+  becomes the circles as hills and the closing block) and deletes it; the editor
+  stays open. **Leave** (Alt+Q, `0x06cf`) writes `BACKUP.MAP` and keeps it, leaving
+  the terrain as it was.
 
 The game needs neither file to start or play, so neither is in
 `xeno_formats::files::EXPECTED_FILES`.
 
 ## Open questions
 
-- None about the layout. The terrain editor itself (a 3D editor in the mission's view)
-  is described in `docs/screens.md`, "The scenario editor (T-048)"; a retail build
-  reaches it with unlock word 9 (Ctrl+M in the situation room).
+- None about the layout. The terrain editor itself (a map view of its own, view mode
+  0xe, over the mission's objects) is described in `docs/screens.md`, "The scenario
+  editor (T-048)"; a retail build reaches it with unlock word 9 (Ctrl+M in the
+  situation room).
 
 ## Parser
 

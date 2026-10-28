@@ -1166,36 +1166,130 @@ running mission with the scenario writer (`file_write_scenario`, `1000:efde`; la
 caller in either code segment or in the data below `DS:0x6e4d`. The same table's
 Ctrl+Alt+S toggles bit 6 of `DS:0x62ec` and Ctrl+Alt+F toggles `DS:0x5ba0` (not traced).
 
-**The terrain editor** (`mapdvr.dvr`, `docs/formats/map.md`): `ui_run_map_editor`
-loads the driver into block `DS:0x150a`, calls its enter slot `0x14f4`
-(`ui_enter_map_editor`, `0x006e`), runs a widget loop until the driver sets the quit
-flag `DS:0x5a`, then calls the leave slot `0x14f8` (`ui_exit_map_editor`, `0x011a`) and
-frees it. It is a **3D editor**: entering copies the map origin as its camera, sets
-up a 200 by 320 view and pointer shape 7, and imports the terrain's hills as circles
-(at most 341). Slot `0x1500` (`gfx_emit_map_editor_render_nodes`, `0x01c9`) adds the
-circles (the selected one highlighted, node type 0x0e12, the others 0x0c12), a marker
-and the circle being dragged to the 3D view's render list. The mouse makes a circle:
-a press on the view (widget 0x11) takes the ground point under the pointer (host
-slot `0x152c`), the drag sizes it (distance by slot `0x1504`), the release adds it.
-Its keys (`ui_map_editor_on_key`, `0x032a`, table at driver data `0x186`):
+**The terrain editor** (`mapdvr.dvr`, `docs/formats/map.md`; T-109 from a Ghidra pass
+over the whole driver). `ui_run_map_editor` loads the driver into block `DS:0x150a`,
+calls its enter slot `0x14f4` (`ui_enter_map_editor`, `0x006e`), points the render
+list's first producer (`DS:0x1528`) at `1000:44ed`, then loops: draw the widgets
+(`1000:26cd`), run the view's steps (`1000:28cf`), wait for an input event and hand it
+to the widgets (`1000:24a9`), until the driver sets the quit flag `DS:0x5a`; then it
+puts the producer back, calls the leave slot `0x14f8` (`ui_exit_map_editor`, `0x011a`)
+and frees the block. The loop never ticks the mission: **the sim stands still** while
+the editor is open.
 
-| Key | Effect |
-|---|---|
-| Arrows | Move the camera a unit |
-| Z, X | Zoom in, out (`0x130`/`0x131`) |
-| Ctrl+arrows | Move the selected circle a unit |
-| Ctrl+Z, Ctrl+X | Its radius up or down a unit |
-| Ctrl+`,`, Ctrl+`.` | Previous, next circle |
-| Space | The next pointer shape (a debug key) |
-| Alt+L | Load a `.map` (open dialog, `ui_load_map`) |
-| Alt+S | Save a `.map` (save dialog, `ui_save_map_with_dialog`) |
-| Alt+N | Clear the circles; Alt+I import them again from the terrain |
-| Alt+E | Apply: write `BACKUP.MAP`, load it as the terrain, delete it |
-| Alt+Q | Leave: write `BACKUP.MAP` (kept) and quit; the terrain is not changed |
-| Shift+`*` | Screenshot (slot `0x1558`) |
+**Its data.** The driver's init hands slot `0x68` 0x104 bytes of its data segment
+from offset 0xde (`ES:SI`, `AX`, descriptor `DS:0x1514`), and every routine then
+reads them through the host's `DS` at the same offsets (slot `0x68` itself is not
+traced), so its variables, strings and key table live in the host's data segment (the key table "at driver data
+`0x186`" is `DS:0x186`). Its widget set is a block of its own (four words, then six
+12-byte widgets; slot `0x151c`, `ui_open_widget_set`, keeps the situation room's to
+put back), whose 24-byte state template slot `0x1522` (`1000:2485`) copies to
+`DS:0xde`: a draw widget (type `0x20`) over the whole screen whose routine,
+`gfx_start_map_editor_frame` (`0x0164`), starts each frame; a key widget (`0x26`,
+`ui_map_editor_on_key`, `0x032a`); a mouse widget (`0x24`) over the whole screen whose
+routine is a word in its state (`DS:0xed`: `ui_map_editor_on_mouse`, `0x0563`, or
+`ui_map_editor_on_drag`, `0x05af`, while a circle is dragged); and a draw widget
+(`dbg_draw_map_editor_status`, `0x086b`) for the debug screen. A key routine sets
+`DS:0xe2` (the view's redraw) and `DS:0xf1` (the status's) to 3.
 
-Its status (camera, pointer and selected circle) also goes to the debug screen, under
-`MAP EDITOR`. It needs the 3D view's projection (T-101).
+| `DS:` | Size | What |
+|---|---|---|
+| `0xf6` | 4 | The circle buffer's block (segment, flags) |
+| `0xfa`, `0xfe` | 4, 4 | The camera's x and y (16.16) |
+| `0x102`, `0x106` | 4, 4 | The ground point under the pointer |
+| `0x10a`, `0x10e` | 4, 4 | The dragged circle's centre |
+| `0x112` | 1 | 0xff while a circle is dragged |
+| `0x114` | 2 | The selected circle (its offset in the buffer) |
+| `0x116` | 14 | The view's buffer descriptor: segment 0, so the frame is drawn on the screen |
+| `0x124` | 12 | The view's rectangle: (0, 0, 200, 320), the whole screen |
+| `0x130`, `0x131` | 1, 1 | The zoom factor (`DS:0x1452`) and zoom shift (`DS:0x1454`) |
+| `0x142`, `0x144`, `0x146` | | The host's `DS:0x374`, `0x146e` and widget set, kept to put back |
+| `0x14e` | 1 | The pointer shape before entering |
+
+**Entering** (`0x006e`): the camera starts at the map origin (`DS:0x14e8`, `0x14ec`:
+(128, 128)), the zoom at 2 with no shift, the view's buffer is `DS:0x116`
+(`DS:0x146e`), the widget set opens, the pointer takes shape 7 (slot `0x1496`, which
+returns the old one) and the circle buffer is allocated **empty**
+(`mem_reset_circle_buffer`, `0x0839`). Entering does **not** import the terrain: the
+editor starts with no circles, and the first circle slot selected. **Leaving**
+(`0x011a`): the buffer freed, the old pointer shape, the situation room's widget set
+reopened (it redraws), `DS:0x1450` = 0x80 and `DS:0x146e`, `0x374` put back.
+
+**The circle buffer**: 0x2000 bytes; a header of three (start, end) pairs (0xc, 0xc),
+(0x100c, 0x100c), (0x180c, 0x180c), of which only the first is used, so 341 circles
+fit (from 0xc up to 0x100c). A circle is 12 bytes: x, y and radius, all 16.16; one
+imported from a hill gets its 8.8 radius shifted left 8.
+
+**The view** (`gfx_start_map_editor_frame`, `0x0164`, when the last frame is done:
+`DS:0x1450` = 0x7f): view mode **0xe**, the map with the grid step (`1000:3760`, not
+traced: T-143), not the 3D view; zoom and shift from `DS:0x130`, `0x131`; no static;
+the rectangle `DS:0x124`; no viewer (0xffff); heading 0; clear colour 0x1f
+(`DS:0x1457`); the camera's x and y from `DS:0xfa`, `0xfe` (z unchanged). The render
+list (`1000:44ed`): the driver's producers first (slot `0x1500`, `0x01c9`, through the
+code-segment table `CS:0x1e2`), then the mission's objects (`DS:0x152a`) as the
+situation room's map shows them; the terrain's own producer is skipped, so the hills
+are not drawn, only the circles. The driver's nodes, in order:
+
+1. Each circle in buffer order (`0x022a`): type 0x12 (the maps' octagon, `1000:3a27`)
+   in colour **0x0e** for the selected circle, **0x0c** for the others; +0x08 0x0e;
+   +0x0a the circle's x, y and radius; +0x1e its radius (16.16).
+2. While a circle is dragged (`0x02e0`): a type 0x12 node in 0x0e at the drag's
+   centre, its radius the distance (`sim_approx_distance_between`, slot `0x1504`) from
+   the centre to the ground point under the pointer.
+3. The origin (`0x01f5`): a type 0xa node with colour 0 at the map origin, sprite
+   0x1a0 (`msprite0`, the maps' target mark).
+
+Two other producers (`0x0287`, a node at `DS:0x132` that swaps two words each time,
+and `0x02b4`, the drag as a type 0xc node) are in the code but not in the table.
+
+**The mouse** (`ui_map_editor_on_mouse`, `0x0563`): on a left press (event bit 2)
+whose key word's high byte is exactly 1 (no Shift, Ctrl or Alt; the 1 is presumably
+the left button) the camera moves to the ground point under the pointer
+(`ui_map_pointer_to_world`, slot `0x152c`, with the frame's rectangle and focal
+factor); with 0x11 (Ctrl) the point becomes the dragged circle's centre and the
+handler switches to `ui_map_editor_on_drag`. Any event then puts the ground point
+under the pointer at `DS:0x102` and redraws the status, not the view. While dragging
+(`0x05af`) only moves and the left release count: a move updates `DS:0x102` and
+redraws the view; the release ends the drag and adds the circle
+(`ui_map_editor_add_dragged_circle`, `0x05e4`) at the centre with the radius from the
+centre to `DS:0x102` (the last move's point, not the release's), clamped to 0xff.ffff
+when it is 256 units or more; it becomes the selected circle. A full buffer adds
+nothing and beeps twice (slot `0x26c`).
+
+**The keys** (`ui_map_editor_on_key`, `0x032a`): key events only (event bits 0x1800;
+0x800 is a press); the key word, release bit masked off, is written into the
+sentinel at the table's end (`DS:0x1de`) and the 22 pairs at `DS:0x186` are scanned;
+the sentinel's handler (`0x0346`) passes the key on. One unit is 0x10000.
+
+| Key | Handler | Effect |
+|---|---|---|
+| Up, Down | `0x03a5`, `03c1` | The camera's y down, up a unit (so the map moves up, down) |
+| Left, Right | `0x03dd`, `03f9` | The camera's x up, down a unit |
+| Z | `0x0356` | Zoom in: the shift down one; at 0 the factor doubles instead, up to 0x80 (at 0x80 nothing, not even a redraw) |
+| X | `0x037e` | Zoom out: the factor halves; at 1 the shift goes up instead, up to 0xff |
+| Ctrl+Up, Down | `0x0415`, `0440` | The selected circle's y up, down a unit |
+| Ctrl+Left, Right | `0x046b`, `0496` | Its x down, up a unit |
+| Ctrl+Z, Ctrl+X | `0x04c1`, `04ec` | Its radius up, down a unit (nothing stops it going negative) |
+| Ctrl+`,`, Ctrl+`.` | `0x0517`, `053d` | The previous, next circle slot |
+| Space | `0x0348` | The next pointer shape (a debug key) |
+| Alt+L | `0x066f` | Open dialog (slot `0x2fe`, T-110); the file loaded as the terrain (slot `0x1506`), then the circles cleared and imported from it |
+| Alt+S | `0x0705` | "SAVE GAME" dialog (slot `0x302`); the circles written there (`file_write_map`) |
+| Alt+N | `0x0694` | Clear the circles |
+| Alt+I | `0x06a3` | Clear the circles and import them from the terrain (`scen_import_terrain_circles`, `0x080d`; with no terrain buffer, a beep) |
+| Alt+E | `0x06b5` | **Apply**: write `BACKUP.MAP`; if that worked, load it as the terrain (slot `0x1506`: the `MAPP` buffer replaced, the origin added) and delete it. The circles stay and the editor stays open |
+| Alt+Q | `0x06cf` | **Leave**: write `BACKUP.MAP` (kept) and quit; the terrain is not changed |
+| Shift+`*` | `0x06f1` | Screenshot (slot `0x1558`, pointer hidden around it), then a beep |
+
+The selection checks only its lower bound: the selected slot must be at or after the
+first, so Ctrl+`.` walks past the last circle (and past the buffer, with nothing to
+stop it) and Ctrl+arrows and Ctrl+Z/X then change bytes no node or save reads; a new
+circle overwrites all 12 bytes of its slot. Writing a `.map` beeps once on success
+(slot `0x26c`) and once the other way on failure (`0x26e`). A routine at `0x06dc`
+(save as `DEFAULT.MAP` through the dialog if `DS:0x14f` is set, then quit) has no
+caller.
+
+**The status** (`dbg_draw_map_editor_status`) goes to the monochrome debug screen
+only, under the title `MAP EDITOR` that entering prints: row 12 the pointer's ground
+point, row 13 the camera, rows 14 to 16 the buffer's three (start, end) pairs.
 
 ### Which parts need the running simulation (T-056)
 
@@ -1430,7 +1524,8 @@ original.
   display, Ctrl+E's flag and Ctrl+Alt+R (remove the relays). After each key the status
   rows are logged, built from the user's template and names as the original prints them
   on its debug screen. Ctrl+M runs the terrain editor as if left at once (Alt+Q): it
-  writes `BACKUP.MAP` with `map::editor_save` and changes nothing. Ctrl+Alt+P (no
+  writes `BACKUP.MAP` with no circles (`map::save_circles(&[])`: the original's
+  editor starts empty, T-109) and changes nothing. Ctrl+Alt+P (no
   unlock, as in the original) writes the scenario with `usg::write` as `EDITED.USG`, a
   fixed name until the file dialogs (T-110). Both go to `--save-dir`, by default the
   game directory, where the original writes them. Not done: placing on the map,

@@ -1630,6 +1630,36 @@ pub fn synthetic_gears(image: &mut [u8], ds: usize) {
     put(KEY_TURN.0, &op(KEY_TURN.1, 0x80));
 }
 
+/// A synthetic `mapdvr.dvr`: an MZ file whose init hands the host its data segment
+/// (paragraph 0x10) from offset 0xde, 0x104 bytes, and whose key dispatcher scans
+/// `keys` there, ended by a zero word (`crate::mapdvr`).
+pub fn synthetic_mapdvr(keys: &[(u16, u16)]) -> Vec<u8> {
+    let mut image = vec![0u8; 0x400];
+    let put = |image: &mut Vec<u8>, at: usize, bytes: &[u8]| {
+        image[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+    put(&mut image, 0x24, &[0xb8, 0x04, 0x01]);
+    put(&mut image, 0x2c, &[0xbe, 0x10, 0x00]);
+    put(&mut image, 0x31, &[0xbe, 0xde, 0x00]);
+    put(&mut image, 0x333, &[0xbf, 0x84, 0x01]);
+    for (i, &(key, handler)) in keys.iter().enumerate() {
+        let at = 0x100 + 0x186 + 4 * i;
+        if at + 4 <= image.len() {
+            put(&mut image, at, &key.to_le_bytes());
+            put(&mut image, at + 2, &handler.to_le_bytes());
+        }
+    }
+    // The MZ header: two paragraphs, no relocations.
+    let size = 0x20 + image.len();
+    let mut file = b"MZ".to_vec();
+    for word in [(size % 512) as u16, size.div_ceil(512) as u16, 0, 2] {
+        file.extend(word.to_le_bytes());
+    }
+    file.resize(0x20, 0);
+    file.extend(image);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
