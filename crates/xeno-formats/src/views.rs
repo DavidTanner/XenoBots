@@ -37,7 +37,7 @@ pub(crate) const PANEL_X_OFFSETS: (usize, &[u8]) = (0xd2da, &[0x8b, 0x84]);
 pub(crate) const PANEL_FONTS: (usize, &[u8]) = (0xd2df, &[0x8b, 0x84]);
 pub(crate) const PANEL_COLOURS: (usize, &[u8]) = (0xd2ea, &[0x8b, 0x84]);
 pub(crate) const PANEL_PRESSED: (usize, &[u8]) = (0xd31f, &[0x8b, 0x84]);
-pub(crate) const PANEL_AUTOMATIC: (usize, u8) = (0xd2f6, 0xb0);
+pub(crate) const PANEL_PILOT: (usize, u8) = (0xd2f6, 0xb0);
 /// The message panel, as a console's opener sets it up (`1000:d1f3`): the font
 /// (`mov ax, font` at `1000:d20d`), the colours by robot kind (`mov ax, [si + table]`
 /// at `1000:d221`) and the colour of codes with bit 7 (`mov al, colour` at
@@ -162,8 +162,8 @@ pub struct PanelStyle {
     /// The name's x offset from the panel's left edge; it is one row below the top.
     pub x_offset: u16,
     pub fill: u8,
-    /// The name's colour while the pilot drives.
-    pub manual_text: u8,
+    /// The name's colour while the program drives.
+    pub program_text: u8,
     /// While pressed, pixels of one of these colours become the other.
     pub pressed: [u8; 2],
 }
@@ -182,8 +182,8 @@ pub struct MissionViews {
     pub roster_rows: Vec<Rect>,
     /// By robot kind.
     pub program_panel: [PanelStyle; 3],
-    /// The name's colour while the robot runs its program.
-    pub automatic_text: u8,
+    /// The name's colour while the pilot drives.
+    pub pilot_text: u8,
     /// Where the unit-name button prints, (x, y).
     pub unit_label: (u16, u16),
     pub message_panel: MessageStyle,
@@ -374,29 +374,29 @@ impl Exe<'_> {
     }
 
     fn panel(&self) -> Result<([PanelStyle; 3], u8), FormatError> {
-        let automatic = match self.bytes(PANEL_AUTOMATIC.0, 2)? {
-            &[op, colour] if op == PANEL_AUTOMATIC.1 => colour,
-            _ => return Err(invalid(PANEL_AUTOMATIC.0, "not the program panel's colour")),
+        let pilot = match self.bytes(PANEL_PILOT.0, 2)? {
+            &[op, colour] if op == PANEL_PILOT.1 => colour,
+            _ => return Err(invalid(PANEL_PILOT.0, "not the program panel's colour")),
         };
         let mut styles = [PanelStyle {
             font: 0,
             x_offset: 0,
             fill: 0,
-            manual_text: 0,
+            program_text: 0,
             pressed: [0; 2],
         }; 3];
         for (kind, style) in styles.iter_mut().enumerate() {
-            let [fill, manual_text] = self.table_word(PANEL_COLOURS, 2 * kind)?.to_le_bytes();
+            let [fill, program_text] = self.table_word(PANEL_COLOURS, 2 * kind)?.to_le_bytes();
             let [a, b] = self.table_word(PANEL_PRESSED, 2 * kind)?.to_le_bytes();
             *style = PanelStyle {
                 font: self.table_word(PANEL_FONTS, 2 * kind)?,
                 x_offset: self.table_word(PANEL_X_OFFSETS, 2 * kind)?,
                 fill,
-                manual_text,
+                program_text,
                 pressed: [a, b],
             };
         }
-        Ok((styles, automatic))
+        Ok((styles, pilot))
     }
 
     fn second_display(&self) -> Result<SecondDisplay, FormatError> {
@@ -473,7 +473,7 @@ pub fn read_image(
     let roster_rows = (0..rows)
         .map(|i| rect(image, ds + usize::from(exe.table_word(ROSTER_ROWS, 2 * i)?)))
         .collect::<Result<_, _>>()?;
-    let (program_panel, automatic_text) = exe.panel()?;
+    let (program_panel, pilot_text) = exe.panel()?;
     Ok(MissionViews {
         humanoid: exe.view(0)?,
         scorpion: exe.view(1)?,
@@ -483,7 +483,7 @@ pub fn read_image(
         situation_buttons,
         roster_rows,
         program_panel,
-        automatic_text,
+        pilot_text,
         unit_label: (
             operand(image, UNIT_LABEL.0 + 3, &[0xbb])?,
             exe.op(UNIT_LABEL)?,
@@ -652,7 +652,7 @@ mod tests {
             assert!(corrupt(at, 0x90).0, "{at:#x}");
         }
         assert!(corrupt(ROSTER_COUNT.0, 0x90).0);
-        assert!(corrupt(PANEL_AUTOMATIC.0, 0x90).0);
+        assert!(corrupt(PANEL_PILOT.0, 0x90).0);
         assert!(corrupt(MESSAGE_HIGH.0, 0x90).0);
         assert!(corrupt(MESSAGE_COLOURS.0, 0x90).0);
         assert!(corrupt(DISPLAY_DEVICES.0, 0x90).0);

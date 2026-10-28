@@ -527,8 +527,8 @@ under the pointer, a right click opens that robot's console), damage, speed and
 weapon panels. Their handlers live in `1000:7f90`-`9c94` (scorpion),
 `9c94`-`b450` (humanoid) and `b450`-`cbff` (scout) and are T-056's.
 
-Console keys (the three tables share most entries): F2 the robot's program
-(automatic), F3 its pilot (manual), F4 automatic and the next program (see "Orders");
+Console keys (the three tables share most entries): F2 the robot's pilot, F3 its
+program, F4 the pilot and the next program (see "Orders");
 ESC and Alt+Q the situation room; Tab and Alt+Tab the next and previous unit; F1, F5
 to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys 1 to
 4 (mines and buoys), `=` and `-`, and per robot letters drive and fight (`docs/sim.md`,
@@ -750,7 +750,7 @@ flips the look; a left release sets the mode (`ui_sitroom_set_view_mode`).
 ### Orders (T-043)
 
 A robot's **orders** are a program, one of 31 scripts in `xeno.exe`, and a switch
-between the program (automatic) and the pilot (manual). There is no other order
+between the program driving (automatic) and the pilot (manual). There is no other order
 parameter in the views: no waypoint or target is given in a console or the situation
 room (the scripts that go to a unit or a place use the robot's destination and target
 fields, set by the mission; the scripts are traced in `docs/sim.md`, "Orders").
@@ -780,7 +780,7 @@ record):
 
 | Offset | What |
 |---|---|
-| +0x23 bit 7 | Manual: the pilot drives and the program waits. Bits 4 and 5 are cleared when switching to manual; bit 3 is the situation room's recall |
+| +0x23 bit 7 | The program drives; clear, the pilot drives and the script waits (T-043 had it the other way round; T-052, T-111). Bits 4 and 5 (the turn keys) are cleared when switching to the program; bit 3 is the situation room's recall |
 | +0x2e | **The program given** |
 | +0x30 | **The program running**: the one given, or a state the script entered by itself (in `scen12a` three human robots given program 9 are saved running 24). The console shows this one, and the next and previous programs are counted from it |
 | +0x31 | The script's stack pointer, 10 (empty) when a program starts (T-053, `docs/sim.md`, "Orders") |
@@ -793,33 +793,32 @@ record):
 `ui_draw_program_panel` `1000:d2d1`, `ui_program_panel_on_mouse` `1000:d34c`), for the
 robot viewed:
 - While the pointer is over the panel, a press or release (left or right) marks it
-  pressed (+0x22 bit 7, bit 0 flipped); a **left release** switches the robot to
-  automatic (`order_switch_to_automatic`, `1000:d446`) and gives it the **next**
+  pressed (+0x22 bit 7, bit 0 flipped); a **left release** hands the robot to its
+  pilot (`order_switch_to_manual`, `1000:d446`) and gives it the **next**
   program offered to its kind (`order_select_next_program`, `1000:4794`), wrapping past
   30 to 0; a **right release** the **previous** one (`order_select_previous_program`,
   `1000:47b1`), wrapping below 0 to 30. Programs not offered are skipped.
-- F4 does what a left release does. F2 switches to automatic and F3 to manual
-  (`order_switch_to_manual`, `1000:d42c`), each only if it changes something; both
-  post an event to the robot (+0x36 bits from `DS:0x1c56`: events 0xa and 0xb, which
-  the message panel reports).
-- **T-052 found the two names the wrong way round**: `1000:d42c` *sets* +0x23 bit 7,
-  and the script steps every tick only with that bit, recalling a robot and giving it
-  a path's program call `1000:d42c`, and the cockpit's drive keys call `1000:d446`
-  (which clears it) before they steer. So bit 7 is "the program drives", `1000:d42c`
-  is `order_switch_to_automatic` and `1000:d446` `order_switch_to_manual` (renamed in
-  Ghidra); which F key does which, and the panel's colours, follow from that and are
-  left to T-111 to check and fix here and in the port.
+- F4 (`1000:d3a2`) does what a left release does. F2 (scan code 0x3c) hands the
+  robot to its pilot (`order_switch_to_manual`, `1000:d446`: bit 7 cleared, event 0xb)
+  and F3 (0x3d) to its program (`order_switch_to_automatic`, `1000:d42c`: bit 7 set,
+  bits 4 and 5 cleared, event 0xa), each only if it changes something; the events are
+  +0x36 bits from `DS:0x1c56`, which the message panel reports. T-043 had the two
+  names, and so the F keys and colours, the wrong way round: T-052 found the script
+  steps every tick only with bit 7 and that recall, a path's program and `1000:d42c`
+  set it while the drive keys call `1000:d446`; T-111 read the three console key
+  tables and the panel's draw. So choosing a program leaves the pilot driving until
+  F3.
 - **Drawn**: the panel filled with the kind's fill colour (slot `0x51a`), then the
   program's name, transparent, in the kind's font, one row below the top and the
-  kind's x offset in from the left, in the kind's text colour if the pilot drives
-  and colour 6 if the program does (tables by kind at `DS:0x7177` font, `0x717d` x
+  kind's x offset in from the left, in the kind's text colour if the program drives
+  (bit 7 set) and colour 6 if the pilot does (tables by kind at `DS:0x7177` font, `0x717d` x
   offset, `0x71b8` fill and text, `0x71c0` pressed). While pressed, the panel is
   recoloured instead (slot `0x522`: pixels of one of the two pressed colours become the
   other; which way flips with +0x22 bit 0) and the name is left as it is.
 
 In the stock `.usg` files nearly every robot, of either side, is saved with +0x23 bit
 7 set (one human robot in `scen06a` is not); the human robots are given program 9 (or
-1 in `scen08a`), the alien ones 8 or, for scorpions, 13. Loading keeps the manual bit,
+1 in `scen08a`), the alien ones 8 or, for scorpions, 13. Loading keeps the program bit,
 but gives every robot its program (+0x2e) anew, so +0x30 is the given program when a
 mission starts (T-058, `usg.md`, "Loading"). The
 paths of `APTH`/`HPTH` are each side's missions for the computer (`usg.md`); no view
@@ -1426,7 +1425,7 @@ The 3D views, scanners and map (the colour-255, 254 and 253 regions), the messag
 panels and log, the unit status panels (damage, speed, weapons, cargo), the
 situation room's roster contents and detail panels, the unit call signs, the map
 controls and camera arrows, and every key that drives, fights or deploys. The views,
-their switching and the orders (program and manual switch) are not.
+their switching and the orders (program and program bit) are not.
 
 ### Where it differs from T-040's list
 
@@ -1588,8 +1587,9 @@ original.
   Tab and Alt+Tab step the selection), and Alt+Q, the end button and the corner end the
   mission with no result (back to the map room). In a console: the program panel
   (filled in the kind's colour, the running program's name in the kind's font, in the
-  manual colour or colour 6; pressed, recoloured; a left release the next program
-  offered to the kind, a right release the previous, both back to automatic), F2, F3
+  text colour while the program drives or colour 6 while the pilot does; pressed,
+  recoloured; a left release the next program offered to the kind, a right release
+  the previous, both handing the robot to its pilot), F2 (pilot), F3 (program)
   and F4, the unit-name button and Tab / Alt+Tab (the next or previous of the player's
   robots, by object slot: the order of the original's unit list is not traced), and
   ESC, Alt+Q and the corner back to the situation room. A release away from the
@@ -1772,8 +1772,9 @@ T-043 named, in `xeno.exe`: `ui_open_view_of_object` (`1000:7ef2`),
 `ui_humanoid_console_on_key` (`1000:ab64`), `ui_scorpion_console_on_key` (`1000:926d`),
 `ui_scout_console_on_key` (`1000:bade`), `order_set_program` (`1000:476f`),
 `order_select_next_program` (`1000:4794`), `order_select_previous_program`
-(`1000:47b1`), `order_find_program_name` (`1000:47ca`), `order_switch_to_manual`
-(`1000:d42c`), `order_switch_to_automatic` (`1000:d446`), `ui_training_button_on_mouse`
+(`1000:47b1`), `order_find_program_name` (`1000:47ca`), `order_switch_to_automatic`
+(`1000:d42c`), `order_switch_to_manual` (`1000:d446`; T-052 swapped these two names),
+`ui_training_button_on_mouse`
 (`1000:6e98`), `ui_training_menu_on_key` (`1000:6ee5`) and `ui_run_training_mission`
 (`1000:6ecf`); in `mgavideo.dvr` `gfx_recolour_rect` (`0x0ef1`, slot `0x522`) and
 `gfx_xor_rect_frame` (`0x106d`, slot `0x536`). All `confirmed`, all saved.

@@ -163,11 +163,16 @@ impl Sim {
     ) -> Option<Change> {
         let change = f(&mut self.world.orders)?;
         let (id, mut events) = (EntityId(change.slot), Vec::new());
-        if change.after.manual != change.before.manual {
+        if change.after.program_drives != change.before.program_drives {
             self.world
                 .orders
-                .set_manual(change.slot, change.before.manual);
-            script::switch(&mut self.world, id, change.after.manual, &mut events);
+                .set_program_drives(change.slot, change.before.program_drives);
+            script::switch(
+                &mut self.world,
+                id,
+                change.after.program_drives,
+                &mut events,
+            );
         }
         if change.after.program != change.before.program
             && let Some(tables) = &self.tables
@@ -454,17 +459,17 @@ mod tests {
             other => panic!("{other:?}"),
         });
         assert!(
-            sim.world.orders.get(2).unwrap().orders.manual,
+            sim.world.orders.get(2).unwrap().orders.program_drives,
             "program drives"
         );
         // `.` stops it and leaves the program driving.
         assert!(sim.pilot(id, Pilot::Stop).is_empty());
         assert_eq!((robot(&sim).0.target_speed, robot(&sim).0.gear), (0, 4));
-        assert!(sim.world.orders.get(2).unwrap().orders.manual);
+        assert!(sim.world.orders.get(2).unwrap().orders.program_drives);
         // An arrow: the pilot takes over (its event waits) and the speed goes up a gear.
         let events = sim.pilot(id, Pilot::Faster);
         assert!(matches!(events[..], [Event::Program(_)]));
-        assert!(!sim.world.orders.get(2).unwrap().orders.manual);
+        assert!(!sim.world.orders.get(2).unwrap().orders.program_drives);
         assert_ne!(robot(&sim).0.script.events & 1 << script::EVENT_PILOT, 0);
         assert_eq!((robot(&sim).0.target_speed, robot(&sim).0.gear), (28, 6));
         sim.pilot(id, Pilot::Slower);
@@ -522,14 +527,14 @@ mod tests {
         assert_eq!(m(&sim, 5).panel.queue[..2], [0x20, 0x25]);
         // Recalled with the pilot driving: the next tick gives program 4 and hands the
         // robot to it.
-        sim.world.orders.set_manual(5, false);
+        sim.world.orders.set_program_drives(5, false);
         sim.recall(EntityId(5));
         assert_ne!(m(&sim, 5).mode & Movement::RECALL, 0);
         let events = sim.tick(&[]);
         assert!(events.iter().any(|e| matches!(e, Event::Program(_))));
         let orders = sim.world.orders.get(5).unwrap().orders;
         assert_eq!(
-            (orders.program, orders.ordered, orders.manual),
+            (orders.program, orders.ordered, orders.program_drives),
             (4, 4, true)
         );
         assert_eq!(m(&sim, 5).mode & Movement::RECALL, 0);

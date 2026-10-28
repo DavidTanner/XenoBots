@@ -58,9 +58,9 @@ mod handler {
 
     /// Consoles: the side's base (ESC, Alt+Q).
     pub const BASE: u16 = 0x7ee7;
-    pub const AUTOMATIC: u16 = 0xd446;
-    pub const MANUAL: u16 = 0xd42c;
-    pub const AUTOMATIC_NEXT: u16 = 0xd3a2;
+    pub const TO_PILOT: u16 = 0xd446;
+    pub const TO_PROGRAM: u16 = 0xd42c;
+    pub const PILOT_NEXT: u16 = 0xd3a2;
     pub const NEXT_UNIT: u16 = 0x7db2;
     pub const PREVIOUS_UNIT: u16 = 0x7dd9;
     /// Situation room: ends the mission on Alt+Q only (ESC shares it).
@@ -789,8 +789,8 @@ impl Mission {
                 String::from_utf8_lossy(programs.name(c.before.program)),
                 c.after.program,
                 String::from_utf8_lossy(programs.name(c.after.program)),
-                mode(c.before.manual),
-                mode(c.after.manual)
+                mode(c.before.program_drives),
+                mode(c.after.program_drives)
             );
             self.dirty = true;
         }
@@ -1051,15 +1051,15 @@ impl Mission {
         let programs = &assets.programs;
         match (self.viewed, handler) {
             (Viewed::Robot(_), handler::BASE) => Some(self.base()),
-            (Viewed::Robot(slot), handler::AUTOMATIC) => {
-                self.change_orders(programs, |book| book.set_manual(slot, false));
+            (Viewed::Robot(slot), handler::TO_PILOT) => {
+                self.change_orders(programs, |book| book.set_program_drives(slot, false));
                 None
             }
-            (Viewed::Robot(slot), handler::MANUAL) => {
-                self.change_orders(programs, |book| book.set_manual(slot, true));
+            (Viewed::Robot(slot), handler::TO_PROGRAM) => {
+                self.change_orders(programs, |book| book.set_program_drives(slot, true));
                 None
             }
-            (Viewed::Robot(slot), handler::AUTOMATIC_NEXT) => {
+            (Viewed::Robot(slot), handler::PILOT_NEXT) => {
                 self.change_orders(programs, |book| book.select_next(slot, programs));
                 None
             }
@@ -2138,10 +2138,10 @@ impl Mission {
                 recolour(fb, area, from, to);
             } else {
                 fill(fb, area, style.fill);
-                let colour = if robot.orders.manual {
-                    style.manual_text
+                let colour = if robot.orders.program_drives {
+                    style.program_text
                 } else {
-                    assets.views.automatic_text
+                    assets.views.pilot_text
                 };
                 if let Some(font) = assets.fonts.get(&style.font) {
                     let mut cursor = TextCursor::at(
@@ -2190,8 +2190,8 @@ impl Assets {
     }
 }
 
-fn mode(manual: bool) -> &'static str {
-    if manual { "manual" } else { "automatic" }
+fn mode(program_drives: bool) -> &'static str {
+    if program_drives { "program" } else { "pilot" }
 }
 
 /// The console of a robot kind.
@@ -2994,11 +2994,11 @@ pub mod tests {
         };
         m.key(0x34, &assets);
         assert_eq!(speed(&m), (0, 2));
-        assert!(m.book().get(robot).unwrap().orders.manual);
+        assert!(m.book().get(robot).unwrap().orders.program_drives);
         m.key(0x48, &assets);
         assert_eq!(speed(&m), (20, 4));
         assert!(
-            !m.book().get(robot).unwrap().orders.manual,
+            !m.book().get(robot).unwrap().orders.program_drives,
             "the pilot drives"
         );
         // F9 flips the weapon: its sound is heard on this console.
@@ -3026,7 +3026,7 @@ pub mod tests {
         m.tick(&[]);
         let orders = m.book().get(robot).unwrap().orders;
         assert_eq!(
-            (orders.program, orders.manual),
+            (orders.program, orders.program_drives),
             (assets.motion.recall_program, true)
         );
     }
@@ -3054,7 +3054,9 @@ pub mod tests {
 
     #[test]
     fn orders_are_set_on_the_console_and_kept_across_views() {
-        let assets = test_assets();
+        let mut assets = test_assets();
+        // The original's F3 (`DS:` key tables): the program takes over.
+        assets.views.humanoid.keys.push((0x3d, handler::TO_PROGRAM));
         let mut m = mission(&assets);
         assert_eq!(m.view(), View::SitRoom);
         assert_eq!(m.viewed_label(), "the base");
@@ -3069,14 +3071,20 @@ pub mod tests {
         );
         assert_eq!(m.viewed(), Viewed::Robot(2));
         assert_eq!(m.viewed_label(), "unit 2 (Humanoid)");
-        // A left release on the program panel: the next program, automatic.
+        // A left release on the program panel: the next program, the pilot driving.
         assert_eq!(click(&mut m, &assets, (130, 92), LEFT), None);
         assert_eq!(m.book().get(2).unwrap().orders, Orders::given(2));
         // A right release: back to 1.
         click(&mut m, &assets, (130, 92), RIGHT);
         assert_eq!(m.book().get(2).unwrap().orders.program, 1);
-        // F2 binds the automatic handler; it is already automatic.
+        // F2 binds the pilot handler; the pilot already drives. F3 hands the robot to
+        // its program (+0x23 bit 7 set), F2 back to the pilot.
         assert_eq!(m.key(0x3c, &assets), None);
+        assert!(!m.book().get(2).unwrap().orders.program_drives);
+        m.key(0x3d, &assets);
+        assert!(m.book().get(2).unwrap().orders.program_drives);
+        m.key(0x3c, &assets);
+        assert!(!m.book().get(2).unwrap().orders.program_drives);
         // The unit-name button: the next unit, the scorpion in slot 5.
         assert_eq!(
             click(&mut m, &assets, (300, 190), LEFT),
@@ -3221,7 +3229,7 @@ pub mod tests {
         m.view_robot(2);
         let mut fb = Framebuffer::new(Size::MODE_13H);
         m.draw(&mut fb, &assets);
-        // Filled with the humanoid's fill colour (0x10), the name in its manual colour.
+        // Filled with the humanoid's fill colour (0x10), the name in its text colour (the program drives).
         assert_eq!(fb.get(193, 97), Some(0x10));
         let inked: Vec<_> = (126..194).filter_map(|x| fb.get(x, 92)).collect();
         assert!(inked.contains(&0x20), "{inked:?}");

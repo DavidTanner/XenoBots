@@ -1,9 +1,9 @@
 //! A robot's orders (`docs/screens.md`, "Orders"): the program it was given, the one
-//! it runs, and whether its pilot drives it by hand. The programs are scripts in
+//! it runs, and whether the program or its pilot drives it. The programs are scripts in
 //! `xeno.exe` (a table of 31, each with a name and a byte saying which robot kinds may
 //! be given it); a robot keeps the program it was given at +0x2e of its object, the one
-//! it runs (that program, or a state it entered by itself) at +0x30, and the manual
-//! switch in bit 7 of +0x23, so all three come from a `.usg` file's `DCBS` objects
+//! it runs (that program, or a state it entered by itself) at +0x30, and the program
+//! bit (the program drives) in bit 7 of +0x23, so all three come from a `.usg` file's `DCBS` objects
 //! (`docs/formats/usg.md`).
 //!
 //! The program table is game data (the names are game text), so [`Programs`] is read

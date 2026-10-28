@@ -553,7 +553,7 @@ fn a_path_starts_its_mission_s_program_with_the_program_bit() {
     let orders = world.orders.get(7).unwrap().orders;
     let program = (10 * mission + 2) as u8;
     assert_eq!(
-        (orders.ordered, orders.program, orders.manual),
+        (orders.ordered, orders.program, orders.program_drives),
         (program, program, true)
     );
     assert!(matches!(events.last(), Some(Event::Program(c)) if c.slot == 7));

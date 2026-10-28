@@ -39,7 +39,7 @@ tested headless in CI. It depends only on `xeno-formats`.
   clock"), moved from `xeno-app`'s `clock.rs`. The host's `Clock` steps with it.
   `Rate::hz` is a float for logs only.
 - **`orders`**: `OrderBook` (the robots' orders by object slot, changed only through
-  `select_next`, `select_previous` and `set_manual`, each returning the change),
+  `select_next`, `select_previous` and `set_program_drives`, each returning the change),
   `Orders`, `Robot` and `Change`, moved unchanged from `xeno_formats::orders`. They
   are mission state the player changes, so they belong to the sim, and the world
   holds an `OrderBook` in its hash. The program table, `Programs`, stays in
@@ -144,14 +144,16 @@ difference wraps to 1 and the carry gives 1.0. The cosine is the sine of
 `0x4000 - angle`. A speed of 63 moves a robot 63/65,536 of a unit a tick at most;
 that is the original's scale (T-053, "Orders", "The speed scale").
 
-**The program bit.** +0x23 bit 7, which T-043 named "manual", is set when the robot's
-program drives: the script interpreter (`order_step_script`, `1000:4899`) steps the
-script only with it set (otherwise it only runs event handlers, and once every 64 ticks
-of `DS:0x62c6` drops an object goal that is gone; T-053, "Orders"); recalling a robot and
-giving it a path's mission set it (`order_switch_to_automatic`, `1000:d42c`, posting
-event 0xa); and the cockpit's drive keys clear it first (`order_switch_to_manual`,
-`1000:d446`, event 0xb). Every stock robot is saved with it set. Both Ghidra names
-were swapped in this pass; T-111 renames the port's `manual`.
+**The program bit.** +0x23 bit 7 (T-043 named it "manual", the wrong way round) is
+set when the robot's program drives: the script interpreter (`order_step_script`,
+`1000:4899`) steps the script only with it set (otherwise it only runs event handlers,
+and once every 64 ticks of `DS:0x62c6` drops an object goal that is gone; T-053,
+"Orders"); recalling a robot, giving it a path's mission and the console's F3 set it
+(`order_switch_to_automatic`, `1000:d42c`, posting event 0xa); the cockpit's drive
+keys clear it first (`order_switch_to_manual`, `1000:d446`, event 0xb), as do F2 and
+choosing a program on the console (T-111; `docs/screens.md`, "Orders"). Every stock
+robot is saved with it set. Both Ghidra names were swapped in T-052; the port calls it
+`Orders::program_drives` and `usg::Robot::PROGRAM` (T-111).
 
 **Paths.** Only the alien base walks robots along paths. A base's tick (`sim_tick_base`,
 `1000:6300`) adds one to +0x41 and calls a routine by its low four bits (table
@@ -217,7 +219,7 @@ object, both filled at load. `motion::tick` runs the objects in slot order: robo
 move (`steer_and_speed`, the script, then `travel`), and the alien base's path phase
 runs at its count's phase 2. Its events are `HillHit` (the 0-point hit, T-054's `Destroyed`),
 `PathTaken` and `Program` (orders changed: the mission's program given and the
-program bit set, kept as `Orders::manual` until T-111, or a script's state). After the
+program bit set, `Orders::program_drives`, or a script's state). After the
 move each robot walks (`motion::walk`, `docs/render.md`, "Walking"): its step counter
 and footstep legs step, and its footsteps are `Event::Sound`s (13 to 15) for it.
 
@@ -435,7 +437,7 @@ arrows act the same, and the keyboard's repeat repeats them.
 | Up, Down | `acda`, `ace0` | `943a`, `9440` | `c5fd`, `c603` | The pilot takes over, then a gear up or down (below) |
 | `.` | `d0a0` | the same | the same | Opcode 0x53's routine: the speed asked for 0 and the bounce routine (the gear matches). The program keeps driving |
 | Q, W, E | | | `c33d`, `c2f8`, `c2b3` | The stance the scout rises or sinks to (+0x10c): 0x60, 0x30 (standing), 0 |
-| F2, F3, F4 | `d446`, `d42c`, `d3a2` | the same | the same | The pilot or the program takes over; the next program ("Orders"; T-111 names these the right way round) |
+| F2, F3, F4 | `d446`, `d42c`, `d3a2` | the same | the same | F2 the pilot takes over (bit 7 cleared), F3 the program (bit 7 set; the turn bits 4 and 5 cleared); F4 the pilot takes over and the next program is given ("Orders", T-111) |
 | F5, F6 | `d131`, `d142`: weapon 0 or 1, by kind through `cs:0xd13c` (`b214`, `98a9`, `ca1d`) | | | The selected weapon (+0xdd) changes, with a message and sound 27 (`docs/formats/dsounds.md`) |
 | F9 | `b20c` | | | The humanoid's weapon flips (+0xdd XOR 1), as F5/F6 |
 | Space | `d0da`: fire, by kind through `cs:0xd0e3` (`b242`, `98f1`, `ca46`) | | | T-114 |
@@ -752,7 +754,7 @@ and `Terrain::from_scenario`, `Paths::from_scenario` take the `MAPP` records and
 `APTH`/`HPTH` paths in use (none for a missing chunk).
 The orders come from the same objects (`OrderBook::from_scenario`), as loading leaves
 them: the original gives every robot its program (+0x2e) anew, so each robot runs the
-program it was given, whatever the file saved as running; the manual bit is kept
+program it was given, whatever the file saved as running; the program bit is kept
 (`usg.md`, "Loading"). Rules for files the stock install does not have:
 
 - An object shorter than 0x18 bytes is refused by the parser. A robot without the

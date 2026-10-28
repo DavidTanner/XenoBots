@@ -416,7 +416,7 @@ MissionViews {
             font: 0,
             x_offset: 2,
             fill: 16,
-            manual_text: 32,
+            program_text: 32,
             pressed: [
                 48,
                 16,
@@ -426,7 +426,7 @@ MissionViews {
             font: 2,
             x_offset: 1,
             fill: 17,
-            manual_text: 33,
+            program_text: 33,
             pressed: [
                 49,
                 17,
@@ -436,14 +436,14 @@ MissionViews {
             font: 2,
             x_offset: 1,
             fill: 18,
-            manual_text: 34,
+            program_text: 34,
             pressed: [
                 50,
                 18,
             ],
         },
     ],
-    automatic_text: 6,
+    pilot_text: 6,
     unit_label: (
         279,
         191,

@@ -1063,7 +1063,7 @@ pub fn synthetic_scripts(image: &mut [u8], ds: usize) {
 }
 
 /// A `.usg` scenario whose objects have the stock sizes (0x172 bytes, 0x34 for the
-/// relay): a human base (slot 0), a human humanoid on program 1 in manual (slot 2), a
+/// relay): a human base (slot 0), a human humanoid on program 1, the program driving (slot 2), a
 /// human relay (slot 3), a human scorpion on program 2 (slot 5) and an alien scout on
 /// program 2 (slot 7), at x 100 + slot, y 130, heading slot x 0x1000. The robots are
 /// units with helm 90 and power 80 and no script events; the base has taken 20 damage and starts in view
@@ -1132,7 +1132,7 @@ impl SyntheticViews {
 /// console has a program panel, a unit-name button, a corner and a key widget; the
 /// situation room a sprite button (handle 0x2a0), a roster of two rows, a corner and a
 /// key widget; every view's keys are F2, ESC, Space, Tab and Alt+Q, bound to the
-/// original's automatic, base, view-selected, next-unit and end handlers. The training menu has two buttons
+/// original's pilot, base, view-selected, next-unit and end handlers. The training menu has two buttons
 /// (action 0, a mission `ATRAIN.USG`, and action 2, back) and two keys (ESC back, A the
 /// mission). `image` must reach `ds + 0x700` and `0xdc00`; it uses the code offsets
 /// 0x1000 to 0x1440 and the image from 0x1a000 to 0x1a910, and leaves the other
@@ -1246,7 +1246,7 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
         put(entry.0, &op(entry.1, at as u16));
         put(ds + at, &words(&values));
     }
-    put(PANEL_AUTOMATIC.0, &[PANEL_AUTOMATIC.1, 6]);
+    put(PANEL_PILOT.0, &[PANEL_PILOT.1, 6]);
     put(UNIT_LABEL.0, &[op(&[0xb8], 191), op(&[0xbb], 279)].concat());
     put(MESSAGE_FONT.0, &op(MESSAGE_FONT.1, 4));
     put(MESSAGE_COLOURS.0, &op(MESSAGE_COLOURS.1, 0x660));

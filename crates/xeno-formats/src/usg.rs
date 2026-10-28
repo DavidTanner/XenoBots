@@ -326,7 +326,7 @@ pub struct Robot {
     /// +0x22: the console's program panel: bit 7 while a program is being picked,
     /// bit 0 the half shown; 0 once one is picked (`1000:d34c`).
     pub program_panel: u8,
-    /// +0x23: [`Robot::MANUAL`], [`Robot::RECALL`], [`Robot::BUMPED`]; bits 4 and 5
+    /// +0x23: [`Robot::PROGRAM`], [`Robot::RECALL`], [`Robot::BUMPED`]; bits 4 and 5
     /// turn the target heading one way or the other every tick (the pilot's turn keys).
     pub mode: u8,
     /// +0x24: the helm, 0 to 100 (100 in stock files); hits lower it.
@@ -473,11 +473,10 @@ pub struct Robot {
 }
 
 impl Robot {
-    /// [`Robot::mode`]: named from T-043 as "the pilot drives; the program waits",
-    /// but T-052 found the reverse: the script steps every tick only with it set, and
-    /// starting a program sets it while the drive keys clear it (`docs/sim.md`,
-    /// "Movement"). T-111 renames it.
-    pub const MANUAL: u8 = 0x80;
+    /// [`Robot::mode`]: the program drives: the script steps every tick only with it
+    /// set; recall and a path's program set it (`order_switch_to_automatic`), the drive
+    /// keys and F2 clear it (`order_switch_to_manual`; `docs/sim.md`, "Movement").
+    pub const PROGRAM: u8 = 0x80;
     /// [`Robot::mode`]: the situation room recalled the robot; its next tick gives it
     /// program 4 and clears the bit.
     pub const RECALL: u8 = 0x08;
@@ -1379,7 +1378,7 @@ mod tests {
         let robot = humanoid.robot().unwrap();
         assert_eq!((robot.program_given, robot.program_running), (1, 1));
         assert_eq!((robot.helm, robot.power), (90, 80));
-        assert_ne!(robot.mode & Robot::MANUAL, 0);
+        assert_ne!(robot.mode & Robot::PROGRAM, 0);
         assert_eq!(objects[2].relay().unwrap().damage, 3);
         let scout = &objects[4];
         assert_eq!((scout.side(), scout.heading), (Side::Alien, 0x7000));

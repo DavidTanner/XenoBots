@@ -240,7 +240,7 @@ before a save). For a robot it turns the script pointer into an address **again*
 value is no longer in its saved form, so the robot is given its program anew
 (`order_set_program` with +0x2e). So at load every robot runs the program it was given
 (+0x30 = +0x2e), from its start, whatever the file saved as running. It also drops the
-robot's target (+0xe6) and the reference count it held on it. The manual bit is kept.
+robot's target (+0xe6) and the reference count it held on it. The program bit (+0x23 bit 7) is kept.
 The other kinds' routines do nothing.
 
 Files with another version take a different path (`scen_on_old_layout_object_loaded`,
@@ -304,7 +304,7 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 | 0x1c | 2 | `eye_height` | The camera's height above z (`docs/render.md`, "The camera"): when made 0x0f80 humanoid, 0x0b80 scorpion, 0x0a00 scout (its stance moves it) |
 | 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths). Worked out from the heading and speed only when either changes: `speed * sin(heading)`, `speed * cos(heading)` |
 | 0x22 | 1 | `program_panel` | The console's program panel (`1000:d2d1`, `d34c`): bit 7 while a program is being picked, bit 0 flips which half of the kind's programs it shows; cleared once one is picked (`DS:0x7183` by kind) |
-| 0x23 | 1 | `mode` | Bit 7: named manual by T-043, but set when the **program** drives (T-052: the script steps every tick only with it; starting a program sets it, the drive keys clear it; T-111); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 1 (`BUMPED`): it ran into something (below); bit 0: the alien base gives it no path |
+| 0x23 | 1 | `mode` | Bit 7 (`Robot::PROGRAM`): the **program** drives (T-052, T-111: the script steps every tick only with it; recall, a path's program and F3 set it, the drive keys, F2 and choosing a program on the console clear it; T-043 named it manual); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 1 (`BUMPED`): it ran into something (below); bit 0: the alien base gives it no path |
 | 0x24 | 1 | `helm` | 0 to 100; a hit can take 0 to 7 off |
 | 0x25 | 1 | | Cleared when made (`1000:d2b6`); nothing reads it |
 | 0x26 | 2 | `speed` | Steps by one towards `target_speed`, limited by the drive, the helm and (scorpions) a speed table: every tick, or every 8 ticks for a scorpion. In 1/65,536ths of a unit a tick |
