@@ -134,6 +134,13 @@ pub struct Movement {
     pub status: u8,
     /// +0xf7: the enemy units the last scan found (`docs/sim.md`, "Sensing").
     pub contacts: u8,
+    /// +0xe6: the target, locked (the loader clears it); +0xe8 and +0xea its
+    /// distance (8.8) and bearing when the lock was last kept.
+    pub target: Option<EntityId>,
+    pub target_distance: u16,
+    pub target_bearing: u16,
+    /// +0xed: another robot's lock on this one, halved every 16 ticks.
+    pub locked_on: u8,
     pub script: Script,
     pub panel: Panel,
 }
@@ -203,6 +210,10 @@ impl Movement {
             legs,
             status,
             contacts: r.contacts,
+            target: None,
+            target_distance: r.target_distance,
+            target_bearing: r.target_bearing,
+            locked_on: r.locked_on,
             // The rest is set when loading starts the program anew.
             script: Script {
                 events: r.events,
@@ -253,7 +264,10 @@ impl StateHash for State {
                 h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
                 h.u8(m.speed_table);
                 h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
-                h.bytes(&[m.status, m.contacts]);
+                h.bytes(&[m.status, m.contacts, m.locked_on]);
+                h.u16(m.target.map_or(0xffff, |t| t.0));
+                h.u16(m.target_distance);
+                h.u16(m.target_bearing);
                 let s = m.script;
                 h.u16(s.pointer);
                 h.u16(s.wait);
@@ -399,6 +413,9 @@ pub struct World {
     pub ticks: u16,
     /// The mission clock (`DS:0x7d46`), from the scenario's `SHDR`.
     pub clock: Clock,
+    /// `DS:0x7201`, `0x7203`: the arc and range the last lock's upkeep used, which a
+    /// new lock also works its bits out with (`docs/sim.md`, "Sensing").
+    pub lock_window: (u16, u16),
     /// The call signs taken (`DS:0x72c5`, bit n for sign n): cleared when a
     /// scenario's objects are read (`scen_read_dcbs`), so only robots made since hold
     /// one. shortcut: a destroyed robot does not give its sign back (`1000:dfc9`) until
@@ -496,6 +513,9 @@ impl World {
             ticks: 0,
             clock: Clock::from_start(&scenario.header.start),
             call_signs: 0,
+            // shortcut: the original carries this from mission to mission (from the
+            // image's value); a lock before any upkeep is rare and only its bits differ.
+            lock_window: (0, 0),
         }
     }
 
@@ -614,6 +634,8 @@ impl StateHash for World {
         h.u8(self.stagger);
         h.u16(self.ticks);
         h.u64(self.call_signs);
+        h.u16(self.lock_window.0);
+        h.u16(self.lock_window.1);
         let c = self.clock;
         for n in [c.hour, c.minute, c.second, c.tick] {
             h.u8(n);

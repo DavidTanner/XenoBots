@@ -36,4 +36,17 @@ Sensing {
             locked_on: 6,
         },
     ],
+    messages: Messages {
+        none_found: 64,
+        locked: 65,
+        relocked: 66,
+        targeting_damaged: 67,
+        out_of_range: 68,
+        already: 69,
+        itself: 70,
+        friendly: 71,
+        lost: 72,
+        destroyed: 73,
+    },
+    lock_sound: 26,
 }

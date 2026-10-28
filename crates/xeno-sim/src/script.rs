@@ -242,6 +242,13 @@ fn pop_return(m: &mut Movement, flags: bool, tables: &Tables) {
     }
 }
 
+/// The carry of a routine that only sets or clears it.
+fn set_carry(world: &mut World, id: EntityId, carry: bool) {
+    if let Some(m) = movement(world, id) {
+        m.script.flags = (m.script.flags & !CARRY) | u8::from(carry);
+    }
+}
+
 fn set_flags(m: &mut Movement, carry: bool, result: u16, word: bool) {
     let sign = if word { result & 0x8000 } else { result & 0x80 } != 0;
     let mut f = m.script.flags & 0x3e;
@@ -271,7 +278,9 @@ fn field(world: &World, id: EntityId, at: u8) -> u8 {
         0x2c => m.path,
         0x2d => m.path_point,
         0x32 => m.goal,
-        // +0xe6, the target: none until T-112.
+        // shortcut: +0xe6 holds a pointer in the original, which the scripts only test
+        // against 0; the port gives the target's slot plus one (under 0x100).
+        0xe6 => m.target.map_or(0, |t| (t.0 + 1) as u8),
         _ => 0,
     }
 }
@@ -364,14 +373,21 @@ fn arithmetic(world: &mut World, id: EntityId, i: &Instruction) {
     }
 }
 
+/// Robot `id`'s target's position, if it has one.
+fn target(world: &World, id: EntityId) -> Option<Position> {
+    let (_, _, m) = robot(world, id)?;
+    world.get(m.target?).map(|t| t.position)
+}
+
 /// What robot `id` heads for (`order_push_goal_distance`, `order_steer_to_goal`):
-/// its destination (+0x32 bit 1) or its own base (bit 2).
-// shortcut: the worked-out point (bit 4), the target (bit 3) and an object (bit 0)
-// count as nothing until T-112 gives them.
+/// its target (+0x32 bit 3), its destination (bit 1) or its own base (bit 2).
+// shortcut: the worked-out point (bit 4) and an object (bit 0) count as nothing
+// until T-112's part 3 gives them.
 fn goal(world: &World, id: EntityId) -> Option<Position> {
     let (_, side, m) = robot(world, id)?;
     match m.goal {
-        g if g & 0x18 != 0 => None,
+        g if g & 0x10 != 0 => None,
+        g if g & 0x08 != 0 => target(world, id),
         g if g & 0x02 != 0 => Some(m.destination),
         g if g & 0x01 != 0 => None,
         g if g & 0x04 != 0 => base_position(world, side),
@@ -612,6 +628,10 @@ fn run(
                 };
             }
         }
+        (0x63, _) => {
+            let found = crate::sense::steer_to_nearest(world, id, tables);
+            set_carry(world, id, !found);
+        }
         (0x64, _) => {
             let turn = (random.word() & 0x7fff).wrapping_sub(0x4000);
             m.target_heading = m.target_heading.wrapping_add(turn);
@@ -634,18 +654,43 @@ fn run(
                 m.goal = goal;
             }
         }
+        (0x6b, _) => {
+            let d = distance(world, id, target(world, id));
+            if let Some(m) = movement(world, id) {
+                push(m, &d.to_le_bytes());
+            }
+        }
+        (0x6c, _) => {
+            let goal = std::mem::replace(&mut m.goal, 0x08);
+            let found = target(world, id).is_some();
+            steer(world, id, tables, |b| b);
+            if let Some(m) = movement(world, id) {
+                m.goal = goal;
+            }
+            set_carry(world, id, !found);
+        }
         (0x6f, _) => {
             m.destination = position;
             m.goal = 0x02;
             post(m, EVENT_HOLD);
         }
         (0x70, _) => join_nearest_path_point(world, id),
+        (0x71, _) => {
+            let found = crate::sense::look(world, id, tables, events);
+            set_carry(world, id, !found);
+        }
         (0x72, _) => {
             let damaged = matches!(world.get(id).map(|e| e.damage),
                 Some(crate::world::Damage::Robot(c)) if c.targeting & 1 != 0);
             if let Some(m) = movement(world, id) {
                 set_flags(m, damaged, u16::from(!damaged).wrapping_neg(), false);
             }
+        }
+        (0x73, _) => {
+            let base = robot(world, id)
+                .and_then(|(_, _, m)| world.get(m.target?))
+                .is_some_and(|t| t.kind == xeno_formats::usg::ObjectKind::Base);
+            set_carry(world, id, !base);
         }
         (0x74, &Operand::Word(text)) => m.panel.post(text),
         // shortcut: the base's message log (0x75, and 0x76's too) and 0x76's copy to

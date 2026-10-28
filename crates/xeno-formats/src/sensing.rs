@@ -26,6 +26,17 @@ pub(crate) const KEEP_LOCK: usize = 0xd66f;
 pub(crate) const LOCKED_ON: (usize, &[u8]) = (0xdc95, &[0xd0, 0xad, 0xed, 0x00]);
 /// Entries in a tick table.
 pub const TICKS: usize = 16;
+/// `mov si, message` before each of the lock's messages to the robot's panel, in
+/// [`Messages`]' order: looking for enemies found none (`1000:d757`); the lock
+/// (`d8af`) took a first target, replaced one, was refused with the targeting
+/// computer damaged, out of range, on the target it has, on the robot itself, and
+/// locked one of its own side; the upkeep (`d66f`) lost the target, and found it
+/// destroyed.
+pub(crate) const MESSAGES_AT: [usize; 10] = [
+    0xd7f0, 0xd8f4, 0xd8fc, 0xd917, 0xd910, 0xd91e, 0xd909, 0xd8dd, 0xd6bd, 0xd6d0,
+];
+/// `mov ax, 2 * event` before the lock's sound.
+pub(crate) const LOCK_SOUND_AT: usize = 0xd902;
 
 /// Where one robot kind's tick table runs the sensing routines: entry `n` runs on
 /// the ticks when +0x1a, after its step, has `(tick & 0x1e) >> 1 == n`.
@@ -51,6 +62,24 @@ pub struct Sensing {
     pub scan_range: [u16; 3],
     pub lock_range: [u16; 3],
     pub ticks: [KindTicks; 3],
+    pub messages: Messages,
+    /// The sound event a lock plays for the robot whose console is open.
+    pub lock_sound: u8,
+}
+
+/// The lock's messages, string-segment offsets (see [`MESSAGES_AT`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Messages {
+    pub none_found: u16,
+    pub locked: u16,
+    pub relocked: u16,
+    pub targeting_damaged: u16,
+    pub out_of_range: u16,
+    pub already: u16,
+    pub itself: u16,
+    pub friendly: u16,
+    pub lost: u16,
+    pub destroyed: u16,
 }
 
 fn ranges(image: &[u8], ds: usize, at: usize) -> Result<[u16; 3], FormatError> {
@@ -107,7 +136,25 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
     if !starts(image, KEEP_LOCK, &[0xa3]) || !starts(image, KEEP_LOCK + 3, &[0x89, 0x1e]) {
         return Err(invalid(KEEP_LOCK, "not the lock's upkeep"));
     }
+    let m = |i: usize| operand(image, MESSAGES_AT[i], &[0xbe]);
+    let sound = operand(image, LOCK_SOUND_AT, &[0xb8])?;
+    if sound % 2 != 0 || sound > 0x1ff {
+        return Err(invalid(LOCK_SOUND_AT, "not a sound event"));
+    }
     Ok(Sensing {
+        messages: Messages {
+            none_found: m(0)?,
+            locked: m(1)?,
+            relocked: m(2)?,
+            targeting_damaged: m(3)?,
+            out_of_range: m(4)?,
+            already: m(5)?,
+            itself: m(6)?,
+            friendly: m(7)?,
+            lost: m(8)?,
+            destroyed: m(9)?,
+        },
+        lock_sound: (sound / 2) as u8,
         scan_range: ranges(image, ds, SCAN_RANGE_AT)?,
         lock_range: ranges(image, ds, LOCK_RANGE_AT)?,
         ticks: [
@@ -138,6 +185,11 @@ mod tests {
         let t = sensing.ticks;
         assert_eq!((t[0].scan, t[0].lock, t[0].locked_on), (15, 5, 6));
         assert_eq!((t[1].lock, t[1].arc, t[1].range), (6, 0x1100, 0x310));
+        let m = sensing.messages;
+        assert_eq!(
+            (m.none_found, m.destroyed, sensing.lock_sound),
+            (0x40, 0x49, 26)
+        );
         insta::assert_debug_snapshot!(sensing);
     }
 
@@ -150,6 +202,8 @@ mod tests {
             (SCAN_RANGE_AT + 1, 0x86),
             (LOCK_RANGE_AT, 0x8a),
             (TICKS_AT[2] + 1, 0x96),
+            (MESSAGES_AT[4], 0xbf),
+            (LOCK_SOUND_AT + 1, 0x35),
             // The scorpion's lock routine calls elsewhere, and its scan is gone.
             (0xa217, 0x00),
             (DS + 0x9720 + 30, 0x00),
@@ -180,6 +234,33 @@ mod tests {
             assert_eq!(t.scan, 15);
             assert!(t.arc > 0 && t.arc < 0x4000);
             assert!(t.range > 0 && t.range <= range);
+        }
+        // The messages are text in the string segment (0x0c breaks a line).
+        let motion = crate::motion::read(&exe).unwrap();
+        let m = sensing.messages;
+        for at in [
+            m.none_found,
+            m.locked,
+            m.relocked,
+            m.targeting_damaged,
+            m.out_of_range,
+            m.already,
+            m.itself,
+            m.friendly,
+            m.lost,
+            m.destroyed,
+        ] {
+            let text: Vec<u8> = (at..)
+                .map(|o| motion.strings.byte(o))
+                .take_while(|&b| b != 0)
+                .collect();
+            assert!(
+                text.len() > 2
+                    && text
+                        .iter()
+                        .all(|&b| b == 0x0c || (0x20..0x7f).contains(&(b & 0x7f))),
+                "{at:#x}"
+            );
         }
     }
 }
