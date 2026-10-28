@@ -13,6 +13,7 @@ pub mod ending;
 mod error;
 pub mod farewell;
 pub mod fgd;
+pub mod filedialog;
 pub mod files;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;

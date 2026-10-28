@@ -83,7 +83,7 @@ managed memory block with slot `0x36`.
 | `0x28e` / `0x292` | `1fe6:44f7` / `456f` | PackBits encode / decode (`palette.md`) |
 | `0x298`–`0x2bc` | `1fe6:253a`–`28e8` | File I/O: `0x2b0` loads a whole file (padded 8.3 name at `DS:DX`) into the block at `CX:BX`, `0x2b4` open, `0x2b8` close, `0x2bc` read. `0x2b0` and `0x2b4` also try the name with `!` (LZW) and `@` (packed) as the extension's middle letter (`packed.md`) |
 | `0x2e4`–`0x2f8` | `1fe6:45d6`–`47f5` | Module loader (below) |
-| `0x2fe` / `0x302` | `1fe6:83aa` / `83cd` | The host's file dialogs: open (its name field starts as `*.USG`) and "SAVE GAME" (FILENAME, DIRECTORY, OK, CANCEL); the name chosen comes back in `SI` |
+| `0x2fe` / `0x302` | `1fe6:83aa` / `83cd` | The host's file dialogs: open (its name field starts as `*.USG`) and "SAVE GAME" (FILENAME, DIRECTORY, OK, CANCEL); the path chosen comes back in `SI`, carry if cancelled (`docs/screens.md`, "The file dialogs (T-110)") |
 | `0x324`–`0x340` | `1fe6:357c`–`39b5` | Input event queue (`0x324` posts an event with the time; `0x330` takes the next one matching a mask) |
 | `0x348` | `1fe6:30b3` | Re-measure the frame period and re-arm the retrace timer; called after every mode change |
 | `0x34c` | `1fe6:3144` | Recompute the derived tick rates from the frame period |

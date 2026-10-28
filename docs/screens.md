@@ -1162,8 +1162,8 @@ map's bit 15; the camera uses the centre only while bit 15 is set.
 file dialog (`ui_call_save_file_dialog`, `1000:fb78`, host slot `0x302`) and writes the
 running mission with the scenario writer (`file_write_scenario`, `1000:efde`; layout in
 `usg.md`, "Writing"). So any player can save a mission as a `.usg`. The matching load
-(`ui_load_scenario_with_dialog`, `1000:eeec`: open dialog, then the chunk reader) has no
-caller in either code segment or in the data below `DS:0x6e4d`. The same table's
+(`ui_load_scenario_with_dialog`, `1000:eeec`: open dialog, then the chunk reader) is
+the map room's and the training menu's Alt+L (T-110, "The file dialogs"). The same table's
 Ctrl+Alt+S toggles bit 6 of `DS:0x62ec` and Ctrl+Alt+F toggles `DS:0x5ba0` (not traced).
 
 **The terrain editor** (`mapdvr.dvr`, `docs/formats/map.md`; T-109 from a Ghidra pass
@@ -1290,6 +1290,135 @@ caller.
 **The status** (`dbg_draw_map_editor_status`) goes to the monochrome debug screen
 only, under the title `MAP EDITOR` that entering prints: row 12 the pointer's ground
 point, row 13 the camera, rows 14 to 16 the buffer's three (start, end) pairs.
+
+### The file dialogs (T-110)
+
+From a Ghidra pass over `ui_run_file_dialog` (`1fe6:83db`) and everything it calls.
+There are two dialogs, opened through host slots `0x2fe` (`ui_open_file_dialog`,
+`1fe6:83aa`) and `0x302` (`ui_save_file_dialog`, `1fe6:83cd`), and from `xeno.exe`'s
+own code through the stubs `ui_call_open_file_dialog` (`1000:fb6e`) and
+`ui_call_save_file_dialog` (`1000:fb78`). Both are a widget set (segment `0x38ce`,
+which also holds the error box's) opened over whatever is on the screen, with no copy
+of what is under it: when the dialog ends the previous widget set is opened again,
+which redraws its screen. They are the same dialog with different widgets and title:
+
+- **Open** (widgets `0xa0`..`0x13c`): its name field is first set to `*.USG`, whoever
+  calls (the terrain editor's Alt+L too). Its title is twenty spaces, so it has none.
+  A FILES list (left) and a DIRECTORIES list (right), each with its scroll bar.
+- **Save** (widgets `0x10`..`0x7c`), titled `SAVE GAME`: the name field keeps what
+  the last dialog left in it (at start-up `*.*`), and only the DIRECTORIES list,
+  on the left.
+
+**The run.** The pointer takes shape 0 (slot `0x1496`), the current drive and
+directory are remembered (`1fe6:8538`), the lists are built (`1fe6:8999`), and the
+loop draws the widgets that need it, waits for an input event and hands it to the
+widgets, until the done byte `DS:0xe9f4` is set. Every 4 counts of the game clock
+`DS:0x374` after 30 it also calls a repeat routine (`DS:0xe905`), which a held scroll
+arrow sets. Then the old pointer shape comes back, the drive and directory are put
+back (`1fe6:8576`), and the old widget set is reopened. It returns the chosen path
+at `DS:0xe94a` in `SI`, and **carry when cancelled** (the done byte is 1 for a cancel,
+`0xff` for an accept). The callers save the game clock before and put it back after,
+so the time spent in a dialog does not count; nothing ticks the mission meanwhile.
+
+**The look.** The backdrop widget (type `0x15c`, the whole screen) runs a small
+drawing script (open `DS:0xeae8`, save `DS:0xea2b`, the error box `DS:0xec0b`): byte
+codes, 0 ends it; 2 fills a rectangle (a colour byte, then top, left, bottom, right)
+through slot `0x51a`; 4 frames one in colour 0 (`0x52a`); 6 moves the text cursor to
+a y and an x word, skips a byte and draws the NUL-terminated text after it,
+transparent; 8 selects the font in the word after it. The dialog has its own text
+state (`DS:0xe9f5`, all zeros in the image), so its text is **colour 0**: the
+scripts never set a colour, and the field and lists set 0 on 12. Both scripts fill the
+box (26, 76)..(131, 265) with colour 12 and frame it, fill a title bar in colour 6,
+write the title in font 0 and the OK and CANCEL labels in font 0 inside their frames
+(OK at (222, 41)..(261, 50), CANCEL a row of 13 lower), then in font 2 the labels
+FILENAME:, DIRECTORY: and FILES: / DIRECTORIES:, the name field's frame and the
+lists' and scroll arrows' frames; the open script also fills the second list's scroll
+track in colour 11. Every text the dialog shows is read from the user's `xeno.exe`.
+
+**The widgets** (12 bytes each, `docs/screens.md`, "Widgets"; their handlers are
+stubs at `1000:fb82`..`fc32` into segment `1fe6`): a key handler (type `0x1a`, which
+jumps to the routine named in its state: `1fe6:8447`), the backdrop, OK (type `0x15e`,
+mouse only), CANCEL (`0x160`), per list an up arrow (`0x164`), a scroll track
+(`0x166`) and a down arrow (`0x168`), and the lists (`0x16c` files, `0x16e`
+directories). An arrow's or track's state byte +1 says which list it scrolls (0 the
+files; 1 or 2 the directories).
+
+- **The name field** (`1fe6:88b6`): the box at `DS:0xebf3` = (42, 127)..(48, 195)
+  filled with 12, then in font 2, opaque, colour 0 on 12, at (127, 42) the last 16
+  characters of the name, then glyph 0x7f transparent (the cursor). Each time, the
+  directory line is drawn too (`1fe6:890a`): at (124, 55), opaque, the drive's letter
+  and `:` (from DOS), then the current directory as DOS gives it (no leading `\`); if
+  that is 20 characters or more it is cut at the first `\` that leaves at most 17
+  characters after it and drawn as `..\` and the rest; then spaces to 20 characters
+  (19 less the length when not cut, 20 less what was drawn when cut).
+- **The lists** (`1fe6:8683` files, `8799` directories): font 2, opaque, colour 0 on
+  12, eight rows of 6 pixels from row 80, from the list's top entry: each name padded
+  with spaces to 12 characters; the rows left empty filled with 12 (from x 79, or the
+  list's left edge less 2) up to row 128; the selected row, if shown, XORed with 12
+  (rows `79 + 6k` to `86 + 6k`). Both rectangles end at x 134 for the files and 54
+  pixels right of their left edge for the directories. The text starts at x 81 for the
+  files and at the list widget's left edge for the directories. The previous highlight
+  is XORed off first.
+- **The scroll bars**: the arrows are `msprite0` sprites, opaque, at their widget's
+  corner: up handle 0x1d0, down 0x1f0, each plus 8 while pressed (a byte shared by
+  both lists). The track is filled with 11 and its thumb (handle 0x1e0, plus 8 while
+  dragged) drawn at row `top - 1 + 24 * first / (count - 1)` (just `top - 1` with one
+  entry or none), integer division.
+
+**The lists' contents** (`1fe6:8999`, entries of 13 bytes in a buffer of 0x1450
+bytes): the files are every match of the name field as a DOS pattern (find first and
+next, normal files only) while the next entry starts below 0x1435 (so up to 398), in
+the order DOS finds them; the directories, after them, are the drives (`A:` up to the
+last one DOS answers for), then every match of `*.*` (the pattern at `DS:0xe924`)
+whose attribute byte is exactly 0x10 (so `.` and `..` too), while the next starts
+below 0x1442. Building them clears both lists' first rows and counts and leaves the
+selections alone (`1fe6:850c` clears them).
+
+**The keys** (`1fe6:8447`, key events only, the key word compared whole, so with
+no Shift, Ctrl or Alt): **ESC** cancels (`1fe6:8aba`); **Enter** accepts
+(`1fe6:84a9`, below); otherwise the key becomes a character (`1fe6:3e86`, as the
+log-in's); none, and releases, are ignored; Backspace (8) drops the field's last
+character; `a`..`z` become upper case; any other character is appended while the
+field is at most 80 long. Each change redraws the field.
+
+**Accepting** (Enter, OK, or a second click on a list entry soon enough): if the field
+holds a `\`, the part up to the last one is made the current directory (and drive, if
+it starts with one; `1fe6:8ea7`) and the field keeps the rest; if that directory does
+not exist, the **error box** opens (below) and nothing else happens. Then, if the
+field is empty or holds `*` or `?`, the lists are built again from it (a new pattern)
+and the dialog stays. Otherwise the result is the drive, `:\`, the current directory,
+`\` and the field, exactly as typed: **no extension is added**. Clicking a directory
+puts its name, `\` and `*.*` in the field, so the open dialog then lists every file.
+
+**The mouse.** OK and CANCEL act on a left release over them. A press on a list (or a
+drag while pressed) selects the row under the pointer; above the list it scrolls one
+up and selects the top row, below it one down and selects the bottom row. The release
+copies the selected file's name into the field (and clears the directories'
+selection), or the directory's name with `\*.*` (clearing the files'); a release
+within 30 counts of the game clock of the previous one on that list (60 for the
+directories) accepts. An arrow is pressed and released with the button; each release
+over it scrolls one entry (the first entry no lower than 0 or past the last entry),
+and held, it repeats every 4 counts after 30. A press on the track above the thumb
+pages 7 up, more than 10 rows below the thumb's top 7 down (to at most the count, or
+the last entry when that is passed), and on the thumb starts a drag: each later event
+on the track puts the first entry at `(y - press_y + thumb_top - 87) * (count - 1) /
+24`. The drag flag is only cleared by the next press, so after a drag the thumb follows
+the pointer over the track with no button held.
+
+**The error box** (`1fe6:8f1f`, widgets `0x7c`..`0xa0`): its script fills and frames
+the same box and writes `THE PATH OR FILENAME IS INCORRECT` at (101, 66) in the
+current font; its OK widget (type `0x16a`) draws `msprite0` sprite 0x1d0 (the up
+arrow's) at the OK corner. Any key or a release over it closes the box, and the dialog
+is drawn again.
+
+**Callers.** The situation room's Ctrl+Alt+P (`ui_save_scenario_with_dialog`), the
+editor's Ctrl+Alt+O and Ctrl+Alt+B, the terrain editor's Alt+L and Alt+S (through
+slots `0x2fe`/`0x302`), and in **both the map room's and the training menu's** widget
+sets two key widgets with no unlock check: type `0x14c` (`1000:f3ef`), Alt+L, opens
+the dialog and loads the chosen file as the scenario (`ui_load_scenario_with_dialog`,
+the save loader `1000:eefc` with AL 0; a beep if it fails), and type `0x14e`
+(`1000:f405`), Alt+S, saves the scenario through the SAVE GAME dialog, then calls
+`1fe6:398c` (not traced).
 
 ### Which parts need the running simulation (T-056)
 
@@ -1575,6 +1704,17 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
 | `1fe6:6b84` | `ui_start_sitroom_robot_view_frame` | Mode R's camera on the selected unit (T-103) |
 | `1fe6:6c05` | `ui_start_sitroom_map_frame` | Mode M's camera, zoom and colours (T-103) |
 | `1fe6:6cb9` | `ui_draw_map_zoom_label` | The map's zoom label (T-103) |
+| `1fe6:8447` | `ui_file_dialog_on_key` | The file dialogs' keys (T-110, created) |
+| `1fe6:84a9` | `ui_file_dialog_accept` | Enter, OK and a double click: a new pattern, or the path chosen (T-110, created) |
+| `1fe6:8586` | `ui_draw_file_dialog` | Runs a dialog's drawing script (T-110, created) |
+| `1fe6:88b6` | `ui_draw_file_dialog_name` | The name field, then the directory line (T-110) |
+| `1fe6:890a` | `ui_draw_file_dialog_directory` | The directory line (T-110) |
+| `1fe6:8999` | `ui_file_dialog_build_lists` | The files and directories lists (T-110) |
+| `1fe6:8aba` | `ui_file_dialog_cancel` | ESC and CANCEL (T-110) |
+| `1fe6:8ea7` | `ui_file_dialog_change_directory` | The field's directory part made current (T-110) |
+| `1fe6:8f1f` | `ui_file_dialog_show_error` | The error box (T-110) |
+| `1000:f3ef` | `ui_key_load_scenario_with_dialog` | The map room's and training menu's Alt+L (T-110, created) |
+| `1000:f405` | `ui_key_save_scenario_with_dialog` | Their Alt+S (T-110, created) |
 
 ## Open questions
 
@@ -1596,8 +1736,8 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   the busy shape shows on R, on the way back from the review and on view switches).
   Whether the dispatcher sends a corner its enter bit when a view opens with the
   pointer already over it (the port waits for the next move into it).
-- What the keys `f3ef` and `f405` that every screen has do, and what `1000:0270`
-  (presumably a beep) does.
+- What `1000:0270` (presumably a beep) does. (The keys `f3ef` and `f405` are the
+  map room's and the training menu's Alt+L and Alt+S, T-110.)
 
 T-042 named, in `xeno.exe`: `ui_draw_map_area` (`1000:7255`), `ui_map_area_on_mouse`
 (`1000:72fa`), `ui_map_room_play_selected` (`1000:739c`), `ui_map_room_select_next`
