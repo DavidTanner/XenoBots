@@ -156,8 +156,8 @@ pub mod flag {
     pub const SCANNED: u8 = 0x04;
     /// The side: clear for human, set for alien.
     pub const ALIEN: u8 = 0x08;
-    /// Relays only: picks the relay's colour in the 3D view, and the base's network
-    /// check looks for it. Probably "linked"; not traced further.
+    /// Relays only: powered by the net ([`Relay::power`] not 0). Picks the relay's
+    /// colour, and robots take their signal only from relays (or bases) with it.
     pub const RELAY_LINKED: u8 = 0x10;
     /// A unit (the robots): the loader adds it to its side's unit list and restarts
     /// its program.
@@ -683,16 +683,68 @@ pub struct Message {
     pub text: u16,
 }
 
-/// A relay's bytes from +0x18 (0x34-byte objects).
+/// A relay's bytes from +0x18 (0x34-byte objects): its stage, its power from the
+/// net and its links to the nearest relay or base in each of four directions
+/// (`docs/formats/usg.md`, "Relays").
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relay {
-    /// +0x18: the relay's set-up state (+0x1f, +0x20) and four words at +0x25, +0x29,
-    /// +0x2d and +0x31 a new relay sets to 0xffff. Not traced.
-    pub unknown_18: Unknown<0x1b>,
+    /// +0x18: frames: body (0), the stage's look (+0x19..=+0x1c) and the colour
+    /// (+0x1d: 1 unpowered, 0 a human net's, 2 an alien net's).
+    pub frames: [u8; 6],
+    /// +0x1e: counts ticks from a random start; the state runs every 16 and the
+    /// links are looked for every 256.
+    pub clock: u8,
+    /// +0x1f: [`Relay::FOLDED`], [`Relay::RISING`], [`Relay::UP`] or
+    /// [`Relay::FOLDING`].
+    pub state: u8,
+    /// +0x20: how far up, 0 to 3; the look and the model height follow it.
+    pub stage: u8,
+    /// +0x21: the power's reach left: the best neighbour's less one (a base gives its
+    /// +0x39 / 4); 0 unpowered.
+    pub power: u8,
+    /// +0x22: whose power: 0 none, 1 human, 2 alien (the relay's side follows it).
+    pub power_side: u8,
+    /// +0x23: the links by direction, a quarter turn each from the bearing's top.
+    pub links: [Link; 4],
     /// +0x33: damage taken; at 20 the relay is removed.
     pub damage: u8,
+}
+
+impl Relay {
+    /// [`Relay::state`]: down, as deployed; it rises once no scorpion is within
+    /// reach.
+    pub const FOLDED: u8 = 0;
+    /// [`Relay::state`]: stepping its stage up to 3.
+    pub const RISING: u8 = 2;
+    /// [`Relay::state`]: up and in the field, linking; it folds when a scorpion
+    /// comes within reach.
+    pub const UP: u8 = 4;
+    /// [`Relay::state`]: stepping its stage down to 0, then folded.
+    pub const FOLDING: u8 = 6;
+}
+
+/// One of a relay's four links (4 bytes).
+#[binrw]
+#[brw(little)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Link {
+    /// [`Link::NONE`], [`Link::FED`] or [`Link::FEEDS`].
+    pub state: u8,
+    /// Nothing uses it.
+    pub unknown_01: u8,
+    /// Set to 0xffff when the relay is made; nothing reads it (0 in stock files).
+    pub unknown_02: u16,
+}
+
+impl Link {
+    pub const NONE: u8 = 0;
+    /// Powered from the neighbour that way.
+    pub const FED: u8 = 1;
+    /// Open: offers power to a neighbour that way (every unfed link of a powered
+    /// relay).
+    pub const FEEDS: u8 = 2;
 }
 
 /// A waypoint, 16.16 fixed point like object positions.
@@ -1663,7 +1715,21 @@ mod tests {
                         }
                     }
                     (Body::Base(b), ObjectKind::Base) => assert!(b.damage < 300, "{at}"),
-                    (Body::Relay(r), ObjectKind::Relay) => assert!(r.damage < 20, "{at}"),
+                    (Body::Relay(r), ObjectKind::Relay) => {
+                        assert!(r.damage < 20, "{at}");
+                        // Up, linked exactly when powered, coloured by the power's side.
+                        assert_eq!((r.state, r.stage), (Relay::UP, 3), "{at}");
+                        let linked = o.flags & flag::RELAY_LINKED != 0;
+                        assert_eq!(linked, r.power != 0, "{at}");
+                        let side = 1 + u8::from(o.side() == Side::Alien);
+                        let want = if linked {
+                            (side, 2 * (side - 1))
+                        } else {
+                            (0, 1)
+                        };
+                        assert_eq!((r.power_side, r.frames[5]), want, "{at}");
+                        assert!(r.links.iter().all(|l| l.state <= Link::FEEDS), "{at}");
+                    }
                     (Body::Other(_), ObjectKind::Obstacle) => {}
                     (body, kind) => panic!("{at}: {kind:?} read as {body:?}"),
                 }
