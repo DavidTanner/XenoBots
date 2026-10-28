@@ -1099,7 +1099,8 @@ By the picked kind (`DS:0x5c3f`):
   writes the side's flag byte (`DS:0x5ca2` by side: 0 or 8) to +0x16, sets it up as new
   (`sim_init_new_object`, `1000:f812`, below) and counts it (`DS:0x62f3`); then the
   point, the heading and target heading (`DS:0x5c43`), and the side's unit list
-  (`sim_add_unit_to_side_list`). Not in the port yet.
+  (`sim_add_unit_to_side_list`: the first free entry of 38, and base +0xc7 = 3).
+  In the port since T-108 part 2 (`xeno_sim::Sim::place`).
 - **Bases** (3): none is made; the side's command object (`DS:0x568e` human, `0x5690`
   alien) moves to the point (x and y only).
 - **Relays** (4): the point is worked out into a scratch object at `DS:0x5cb4`, then
@@ -1123,9 +1124,27 @@ By the picked kind (`DS:0x5c3f`):
 not in use, `DS:0x72c5`, into +0xdb), `d5c4` (+0xdc, +0xdd, +0xe6 cleared), `d9ab`
 (+0xef, +0xf1, +0xf3 = 0, +0xf2 = 2, and two display globals), `dc7e` (+0xf6, +0xf4
 cleared) and `dd79` (+0xf9 = 0), clears +0x1b, sets +0x16 bits 0x66 and runs the
-kind's routine (`DS:0xe73f`; the humanoid's `1000:ab8a` draws its serial and sets
-radius, gear, eye and model heights, cloaks and ECM, then `1000:d41c` and a 0x388b
-template copy into +0x10c; not traced further).
+kind's routine (`DS:0xe73f`): a serial (`random & 0x1ff`, +0x18), then the
+humanoid's (`1000:ab8a`) radius 0x0a00, +0x10b = 4, +0x103/+0x104 = 0, eye height
+0x0f80, model height 0x0a00, 10 cloaks, ECM 0xff; the scorpion's (`9293`) radius
+0x1200, 2000 rounds (+0x120), 6 missiles, +0xdd = 0, ECM 0xff, mines 20, alarm and
+ECM buoys 8, decoys 4, +0x123 = 0xffff, 12 relays, +0x119 = 0, model height 0x0a80, eye
+0x0b80; the scout's (`c40e`) radius 0x0a00, +0x105/+0x106 = 0, 80 shells (+0x107), ECM
+0xff, 4 cloaks, mines 6, alarm and ECM buoys 2, decoys 6, gear 4, stance 0x2f, +0x10c
+= 0x30, eye 0x0a00, model height 0x0c80. The humanoid and scorpion then work out
+their velocity (`1000:d41c`, 0 at speed 0), and each copies a block of the load image
+over its parts (`1000:2485`: the block named by `mov ax, seg` has the data's paragraph
+at +4 and its length at +8; humanoid 53 bytes to +0x10c, scorpion 69 to +0x127, scout
+60 to +0x10d; the same blocks are the consoles' widget sets, `ui_open_widget_set`),
+read from the user's `xeno.exe` by `xeno_formats::editor`.
+
+The call signs (`1000:dfaf`): `DS:0x72c5` holds a flag for each of the 64, all
+cleared when a scenario's objects are read (`scen_read_dcbs`), so loaded robots hold
+none; a new robot takes, from a random word's low byte plus one, the next free one (mod
+64), and a destroyed robot frees its own (`1000:dfc9`). A save writes a made robot as
+any other (`scen_pack_all_objects`, `DS:0xe81c`): its script pointer as `(pointer -
+0x4ff4) | 0xa000` (`1000:4826`, the program table's address read by
+`xeno_formats::editor`) and no target as 0xffff.
 
 **Scrolling.** Ctrl+Alt+Left and Right add 0x7fff and -0x7fff to the base's map
 centre x (+0x4f), Up and Down -0x7fff and 0x7fff to its y (+0x53) (`1fe6:7243`,
