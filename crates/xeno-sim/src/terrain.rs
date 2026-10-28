@@ -73,9 +73,13 @@ pub struct Terrain {
 impl Terrain {
     /// `scenario`'s `MAPP` records; none if it has no such chunk.
     pub fn from_scenario(scenario: &Scenario) -> Terrain {
-        let features = scenario.terrain.iter().flat_map(|t| &t.features);
+        Terrain::of(scenario.terrain.iter().flat_map(|t| &t.features))
+    }
+
+    /// The records `features`, in order.
+    pub fn of<'a>(features: impl IntoIterator<Item = &'a TerrainFeature>) -> Terrain {
         Terrain {
-            features: features.map(Feature::of).collect(),
+            features: features.into_iter().map(Feature::of).collect(),
         }
     }
 

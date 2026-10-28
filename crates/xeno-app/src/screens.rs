@@ -501,6 +501,7 @@ impl Screens {
     /// The pointer moved to `at` in a mission view: the shape the view's handlers
     /// set there ([`MissionState::pointer_shape`], by the picture's pixel under it).
     fn mission_hover(&mut self, at: (u16, u16)) {
+        self.mission.hover(at, &self.mission_assets);
         let colour = self
             .screen
             .file()
@@ -654,18 +655,23 @@ impl Screens {
                     (InputEvent::MouseDown { button }, Mission(_)) => {
                         let at = self.mouse.position;
                         // The event's key word carries Ctrl (`1000:5781` tests 0x1000).
-                        let ctrl = key_word(ScanCode(0), &self.keys).0 & CTRL != 0;
-                        let placed = button == xeno_sim::input::MouseButton::Left
-                            && ctrl
-                            && self.mission.place_at_pointer(at, &self.mission_assets);
+                        let held = key_word(ScanCode(0), &self.keys).0;
+                        let ctrl = held & CTRL != 0;
+                        let assets = &self.mission_assets;
+                        let placed = self.mission.terrain_mouse(button, true, at, held, assets)
+                            || button == xeno_sim::input::MouseButton::Left
+                                && ctrl
+                                && self.mission.place_at_pointer(at, &self.mission_assets);
                         if !placed {
                             self.mission.mouse_down(button, at, &self.mission_assets);
                         }
                     }
                     (InputEvent::MouseUp { button }, Mission(_)) => {
                         let at = self.mouse.position;
-                        if let Some(request) =
-                            self.mission.mouse_up(button, at, &self.mission_assets)
+                        let assets = &self.mission_assets;
+                        if !self.mission.terrain_mouse(button, false, at, 0, assets)
+                            && let Some(request) =
+                                self.mission.mouse_up(button, at, &self.mission_assets)
                         {
                             self.mission_request(request);
                         }

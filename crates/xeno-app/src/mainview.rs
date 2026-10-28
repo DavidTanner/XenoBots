@@ -351,7 +351,7 @@ pub fn console_map(
 /// A position's pixel in the buffer (`1000:3ad8`): columns right with the lateral
 /// offset (`CX`, x at the map's heading 0), rows up with the depth (`AX`, y), from the
 /// middle. [`pointer_to_world`] is its inverse.
-fn pixel(camera: &Camera, buffer: &Framebuffer, x: i32, y: i32) -> (i32, i32) {
+pub fn pixel(camera: &Camera, buffer: &Framebuffer, x: i32, y: i32) -> (i32, i32) {
     let (across, along) = camera.map_offset(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
     let size = buffer.surface();
     (
@@ -395,7 +395,7 @@ fn dot(buffer: &mut Framebuffer, (x, y): (i32, i32), colour: u8) {
 
 /// Node type 0xa (`1000:3912`): the sprite centred on the point, keyed, if it fits;
 /// then a dot of `colour` unless it is 0.
-fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colour: u8) {
+pub fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colour: u8) {
     if let Some(sprite) = sprite {
         let blit = SpriteBlit {
             mode: BlitMode::Keyed,
@@ -409,15 +409,15 @@ fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colou
     }
 }
 
-/// `gfx_draw_hill_outline_on_map` (`1000:39fb`, `3a27`): a hill as an octagon in the
-/// hill colour, at its radius on the axes and two thirds of it on the diagonals,
-/// filled by the 3D view's polygon fill.
-fn hill(buffer: &mut Framebuffer, camera: &Camera, f: &TerrainFeature, colour: u8) {
-    let r = i32::from(f.radius) << 8;
-    let d = (r as u32 * 2 / 3) as i32;
+/// Node type 0x12 (`1000:3a27`): an octagon at `(x, y)` in `colour`, at the radius `r`
+/// (16.16) on the axes and two thirds of it on the diagonals, filled by the 3D view's
+/// polygon fill. A hill (`gfx_draw_hill_outline_on_map`, `1000:39fb`) is one in the
+/// hill colour at its 8.8 radius shifted to a 16.16.
+pub fn octagon(buffer: &mut Framebuffer, camera: &Camera, (x, y): (i32, i32), r: i32, colour: u8) {
+    let d = ((r as u32).wrapping_mul(2) / 3) as i32;
     let r = i32::from(camera.map_offset(r, r).1);
     let d = i32::from(camera.map_offset(d, d).1);
-    let (x, y) = pixel(camera, buffer, f.x, f.y);
+    let (x, y) = pixel(camera, buffer, x, y);
     let corners = [
         (x, y - r),
         (x - d, y - d),
@@ -442,15 +442,13 @@ pub struct Inputs<'a> {
 }
 
 impl Inputs<'_> {
-    fn sprite(&self, handle: u16) -> Option<&Sprite> {
+    pub fn sprite(&self, handle: u16) -> Option<&Sprite> {
         self.sprites.get(usize::from(handle / HANDLE_STEP))
     }
 }
 
-/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, then the hills, the
-/// selected unit's destination and the objects in slot order, then the zoom label (the
-/// situation room's, drawn only with a font). `colours`: the clear and hill colours
-/// (`DS:0x1457`, `0x1458`).
+/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, then the hills, then
+/// [`draw_objects`]. `colours`: the clear and hill colours (`DS:0x1457`, `0x1458`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_map(
     buffer: &mut Framebuffer,
@@ -465,8 +463,29 @@ pub fn draw_map(
 ) {
     buffer.clear(clear);
     for f in terrain.iter().filter(|f| f.shape.first() == Some(&HILL_OP)) {
-        hill(buffer, camera, f, hill_colour);
+        octagon(
+            buffer,
+            camera,
+            (f.x, f.y),
+            i32::from(f.radius) << 8,
+            hill_colour,
+        );
     }
+    draw_objects(buffer, world, camera, map, flags, selected, inputs);
+}
+
+/// The map's nodes after the terrain's: the selected unit's destination and the
+/// objects in slot order, then the zoom label (the situation room's, drawn only with a
+/// font).
+pub fn draw_objects(
+    buffer: &mut Framebuffer,
+    world: &World,
+    camera: &Camera,
+    map: &MapState,
+    flags: &Flags,
+    selected: Option<&Entity>,
+    inputs: &Inputs,
+) {
     // `1000:f914`: the selected robot's destination (+0x32 bit 1). shortcut: bit 0,
     // a target object (+0x3a, sprite 0x1a0), is not kept by the sim, so not shown.
     if let Some(State::Robot(m)) = selected.map(|e| e.state)
@@ -682,7 +701,7 @@ pub(crate) mod tests {
     }
 
     /// 3x3 raw sprites, sprite `n` all colour `n + 1`.
-    fn sprites() -> Vec<Sprite> {
+    pub(crate) fn sprites() -> Vec<Sprite> {
         (0..60u8)
             .map(|n| Sprite {
                 header: SpriteHeader {

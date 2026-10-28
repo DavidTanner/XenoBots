@@ -66,9 +66,8 @@ const DEGREE: u16 = 0xb6;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effect {
     None,
-    /// Ctrl+M: the terrain editor, which the port runs as entering and leaving at
-    /// once (Alt+Q), saving `BACKUP.MAP` (T-109 for the editor itself).
-    SaveTerrain,
+    /// Ctrl+M: the terrain editor (`ui_run_map_editor`, T-109).
+    TerrainEditor,
     /// Ctrl+Alt+arrows: move the situation room's map centre by (x, y), 16.16.
     Scroll(i32, i32),
     /// Ctrl+D (`1000:6ab7`): destroy the selected unit (base +0x3c, which the
@@ -167,7 +166,7 @@ impl Editor {
                 let objects = scenario.objects.get_or_insert_with(Vec::new);
                 objects.retain(|o| o.kind != ObjectKind::Relay);
             }
-            handler::TERRAIN => return Effect::SaveTerrain,
+            handler::TERRAIN => return Effect::TerrainEditor,
             handler::DESTROY => return Effect::DestroySelected,
             handler::TOGGLE => {
                 self.flag = !self.flag;

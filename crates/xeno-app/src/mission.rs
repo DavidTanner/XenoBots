@@ -34,7 +34,7 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MESSAGE_PANEL_TYPE, MissionViews, PROGRAM_PANEL_TYPE,
     SITUATION_CORNER_TYPE, TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, lzexe, map, mgavideo, motion, sitroom};
+use xeno_formats::{editor, lzexe, map, mapdvr, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
@@ -46,6 +46,7 @@ use crate::mainview::{self, MapState};
 use crate::maproom::{Campaign, scenario_file};
 use crate::pointer::{ARROW, CORNER};
 use crate::screens::View;
+use crate::terrain::{self, TerrainEditor};
 use crate::{review, scene};
 
 /// Original handlers (offsets in `xeno.exe`'s segment `1000`) whose keys the port acts
@@ -244,6 +245,10 @@ pub struct Assets {
     pub editor: Option<editor::Editor>,
     /// Whether the user's `XENO.KEY` gives unlock word 9 (the editor's keys).
     pub editor_unlocked: bool,
+    /// The terrain editor's keys (T-109), if the user's `mapdvr.dvr` has them where the
+    /// port reads them; without them Ctrl+M does nothing, as when the original cannot
+    /// load the driver.
+    pub map_driver: Option<mapdvr::MapDriver>,
     /// Where Ctrl+Alt+P and the editor save (`--save-dir`, else the game directory).
     pub save_dir: PathBuf,
     /// The 3D view's tables (T-101), if the user's `xeno.exe` has them where the port
@@ -334,6 +339,10 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         scenarios,
         editor,
         editor_unlocked: false,
+        map_driver: read("mapdvr.dvr")
+            .and_then(|b| mapdvr::parse(&b).map_err(|e| format!("mapdvr.dvr: {e}")))
+            .inspect_err(|e| log::warn!("no terrain editor: {e}"))
+            .ok(),
         save_dir: files.dir().path.clone(),
         view3d: view3d::read(&exe)
             .inspect_err(|e| log::warn!("xeno.exe: no 3D view tables this port can read: {e}"))
@@ -508,6 +517,8 @@ pub struct Mission {
     /// (and a save writes; T-116 for saving the running sim's world).
     scenario: Option<Scenario>,
     editor: Editor,
+    /// The terrain editor while it is open (Ctrl+M): the sim stands still.
+    terrain: Option<TerrainEditor>,
 }
 
 impl Mission {
@@ -577,6 +588,7 @@ impl Mission {
             map: MapState::default(),
             scenario: None,
             editor: Editor::default(),
+            terrain: None,
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
@@ -834,7 +846,8 @@ impl Mission {
     /// parked mission waits). What it did goes to the log. `Some(won)` once a
     /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
     pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Option<bool> {
-        let Run::Running(sim) = &mut self.run else {
+        // `ui_run_map_editor`'s loop never ticks the mission.
+        let (Run::Running(sim), None) = (&mut self.run, &self.terrain) else {
             return None;
         };
         let mut over = None;
@@ -972,12 +985,19 @@ impl Mission {
 
     /// The key word `word` went down in the view shown.
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
+        if self.terrain.is_some() {
+            let keys = assets.map_driver.iter().flat_map(|d| &d.keys);
+            if let Some(&(_, handler)) = keys.into_iter().find(|&&(w, _)| w == word) {
+                self.terrain_key(handler, &assets.save_dir);
+            }
+            return None;
+        }
         // The situation room's editor widget comes before its key table.
         if let (Viewed::Base, true, Some(tables)) =
             (self.viewed, assets.editor_unlocked, &assets.editor)
             && let Some(&(_, handler)) = tables.keys.iter().find(|&&(w, _)| w == word)
         {
-            self.editor_key(handler, tables, &assets.save_dir);
+            self.editor_key(handler, tables, assets);
             return None;
         }
         let view = self.view();
@@ -1099,7 +1119,7 @@ impl Mission {
 
     /// Runs an editor key on the mission's scenario, logs the editor's status, and
     /// saves the terrain if the key asks.
-    fn editor_key(&mut self, handler: u16, tables: &editor::Editor, dir: &Path) {
+    fn editor_key(&mut self, handler: u16, tables: &editor::Editor, assets: &Assets) {
         let Some(scenario) = &mut self.scenario else {
             log::debug!("editor: no scenario loaded");
             return;
@@ -1110,17 +1130,10 @@ impl Mission {
             let c = &mut self.map.centre;
             (c.x.0, c.y.0) = (c.x.0.wrapping_add(x), c.y.0.wrapping_add(y));
         }
-        if effect == Effect::SaveTerrain {
-            // The terrain editor starts with no circles (T-109): left at once, it
-            // saves the closing block alone.
-            let saved = map::save_circles(&[]);
-            let path = dir.join(SAVED_TERRAIN);
-            match std::fs::write(&path, map::write(&saved)) {
-                Ok(()) => log::info!(
-                    "editor: the terrain editor entered and left at once (T-109), {} written",
-                    path.display()
-                ),
-                Err(e) => log::warn!("editor: cannot write {}: {e}", path.display()),
+        if effect == Effect::TerrainEditor {
+            match assets.map_driver {
+                Some(_) => self.terrain = Some(TerrainEditor::enter()),
+                None => log::info!("editor: no terrain editor without mapdvr.dvr's keys"),
             }
         }
         for row in self.editor.status(scenario, tables) {
@@ -1128,6 +1141,113 @@ impl Mission {
         }
         if effect == Effect::DestroySelected {
             self.destroy_selected();
+        }
+    }
+
+    /// Runs a terrain editor key: Apply changes the mission's terrain through the sim,
+    /// Leave writes `BACKUP.MAP` in `dir` and closes the editor.
+    fn terrain_key(&mut self, handler: u16, dir: &Path) {
+        let Some(editor) = &mut self.terrain else {
+            return;
+        };
+        let world = self.scenario.as_ref().and_then(|s| s.terrain.as_ref());
+        let effect = editor.key(handler, world.map_or(&[][..], |t| &t.features));
+        self.dirty = true;
+        match effect {
+            terrain::Effect::None => {}
+            terrain::Effect::Later(what) => log::info!("terrain editor: this key {what}"),
+            terrain::Effect::Apply => {
+                // shortcut: the original writes `BACKUP.MAP`, loads it and deletes it;
+                // the port applies the same records without the file, and the buffer's
+                // leftover memory to a paragraph is zeros. Upgrade if a save's MAPP
+                // chunk must match DOSBox's byte for byte.
+                let saved = map::write(&editor.saved());
+                let mut world = map::to_world(&editor.saved());
+                world.padding = vec![0; saved.len().next_multiple_of(16) - saved.len()];
+                if let Run::Running(sim) = &mut self.run {
+                    sim.set_terrain(&world.features);
+                }
+                if let Some(scenario) = &mut self.scenario {
+                    scenario.terrain = Some(world);
+                }
+                log::info!("terrain editor: applied");
+            }
+            terrain::Effect::Leave => {
+                let path = dir.join(SAVED_TERRAIN);
+                match std::fs::write(&path, map::write(&editor.saved())) {
+                    Ok(()) => log::info!("terrain editor: left, {} written", path.display()),
+                    Err(e) => log::warn!("terrain editor: cannot write {}: {e}", path.display()),
+                }
+                self.terrain = None;
+                return;
+            }
+        }
+        log::debug!("terrain editor: {}", editor.status());
+    }
+
+    /// The terrain editor's view's camera and rectangle: the whole screen.
+    fn terrain_camera(&self, assets: &Assets) -> Option<xeno_render::view3d::Camera> {
+        let view = assets.view3d.as_ref()?;
+        Some(self.terrain.as_ref()?.camera(view, &assets.motion))
+    }
+
+    /// The ground point under the pointer at `at` in the terrain editor
+    /// (`ui_map_pointer_to_world`). shortcut: from the editor's camera now, where the
+    /// original uses the last frame's; they differ only between a camera move and the
+    /// next frame.
+    fn terrain_point(&self, at: (u16, u16), assets: &Assets) -> Option<xeno_sim::Position> {
+        let camera = self.terrain_camera(assets)?;
+        let screen = Rect {
+            top: 0,
+            left: 0,
+            bottom: 200,
+            right: 320,
+        };
+        Some(mainview::pointer_to_world(&camera, screen, at))
+    }
+
+    /// A mouse button went down (or up) at `at` in the terrain editor with the key
+    /// word `held` (Shift, Ctrl and Alt bits): only the left button counts. Returns
+    /// whether the editor is open (and took the event).
+    pub fn terrain_mouse(
+        &mut self,
+        button: MouseButton,
+        down: bool,
+        at: Option<(u16, u16)>,
+        held: u16,
+        assets: &Assets,
+    ) -> bool {
+        // shortcut: the event's key word's high byte is taken as the modifiers with
+        // bit 0 set (1 plain, 0x11 with Ctrl), the 1 guessed to be the left button;
+        // upgrade when the mouse events' writer is traced (T-133).
+        let modifiers = (held >> 8) as u8 | 1;
+        if self.terrain.is_none() {
+            return false;
+        }
+        let point = at.and_then(|at| self.terrain_point(at, assets));
+        let Some(editor) = &mut self.terrain else {
+            return false;
+        };
+        match (button, down, point) {
+            (MouseButton::Left, true, Some(point)) => editor.press(point, modifiers),
+            (MouseButton::Left, false, _) => {
+                if !editor.release() {
+                    log::info!("terrain editor: no room for another circle");
+                }
+            }
+            _ => return true,
+        }
+        self.dirty = true;
+        true
+    }
+
+    /// The pointer moved to `at`: in the terrain editor, the ground point under it.
+    pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
+        if let Some(point) = self.terrain_point(at, assets)
+            && let Some(editor) = &mut self.terrain
+        {
+            editor.hover(point);
+            self.dirty = true;
         }
     }
 
@@ -1237,6 +1357,9 @@ impl Mission {
     /// held its own. Anywhere else the arrow, as those handlers set it when the pointer
     /// leaves them or their region.
     pub fn pointer_shape(&self, assets: &Assets, (x, y): (u16, u16), colour: u8, alt: bool) -> u8 {
+        if let Some(editor) = &self.terrain {
+            return editor.pointer_shape();
+        }
         let Some(top) = assets
             .tables(self.view())
             .widgets
@@ -1465,6 +1588,9 @@ impl Mission {
 
     /// Draws the view's own parts over its picture, which `fb` already shows.
     pub fn draw(&self, fb: &mut Framebuffer, assets: &Assets) {
+        if self.draw_terrain_editor(fb, assets) {
+            return;
+        }
         let view = self.view();
         let colours: &[u8] = if view == View::SitRoom {
             &VIEW_COLOURS[2..]
@@ -1498,6 +1624,31 @@ impl Mission {
             Viewed::Base => self.draw_situation(fb, assets),
             Viewed::Robot(slot) => self.draw_console(fb, assets, slot),
         }
+    }
+
+    /// The terrain editor's view over the whole screen; `false` when it is closed or
+    /// the tables are missing.
+    fn draw_terrain_editor(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+        let (Some(editor), Some(camera), Some(view), Some(room)) = (
+            &self.terrain,
+            self.terrain_camera(assets),
+            &assets.view3d,
+            &assets.sitroom,
+        ) else {
+            return false;
+        };
+        let inputs = mainview::Inputs {
+            room,
+            view,
+            sprites: &assets.map_sprites,
+            font: None,
+        };
+        let world = self.world();
+        let selected = self.selected.and_then(|s| world.get(EntityId(s)));
+        let flags = mainview::flags(self.scenario.as_ref());
+        let map = self.shown_map();
+        editor.draw(fb, &camera, world, &map, &flags, selected, &inputs);
+        true
     }
 
     /// The colour-255 region's view, drawn in a buffer the size of the region and
@@ -2007,6 +2158,7 @@ pub mod tests {
                 .collect(),
             editor: None,
             editor_unlocked: false,
+            map_driver: None,
             save_dir: PathBuf::new(),
             view3d: None,
             models: Vec::new(),
@@ -2102,7 +2254,7 @@ pub mod tests {
             made_parts: [(0x10c, vec![1]), (0x127, vec![2]), (0x10d, vec![3])],
             program_table: 0,
         };
-        // Ctrl+Alt+R removes the relays; Ctrl+M saves the terrain.
+        // Ctrl+Alt+R removes the relays; Ctrl+M opens the terrain editor.
         let (remove, terrain) = ((0x3013, 0x6ac8), (0x1032, 0x448c));
         assets.editor = Some(tables(vec![remove, terrain]));
         assets.save_dir = dir.clone();
@@ -2117,9 +2269,53 @@ pub mod tests {
         assets.editor_unlocked = true;
         m.key(remove.0, &assets);
         assert_eq!(relays(&m), 0);
+        // Ctrl+M opens the terrain editor (with the driver's keys), which stops the
+        // sim; a Ctrl+drag makes a circle, Alt+E applies it through the sim and Alt+Q
+        // leaves, writing the circles.
         m.key(terrain.0, &assets);
+        assert!(m.terrain.is_none(), "no driver, no editor");
+        let (apply, leave) = ((0x2012, 0x6b5), (0x2010, 0x6cf));
+        assets.map_driver = Some(mapdvr::MapDriver {
+            keys: vec![apply, leave],
+        });
+        m.key(terrain.0, &assets);
+        let retrace = |m: &Mission| match &m.run {
+            Run::Running(sim) => sim.retrace(),
+            _ => unreachable!(),
+        };
+        let before = retrace(&m);
+        m.tick(&[]);
+        assert_eq!(retrace(&m), before, "the sim stands still");
+        let at = |x: i32| xeno_sim::Position {
+            x: xeno_sim::Fixed(x << 16),
+            y: xeno_sim::Fixed(x << 16),
+        };
+        let editor = m.terrain.as_mut().unwrap();
+        editor.press(at(200), 0x11);
+        editor.hover(at(203));
+        assert!(editor.release());
+        m.key(apply.0, &assets);
+        let features = &m
+            .scenario
+            .as_ref()
+            .unwrap()
+            .terrain
+            .as_ref()
+            .unwrap()
+            .features;
+        assert_eq!(
+            (features.len(), features[0].x, features[0].radius),
+            (2, 200 << 16, 0x480)
+        );
+        let Run::Running(sim) = &m.run else {
+            unreachable!()
+        };
+        assert!(sim.world.terrain.hill_at(at(201)).is_some());
+        m.key(leave.0, &assets);
+        assert!(m.terrain.is_none());
         let saved = map::parse(&std::fs::read(dir.join(SAVED_TERRAIN)).unwrap()).unwrap();
-        assert_eq!(saved.features, [map::closing_block()]);
+        assert_eq!(saved.features.len(), 2);
+        assert_eq!(saved.features[1], map::closing_block());
         m.save_scenario(&dir.join(SAVED_SCENARIO));
         // It reads back as saved (the terrain filled to a paragraph, as the game's).
         let bytes = std::fs::read(dir.join(SAVED_SCENARIO)).unwrap();
@@ -2816,6 +3012,7 @@ pub mod tests {
         let tables = &assets.views.situation;
         let area = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area).unwrap();
         assert_eq!(assets.scenarios.len(), 17);
+        assert_eq!(assets.map_driver.as_ref().map(|d| d.keys.len()), Some(22));
         for (name, scenario) in &assets.scenarios {
             let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
             m.mode = ORDERS_MODE;
