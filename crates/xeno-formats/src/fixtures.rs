@@ -1660,6 +1660,99 @@ pub fn synthetic_mapdvr(keys: &[(u16, u16)]) -> Vec<u8> {
     file
 }
 
+/// Where `synthetic_file_dialogs` puts the dialogs' widget set (segment 0x1400).
+pub const SYNTHETIC_FILE_DIALOG_SET: usize = 0x14000;
+
+/// The code and data `crate::filedialog` reads, in a load image whose data segment
+/// starts at `ds`: a save dialog with its directories list and scroll bar, an open
+/// dialog with OK, the files list and the directories' up arrow, and the error box's
+/// OK. Returns the relocated words.
+pub fn synthetic_file_dialogs(image: &mut [u8], ds: usize) -> Vec<usize> {
+    use crate::filedialog::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let words =
+        |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    let set = SYNTHETIC_FILE_DIALOG_SET;
+    let seg = (set / 16) as u16;
+    const NONE: [u16; 4] = [0x7fff; 4];
+    let widget =
+        |kind: u16, state: u16, area: [u16; 4]| words(&[&[kind, state][..], &area].concat());
+
+    put(RUN, &op(&[0xb8], seg));
+    put(OPEN, &op(&[0xb8], 0x1100));
+    put(OPEN + 6, &op(&[0xbf], 0x1300));
+    put(OPEN + 9, &op(&[0xbe], 0x1310));
+    put(OPEN + 0x1b, &op(&[0xbb], 0x7c));
+    put(OPEN + 0x1e, &op(&[0xba], 0xa0));
+    put(SAVE, &op(&[0xb8], 0x1000));
+    put(SAVE + 6, &op(&[0xbb], 0x10));
+    put(SAVE + 9, &op(&[0xba], 0x70));
+    put(ERROR, &op(&[0xb8], 0x1200));
+    put(ERROR + 0xb, &op(&[0xb8], seg));
+    put(ERROR + 0xe, &op(&[0xbb], 0x70));
+    put(ERROR + 0x13, &op(&[0xba], 0x7c));
+    put(NAME_FIELD.0, &op(NAME_FIELD.1, 0x1330));
+    put(DIRECTORY_PATTERN.0, &op(DIRECTORY_PATTERN.1, 0x1320));
+
+    let fill = |colour: u8, r: [u16; 4]| [&[2, colour][..], &words(&r)].concat();
+    let frame = |r: [u16; 4]| [&[4][..], &words(&r)].concat();
+    let text = |y: u16, x: u16, s: &[u8]| [&[6][..], &words(&[y, x]), &[0], s, &[0]].concat();
+    let font = |id: u16| [&[8][..], &words(&[id])].concat();
+    let save_script = [
+        fill(12, [26, 76, 131, 265]),
+        frame([26, 76, 131, 265]),
+        font(0),
+        text(30, 146, b"SAVE"),
+        font(2),
+        text(42, 81, b"NAME:"),
+        vec![0],
+    ]
+    .concat();
+    put(ds + 0x1000, &save_script);
+    put(
+        ds + 0x1100,
+        &[fill(12, [26, 76, 131, 265]), text(43, 234, b"OK"), vec![0]].concat(),
+    );
+    put(
+        ds + 0x1200,
+        &[frame([26, 76, 131, 265]), text(66, 101, b"WRONG"), vec![0]].concat(),
+    );
+    put(ds + 0x1300, b"\x03*.*\0");
+    put(ds + 0x1310, b"\x05*.USG\0");
+    put(ds + 0x1320, b"*.*\0");
+    put(ds + 0x1330, &words(&[42, 127, 48, 195]));
+
+    // The widgets' states: an arrow's byte +1 picks its list, the error OK's word +3
+    // is its sprite.
+    put(ds + 0x1401, &[1]);
+    put(ds + 0x1403, &[2]);
+    put(ds + 0x1405, &[2]);
+    put(ds + 0x1408, &words(&[0x1d0]));
+    let list = [
+        // Save: 0x10..0x70.
+        widget(0x0e, 0x1400, NONE),
+        widget(0x1a, 0x1400, NONE),
+        widget(0x15c, 0x1400, [0, 0, 200, 320]),
+        widget(0x15e, 0x1400, [41, 222, 50, 261]),
+        widget(0x160, 0x1400, [54, 222, 63, 261]),
+        widget(0x164, 0x1400, [78, 135, 88, 145]),
+        widget(0x166, 0x1402, [87, 135, 119, 144]),
+        widget(0x16e, 0x1400, [78, 81, 129, 135]),
+        // The error box: 0x70..0x7c.
+        widget(0x16a, 0x1405, [41, 222, 50, 261]),
+    ];
+    put(set + 0x10, &list.concat());
+    // Open: 0x7c..0xa0.
+    let open = [
+        widget(0x15e, 0x1400, [41, 222, 50, 261]),
+        widget(0x16c, 0x1400, [78, 81, 129, 135]),
+        widget(0x164, 0x1404, [78, 218, 88, 228]),
+    ];
+    put(set + 0x7c, &open.concat());
+    vec![RUN + 1, ERROR + 0xc]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

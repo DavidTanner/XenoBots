@@ -1,0 +1,224 @@
+---
+source: crates/xeno-formats/src/filedialog.rs
+expression: dialogs
+---
+FileDialogs {
+    open: Dialog {
+        script: [
+            Fill {
+                colour: 12,
+                area: Rect {
+                    top: 26,
+                    left: 76,
+                    bottom: 131,
+                    right: 265,
+                },
+            },
+            Text {
+                x: 234,
+                y: 43,
+                unknown_skipped: 0,
+                text: [
+                    79,
+                    75,
+                ],
+            },
+        ],
+        parts: [
+            (
+                Ok,
+                Rect {
+                    top: 41,
+                    left: 222,
+                    bottom: 50,
+                    right: 261,
+                },
+            ),
+            (
+                List(
+                    Files,
+                ),
+                Rect {
+                    top: 78,
+                    left: 81,
+                    bottom: 129,
+                    right: 135,
+                },
+            ),
+            (
+                Up(
+                    Directories,
+                ),
+                Rect {
+                    top: 78,
+                    left: 218,
+                    bottom: 88,
+                    right: 228,
+                },
+            ),
+        ],
+    },
+    save: Dialog {
+        script: [
+            Fill {
+                colour: 12,
+                area: Rect {
+                    top: 26,
+                    left: 76,
+                    bottom: 131,
+                    right: 265,
+                },
+            },
+            Frame(
+                Rect {
+                    top: 26,
+                    left: 76,
+                    bottom: 131,
+                    right: 265,
+                },
+            ),
+            Font(
+                0,
+            ),
+            Text {
+                x: 146,
+                y: 30,
+                unknown_skipped: 0,
+                text: [
+                    83,
+                    65,
+                    86,
+                    69,
+                ],
+            },
+            Font(
+                2,
+            ),
+            Text {
+                x: 81,
+                y: 42,
+                unknown_skipped: 0,
+                text: [
+                    78,
+                    65,
+                    77,
+                    69,
+                    58,
+                ],
+            },
+        ],
+        parts: [
+            (
+                Ok,
+                Rect {
+                    top: 41,
+                    left: 222,
+                    bottom: 50,
+                    right: 261,
+                },
+            ),
+            (
+                Cancel,
+                Rect {
+                    top: 54,
+                    left: 222,
+                    bottom: 63,
+                    right: 261,
+                },
+            ),
+            (
+                Up(
+                    Directories,
+                ),
+                Rect {
+                    top: 78,
+                    left: 135,
+                    bottom: 88,
+                    right: 145,
+                },
+            ),
+            (
+                Track(
+                    Directories,
+                ),
+                Rect {
+                    top: 87,
+                    left: 135,
+                    bottom: 119,
+                    right: 144,
+                },
+            ),
+            (
+                List(
+                    Directories,
+                ),
+                Rect {
+                    top: 78,
+                    left: 81,
+                    bottom: 129,
+                    right: 135,
+                },
+            ),
+        ],
+    },
+    error: Dialog {
+        script: [
+            Frame(
+                Rect {
+                    top: 26,
+                    left: 76,
+                    bottom: 131,
+                    right: 265,
+                },
+            ),
+            Text {
+                x: 101,
+                y: 66,
+                unknown_skipped: 0,
+                text: [
+                    87,
+                    82,
+                    79,
+                    78,
+                    71,
+                ],
+            },
+        ],
+        parts: [
+            (
+                ErrorOk(
+                    464,
+                ),
+                Rect {
+                    top: 41,
+                    left: 222,
+                    bottom: 50,
+                    right: 261,
+                },
+            ),
+        ],
+    },
+    open_pattern: [
+        42,
+        46,
+        85,
+        83,
+        71,
+    ],
+    first_name: [
+        42,
+        46,
+        42,
+    ],
+    directory_pattern: [
+        42,
+        46,
+        42,
+    ],
+    name_field: Rect {
+        top: 42,
+        left: 127,
+        bottom: 48,
+        right: 195,
+    },
+}
