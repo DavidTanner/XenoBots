@@ -1104,7 +1104,13 @@ impl Mission {
             log::debug!("editor: no scenario loaded");
             return;
         };
-        if self.editor.key(handler, scenario, tables) == Effect::SaveTerrain {
+        let effect = self.editor.key(handler, scenario, tables);
+        if let Effect::Scroll(x, y) = effect {
+            let c = &mut self.map.centre;
+            (c.x.0, c.y.0) = (c.x.0.wrapping_add(x), c.y.0.wrapping_add(y));
+            self.dirty = true;
+        }
+        if effect == Effect::SaveTerrain {
             let world = scenario.terrain.as_ref().map(|t| t.features.as_slice());
             let saved = map::editor_save(world.unwrap_or_default());
             let path = dir.join(SAVED_TERRAIN);
@@ -1121,6 +1127,59 @@ impl Mission {
         for row in self.editor.status(scenario, tables) {
             log::info!("editor: {row}");
         }
+    }
+
+    /// A left press with Ctrl at `at` (`1000:5781`): over the situation room's main view
+    /// in mode M (the map), with no other widget there, it is the editor's place
+    /// (`ui_editor_place_at_pointer`), which needs unlock word 9 and a running sim.
+    /// Returns whether the press was taken.
+    pub fn place_at_pointer(&mut self, at: Option<(u16, u16)>, assets: &Assets) -> bool {
+        let Some(at) = at else {
+            return false;
+        };
+        let view = self.main_view(assets);
+        if self.viewed != Viewed::Base
+            || self.mode != MAP_MODE
+            || !view.contains(at.0, at.1)
+            || self.target(assets, at).is_some()
+        {
+            return false;
+        }
+        let (Some(camera), Some(tables)) = (self.map_camera(assets), &assets.editor) else {
+            return true;
+        };
+        let (Run::Running(sim), Some(scenario), true) =
+            (&mut self.run, &mut self.scenario, assets.editor_unlocked)
+        else {
+            return true;
+        };
+        let point = mainview::pointer_to_world(&camera, view, at);
+        if self.editor.place(point, scenario, sim) {
+            for row in self.editor.status(scenario, tables) {
+                log::info!("editor: {row}");
+            }
+        }
+        self.dirty = true;
+        true
+    }
+
+    /// The situation room map's camera, as the last frame drew it.
+    fn map_camera(&self, assets: &Assets) -> Option<xeno_render::view3d::Camera> {
+        let view = assets.view3d.as_ref()?;
+        let world = self.world();
+        let selected = self.selected.and_then(|s| world.get(EntityId(s)));
+        let base = world
+            .iter()
+            .find(|(_, e)| e.kind == usg::ObjectKind::Base && e.side == Side::Human)
+            .map(|(_, e)| e.position)
+            .unwrap_or_default();
+        Some(mainview::camera(
+            base,
+            selected,
+            &self.map,
+            view,
+            &assets.motion,
+        ))
     }
 
     /// Ctrl+Alt+P: writes the mission's scenario as the original's writer does.
@@ -1453,13 +1512,9 @@ impl Mission {
                 let selected = self.selected.and_then(|s| world.get(EntityId(s)));
                 match self.mode {
                     MAP_MODE => {
-                        let base = world
-                            .iter()
-                            .find(|(_, e)| e.kind == usg::ObjectKind::Base && e.side == Side::Human)
-                            .map(|(_, e)| e.position)
-                            .unwrap_or_default();
-                        let camera =
-                            mainview::camera(base, selected, &self.map, view, &assets.motion);
+                        let Some(camera) = self.map_camera(assets) else {
+                            return false;
+                        };
                         let flags = mainview::flags(self.scenario.as_ref());
                         mainview::draw_map(
                             &mut buffer,
@@ -2037,6 +2092,121 @@ pub mod tests {
         assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
         assert_eq!(usg::write(&back).unwrap(), bytes);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With unlock word 9, a Ctrl+left press on the map in mode M places the picked
+    /// kind at the point under the pointer through the sim, and Ctrl+Alt+arrows
+    /// scroll the map; the save holds what was placed.
+    #[test]
+    fn the_editor_places_on_the_map_and_scrolls_it() {
+        use xeno_sim::{Fixed, Position};
+        let mut assets = test_assets();
+        let keys = vec![
+            (0x1018, 0x6ae6), // Ctrl+O: obstacles
+            (0x1030, 0x6b08), // Ctrl+B: the base
+            (0x1019, 0x6afb), // Ctrl+P: path points
+            (0x1052, 0x6b0f), // Ctrl+Ins: a new path
+            (0x304b, 0x6dde), // Ctrl+Alt+Left
+        ];
+        assets.editor = Some(editor::Editor {
+            keys: keys.clone(),
+            kind_names: vec![None; editor::KINDS],
+            side_names: [b"H".to_vec(), b"A".to_vec()],
+            show_names: [b"N".to_vec(), b"Y".to_vec()],
+            mission_names: vec![b"M".to_vec(); 8],
+            mission_defaults: vec![[0; 4]; 7],
+            mix_percent: vec![0; 11],
+            status: b"T:\r".to_vec(),
+        });
+        assets.view3d = Some(mainview::tests::view());
+        let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
+        main_view.kind = MAIN_VIEW_TYPE;
+        main_view.area = Some(Rect {
+            top: 40,
+            left: 100,
+            bottom: 100,
+            right: 220,
+        });
+        assets.views.situation.widgets.push(main_view);
+        let mut m = mission(&assets);
+        m.mode = MAP_MODE;
+        // The map free on (0, 0) at zoom 0: a unit a pixel from the middle (160, 70).
+        m.map.overlays |= usg::Base::MAP_FREE;
+        (m.map.centre, m.map.zoom) = (Position::default(), 0);
+        let count = |m: &Mission| m.scenario.as_ref().unwrap().objects.as_ref().unwrap().len();
+        let objects = count(&m);
+        assert!(
+            m.place_at_pointer(Some((165, 67)), &assets),
+            "the editor's press"
+        );
+        assert_eq!(count(&m), objects, "locked: nothing placed");
+        assert!(
+            !m.place_at_pointer(Some((10, 10)), &assets),
+            "off the main view"
+        );
+        assets.editor_unlocked = true;
+        let key = |m: &mut Mission, word: u16| m.key(word, &assets);
+        let press = |m: &mut Mission, at| m.place_at_pointer(Some(at), &assets);
+        key(&mut m, 0x1018);
+        assert!(press(&mut m, (165, 67)));
+        let unit = Fixed::from_int;
+        let o = m
+            .scenario
+            .as_ref()
+            .unwrap()
+            .objects
+            .as_ref()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            (o.kind, o.x, o.y),
+            (usg::ObjectKind::Obstacle, 5 << 16, 3 << 16)
+        );
+        let made = m.world().get(EntityId(o.slot)).unwrap();
+        assert_eq!(
+            (made.kind, made.position.x, made.position.y),
+            (o.kind, unit(5), unit(3))
+        );
+        // The base moves to the point; a path point needs a path first.
+        key(&mut m, 0x1030);
+        press(&mut m, (150, 80));
+        let slot = m.world().base(Side::Human).unwrap();
+        let base = m.world().get(slot).unwrap().position;
+        assert_eq!((base.x, base.y), (unit(-10), unit(-10)));
+        key(&mut m, 0x1019);
+        press(&mut m, (161, 69));
+        let human = |m: &Mission| m.scenario.as_ref().unwrap().human_paths.clone();
+        assert!(
+            human(&m).is_none_or(|t| t.paths[0].point_count == 0),
+            "no path yet"
+        );
+        key(&mut m, 0x1052);
+        press(&mut m, (161, 69));
+        let t = human(&m).unwrap();
+        assert_eq!((t.count, t.paths[0].point_count), (1, 1));
+        assert_eq!(
+            t.paths[0].points[0],
+            usg::Point {
+                x: 1 << 16,
+                y: 1 << 16
+            }
+        );
+        assert_eq!(
+            m.world().paths.human.slots[0].points.len(),
+            1,
+            "the sim's too"
+        );
+        // Ctrl+Alt+Left moves the centre's x up by 0x7fff.
+        key(&mut m, 0x304b);
+        assert_eq!(m.map.centre.x, Fixed(0x7fff));
+        // The save holds the obstacle and the moved base.
+        let back = usg::parse(&usg::write(m.scenario.as_ref().unwrap()).unwrap()).unwrap();
+        let objects = back.objects.unwrap();
+        assert!(objects.contains(&o));
+        let base = objects.iter().find(|b| b.slot == slot.0).unwrap();
+        assert_eq!((base.x, base.y), (-10 << 16, -10 << 16));
     }
 
     fn click(
@@ -2654,6 +2824,55 @@ pub mod tests {
                         .count();
                     assert!(background > 1000, "{name}: {background}");
                 }
+            }
+        }
+    }
+
+    /// An obstacle placed with the pointer in every stock scenario's map (the editor
+    /// unlocked here, not by the user's `XENO.KEY`) is drawn under the pointer.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_placed_obstacle_is_drawn_under_the_pointer() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let mut assets = load(&files, 13).unwrap();
+        assets.editor_unlocked = true;
+        let tables = assets.editor.as_ref().unwrap();
+        let obstacles = tables.keys.iter().find(|k| k.1 == 0x6ae6).unwrap().0;
+        let area = assets
+            .views
+            .situation
+            .find(MAIN_VIEW_TYPE)
+            .and_then(|w| w.area)
+            .unwrap();
+        let at = (
+            (area.left + area.right) / 2 + 13,
+            (area.top + area.bottom) / 2 - 7,
+        );
+        for (name, scenario) in &assets.scenarios {
+            for zoom in [0, 3, 6] {
+                let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+                (m.mode, m.map.zoom) = (MAP_MODE, zoom);
+                m.key(obstacles, &assets);
+                assert!(m.place_at_pointer(Some(at), &assets), "{name}");
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                let (w, h) = (area.right - area.left, area.bottom - area.top);
+                let rect =
+                    xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
+                fb.fill_rect(rect, 255);
+                m.draw(&mut fb, &assets);
+                // Both ways truncate, so the dot can land a pixel short, as the
+                // original's does.
+                let near = (at.1 - 1..=at.1 + 1)
+                    .flat_map(|y| (at.0 - 1..=at.0 + 1).map(move |x| (x, y)))
+                    .any(|(x, y)| fb.get(x.into(), y.into()) == Some(mainview::OBSTACLE_DOT));
+                assert!(near, "{name} zoom {zoom}");
             }
         }
     }

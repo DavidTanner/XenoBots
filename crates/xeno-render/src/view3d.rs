@@ -115,6 +115,38 @@ impl GameFloat {
         }
     }
 
+    /// `1000:0d6f`: to a 16.16's raw value, `mantissa << (exponent + 8)`, by whole
+    /// bytes; one byte down at `exponent + 8 = -8`, 0 below; 0x6fff6fff (0x90019001
+    /// negative) when it does not fit. The inverse of [`GameFloat::from_raw`] taken
+    /// through a map's 2^-8.
+    pub fn to_raw(self) -> i32 {
+        let m = u32::from(self.mantissa);
+        let v = match self.exponent.wrapping_add(8) {
+            0 => m,
+            -8 => m >> 8,
+            e if e < 0 => 0,
+            mut e => {
+                let mut v = m;
+                while e > 0 {
+                    if v >> 24 != 0 {
+                        return if self.negative {
+                            0x9001_9001u32 as i32
+                        } else {
+                            0x6fff_6fff
+                        };
+                    }
+                    (v, e) = (v << 8, e - 8);
+                }
+                v
+            }
+        };
+        if self.negative {
+            (v as i32).wrapping_neg()
+        } else {
+            v as i32
+        }
+    }
+
     /// `1000:0dcf`: to a 16-bit integer, 0x6fff (signed) when it does not fit, 0
     /// below 2^-16.
     pub fn to_int(self) -> i16 {
@@ -222,8 +254,8 @@ impl Camera {
     }
 
     /// `1000:3eb9`: the offset `(dx, dy)` on a map, in pixels: each sum of
-    /// [`Camera::rotate`] whole, times 2^-24 and the focal factor. The map's rows run
-    /// against `X` and its columns with `Z` (`1000:3ad8`).
+    /// [`Camera::rotate`] whole, times 2^-24 and the focal factor. The map's columns
+    /// run with `X` and its rows against `Z` (`1000:3ad8`).
     pub fn map_offset(&self, dx: i32, dy: i32) -> (i16, i16) {
         let (x, z) = self.rotate_wide(dx, dy);
         let pixels = |v: i64| {
@@ -474,6 +506,18 @@ mod tests {
         assert_eq!(f(0x7f, 8).to_int(), 0x7f00);
         assert_eq!(f(0x80, 8).to_int(), 0x6fff);
         assert_eq!(f(1, 16).to_int(), 0x6fff);
+        // To a 16.16's raw value: 2^8 more than the number.
+        assert_eq!(f(0x1234, -8).to_raw(), 0x1234);
+        assert_eq!(f(0x1234, 0).to_raw(), 0x12_3400);
+        assert_eq!(f(0x1234, 8).to_raw(), 0x1234_0000);
+        assert_eq!(f(0x1234, 16).to_raw(), 0x6fff_6fff);
+        assert_eq!(f(0x1234, -16).to_raw(), 0x12);
+        assert_eq!(f(0x1234, -24).to_raw(), 0);
+        let negative = GameFloat {
+            negative: true,
+            ..f(0x1234, 0)
+        };
+        assert_eq!(negative.to_raw(), -0x12_3400);
         assert_eq!(f(0x1234, -8).to_int(), 0x12);
         assert_eq!(f(0xffff, -16).to_int(), 0);
         assert_eq!(
@@ -503,7 +547,7 @@ mod tests {
         assert_eq!(GameFloat::from_wide(0x1_2345_6789), f(0x123, 24));
     }
 
-    /// The map's 327 at zoom 4: 1308 / 256 pixels a unit, rows against x.
+    /// The map's 327 at zoom 4: 1308 / 256 pixels a unit.
     #[test]
     fn map_offsets_scale_by_the_zoomed_focal_factor() {
         let map = Float {

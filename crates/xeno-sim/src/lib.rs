@@ -5,6 +5,7 @@
 
 pub mod clock;
 pub mod damage;
+pub mod editor;
 pub mod hash;
 pub mod input;
 pub mod motion;

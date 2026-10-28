@@ -653,7 +653,14 @@ impl Screens {
                     }
                     (InputEvent::MouseDown { button }, Mission(_)) => {
                         let at = self.mouse.position;
-                        self.mission.mouse_down(button, at, &self.mission_assets);
+                        // The event's key word carries Ctrl (`1000:5781` tests 0x1000).
+                        let ctrl = key_word(ScanCode(0), &self.keys).0 & CTRL != 0;
+                        let placed = button == xeno_sim::input::MouseButton::Left
+                            && ctrl
+                            && self.mission.place_at_pointer(at, &self.mission_assets);
+                        if !placed {
+                            self.mission.mouse_down(button, at, &self.mission_assets);
+                        }
                     }
                     (InputEvent::MouseUp { button }, Mission(_)) => {
                         let at = self.mouse.position;
