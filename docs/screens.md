@@ -484,7 +484,7 @@ acts. The corner hot spot (`0x15a`) ends the mission too.
 Situation room keys (`DS:0x5b20`): Alt+Q ends the mission (ESC is listed but its
 handler only acts on Alt+Q); Space and J view the selected unit; Tab and Alt+Tab step
 the roster selection; O, S, M, R, C the main view's mode; F3 recalls the selected
-unit; = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1, F2 act
+unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; T-135); = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1, F2 act
 on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
 
 *The consoles* share most of their layout but not their positions. All three have:

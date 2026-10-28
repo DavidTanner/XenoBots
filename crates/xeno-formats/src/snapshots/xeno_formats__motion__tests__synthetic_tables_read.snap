@@ -742,6 +742,36 @@ Motion {
         scorpion_bottom: -15,
         turn: 128,
     },
+    weapon_keys: WeaponKeys {
+        sound: 5,
+        selected: [
+            [
+                16,
+                17,
+            ],
+            [
+                32,
+                33,
+            ],
+            [
+                48,
+                49,
+            ],
+        ],
+        scorpion_empty: [
+            34,
+            35,
+        ],
+        scorpion_damaged: [
+            36,
+            37,
+        ],
+        scorpion_bits: [
+            1,
+            2,
+        ],
+    },
+    recall_program: 6,
     scripts: Scripts {
         start: 39488,
         bytes: [

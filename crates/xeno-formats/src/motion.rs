@@ -42,6 +42,12 @@ pub(crate) const GEAR_OPS: [usize; 2] = [0xd094, 0xd09c];
 /// `sub ax, turn` in the humanoid's left arrow (`1000:acc0`: the pilot takes over,
 /// then the heading asked for is the heading less `turn`).
 pub(crate) const KEY_TURN: (usize, &[u8]) = (0xacc6, &[0x2d]);
+/// `jmp cs:[bx + table]` in F5's handler (`1000:d137`): each kind's routine that
+/// selects a weapon (F6 and the humanoid's F9 reach the same routines).
+pub(crate) const WEAPON_KEYS: (usize, &[u8]) = (0xd137, &[0x2e, 0xff, 0xa7]);
+/// `test byte [di + 0x23], 8`, `jz`, `mov al, program` at the start of
+/// `sim_move_humanoid` (`1000:ac29`): the recall's program.
+pub(crate) const RECALL_AT: usize = 0xac29;
 /// No more gears than this (the stock build has 6).
 const MAX_GEARS: usize = 16;
 
@@ -92,6 +98,11 @@ pub struct Motion {
     pub script_speeds: [[i16; 3]; 5],
     /// The speed keys' and gear opcodes' steps.
     pub gears: Gears,
+    /// What the weapon keys post and play.
+    pub weapon_keys: WeaponKeys,
+    /// The program a recalled robot is given (+0x23 bit 3; 4, RET BASE, in the stock
+    /// build).
+    pub recall_program: u8,
     /// The robots' scripts (`xeno_formats::script`).
     pub scripts: Scripts,
     /// What damage does (`xeno_formats::damage`).
@@ -137,6 +148,22 @@ pub struct Gears {
     pub scorpion_bottom: i16,
     /// What the left and right arrows take from or add to the heading.
     pub turn: u16,
+}
+
+/// What a weapon key does when the weapon selected (+0xdd) changes (`docs/sim.md`,
+/// "The cockpit keys"): a message to the robot's panel and a sound event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeaponKeys {
+    /// The sound event played (27 in the stock build).
+    pub sound: u8,
+    /// The message (a string-segment offset) by kind (humanoid, scorpion, scout) and
+    /// weapon; the scorpion's when the weapon is neither damaged nor empty.
+    pub selected: [[u16; 2]; 3],
+    /// The scorpion's when the weapon's count is 0, and when it is damaged.
+    pub scorpion_empty: [u16; 2],
+    pub scorpion_damaged: [u16; 2],
+    /// The scorpion's weapons-damaged bit (+0xdc) by weapon.
+    pub scorpion_bits: [u8; 2],
 }
 
 /// The leg frames of the walking animations that make footsteps, by step
@@ -232,6 +259,11 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         atan,
         script_speeds,
         gears: gears(image, ds)?,
+        weapon_keys: weapon_keys(image, ds)?,
+        recall_program: match *bytes(image, RECALL_AT, 8)? {
+            [0xf6, 0x45, 0x23, 0x08, 0x74, _, 0xb0, program] => program,
+            _ => return Err(invalid(RECALL_AT, "not the recall's test")),
+        },
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
         walk: Walk {
@@ -345,6 +377,63 @@ fn gears(image: &[u8], ds: usize) -> Result<Gears, FormatError> {
     })
 }
 
+/// The weapon keys' messages and sound, through each kind's routine: the humanoid's
+/// and scout's (`mov bl, al`, `cmp bl, [di + 0xdd]`, `jz`, ..., then `mov si, [bx +
+/// messages]`, `call`, `mov ax, 2 * sound`) and the scorpion's (`1000:98a9`: the
+/// damaged bits, then the loaded, empty and damaged messages at fixed places).
+fn weapon_keys(image: &[u8], ds: usize) -> Result<WeaponKeys, FormatError> {
+    let table = usize::from(operand(image, WEAPON_KEYS.0, WEAPON_KEYS.1)?);
+    let routine = |kind: usize| -> Result<usize, FormatError> {
+        Ok(usize::from(word(image, table + 2 * kind)?))
+    };
+    let words = |at: usize| -> Result<[u16; 2], FormatError> {
+        Ok([word(image, ds + at)?, word(image, ds + at + 2)?])
+    };
+    let sound = |at: usize| -> Result<u8, FormatError> {
+        let w = operand(image, at, &[0xb8])?;
+        u8::try_from(w / 2)
+            .ok()
+            .filter(|_| w % 2 == 0)
+            .ok_or_else(|| invalid(at, "not a sound event"))
+    };
+    // The humanoid's and scout's: the messages' load, a call and the sound.
+    let plain = |kind: usize| -> Result<([u16; 2], u8), FormatError> {
+        let at = routine(kind)?;
+        let code = bytes(image, at, 48)?;
+        let found = (code[..7] == [0x8a, 0xd8, 0x3a, 0x9d, 0xdd, 0x00, 0x74])
+            .then(|| {
+                code.windows(8)
+                    .position(|w| w[..2] == [0x8b, 0xb7] && w[4] == 0xe8 && w[7] == 0xb8)
+            })
+            .flatten();
+        match found {
+            Some(i) => Ok((
+                words(usize::from(operand(image, at + i, &[0x8b, 0xb7])?))?,
+                sound(at + i + 7)?,
+            )),
+            None => Err(invalid(at, "not a weapon key routine")),
+        }
+    };
+    let ((humanoid, sound_h), (scout, sound_s)) = (plain(0)?, plain(2)?);
+    let at = routine(1)?;
+    if bytes(image, at, 9)? != [0x32, 0xe4, 0x8b, 0xf0, 0x3a, 0x85, 0xdd, 0x00, 0x74] {
+        return Err(invalid(at, "not the scorpion's weapon key routine"));
+    }
+    let bits = usize::from(operand(image, at + 0x18, &[0x8a, 0x84])?);
+    let message = |offset: usize| words(usize::from(operand(image, at + offset, &[0x8b, 0xb4])?));
+    let sound_c = sound(at + 0x40)?;
+    if sound_h != sound_c || sound_s != sound_c {
+        return Err(invalid(at, "the kinds play other sounds"));
+    }
+    Ok(WeaponKeys {
+        sound: sound_c,
+        selected: [humanoid, message(0x2d)?, scout],
+        scorpion_empty: message(0x33)?,
+        scorpion_damaged: message(0x39)?,
+        scorpion_bits: bytes(image, ds + bits, 2)?.try_into().expect("2 bytes"),
+    })
+}
+
 /// Reads the tables from an unpacked `xeno.exe`.
 pub fn read(exe: &Unpacked) -> Result<Motion, FormatError> {
     read_image(
@@ -396,6 +485,7 @@ mod tests {
         crate::fixtures::synthetic_damage(&mut image, DS);
         crate::fixtures::synthetic_walk(&mut image);
         crate::fixtures::synthetic_gears(&mut image, DS);
+        crate::fixtures::synthetic_weapon_keys(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
@@ -468,6 +558,14 @@ mod tests {
             (g.scorpion_step, g.scorpion_bottom, g.scorpion_top, g.turn),
             (5, -15, 25, 0x80)
         );
+        let w = &motion.weapon_keys;
+        assert_eq!((w.sound, motion.recall_program), (5, 6));
+        assert_eq!(w.selected, [[0x10, 0x11], [0x20, 0x21], [0x30, 0x31]]);
+        assert_eq!(
+            (w.scorpion_empty, w.scorpion_damaged),
+            ([0x22, 0x23], [0x24, 0x25])
+        );
+        assert_eq!(w.scorpion_bits, [1, 2]);
         assert_eq!(motion.strings.byte(0x201), 0x02);
         assert_eq!(motion.strings.byte(0xffff), 0);
         insta::assert_debug_snapshot!(motion);
@@ -499,6 +597,15 @@ mod tests {
             (0xb150 + 9, 0x2d),
             (0xb160 + 9, 4),
             (KEY_TURN.0, 0x05),
+            (WEAPON_KEYS.0 + 2, 0xa6),
+            (0xb190 + 3, 0x85),
+            (0xb1c0 + 0x08 + 7, 0xb9),
+            (0xb1c0 + 0x08 + 8, 0x0b),
+            (0xb1f0 + 1, 0xe5),
+            (0xb1f0 + 0x2d, 0x8a),
+            (0xb1f0 + 0x40 + 1, 0x0c),
+            (RECALL_AT + 3, 0x10),
+            (RECALL_AT + 6, 0xb1),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -555,5 +662,24 @@ mod tests {
         assert_eq!(g.scorpion_top, motion.script_speeds[0][1]);
         assert_eq!(g.scorpion_bottom, motion.script_speeds[4][1]);
         assert!(g.turn > 0 && g.turn < 0x4000);
+        // The weapon keys' messages are text in the string segment, and the recall
+        // gives a program in the table.
+        let w = &motion.weapon_keys;
+        let messages = w
+            .selected
+            .iter()
+            .chain([&w.scorpion_empty, &w.scorpion_damaged]);
+        for &m in messages.flatten() {
+            let text: Vec<u8> = (m..)
+                .map(|o| motion.strings.byte(o))
+                .take_while(|&b| b != 0)
+                .collect();
+            assert!(
+                text.len() > 2 && text.iter().all(|b| (0x20..0x7f).contains(&(b & 0x7f))),
+                "{m:#x}"
+            );
+        }
+        assert!(w.scorpion_bits.iter().all(|b| b.count_ones() == 1));
+        assert!(motion.recall_program < 31);
     }
 }

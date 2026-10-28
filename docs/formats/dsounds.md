@@ -129,10 +129,10 @@ heard either. The other 14 blocks are.
 
 **In the port** (T-061): the sim reports the events it reaches as
 `motion::Event::Sound` (21 for a hit, 2 for a robot destroyed, 2 to 5 for the base's
-end steps, 13 to 15 for the footsteps, T-100), with the robot for the viewed ones; `xeno-app`'s `Jukebox` plays them on
+end steps, 13 to 15 for the footsteps, T-100; 27 for a weapon key, T-105), with the robot for the viewed ones; `xeno-app`'s `Jukebox` plays them on
 `xeno_audio::Mixer` from the user's `dsounds.bin` and event table, a viewed event only
 while that robot's console is open (never in the situation room). The other events
-wait for the weapons (T-114), the consoles (T-104) and the cockpit keys (T-105).
+wait for the weapons (T-114) and the relays (25, T-113).
 
 ## Open questions
 

@@ -116,6 +116,8 @@ pub struct Movement {
     /// A humanoid's (+0x10b) or scout's (+0x109) speed gear, twice an index into its
     /// gears (`Tables::gears`); 0 for a scorpion.
     pub gear: u8,
+    /// +0xdd: the weapon selected (0 or 1).
+    pub weapon: u8,
     /// +0x10b, +0x10c: a scout's stance and the one it moves to (a humanoid's +0x10b
     /// is its gear).
     pub stance: u8,
@@ -153,6 +155,8 @@ impl Movement {
     pub const BACKWARDS: u8 = usg::Robot::PATH_BACKWARDS;
     pub const NEXT: u8 = usg::Robot::PATH_NEXT;
     pub const ON_PATH: u8 = usg::Robot::ON_PATH;
+    /// [`Movement::mode`]: recalled by the situation room (+0x23 bit 3).
+    pub const RECALL: u8 = usg::Robot::RECALL;
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
@@ -184,6 +188,7 @@ impl Movement {
                 ObjectKind::Scout => f7[0x12],
                 _ => 0,
             },
+            weapon: r.unknown_dd.0[0],
             stance: r.stance,
             stance_target: r.stance_target,
             speed_table: r.speed_table,
@@ -236,7 +241,8 @@ impl StateHash for State {
                 h.bytes(&[m.path, m.path_point, m.goal]);
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
-                h.bytes(&[m.drive, m.gear, m.stance, m.stance_target, m.speed_table]);
+                h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
+                h.u8(m.speed_table);
                 h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
                 let s = m.script;
                 h.u16(s.pointer);

@@ -27,7 +27,7 @@ use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};
 use motion::{Event, Tables};
 use orders::{Change, OrderBook};
-use xeno_formats::usg::Scenario;
+use xeno_formats::usg::{ObjectKind, Scenario};
 
 /// The simulation's whole state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,7 +193,10 @@ impl Sim {
         let Some(e) = self.world.get(id) else {
             return events;
         };
-        let (kind, heading) = (e.kind, e.heading);
+        let (kind, heading, weapons) = match e.damage {
+            Damage::Robot(c) => (e.kind, e.heading, c.weapons),
+            _ => (e.kind, e.heading, 0),
+        };
         if matches!(
             key,
             Pilot::Left | Pilot::Right | Pilot::Faster | Pilot::Slower
@@ -216,8 +219,42 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
+            Pilot::Weapon(_) | Pilot::OtherWeapon => {
+                let weapon = match key {
+                    Pilot::Weapon(w) => w,
+                    _ => m.weapon ^ 1,
+                };
+                if weapon != m.weapon {
+                    m.weapon = weapon;
+                    let w = &tables.weapon_keys;
+                    let k = usize::from(kind == ObjectKind::Scorpion)
+                        + 2 * usize::from(kind == ObjectKind::Scout);
+                    let damaged = w.scorpion_bits.get(usize::from(weapon));
+                    // shortcut: the scorpion's weapon counts (+0x120, +0x122) are not
+                    // kept until T-114, so its "empty" message is never posted.
+                    let messages = match damaged {
+                        Some(&bit) if k == 1 && weapons & bit != 0 => &w.scorpion_damaged,
+                        _ => &w.selected[k],
+                    };
+                    if let Some(&text) = messages.get(usize::from(weapon)) {
+                        m.panel.post(text);
+                    }
+                    events.push(Event::Sound {
+                        event: w.sound,
+                        only_for: Some(id),
+                    });
+                }
+            }
         }
         events
+    }
+
+    /// The situation room recalls robot `id` (F3, its recall button: +0x23 bit 3); its
+    /// next tick gives it the recall's program (`motion::tick`).
+    pub fn recall(&mut self, id: EntityId) {
+        if let Some(m) = motion::movement(&mut self.world, id) {
+            m.mode |= Movement::RECALL;
+        }
     }
 
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
@@ -255,6 +292,11 @@ pub enum Pilot {
     Stop,
     /// A scout's Q, W and E: the stance it rises or sinks to (+0x10c).
     Stance(u8),
+    /// F5 and F6: weapon 0 or 1 selected (+0xdd); a change posts the kind's message
+    /// and plays its sound for the robot (`Tables::weapon_keys`).
+    Weapon(u8),
+    /// The humanoid's F9: the other weapon, as `Weapon`.
+    OtherWeapon,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -440,5 +482,55 @@ mod tests {
         let before = sim.state_hash();
         assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());
         assert_eq!(sim.state_hash(), before);
+    }
+
+    #[test]
+    fn a_new_weapon_posts_its_message_and_sound_and_a_recall_runs_its_program() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let m = |sim: &Sim, slot: u16| match sim.world.get(EntityId(slot)).map(|e| e.state) {
+            Some(State::Robot(m)) => m,
+            other => panic!("{other:?}"),
+        };
+        // Slot 2 is a humanoid, slot 5 a scorpion; their panels' queues empty.
+        for slot in [2, 5] {
+            motion::movement(&mut sim.world, EntityId(slot))
+                .unwrap()
+                .panel
+                .queue = [0; 5];
+        }
+        let sound = |slot| Event::Sound {
+            event: 27,
+            only_for: Some(EntityId(slot)),
+        };
+        sim.pilot(EntityId(2), Pilot::Weapon(0));
+        assert_eq!(sim.pilot(EntityId(2), Pilot::OtherWeapon), [sound(2)]);
+        assert_eq!(m(&sim, 2).weapon, 1);
+        assert!(m(&sim, 2).panel.queue.contains(&0x11));
+        assert!(
+            sim.pilot(EntityId(2), Pilot::Weapon(1)).is_empty(),
+            "no change"
+        );
+        // The scorpion's damaged weapon has its own message.
+        if let Some(Damage::Robot(c)) = sim.world.get_mut(EntityId(5)).map(|e| &mut e.damage) {
+            c.weapons = 2;
+        }
+        sim.pilot(EntityId(5), Pilot::Weapon(0));
+        assert_eq!(sim.pilot(EntityId(5), Pilot::Weapon(1)), [sound(5)]);
+        assert_eq!(m(&sim, 5).panel.queue[..2], [0x20, 0x25]);
+        // Recalled with the pilot driving: the next tick gives program 4 and hands the
+        // robot to it.
+        sim.world.orders.set_manual(5, false);
+        sim.recall(EntityId(5));
+        assert_ne!(m(&sim, 5).mode & Movement::RECALL, 0);
+        let events = sim.tick(&[]);
+        assert!(events.iter().any(|e| matches!(e, Event::Program(_))));
+        let orders = sim.world.orders.get(5).unwrap().orders;
+        assert_eq!(
+            (orders.program, orders.ordered, orders.manual),
+            (4, 4, true)
+        );
+        assert_eq!(m(&sim, 5).mode & Movement::RECALL, 0);
     }
 }

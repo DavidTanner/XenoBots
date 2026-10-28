@@ -1539,6 +1539,42 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_walk(image);
     synthetic_damage(image, ds);
     synthetic_gears(image, ds);
+    synthetic_weapon_keys(image, ds);
+}
+
+/// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0xb180
+/// up and tables at `DS:0x96a0` up: sound 5; messages 0x10 and 0x11 (humanoid), 0x30
+/// and 0x31 (scout), the scorpion's 0x20, 0x21 loaded, 0x22, 0x23 empty, 0x24, 0x25
+/// damaged, its damaged bits 1 and 2; and the recall's program, 6.
+pub fn synthetic_weapon_keys(image: &mut [u8], ds: usize) {
+    use crate::motion::{RECALL_AT, WEAPON_KEYS};
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    put(WEAPON_KEYS.0, &op(WEAPON_KEYS.1, 0xb180));
+    put(0xb180, &[0x90, 0xb1, 0xf0, 0xb1, 0xc0, 0xb1]);
+    for (at, load, table) in [(0xb190, 0x10, 0x96a0u16), (0xb1c0, 0x08, 0x96a4)] {
+        put(at, &[0x8a, 0xd8, 0x3a, 0x9d, 0xdd, 0x00, 0x74, 0x24]);
+        put(at + load, &op(&[0x8b, 0xb7], table));
+        put(at + load + 4, &[0xe8, 0, 0, 0xb8, 0x0a, 0]);
+    }
+    put(
+        0xb1f0,
+        &[0x32, 0xe4, 0x8b, 0xf0, 0x3a, 0x85, 0xdd, 0x00, 0x74, 0x3c],
+    );
+    put(0xb1f0 + 0x18, &op(&[0x8a, 0x84], 0x96b4));
+    for (offset, table) in [(0x2d, 0x96a8), (0x33, 0x96ac), (0x39, 0x96b0)] {
+        put(0xb1f0 + offset, &op(&[0x8b, 0xb4], table));
+    }
+    put(0xb1f0 + 0x40, &[0xb8, 0x0a, 0]);
+    let messages: Vec<u8> = [
+        0x10u16, 0x11, 0x30, 0x31, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25,
+    ]
+    .iter()
+    .flat_map(|m| m.to_le_bytes())
+    .collect();
+    put(ds + 0x96a0, &messages);
+    put(ds + 0x96b4, &[1, 2]);
+    put(RECALL_AT, &[0xf6, 0x45, 0x23, 0x08, 0x74, 0x0f, 0xb0, 6]);
 }
 
 /// Writes made-up gear steps (`crate::motion::Gears`) with the routines that read

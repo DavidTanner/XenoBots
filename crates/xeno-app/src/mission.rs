@@ -102,10 +102,16 @@ mod handler {
     ];
     pub const DISPLAY_ZOOM_IN: u16 = 0xda0e;
     pub const DISPLAY_ZOOM_OUT: u16 = 0xda37;
-    /// Consoles: the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
+    /// Situation room: F3 recalls the selected unit (`1000:675e`).
+    pub const RECALL: u16 = 0x675e;
+    /// Consoles: F5, F6 and the humanoid's F9 select a weapon (`docs/sim.md`, "The
+    /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
     /// W, E with the stance each sets (`docs/sim.md`, "The cockpit keys").
-    pub const PILOT: [(u16, Pilot); 16] = [
+    pub const PILOT: [(u16, Pilot); 19] = [
+        (0xd131, Pilot::Weapon(0)),
+        (0xd142, Pilot::Weapon(1)),
+        (0xb20c, Pilot::OtherWeapon),
         (0xacc0, Pilot::Left),
         (0xaccd, Pilot::Right),
         (0xacda, Pilot::Faster),
@@ -791,6 +797,14 @@ impl Mission {
         (self.tint != Some(weight)).then(|| *self.tint.insert(weight))
     }
 
+    /// The situation room recalls its selected unit, if any (`Sim::recall`).
+    fn recall(&mut self) {
+        if let (Run::Running(sim), Some(slot)) = (&mut self.run, self.selected) {
+            log::debug!("situation room: unit {slot} recalled");
+            sim.recall(EntityId(slot));
+        }
+    }
+
     /// A cockpit key acts on robot `slot` through the running sim; a parked mission
     /// changes nothing.
     fn pilot(&mut self, slot: u16, key: Pilot) {
@@ -1001,6 +1015,10 @@ impl Mission {
                 None
             }
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
+            (Viewed::Base, handler::RECALL) => {
+                self.recall();
+                None
+            }
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
                 let mode = handler::MODES.iter().find(|&&(m, _)| m == h)?.1;
                 self.set_mode(mode);
@@ -1286,9 +1304,13 @@ impl Mission {
             }
             button::VIEW => self.view_selected(),
             button::END => Some(Request::End),
-            button::LAUNCH | button::RECALL => {
+            button::RECALL => {
+                self.recall();
+                None
+            }
+            button::LAUNCH => {
                 log::info!(
-                    "situation room: launching or recalling unit {:?} needs the running mission (T-056)",
+                    "situation room: launching unit {:?} needs units in the base (T-135)",
                     self.selected
                 );
                 None
@@ -1846,6 +1868,14 @@ pub mod tests {
                     scorpion_bottom: -15,
                     turn: 0x80,
                 },
+                weapon_keys: motion::WeaponKeys {
+                    sound: 27,
+                    selected: [[1, 2], [3, 4], [5, 6]],
+                    scorpion_empty: [7, 8],
+                    scorpion_damaged: [9, 10],
+                    scorpion_bits: [1, 2],
+                },
+                recall_program: 4,
                 scripts: {
                     let mut image = vec![0; 0x29c00];
                     xeno_formats::fixtures::synthetic_scripts(&mut image, 0x20000);
@@ -2056,6 +2086,34 @@ pub mod tests {
         assert!(
             !m.book().get(robot).unwrap().orders.manual,
             "the pilot drives"
+        );
+        // F9 flips the weapon: its sound is heard on this console.
+        let _ = m.take_sounds();
+        let keys = match view {
+            View::Humanoid => &mut assets.views.humanoid.keys,
+            View::Scorpion => &mut assets.views.scorpion.keys,
+            _ => &mut assets.views.scout.keys,
+        };
+        keys.push((0x43, 0xb20c));
+        m.key(0x43, &assets);
+        let sound = Sound::Play(assets.motion.weapon_keys.sound);
+        assert_eq!(m.take_sounds(), [sound]);
+        // The situation room's F3 recalls the selected unit (the synthetic robot is
+        // saved recalled: not any more); its tick hands it to the recall's program.
+        if let Run::Running(sim) = &mut m.run
+            && let Some(State::Robot(r)) = sim.world.get_mut(EntityId(robot)).map(|e| &mut e.state)
+        {
+            r.mode &= !xeno_sim::Movement::RECALL;
+        }
+        m.base();
+        m.select_unit(Some(robot));
+        assets.views.situation.keys.push((0x3d, 0x675e));
+        m.key(0x3d, &assets);
+        m.tick(&[]);
+        let orders = m.book().get(robot).unwrap().orders;
+        assert_eq!(
+            (orders.program, orders.manual),
+            (assets.motion.recall_program, true)
         );
     }
 

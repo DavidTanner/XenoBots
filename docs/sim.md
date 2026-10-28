@@ -222,8 +222,7 @@ move each robot walks (`motion::walk`, `docs/render.md`, "Walking"): its step co
 and footstep legs step, and its footsteps are `Event::Sound`s (13 to 15) for it.
 
 The scripts (T-053, below) call `head_for_path_point` and
-`join_nearest_path_point`. Left out until their tasks: the recall (bit 3, T-105
-part 2), the scout's height at +0x1c
+`join_nearest_path_point`. Left out until their tasks: the scout's height at +0x1c
 (T-101), the path census (`sim_count_units_on_paths`) and the base's other phases.
 Where the original reads past a table (a scorpion speed table or entry past the
 last, a path slot over 7, a mission over 6) the port takes the last entry or does
@@ -475,7 +474,7 @@ routines, by kind (`DS:0x722d`, `0x7233`; `xeno_formats::motion::Gears`):
 **Recall.** The kind routines run with the recall (`1000:b365`, `9b87`, `cb3d`) only
 mark the console's panels for redrawing.
 
-### The port (T-105, part 1)
+### The port (T-105)
 
 `Sim::pilot` does the arrows, `.` and the scout's stances; `motion::shift` and
 `motion::match_gear` the gears, used by the keys, the opcodes 0x51 to 0x58 and the hill
@@ -483,6 +482,17 @@ bounce. `Movement::gear` is loaded from +0x10b (humanoid) or +0x109 (scout) and 
 `xeno-app` maps each console's handlers to `Pilot` (`mission::handler::PILOT`) and
 calls the sim for the viewed robot. The opcodes 0x54 to 0x58 find their gear with the
 bounce routine, which gives the routines' gear because every script speed is a gear's.
+
+Part 2: F5, F6 and F9 are `Pilot::Weapon` and `Pilot::OtherWeapon`: a change of
+`Movement::weapon` (+0xdd) posts the kind's message to the robot's panel and plays the
+sound (`Event::Sound`, only for the robot) read with the messages from the routines
+(`xeno_formats::motion::WeaponKeys`). The scorpion's message is the damaged one when
+its weapon's bit (+0xdc) is set, else the loaded one: its weapon counts are T-114's,
+so the empty one is never posted. `Sim::recall` sets +0x23 bit 3 (the situation
+room's F3 and recall button, for the selected unit); `motion::tick` gives a robot with
+it the recall's program (`Tables::recall_program`) and its program takes over, before
+it moves. The keys still to port are T-113 (relays), T-114 (fire), T-134 (pan) and
+T-135 to T-139.
 
 ## Damage (T-054)
 
