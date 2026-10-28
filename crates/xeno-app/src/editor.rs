@@ -1,13 +1,17 @@
 //! The original's scenario editor (`docs/screens.md`, "The scenario editor (T-048)"):
 //! with unlock word 9 its Ctrl keys work in the situation room, on the mission's
 //! scenario. The port keeps an editable copy of the scenario the mission loaded and
-//! applies the keys that need neither the map view (placing, T-108) nor a file
-//! dialog (T-110) to it; its saves go through `xeno_formats::usg::write` and
-//! `map::write`. The status the original prints on its monochrome debug screen is
+//! applies the keys that need no file dialog (T-110) to it; its saves go through
+//! `xeno_formats::usg::write` and `map::write`. Placing on the map (T-108) goes
+//! through the sim ([`Sim::place`]), and what it makes or moves is copied into the
+//! scenario. The status the original prints on its monochrome debug screen is
 //! logged, built from the user's own template and names.
 
 use xeno_formats::editor::Editor as Tables;
-use xeno_formats::usg::{ObjectKind, PathTable, Scenario};
+use xeno_formats::usg::{ObjectKind, Path, PathTable, Point, Scenario, Side};
+use xeno_sim::editor::{Place, Placed};
+use xeno_sim::terrain::Paths;
+use xeno_sim::{Position, Sim};
 
 /// The handlers in the editor's key table (`DS:0x5bc3`), by their offset in segment
 /// `1000`, which is how the port knows them.
@@ -38,16 +42,20 @@ mod handler {
     pub const REMOVE_RELAYS: u16 = 0x6ac8;
     pub const TERRAIN: u16 = 0x448c;
     pub const TOGGLE: u16 = 0x6bcf;
-    /// Ctrl+D, Ctrl+C, Ctrl+Alt+O and B, Ctrl+Alt+arrows: not in the port yet.
-    pub const LATER: [(u16, &str); 8] = [
+    /// Ctrl+Alt+Left, Right, Up, Down (`1fe6:7243`..`727a`): the map's centre (base
+    /// +0x4f, +0x53) moved by 0x7fff, a whole number of 1/65,536ths, on x then y.
+    pub const SCROLLS: [(u16, i32, i32); 4] = [
+        (0x6dde, 0x7fff, 0),
+        (0x6de4, -0x7fff, 0),
+        (0x6dea, 0, -0x7fff),
+        (0x6df0, 0, 0x7fff),
+    ];
+    /// Ctrl+D, Ctrl+C, Ctrl+Alt+O and B: not in the port yet.
+    pub const LATER: [(u16, &str); 4] = [
         (0x6ab7, "destroys the roster's robot (T-108)"),
         (0x6901, "clears the base's messages (T-103)"),
         (0x6d67, "loads the orders from a file (T-110)"),
         (0x6dc3, "picks the sky from a file (T-110)"),
-        (0x6dde, "scrolls the map (T-108)"),
-        (0x6de4, "scrolls the map (T-108)"),
-        (0x6dea, "scrolls the map (T-108)"),
-        (0x6df0, "scrolls the map (T-108)"),
     ];
 }
 
@@ -61,6 +69,8 @@ pub enum Effect {
     /// Ctrl+M: the terrain editor, which the port runs as entering and leaving at
     /// once (Alt+Q), saving `BACKUP.MAP` (T-109 for the editor itself).
     SaveTerrain,
+    /// Ctrl+Alt+arrows: move the situation room's map centre by (x, y), 16.16.
+    Scroll(i32, i32),
 }
 
 /// The editor's state (`DS:0x5c3f`..`0x5c47`), as `ui_reset_editor_state` leaves it.
@@ -88,6 +98,9 @@ fn table(scenario: &mut Scenario, alien: bool) -> &mut PathTable {
 impl Editor {
     /// Runs the key's `handler` on `scenario`.
     pub fn key(&mut self, handler: u16, scenario: &mut Scenario, tables: &Tables) -> Effect {
+        if let Some(&(_, x, y)) = handler::SCROLLS.iter().find(|&&(s, ..)| s == handler) {
+            return Effect::Scroll(x, y);
+        }
         let alien = self.alien;
         let path = self.path;
         match handler {
@@ -162,6 +175,49 @@ impl Editor {
             },
         }
         Effect::None
+    }
+
+    /// A Ctrl+left press on the map in mode M (`ui_editor_place_at_pointer`,
+    /// `1000:6be8`) at `at`, with the picked kind and side: a path point goes on the
+    /// side's current path, an obstacle is made, the side's base moved. Returns
+    /// whether the status changed (only a point redraws it).
+    pub fn place(&self, at: Position, scenario: &mut Scenario, sim: &mut Sim) -> bool {
+        let side = if self.alien { Side::Alien } else { Side::Human };
+        let what = match self.kind {
+            -1 => {
+                // `1000:6cac`: the side's table needs a path (`1000:6d06`), the path
+                // room for a point; the path is the current one, in use or not.
+                let t = table(scenario, self.alien);
+                let p = &mut t.paths[self.path.min(PathTable::SLOTS - 1)];
+                if t.count == 0 || usize::from(p.point_count) >= Path::MAX_POINTS {
+                    return false;
+                }
+                p.points[usize::from(p.point_count)] = Point {
+                    x: at.x.0,
+                    y: at.y.0,
+                };
+                p.point_count += 1;
+                sim.set_paths(Paths::from_scenario(scenario));
+                return true;
+            }
+            3 => Place::Base(side),
+            16 => Place::Obstacle,
+            kind => {
+                log::info!("editor: placing kind {kind} is not in the port yet (T-108)");
+                return false;
+            }
+        };
+        let objects = scenario.objects.get_or_insert_with(Vec::new);
+        match sim.place(what, at) {
+            Some(Placed::Made(o)) => objects.push(*o),
+            Some(Placed::Moved(id)) => {
+                if let Some(o) = objects.iter_mut().find(|o| o.slot == id.0) {
+                    (o.x, o.y) = (at.x.0, at.y.0);
+                }
+            }
+            None => log::info!("editor: nothing placed (no free slot or no base)"),
+        }
+        false
     }
 
     /// The four status rows the original prints from row 20 of its debug screen

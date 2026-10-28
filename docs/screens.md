@@ -681,9 +681,11 @@ the clear, the pointer probe and `1000:3877`, which asks the producers for one n
 a time (no sorting) and draws each through `DS:0x39ae` by type, with the sprite anchor
 centred (slot `0x5c0`). A position becomes a pixel by `1000:3eb9`: the offset from the
 camera turned as the 3D view turns it (`1000:12b9`), each 48-bit sum to a float by
-whole bytes (`1000:0ced`), times 2^-24 and the focal factor, to an integer; the row is
-`H/2 - X`, the column `W/2 + Z` (`1000:3ad8`), so x runs up and y right, about 1.28
-pixels a unit at zoom 0. The zoom label (`1fe6:6cb9`): `DS:0x5ada` (a space, three
+whole bytes (`1000:0ced`), times 2^-24 and the focal factor, to an integer;
+`1000:3eb9` returns `X` in `CX` and `Z` in `AX`, and the column is `W/2 + X`, the row
+`H/2 - Z` (`1000:3ad8`), so at heading 0 x runs right and y up, about 1.28 pixels a
+unit at zoom 0 (T-103 had the two swapped; T-108 found it from the pointer's
+conversion below, which puts columns on x and rows on y). The zoom label (`1fe6:6cb9`): `DS:0x5ada` (a space, three
 scale-bar glyphs and a new line) then the zoom's name (`DS:0x7140`: `3.2 K` to `50 M`)
 in font 0 at (8, 0x5a) of the buffer.
 
@@ -1071,18 +1073,64 @@ is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` headin
 | Ctrl+Alt+arrows | `1000:6dde`..`6df0` | Scroll the situation room's map by half a unit (base +0x4f x, +0x53 y; `1fe6:7243`..`727a`) |
 | Alt+F1 | `1000:6bcf` | As above |
 
-**Placing** (`ui_editor_place_at_pointer`, `1000:6be8`): the situation room's main
-view, in **mode 4 (the map)**, calls it on a left press with Ctrl held (`1000:5781`).
-The pointer becomes a world position through the map's scale and scroll
-(`ui_map_pointer_to_world`, `1000:3fd3`: the view's centre, `DS:0x4d24` scale, the
-map's origin at `DS:0x1466`). By kind: a robot is allocated (`sim_alloc_object`, side
-bit 0 or 8 from `DS:0x5ca2`), set up as new (`sim_init_new_object`), placed there with
-heading and target heading from `DS:0x5c43`, and added to its side's unit list; an
-obstacle is allocated, given radius 13 and `IN_FIELD` (`1000:e9c3`) and placed; a
-**base** is not made: the side's base moves there; a relay is placed only where the
-relay checks allow (`1000:d15b`, then its set-up `1000:cc2a`, `cca8`; not traced); the
-path kind appends the point to the current path (at most 16). So placing needs the
-map view (T-103).
+**Placing** (`ui_editor_place_at_pointer`, `1000:6be8`, T-108): the situation room's
+main view's mouse handler (`1000:571f`) calls it on a left press whose event word has
+Ctrl (0x1000) while the view is in **mode 4 (the map)** (`1000:5781`); the press then
+does nothing else, so without unlock word 9 (checked first) a Ctrl+press on the map
+does nothing at all. Every kind is followed by `1000:0261`/`0266` (beeps through
+`2000:4189`/`4191`, not traced).
+
+The pointer becomes a world point in `ui_map_pointer_to_world` (`1000:3fd3`, the
+inverse of the drawing above): the row offset is the target rectangle's (`DS:0x145a`:
+top +4, left +6, bottom +8, right +0xa) middle row less the pointer's row
+(`DS:0x14ba`), the column offset the pointer's column (`DS:0x14bc`) less the middle
+column, each middle the halved 17-bit sum. Each offset, a 16-bit whole number of
+pixels (`m`, exponent 0, sign), is divided by the focal factor the last frame used
+(`DS:0x4d24`, which `gfx_set_view_camera` writes; `1000:0e3c`), turned into a 16.16 by
+`1000:0d6f` (`m << (e + 8)` by whole bytes, `m >> 8` at `e + 8 = -8`, 0 below,
+0x6fff6fff or 0x90019001 when it does not fit), and added to the camera's position:
+the column's to x (`DS:0x1462`), the row's to y (`DS:0x1466`). The map's heading is 0,
+so nothing is turned back. Both ways truncate, so a point placed off a whole number of
+pixels a unit is drawn up to a pixel short of the pointer.
+
+By the picked kind (`DS:0x5c3f`):
+
+- **Robots** (0, 1, 2): `1000:7e99` allocates the object (`sim_alloc_object_slot`),
+  writes the side's flag byte (`DS:0x5ca2` by side: 0 or 8) to +0x16, sets it up as new
+  (`sim_init_new_object`, `1000:f812`, below) and counts it (`DS:0x62f3`); then the
+  point, the heading and target heading (`DS:0x5c43`), and the side's unit list
+  (`sim_add_unit_to_side_list`). Not in the port yet.
+- **Bases** (3): none is made; the side's command object (`DS:0x568e` human, `0x5690`
+  alien) moves to the point (x and y only).
+- **Relays** (4): the point is worked out into a scratch object at `DS:0x5cb4`, then
+  `1000:49a1` and the relay check `1000:d15b`; only if it allows (carry) is a relay
+  allocated, its x, y and z copied from the scratch and set up (`1000:cc2a`, `cca8`).
+  Not traced, not in the port yet.
+- **Obstacles** (16): allocated (`sim_alloc_object_slot`, `1000:f4b1`: the lowest free
+  slot of the 240, the reference count 1, the lowest free entry of its pool, the bytes
+  from +4 cleared, 0x30 of them for the small pool), then radius 13 (0x0d00) and
+  `IN_FIELD` (`1000:e9c3`), and the point: so side human, heading 0, and every other
+  byte 0, exactly as every stock obstacle is saved.
+- **Path points** (-1, `1000:6cac`): the picked side's table (`DS:0x5cd1`) needs at
+  least one path (`1000:6d06`), the current path (`DS:0x5c45`, in use or not) fewer
+  than 16 points; the point is written after its last and the count goes up, and the
+  status is redrawn.
+
+`sim_init_new_object` (`1000:f812`) for robots runs `1000:d2b6` (+0x23 = 0, +0x24 =
+100, +0x26 = 0, +0x25 = 0, program 9 through `order_set_program`, then +0x23 bit 7),
+`d17d` (+0x4e = 100, +0xfd bit 0 cleared, +0x4f..+0x51 = 0xff), `d1cd` (+0x52 = 1,
++0x53..+0x5e cleared), `d533` (a call sign: a random number, then the next of the 64
+not in use, `DS:0x72c5`, into +0xdb), `d5c4` (+0xdc, +0xdd, +0xe6 cleared), `d9ab`
+(+0xef, +0xf1, +0xf3 = 0, +0xf2 = 2, and two display globals), `dc7e` (+0xf6, +0xf4
+cleared) and `dd79` (+0xf9 = 0), clears +0x1b, sets +0x16 bits 0x66 and runs the
+kind's routine (`DS:0xe73f`; the humanoid's `1000:ab8a` draws its serial and sets
+radius, gear, eye and model heights, cloaks and ECM, then `1000:d41c` and a 0x388b
+template copy into +0x10c; not traced further).
+
+**Scrolling.** Ctrl+Alt+Left and Right add 0x7fff and -0x7fff to the base's map
+centre x (+0x4f), Up and Down -0x7fff and 0x7fff to its y (+0x53) (`1fe6:7243`,
+`7254`, `7267`, `727a`, on the viewed object `DS:0x62f1`), whatever the mode and the
+map's bit 15; the camera uses the centre only while bit 15 is set.
 
 **Saving.** The situation room's own key table (`DS:0x5b20`) has **Ctrl+Alt+P**, with
 **no unlock check**: `ui_save_scenario_with_dialog` (`1000:efd5`) opens the "SAVE GAME"

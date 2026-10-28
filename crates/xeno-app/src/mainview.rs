@@ -4,16 +4,16 @@
 
 use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
-use xeno_formats::maproom::HANDLE_STEP;
+use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
 use xeno_formats::views::Widget;
 use xeno_render::shape::fill_polygon;
-use xeno_render::view3d::{Camera, focal_shifted, focal_zoomed};
+use xeno_render::view3d::{Camera, GameFloat, focal_shifted, focal_zoomed};
 use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::motion::Tables;
-use xeno_sim::{Damage, Entity, Position, State, World};
+use xeno_sim::{Damage, Entity, Fixed, Position, State, World};
 
 use crate::scene::trig;
 
@@ -34,7 +34,7 @@ const RELAY_SPRITES: [u16; 2] = [0x188, 0x190];
 const RELAY_DOTS: [u8; 2] = [0xfe, 0xfd];
 const RELAY_UNLINKED_DOT: u8 = 7;
 const ALIEN_DOT: u8 = 0xfd;
-const OBSTACLE_DOT: u8 = 1;
+pub const OBSTACLE_DOT: u8 = 1;
 const MARK_DOT: u8 = 0x0f;
 /// `+0x17` bits: bit 0 hides a robot from the map; bit 2, an alien one is detected.
 const HIDDEN: u8 = 0x01;
@@ -344,15 +344,41 @@ pub fn console_map(
     (camera, map)
 }
 
-/// A position's pixel in the buffer (`1000:3ad8`): rows up with x, columns right
-/// with y, from the middle.
+/// A position's pixel in the buffer (`1000:3ad8`): columns right with the lateral
+/// offset (`CX`, x at the map's heading 0), rows up with the depth (`AX`, y), from the
+/// middle. [`pointer_to_world`] is its inverse.
 fn pixel(camera: &Camera, buffer: &Framebuffer, x: i32, y: i32) -> (i32, i32) {
     let (across, along) = camera.map_offset(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
     let size = buffer.surface();
     (
-        (size.width / 2) as i32 + i32::from(along),
-        (size.height / 2) as i32 - i32::from(across),
+        (size.width / 2) as i32 + i32::from(across),
+        (size.height / 2) as i32 - i32::from(along),
     )
+}
+
+/// `ui_map_pointer_to_world` (`1000:3fd3`): the point under the pointer at `(px, py)`
+/// on a map drawn by `camera` in `view` (the target rectangle, `DS:0x145a`): each
+/// offset from the rectangle's middle, a 16-bit whole number of pixels, over the focal
+/// factor (`DS:0x4d24`), back to a 16.16 (`1000:0d6f`) and added to the camera's
+/// position (`DS:0x1462`, `0x1466`). The map's heading is 0, so nothing is turned back.
+pub fn pointer_to_world(camera: &Camera, view: Rect, (px, py): (u16, u16)) -> Position {
+    let offset = |pixels: i32| {
+        // The middle is the halved 17-bit sum, the offset kept to 16 bits.
+        let d = pixels as i16;
+        let d = GameFloat {
+            mantissa: d.unsigned_abs(),
+            exponent: 0,
+            negative: d < 0,
+        };
+        d.over(camera.focal).to_raw()
+    };
+    let middle = |a: u16, b: u16| ((u32::from(a) + u32::from(b)) >> 1) as i32;
+    let rows = middle(view.top, view.bottom) - i32::from(py);
+    let columns = i32::from(px) - middle(view.left, view.right);
+    Position {
+        x: Fixed(camera.x.wrapping_add(offset(columns))),
+        y: Fixed(camera.y.wrapping_add(offset(rows))),
+    }
 }
 
 /// Node type 0xc (`1000:38bc`): one pixel, if it is in the buffer.
@@ -631,7 +657,7 @@ pub(crate) mod tests {
 
     /// Kinds' models as the game's (humanoid 0, scorpion 2, scout 4); a map focal
     /// factor of 1/256, so a unit is a pixel at zoom 0.
-    fn view() -> View3d {
+    pub(crate) fn view() -> View3d {
         View3d {
             kind_models: [0, 2, 4, 0x10, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x14],
             frame_offsets: [0; 17],
@@ -684,16 +710,16 @@ pub(crate) mod tests {
         }
     }
 
-    /// A base at (10, 10); robots at (13, 15), (8, 5) (alien, detected) and (0, 0)
-    /// (alien, not detected); relays at (10, 0) (not linked) and (10, 2) (alien,
-    /// linked); an obstacle at (5, 10); a hill of radius 3 at (16, 10). The humanoid
-    /// heads for (12, 20), the scout for a target object.
+    /// A base at (10, 10); robots at (15, 13), (5, 8) (alien, detected) and (0, 0)
+    /// (alien, not detected); relays at (0, 10) (not linked) and (2, 10) (alien,
+    /// linked); an obstacle at (10, 5); a hill of radius 3 at (10, 16). The humanoid
+    /// heads for (20, 12), the scout for a target object.
     fn world() -> (World, Flags, Vec<TerrainFeature>) {
         let robot = State::Robot(Movement {
             goal: 2,
             destination: Position {
-                x: Fixed::from_int(12),
-                y: Fixed::from_int(20),
+                x: Fixed::from_int(20),
+                y: Fixed::from_int(12),
             },
             ..Movement::default()
         });
@@ -709,7 +735,7 @@ pub(crate) mod tests {
             entity(ObjectKind::Base, h, 10, 10, State::default()),
             (0, 0),
         );
-        put(2, entity(ObjectKind::Humanoid, h, 13, 15, robot), (0, 0));
+        put(2, entity(ObjectKind::Humanoid, h, 15, 13, robot), (0, 0));
         let target = State::Robot(Movement {
             goal: 3,
             ..match robot {
@@ -717,30 +743,30 @@ pub(crate) mod tests {
                 _ => unreachable!(),
             }
         });
-        put(3, entity(ObjectKind::Scout, a, 8, 5, target), (0, DETECTED));
+        put(3, entity(ObjectKind::Scout, a, 5, 8, target), (0, DETECTED));
         put(4, entity(ObjectKind::Scorpion, a, 0, 0, robot), (0, 0));
         put(
             5,
-            entity(ObjectKind::Relay, h, 10, 0, State::default()),
+            entity(ObjectKind::Relay, h, 0, 10, State::default()),
             (0, 0),
         );
         let linked = (flag::RELAY_LINKED, 0);
         put(
             6,
-            entity(ObjectKind::Relay, a, 10, 2, State::default()),
+            entity(ObjectKind::Relay, a, 2, 10, State::default()),
             linked,
         );
         put(
             7,
-            entity(ObjectKind::Obstacle, h, 5, 10, State::default()),
+            entity(ObjectKind::Obstacle, h, 10, 5, State::default()),
             (0, 0),
         );
         let hill = TerrainFeature {
             size: 0x1a,
             kind: HILL_OP,
             point_slots: 0,
-            x: 16 << 16,
-            y: 10 << 16,
+            x: 10 << 16,
+            y: 16 << 16,
             z: 0,
             radius: 3 << 8,
             diagonal: 0,
@@ -787,7 +813,7 @@ pub(crate) mod tests {
     fn the_map_shows_hills_and_objects_as_dots() {
         let b = draw(Base::MAP_ROBOTS | Base::MAP_RELAYS, 0, None);
         let at = |x, y| b.get(x, y).unwrap();
-        // x runs up the rows from the middle (20, 10), y along the columns.
+        // x runs along the columns from the middle (20, 10), y up the rows.
         assert_eq!(at(0, 0), MAP_BACKGROUND);
         assert_eq!(at(25, 7), 0x30, "the humanoid");
         assert_eq!(at(15, 12), 0x32, "the detected scout");
@@ -834,7 +860,7 @@ pub(crate) mod tests {
     #[test]
     fn the_selected_unit_s_destination_is_marked() {
         let b = draw(Base::MAP_ROBOTS, 0, Some(2));
-        // The camera follows the humanoid at (13, 15); its destination (12, 20) is a
+        // The camera follows the humanoid at (15, 13); its destination (20, 12) is a
         // row down and five columns right.
         assert_eq!(b.get(25, 11), Some(colour(MARKER_SPRITE)));
         assert_eq!(b.get(20, 10), Some(0x30));
@@ -845,6 +871,40 @@ pub(crate) mod tests {
         // With the map free the camera stays on the centre, (0, 0) here.
         let b = draw(Base::MAP_ROBOTS | Base::MAP_FREE, 0, Some(2));
         assert_eq!(b.get(20, 10), Some(MAP_BACKGROUND));
+    }
+
+    /// `pointer_to_world` names the point drawn under the pointer: x to the right, y
+    /// up, at the zoom's pixels a unit.
+    #[test]
+    fn a_pointer_on_the_map_names_the_point_drawn_under_it() {
+        let tables = crate::mission::tests::test_assets().motion;
+        let centre = Position {
+            x: Fixed::from_int(3),
+            y: Fixed::from_int(-4),
+        };
+        let map = MapState {
+            overlays: Base::MAP_FREE,
+            zoom: 2,
+            centre,
+        };
+        let camera = camera(Position::default(), None, &map, &view(), &tables);
+        let rect = Rect {
+            top: 20,
+            left: 30,
+            bottom: 60,
+            right: 110,
+        };
+        let buffer = Framebuffer::new(xeno_render::Size::new(80, 40));
+        // The middle (70, 40) is the centre; 4 pixels right is a unit up x, 4 up y.
+        let at = |px, py| pointer_to_world(&camera, rect, (px, py));
+        assert_eq!(at(70, 40), centre);
+        assert_eq!(at(74, 40).x, Fixed::from_int(4));
+        assert_eq!(at(70, 36).y, Fixed::from_int(-3));
+        for (x, y) in [(3, -4), (10, 0), (-2, -9)] {
+            let (c, r) = pixel(&camera, &buffer, x << 16, y << 16);
+            let p = at((c + 30) as u16, (r + 20) as u16);
+            assert_eq!((p.x.0, p.y.0), (x << 16, y << 16));
+        }
     }
 
     #[test]
