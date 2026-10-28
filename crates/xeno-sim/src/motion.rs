@@ -150,7 +150,7 @@ fn kind_index(kind: ObjectKind) -> Option<usize> {
 }
 
 /// The turn keys, steering, the speed step and the velocity: `sim_move_*` up to the
-/// script. The recall (+0x23 bit 3) is not run (T-105).
+/// script, after the recall ([`recall`]).
 pub fn steer_and_speed(
     tables: &Tables,
     kind: ObjectKind,
@@ -214,6 +214,22 @@ fn gears(tables: &Tables, kind: ObjectKind) -> Option<&[i16]> {
         ObjectKind::Scout => Some(&tables.gears.scout),
         _ => None,
     }
+}
+
+/// The start of `sim_move_*`: a robot the situation room recalled (+0x23 bit 3) is
+/// given the recall's program (`Tables::recall_program`), its program takes over and
+/// the bit is cleared. (The kind's routine after it, `1000:b365`, `9b87`, `cb3d`, only
+/// marks the console's panels for redrawing.)
+fn recall(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
+    let Some(m) = movement(world, id) else {
+        return;
+    };
+    if m.mode & Movement::RECALL == 0 {
+        return;
+    }
+    m.mode &= !Movement::RECALL;
+    crate::script::set_program(world, id, tables.recall_program, tables, events);
+    crate::script::switch(world, id, true, events);
 }
 
 /// One gear up or down: the speed keys (`1000:acda`, `ace0` and the other kinds')
@@ -613,6 +629,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
     let mut next = world.next_from(0);
     while let Some(id) = next {
         next = world.next_from(id.0 + 1);
+        recall(world, id, tables, &mut events);
         let Some(e) = world.get_mut(id) else {
             continue;
         };
@@ -725,6 +742,14 @@ pub(crate) fn synthetic_tables() -> Tables {
             scorpion_bottom: -42,
             turn: 0x100,
         },
+        weapon_keys: xeno_formats::motion::WeaponKeys {
+            sound: 27,
+            selected: [[0x10, 0x11], [0x20, 0x21], [0x30, 0x31]],
+            scorpion_empty: [0x22, 0x23],
+            scorpion_damaged: [0x24, 0x25],
+            scorpion_bits: [1, 2],
+        },
+        recall_program: 4,
         script_speeds: [
             [95, 63, 113],
             [56, 42, 85],
