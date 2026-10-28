@@ -596,8 +596,8 @@ animation, which later sets +0xdc bit 5 or 6); and fires a weapon whose bit is s
 whose cool-down is 0 and with +0xec bit 2: with no target (+0xe6) a message; it needs
 energy (+0x50, 10 or 22 taken when +0xfd bit 0 is set) and makes a shot of kind 7 or 8
 at an offset by the heading's octant, with a sound, and a cool-down of 12 or 50 steps.
-A shot of kind 6 (`1000:e2c8`) falls (its vertical speed drops by 3 a tick), lives
-+0x20 ticks, explodes on the ground (`sim_test_below_ground`) or on hitting an object
+A shot of kind 6 (`1000:e2c8`) falls (its vertical speed drops by 3 a step, two
+steps a tick), cannot hit anything for its first +0x20 ticks (T-107), explodes on the ground (`sim_test_below_ground`) or on hitting an object
 (`sim_find_shot_hit`, `1000:e8ac`: the first object with +0x16 bit 6 within its
 radius, and a side check) and then damages it by +0x22. A shot of kind 7
 (`1000:e3ca`) turns towards its target by at most 0x2d8 every 8 ticks. The weapon

@@ -320,7 +320,41 @@ expression: "&objects[..3]"
         status: 123,
         body: Relay(
             Relay {
-                unknown_18: 8a6f46b301dd50d0a6e8eb9ccfc9ab66fb64a7129699b7caad8d68,
+                frames: [
+                    138,
+                    111,
+                    70,
+                    179,
+                    1,
+                    221,
+                ],
+                clock: 80,
+                state: 208,
+                stage: 166,
+                power: 232,
+                power_side: 235,
+                links: [
+                    Link {
+                        state: 156,
+                        unknown_01: 207,
+                        unknown_02: 43977,
+                    },
+                    Link {
+                        state: 102,
+                        unknown_01: 251,
+                        unknown_02: 42852,
+                    },
+                    Link {
+                        state: 18,
+                        unknown_01: 150,
+                        unknown_02: 47001,
+                    },
+                    Link {
+                        state: 202,
+                        unknown_01: 173,
+                        unknown_02: 26765,
+                    },
+                ],
                 damage: 3,
             },
         ),

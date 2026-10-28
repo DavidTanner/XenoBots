@@ -256,7 +256,7 @@ bytes, and `Body` the rest by kind (`Robot`, with the kind's `Parts` from +0xfe,
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
-| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play: 6, 7 and 8 are shots (T-054's survey, `docs/sim.md`, "Weapons and shots"), 13 an explosion; the rest are not traced. Removing an object can turn it into kind 15 |
+| 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play (below, "Kinds made during play"): 5 the scorpion's tail missile, 6 to 8 shots, 9 to 12 mines and buoys, 13 an explosion, 14 the cloak's sparkle. Removing an object can turn it into kind 15 |
 | 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved. Some stock files repeat a number |
 | 0x04 | 4 | `x` | Position, 16.16 |
 | 0x08 | 4 | `y` | |
@@ -409,13 +409,47 @@ details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 | 0x4d | 2 | | The side's unit list, set at load |
 | 0xbd | 0x43 | `view_state` | The situation room's widget state (T-043) |
 
-**Relays** (0x34 bytes, `usg::Relay`): +0x33 `damage`, at 20 the relay is removed
-(`sim_damage_relay`, `1000:cfba`). +0x1f and +0x20 are its set-up state, and a new
-relay sets the words at +0x25, +0x29, +0x2d and +0x31 to 0xffff. Its tick
-(`sim_tick_relay`, T-055) counts +0x1e and every 16 ticks runs a routine by +0x1f
-(set-up stage +0x20, linked from +0x21, its colour +0x1d); not traced further (T-113).
-**Obstacles** (0x34 bytes) have no damage routine and a tick that does nothing, so
-shots do not harm them and they never change; nothing past +0x18 is known.
+**Relays** (0x34 bytes, `usg::Relay`, T-107). Made by `1000:cc2a` (the scorpion's U,
+`1000:cc69`, puts it at the scorpion's position and `1000:cca8` snaps it to the relay
+grid); ticked by `sim_tick_relay` (`1000:ccd9`):
+
+| Offset | Size | Field | Meaning |
+|---|---|---|---|
+| 0x18 | 6 | `frames` | The model's frames: +0x18 the body (0); +0x19..=+0x1c the stage's look (`DS:0x6fbb[stage]`); +0x1d the colour: 1 unpowered, 0 powered by the human net, 2 by the alien net (`1000:ccf0`, every time the state runs) |
+| 0x1e | 1 | `clock` | Steps every tick from a random start; the state runs when its low four bits are 0, and an up relay looks for links when it is 0 |
+| 0x1f | 1 | `state` | By `DS:0x6fc7`: 0 folded (out of the field, unpowered; it rises once no scorpion is within 0x32 of it, `1000:f703`), 2 rising (stage up by one a run; at 3 it is up), 4 up (in the field; links as below; folds when a scorpion comes within 0x32, the scorpion's L loading it), 6 folding (stage down; at 0 folded), 8 nothing |
+| 0x20 | 1 | `stage` | 0 to 3; the look and the model height (+0x12, `DS:0x6fbf[stage]`) follow it |
+| 0x21 | 1 | `power` | The power's reach: the largest of its feeding neighbours' less one (a base gives its +0x39 / 4, `2000:6978`, the situation room's first slider); 0 unpowered. Flag bit 4 (`RELAY_LINKED`) is set while it is not 0, and robots take their signal only from such relays and bases |
+| 0x22 | 1 | `power_side` | Whose power: 0 none, 1 human, 2 alien. A neighbour of the other side's power is not taken; the relay's side bit (+0x16 bit 3) is set to follow it, so a relay can change sides |
+| 0x23 | 16 | `links` | Four 4-byte links, one per quarter turn of bearing from the relay (`1000:cd88`: the nearest relay or base within 0x640 of it that way, 1/256ths): a state byte (0 none; 1 fed from that neighbour, which needs the neighbour's opposite link at 2, or is a base of a compatible side; 2 open, offering power: every link not fed, once the relay is powered), a byte nothing uses, and a word set to 0xffff when made that nothing reads (0 in stock files) |
+| 0x33 | 1 | `damage` | At 20 the relay is removed (`sim_damage_relay`, `1000:cfba`) |
+
+**Obstacles** (0x34 bytes) have no set-up, damage or tick routine (their entries are
+bare `ret`s), so they never change and nothing reads or writes past +0x18: those bytes
+are 0 in every stock file. A shot hits one only below 0x900 of height (z under 9,
+`1000:e9ce`, through the kinds' hit tests at `DS:0xe761`).
+
+**Kinds made during play** (5 to 15, T-107). None is in a stock file, but a save can
+hold them; `usg::Body::Other` keeps their bytes. Each kind's set-up routine is in
+`DS:0xe73f` (called with the maker in `DI` and the new object in `SI`), its tick in
+`DS:0xe6e8`, its hit test in `DS:0xe761` (carry: a shot hits it):
+
+| Kind | What | Set up, tick | Fields from +0x18 |
+|---|---|---|---|
+| 5 | The scorpion's tail missile | `1000:e08e`, `e0e8` | +0x19 the target (a referenced slot); +0x1b its speed (0x100, +0x80 a tick to 0x800), +0x1d its climb (clamped to ±0xe38), +0x1f, +0x21, +0x23 its velocity; +0x25 ticks in the phase; +0x27 its turn limit (0x16c, then +0x16 a tick); +0x29 the phase (0 launch for 20 ticks, 2, 4 homing). Starts 0x19c0 above the scorpion; within 0x3c of the target it climbs or dives at it; on the ground or a hit, a blast of 100 points in radius 100 |
+| 6 | A shell (the scorpion's cannon, the scout's) | `1000:e235`, `e2c8` | +0x18 the speed (0x900); +0x1a, +0x1c its velocity; +0x1e the vertical speed (0x80, less 3 a step); +0x20 ticks before it can hit (15); +0x22 the damage. It moves two steps a tick; the heading is spread at random |
+| 7 | A homing shot (the humanoid's first weapon, the scout's plasma) | `1000:e34a`, `e3ca` | +0x19 the target; +0x1b the speed (0x400); +0x1d the climb; +0x1f..+0x23 the velocity; +0x25 ticks before it can hit (10); +0x27 its age; +0x29 the damage. It turns to its target by at most 0x2d8 every 8 ticks |
+| 8 | The humanoid's missile (its second weapon) | `1000:e48a`, `e537` | +0x18 a spinning frame (0 to 3); +0x1b the speed (0x300); +0x1d..+0x21 the velocity, aimed with a lead (`1000:e98d`); +0x23 ticks before it can hit (10); +0x25 ticks it lives (0x3c0). Damage 8 (`1000:e587`) |
+| 9 | A proximity mine | `1000:e5ab`, `e5b5` | +0x19 counts ticks; every 256 it looks for an enemy within 0x3c (`1000:e84f`): a blast of 50 points in radius 100 |
+| 10 | An EMI decoy | `1000:e5e8`, none | +0x19 a word from `DS:0xe70c` by the dropping robot's kind, read back by `1000:e5fe` (not traced) |
+| 11 | An alarm buoy | `1000:e602`, `e60c` | +0x19 counts ticks; every 256 +0x1a halves (flag bit 4 while it is not 0, the alarm showing) and an enemy within 0x96 sets it to 0x10 with a message |
+| 12 | An ECM buoy | `1000:e63d`, `e64b` | As the alarm buoy, with +0x1a set to 0x40, and +0x1b its charges (10): one is spent each time; at 0 it is removed. What it does to the enemy is not traced (T-137) |
+| 13 | An explosion | `1000:e79a`, `e7e3` | `docs/sim.md`, "Damage": +0x18 the frame, +0x1a the last, +0x1b ticks a frame, +0x1c the countdown |
+| 14 | The sparkle (a cloak, F8) | `1000:dfff`, `e03b` | At the robot's position, heading 0x10, radius 0x2000. +0x18 the frame (0 to 7, one every 8 ticks of +0x19); +0x1a its age in frames: at 40 and 80 +0x1b (a word) steps to the next of the routines at `CS:0xe073`, which shrink the heading and radius; removed at 120 |
+| 15 | Removed | none, `f5c1` | Removal (`1000:f5a4`) turns an object into kind 15 with +0x17 = 2; its tick counts +0x17 down and frees the slot at 0 |
+
+Every drop (9 to 12, `1000:e801`) is put at the robot's position with a small random
+offset, takes its side, and sets +0x18 bit 0 when the robot was on its battery.
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
 sit on whole-number positions in chains near their own side's base.
@@ -627,10 +661,12 @@ paragraph as the writer's buffer is. `xeno-tool inspect` prints a save's campaig
 
 ## Open questions
 
-- The object bytes still unnamed: the relay's set-up state and links, the kinds made
-  during play (5 to 15), and anything in an obstacle past +0x18 (T-107). A robot's
-  unnamed bytes (+0x25, +0x2f, +0xfc, the humanoid's +0x106, +0x107, a scorpion's
-  +0x115, +0x119 and the tails after the widget state) are never used.
+- The object bytes still unnamed are never used (T-107): a robot's +0x25, +0x2f,
+  +0xfc, the humanoid's +0x106 and +0x107, a scorpion's +0x115 and +0x119 and the
+  tails after each console's widget state; a relay link's second byte and word; an
+  obstacle's bytes past +0x18. The kinds made during play (5 to 15) are described
+  above but kept as bytes; an EMI decoy's +0x19 and what an ECM buoy does are not
+  traced.
 - Whether `pool_index` matters once loaded, given that stock files repeat some.
 
 ## Parser
