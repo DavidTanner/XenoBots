@@ -15,7 +15,7 @@ use xeno_sim::{Position, Sim};
 
 /// The handlers in the editor's key table (`DS:0x5bc3`), by their offset in segment
 /// `1000`, which is how the port knows them.
-mod handler {
+pub(crate) mod handler {
     /// Ctrl+H, N, S, B, R, O, P: the kind to place.
     pub const KINDS: [(u16, i16); 7] = [
         (0x6ad8, 0),
@@ -43,6 +43,8 @@ mod handler {
     pub const REMOVE_RELAYS: u16 = 0x6ac8;
     pub const TERRAIN: u16 = 0x448c;
     pub const TOGGLE: u16 = 0x6bcf;
+    /// Ctrl+Alt+O (`1000:6d67`): the orders from a file (T-110).
+    pub const ORDERS: u16 = 0x6d67;
     /// Ctrl+Alt+Left, Right, Up, Down (`1fe6:7243`..`727a`): the map's centre (base
     /// +0x4f, +0x53) moved by 0x7fff, a whole number of 1/65,536ths, on x then y.
     pub const SCROLLS: [(u16, i32, i32); 4] = [
@@ -51,10 +53,9 @@ mod handler {
         (0x6dea, 0, -0x7fff),
         (0x6df0, 0, 0x7fff),
     ];
-    /// Ctrl+C, Ctrl+Alt+O and B: not in the port yet.
-    pub const LATER: [(u16, &str); 3] = [
+    /// Ctrl+C and Ctrl+Alt+B: not in the port yet.
+    pub const LATER: [(u16, &str); 2] = [
         (0x6901, "clears the base's messages (T-103)"),
-        (0x6d67, "loads the orders from a file (T-110)"),
         (0x6dc3, "picks the sky from a file (T-110)"),
     ];
 }
@@ -73,6 +74,8 @@ pub enum Effect {
     /// Ctrl+D (`1000:6ab7`): destroy the selected unit (base +0x3c, which the
     /// roster's selection sets, `1fe6:6f31`) with `sim_destroy_robot`.
     DestroySelected,
+    /// Ctrl+Alt+O: the open dialog, then the chosen file as the orders.
+    Orders,
 }
 
 /// The editor's state (`DS:0x5c3f`..`0x5c47`), as `ui_reset_editor_state` leaves it.
@@ -168,6 +171,7 @@ impl Editor {
             }
             handler::TERRAIN => return Effect::TerrainEditor,
             handler::DESTROY => return Effect::DestroySelected,
+            handler::ORDERS => return Effect::Orders,
             handler::TOGGLE => {
                 self.flag = !self.flag;
                 log::info!("editor: Alt+F1 flag {} (nothing reads it)", self.flag);

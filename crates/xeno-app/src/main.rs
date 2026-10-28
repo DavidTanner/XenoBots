@@ -5,6 +5,7 @@
 
 mod campaign;
 mod clock;
+mod dialog;
 mod drop;
 mod editor;
 mod game_dir;
