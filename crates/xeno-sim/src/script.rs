@@ -13,7 +13,7 @@ use crate::motion::{
 use crate::orders::RobotKind;
 use crate::random::Random;
 use crate::terrain::approx_distance;
-use crate::world::{EntityId, Movement, Position, Script, World};
+use crate::world::{EntityId, Fixed, Movement, Position, Script, World};
 
 const CARRY: u8 = 0x01;
 const ZERO: u8 = 0x40;
@@ -124,9 +124,10 @@ pub fn step(
             dispatch(world, id, tables);
             return;
         }
-        // shortcut: the original also checks an object goal every 64 ticks here; the
-        // port has no object goals until T-112.
         if !program_drives(world, id) {
+            if world.ticks & 0x3f == 0 {
+                check_object_goal(world, id);
+            }
             return;
         }
     }
@@ -157,6 +158,7 @@ pub fn step(
         m.script.wait = tables.scripts.times[usize::from(i.op)];
     }
     run(world, id, &i, tables, random, events);
+    check_object_goal(world, id);
 }
 
 /// Starts the handler of the highest event waiting: the running program's own
@@ -379,19 +381,48 @@ fn target(world: &World, id: EntityId) -> Option<Position> {
     world.get(m.target?).map(|t| t.position)
 }
 
-/// What robot `id` heads for (`order_push_goal_distance`, `order_steer_to_goal`):
-/// its target (+0x32 bit 3), its destination (bit 1) or its own base (bit 2).
-// shortcut: the worked-out point (bit 4) and an object (bit 0) count as nothing
-// until T-112's part 3 gives them.
+/// The object in `slot` (`1000:f691`): none for 0xffff or an empty slot.
+fn object(world: &World, slot: u16) -> Option<Position> {
+    (slot != 0xffff)
+        .then(|| world.get(EntityId(slot)))
+        .flatten()
+        .map(|o| o.position)
+}
+
+/// What robot `id` measures its distance to (`order_push_goal_distance`): by +0x32,
+/// the worked-out point (bit 4), its target (bit 3), its destination (bit 1), its
+/// goal object (bit 0), its destination again (bit 2), else its own base.
+fn goal_distance(world: &World, id: EntityId) -> Option<Position> {
+    let (_, side, m) = robot(world, id)?;
+    match m.goal {
+        g if g & 0x10 != 0 => Some(world.point),
+        g if g & 0x08 != 0 => target(world, id),
+        g if g & 0x02 != 0 => Some(m.destination),
+        g if g & 0x01 != 0 => object(world, m.goal_object),
+        g if g & 0x04 != 0 => Some(m.destination),
+        _ => base_position(world, side),
+    }
+}
+
+/// What robot `id` steers to (`order_steer_to_goal`): as [`goal_distance`], but bit 2
+/// is its own base and no bit is nothing.
 fn goal(world: &World, id: EntityId) -> Option<Position> {
     let (_, side, m) = robot(world, id)?;
     match m.goal {
-        g if g & 0x10 != 0 => None,
-        g if g & 0x08 != 0 => target(world, id),
-        g if g & 0x02 != 0 => Some(m.destination),
-        g if g & 0x01 != 0 => None,
+        g if g & 0x1b != 0 => goal_distance(world, id),
         g if g & 0x04 != 0 => base_position(world, side),
         _ => None,
+    }
+}
+
+/// The step's object check (`1000:48f2`): an object goal with no object (0xffff) is
+/// dropped.
+fn check_object_goal(world: &mut World, id: EntityId) {
+    if let Some(m) = movement(world, id)
+        && m.goal & 0x01 != 0
+        && m.goal_object == 0xffff
+    {
+        m.goal = 0;
     }
 }
 
@@ -592,13 +623,13 @@ fn run(
             jump(m, taken);
         }
         (0x5d, &Operand::Word(w)) => {
-            let d = distance(world, id, goal(world, id));
+            let d = distance(world, id, goal_distance(world, id));
             if let Some(m) = movement(world, id) {
                 set_flags(m, d < w, d.wrapping_sub(w), true);
             }
         }
         (0x5e, _) => {
-            let d = distance(world, id, goal(world, id));
+            let d = distance(world, id, goal_distance(world, id));
             if let Some(m) = movement(world, id) {
                 push(m, &d.to_le_bytes());
             }
@@ -639,6 +670,51 @@ fn run(
         (0x65, _) => {
             m.target_heading = heading;
             m.target_speed = 0;
+        }
+        (0x66, _) => {
+            let (slot, offset) = (m.goal_object, m.destination);
+            // shortcut: an object goal on an empty slot reads the original's null
+            // object; the port takes it as none (every word 0xffff).
+            world.point = object(world, slot).map_or(
+                Position {
+                    x: Fixed(-1),
+                    y: Fixed(-1),
+                },
+                |at| Position {
+                    x: Fixed(at.x.0.wrapping_add(offset.x.0)),
+                    y: Fixed(at.y.0.wrapping_add(offset.y.0)),
+                },
+            );
+        }
+        (0x67, &Operand::Word(w)) => {
+            let d = approx_distance(position, world.point).0 as u32;
+            // Past 256 units the flags are those of the whole units less 1.
+            let (a, b) = match d >> 24 {
+                0 => ((d >> 8) as u16, w),
+                _ => ((d >> 16) as u16, 1),
+            };
+            if let Some(m) = movement(world, id) {
+                set_flags(m, a < b, a.wrapping_sub(b), true);
+            }
+        }
+        (0x68, _) => {
+            let heading = bearing(&tables.atan, position, world.point);
+            if let Some(m) = movement(world, id) {
+                m.target_heading = heading;
+            }
+        }
+        (0x6d, _) => {
+            let d = distance(world, id, Some(world.point));
+            if let Some(m) = movement(world, id) {
+                push(m, &d.to_le_bytes());
+            }
+        }
+        (0x6e, _) => {
+            let goal = std::mem::replace(&mut m.goal, 0x10);
+            steer(world, id, tables, |b| b);
+            if let Some(m) = movement(world, id) {
+                m.goal = goal;
+            }
         }
         (0x69, _) => {
             let side = world.get(id).map(|e| e.side);
@@ -705,11 +781,36 @@ fn run(
             }
             _ => {}
         },
+        (0x78, _) => {
+            let usable = (0..2).any(|w| {
+                let bits = crate::sense::weapon_state(world, id, w, tables) as u8;
+                bits & 0x01 != 0 && bits & 0x60 == 0
+            });
+            set_carry(world, id, !usable);
+        }
+        (0x79 | 0x7a, _) => {
+            let state = crate::sense::weapon_state(world, id, usize::from(i.op - 0x79), tables);
+            if let Some(m) = movement(world, id) {
+                push(m, &state.to_le_bytes());
+            }
+        }
+        (0x7b | 0x7c, _) => {
+            let weapons = match world.get(id).map(|e| e.damage) {
+                Some(crate::world::Damage::Robot(c)) => c.weapons,
+                _ => 0,
+            };
+            if let Some(m) = movement(world, id) {
+                crate::motion::select_weapon(tables, kind, weapons, id, m, i.op - 0x7b, events);
+            }
+        }
+        // shortcut: firing (the fire request and the kinds' trigger routines) is
+        // T-114's; until then the script goes on as if it fired.
+        (0x7d, _) => {}
         (0x84, &Operand::Byte(bits)) => {
             let result = u16::from(m.goal & bits);
             set_flags(m, false, result, false);
         }
-        // shortcut: sensing and object goals (T-112), weapons (T-114) and the relay net (T-113) are not ported: the script stays here.
+        // shortcut: the relay net (T-113) is not ported: the script stays here.
         _ => m.script.pointer = i.at,
     }
 }

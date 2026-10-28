@@ -37,6 +37,14 @@ pub(crate) const MESSAGES_AT: [usize; 10] = [
 ];
 /// `mov ax, 2 * event` before the lock's sound.
 pub(crate) const LOCK_SOUND_AT: usize = 0xd902;
+/// `call cs:[bx + table]` in the weapon state routines (`1000:d0e9`, `d10d`, opcodes
+/// 0x78 to 0x7a): each kind's routine for its first and second weapon.
+pub(crate) const WEAPON_STATE_AT: [usize; 2] = [0xd0ed, 0xd111];
+const WEAPON_STATE_OP: &[u8] = &[0x2e, 0xff, 0x97];
+/// The drive check those routines call (`cmp al, [di + 0x51]`).
+pub(crate) const DRIVE_CHECK: (usize, &[u8]) = (0xd1c4, &[0x3a, 0x45, 0x51]);
+/// `mov [point], ax` in opcode 0x66: the worked-out point (`DS:0x4da4`).
+pub(crate) const POINT_AT: (usize, &[u8]) = (0x510e, &[0xa3]);
 
 /// Where one robot kind's tick table runs the sensing routines: entry `n` runs on
 /// the ticks when +0x1a, after its step, has `(tick & 0x1e) >> 1 == n`.
@@ -63,8 +71,23 @@ pub struct Sensing {
     pub lock_range: [u16; 3],
     pub ticks: [KindTicks; 3],
     pub messages: Messages,
+    /// Each kind's two weapons as the scripts' weapon state sees them.
+    pub weapons: [[Weapon; 2]; 3],
+    /// The worked-out point's x and y (16.16) in the image.
+    pub point: (i32, i32),
     /// The sound event a lock plays for the robot whose console is open.
     pub lock_sound: u8,
+}
+
+/// One weapon in the weapon state (`docs/sim.md`, "Sensing"): its number (the state
+/// word's high byte), the drive it needs (+0x51), and its damaged bits in +0xdc: the
+/// weapon is present unless any is set, or with `all` unless all are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Weapon {
+    pub number: u8,
+    pub drive: u8,
+    pub damaged: u8,
+    pub all: bool,
 }
 
 /// The lock's messages, string-segment offsets (see [`MESSAGES_AT`]).
@@ -128,6 +151,47 @@ fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatErr
     }
 }
 
+/// A weapon state routine: `mov al, number`, `xor ah, ah`, `push ax`, `mov al, drive`,
+/// a call to the drive check, `pop ax`, `jnc`, `or ah, 0x20`, then the damaged test:
+/// `test byte [di + 0xdc], bits`, `jnz`, or `mov al, [di + 0xdc]`, `and al, bits`,
+/// `cmp al, bits`, `jz`.
+fn weapon(image: &[u8], at: usize) -> Result<Weapon, FormatError> {
+    let bad = || invalid(at, "not a weapon state routine");
+    let b = image.get(at..at + 26).ok_or_else(bad)?;
+    let call = (at as u16 + 10).wrapping_add(u16::from_le_bytes([b[8], b[9]]));
+    let head = b[0] == 0xb0
+        && b[2..6] == [0x32, 0xe4, 0x50, 0xb0]
+        && b[7] == 0xe8
+        && usize::from(call) == DRIVE_CHECK.0
+        && b[10..16] == [0x58, 0x73, 0x03, 0x80, 0xcc, 0x20];
+    let (damaged, all) = match b[16..] {
+        [0xf6, 0x85, 0xdc, 0x00, bits, 0x75, ..] => (bits, false),
+        [0x8a, 0x85, 0xdc, 0x00, 0x24, bits, 0x3c, again, 0x74, _] if bits == again => (bits, true),
+        _ => return Err(bad()),
+    };
+    if !head || damaged == 0 {
+        return Err(bad());
+    }
+    Ok(Weapon {
+        number: b[1],
+        drive: b[6],
+        damaged,
+        all,
+    })
+}
+
+fn weapons(image: &[u8]) -> Result<[[Weapon; 2]; 3], FormatError> {
+    if !starts(image, DRIVE_CHECK.0, DRIVE_CHECK.1) {
+        return Err(invalid(DRIVE_CHECK.0, "not the drive check"));
+    }
+    let routine = |w: usize, kind: usize| -> Result<Weapon, FormatError> {
+        let table = usize::from(operand(image, WEAPON_STATE_AT[w], WEAPON_STATE_OP)?);
+        weapon(image, usize::from(word(image, table + 2 * kind)?))
+    };
+    let kind = |k| Ok::<_, FormatError>([routine(0, k)?, routine(1, k)?]);
+    Ok([kind(0)?, kind(1)?, kind(2)?])
+}
+
 /// Reads the tables from a load image whose data segment starts at `ds`.
 pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
     if !starts(image, SCAN.0, SCAN.1) || !starts(image, LOCKED_ON.0, LOCKED_ON.1) {
@@ -155,6 +219,15 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
             destroyed: m(9)?,
         },
         lock_sound: (sound / 2) as u8,
+        weapons: weapons(image)?,
+        point: {
+            let at = ds + usize::from(operand(image, POINT_AT.0, POINT_AT.1)?);
+            let w = |i: usize| word(image, at + 2 * i);
+            (
+                i32::from(w(0)?) | i32::from(w(1)?) << 16,
+                i32::from(w(2)?) | i32::from(w(3)?) << 16,
+            )
+        },
         scan_range: ranges(image, ds, SCAN_RANGE_AT)?,
         lock_range: ranges(image, ds, LOCK_RANGE_AT)?,
         ticks: [
@@ -204,6 +277,11 @@ mod tests {
             (TICKS_AT[2] + 1, 0x96),
             (MESSAGES_AT[4], 0xbf),
             (LOCK_SOUND_AT + 1, 0x35),
+            (DRIVE_CHECK.0 + 2, 0x50),
+            (WEAPON_STATE_AT[1] + 2, 0x96),
+            (0xa300 + 7, 0xe9),
+            (0xa320 + 16, 0x8b),
+            (POINT_AT.0, 0xa1),
             // The scorpion's lock routine calls elsewhere, and its scan is gone.
             (0xa217, 0x00),
             (DS + 0x9720 + 30, 0x00),
@@ -234,6 +312,12 @@ mod tests {
             assert_eq!(t.scan, 15);
             assert!(t.arc > 0 && t.arc < 0x4000);
             assert!(t.range > 0 && t.range <= range);
+        }
+        // Each kind has two weapons with damaged bits; only the scorpion's first takes
+        // all its bits (its two cannons).
+        for (k, kind) in sensing.weapons.iter().enumerate() {
+            assert!(kind.iter().all(|w| w.damaged != 0));
+            assert_eq!(kind[0].all, k == 1);
         }
         // The messages are text in the string segment (0x0c breaks a line).
         let motion = crate::motion::read(&exe).unwrap();

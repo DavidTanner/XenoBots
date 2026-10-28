@@ -412,17 +412,15 @@ and bearing (the destination and the robot's own base), zigzag, random turns, st
 hold here, joining the nearest path point, the targeting check and the path commands;
 events dispatch to the header's or the tables' handlers.
 
-Shortcuts, each named in the code: an opcode not ported (object goals and the
-worked-out point, T-112's part 3; weapons, T-114; the relay net, T-113)
+Shortcuts, each named in the code: an opcode not ported (the relay net, T-113)
 **halts the script on itself**, so a robot keeps its speed and heading; opcode 0x74
 puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
-log and 0x76's copies are T-129); the 64-tick object-goal
-check is skipped (no object goals yet); field opcodes
-read 0 at other offsets; return addresses are pushed as offsets from the script
-area, not the program table; the stagger starts at 0 each mission.
+log and 0x76's copies are T-129); firing (0x7d) does nothing until T-114; field
+opcodes read 0 at other offsets; return addresses are pushed as offsets from the
+script area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
-paths and the human robots on ENGAGE halt at the weapons check (T-114), and an alien
-scorpion on DENSE NET halts at once (T-113).
+paths until a scan finds enemies, the human robots on ENGAGE look for enemies and
+close on them (T-112), and an alien scorpion on DENSE NET halts at once (T-113).
 
 ## Sensing (T-112)
 
@@ -578,6 +576,23 @@ distance is exact in x and y (no z); the upkeep's bearing is the coarse one; the
 target's ECM never breaks a lock (T-136); a locked base is not marked spotted; the
 field +0xe6 reads the target's slot plus one, not a pointer; the lock window starts
 at 0 each mission; a target is gone when its slot is empty or holds another kind.
+
+Part 3 (`t-112-goals`): the goal bits as the distance and the steering each read
+them (`script::goal_distance`, `goal`; T-053's port took bit 2 as the base for both
+and gave no goal the distance 0xffff), the goal object (+0x3a, `Movement::goal_object`,
+loaded and hashed) and the step's object check, the worked-out point
+(`World::point`, from the image at load, hashed) and opcodes 0x66 to 0x68, 0x6d and
+0x6e; the weapon state (`sense::weapon_state`, the routines' numbers, drives and
+damaged bits read by `xeno_formats::sensing`) and opcodes 0x78 to 0x7c, 0x7b and 0x7c
+selecting through the weapon keys' routine (`motion::select_weapon`). So ENGAGE,
+ENGAGING, GO TO UNIT, SHADOW, PURSUE, DETECT and COMMANDO run; `sense`'s
+`real_assets_two_stock_robots_find_and_close_on_each_other` shows scen00a's first
+human humanoid and first alien robot, 7 units apart, lock each other and stand under
+2 units apart within two minutes. Shortcuts, each named in the code: firing (0x7d)
+does nothing (T-114); a weapon is never cooling down or out of rounds (T-114); an
+object goal on an empty slot gives the point 0xffff; the point carries over no
+mission. Nothing sets an object goal yet: only the consoles' map-mode press does
+(T-133).
 
 ## The cockpit keys (T-105)
 

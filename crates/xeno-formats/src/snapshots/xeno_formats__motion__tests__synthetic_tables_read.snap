@@ -1307,6 +1307,54 @@ Motion {
             lost: 72,
             destroyed: 73,
         },
+        weapons: [
+            [
+                Weapon {
+                    number: 0,
+                    drive: 10,
+                    damaged: 1,
+                    all: false,
+                },
+                Weapon {
+                    number: 1,
+                    drive: 22,
+                    damaged: 2,
+                    all: false,
+                },
+            ],
+            [
+                Weapon {
+                    number: 0,
+                    drive: 10,
+                    damaged: 3,
+                    all: true,
+                },
+                Weapon {
+                    number: 1,
+                    drive: 22,
+                    damaged: 4,
+                    all: false,
+                },
+            ],
+            [
+                Weapon {
+                    number: 0,
+                    drive: 10,
+                    damaged: 1,
+                    all: false,
+                },
+                Weapon {
+                    number: 1,
+                    drive: 22,
+                    damaged: 2,
+                    all: false,
+                },
+            ],
+        ],
+        point: (
+            65538,
+            -1,
+        ),
         lock_sound: 26,
     },
     walk: Walk {
