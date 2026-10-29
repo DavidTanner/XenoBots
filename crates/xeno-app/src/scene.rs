@@ -53,9 +53,9 @@ pub fn camera(world: &World, id: EntityId, view: &View3d, tables: &Tables) -> Op
 }
 
 /// The frames the sim keeps, from the kind's frame bytes (`docs/render.md`, "Frame
-/// numbers"): the humanoid's arms and legs, the scout's legs, a base's look, an
-/// explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0); the
-/// others are 0 (the scorpion's, T-120 part 2).
+/// numbers"): the humanoid's arms and legs, the scorpion's and scout's legs, a base's
+/// look, an explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0);
+/// the others are 0 (the scorpion's tail and claws, T-151).
 fn frames(e: &Entity) -> Vec<u8> {
     match (e.kind, e.state) {
         (ObjectKind::Humanoid, State::Robot(m)) => {
@@ -63,7 +63,7 @@ fn frames(e: &Entity) -> Vec<u8> {
             vec![0, a, b, m.legs[2], m.legs[3]]
         }
         (_, State::Shot(s)) => vec![s.frame],
-        (ObjectKind::Scout, State::Robot(m)) => [&[0][..], &m.legs].concat(),
+        (ObjectKind::Scorpion | ObjectKind::Scout, State::Robot(m)) => [&[0][..], &m.legs].concat(),
         (_, State::Base { look, .. }) => vec![look],
         (_, State::Explosion { frame, .. }) => vec![frame],
         _ => Vec::new(),
@@ -292,6 +292,26 @@ mod tests {
             max_distance: 0x7d,
             box_program: Vec::new(),
             hill_program: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_robot_s_frames_are_its_arms_and_legs() {
+        let m = Movement {
+            legs: [1, 2, 3, 4, 5, 6],
+            guns: xeno_sim::Guns {
+                arms: [7, 8],
+                ..xeno_sim::Guns::default()
+            },
+            ..Movement::default()
+        };
+        let legs = vec![0, 1, 2, 3, 4, 5, 6];
+        for (kind, want) in [
+            (ObjectKind::Humanoid, vec![0, 7, 8, 3, 4]),
+            (ObjectKind::Scorpion, legs.clone()),
+            (ObjectKind::Scout, legs),
+        ] {
+            assert_eq!(frames(&entity(kind, 0, 0, State::Robot(m))), want);
         }
     }
 
