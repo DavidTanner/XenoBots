@@ -206,6 +206,14 @@ fn sign_less(a: i16, b: i16) -> bool {
     a.wrapping_sub(b) < 0
 }
 
+/// `b - a` per axis, or, if either overflows 16 bits, the difference of the halves.
+fn deltas(a: Point, b: Point) -> (i16, i16) {
+    match (b.0.checked_sub(a.0), b.1.checked_sub(a.1)) {
+        (Some(dx), Some(dy)) => (dx, dy),
+        _ => ((b.0 >> 1) - (a.0 >> 1), (b.1 >> 1) - (a.1 >> 1)),
+    }
+}
+
 /// The edge table: a left and a right x a row, rows 0 to the bottom (writes past it
 /// land elsewhere in the original and are dropped here).
 struct Table(Vec<[i16; 2]>);
@@ -216,11 +224,14 @@ impl Table {
             entry[column] = x;
         }
     }
+
+    fn fill(&mut self, rows: std::ops::RangeInclusive<i16>, column: usize, x: i16) {
+        rows.for_each(|row| self.set(row.into(), column, x));
+    }
 }
 
-/// `gfx_walk_polygon_edge` (`1fe6:60ea`) for an edge inside the clip rectangle
-/// (`1fe6:6336` the left column, 0, and `1fe6:6461` the right, 1): the edge from `a` to
-/// `b`, walked from the end with the smaller x.
+/// `1fe6:6336` (left, column 0) and `1fe6:6461` (right, 1): the edge from `a` to `b`,
+/// both inside the clip rectangle, walked from the end with the smaller x.
 fn walk(table: &mut Table, column: usize, a: Point, b: Point) {
     // The original compares unsigned, the same for the clipped ends' 0..=bottom.
     let ((mut x, y0), (x1, y1)) = if b.0 < a.0 { (b, a) } else { (a, b) };
@@ -277,6 +288,89 @@ fn walk(table: &mut Table, column: usize, a: Point, b: Point) {
     }
 }
 
+/// `gfx_walk_polygon_edge` (`1fe6:60ea`): the edge from `a` to `b` into `column`,
+/// through the clipper when the polygon's box needs it.
+fn edge(table: &mut Table, clip: &Clip, clipping: bool, column: usize, a: Point, b: Point) {
+    // The sign of dx ^ dy is only worked out when clipping; unclipped, the fills
+    // below write only the end row, which the walk overwrites.
+    let mut opposite = false;
+    let (mut a, mut b) = (a, b);
+    let (a_y, b_y) = (a.1, b.1);
+    let side = |table: &mut Table, x: i16| {
+        table.fill(clip.top.max(a_y)..=clip.bottom.min(b_y), column, x);
+    };
+    if clipping {
+        let mut moved = false;
+        loop {
+            let less = |p: i16, q: i16| p < q;
+            let (ca, cb) = (clip.bits(a, less), clip.bits(b, less));
+            if ca & cb & 0b1100 != 0 {
+                return;
+            }
+            if ca & cb != 0 {
+                return side(table, if ca & 2 != 0 { clip.left } else { clip.right });
+            }
+            if ca | cb == 0 {
+                break;
+            }
+            if moved {
+                return side(
+                    table,
+                    if a.0 > clip.left {
+                        clip.right
+                    } else {
+                        clip.left
+                    },
+                );
+            }
+            moved = true;
+            let (dx, dy) = deltas(a, b);
+            opposite = (dx ^ dy) < 0;
+            a = onto(clip, a, ca, dx, dy);
+            b = onto(clip, b, cb, dx, dy);
+        }
+    }
+    let (before, after) = if opposite {
+        (clip.right, clip.left)
+    } else {
+        (clip.left, clip.right)
+    };
+    table.fill(clip.top.max(a_y)..=a.1 - 1, column, before);
+    table.fill(b.1..=clip.bottom.min(b_y), column, after);
+    walk(table, column, a, b);
+}
+
+/// `1fe6:623c`: an endpoint with outside bits `bits` moved onto the clip rectangle along
+/// the edge (`dx`, `dy`).
+fn onto(clip: &Clip, (x0, y0): Point, bits: u8, dx: i16, dy: i16) -> Point {
+    // `y0 + (to - x0) * num / den`, 16-bit wrapping, the division truncating.
+    // shortcut: when the quotient overflows 16 bits (or a halved difference is 0) the
+    // original's `idiv` faults; it wraps (or is 0) here. Only edges over 32,767 pixels
+    // long reach it; upgrade if a capture shows what the game does.
+    let along = |from: i16, to: i16, at: i16, num: i16, den: i16| {
+        let q = (i32::from(to.wrapping_sub(at)) * i32::from(num))
+            .checked_div(den.into())
+            .unwrap_or(0);
+        from.wrapping_add(q as i16)
+    };
+    let (mut x, mut y) = (x0, y0);
+    if bits & 1 != 0 {
+        x = clip.right - 1;
+        y = along(y0, x, x0, dy, dx);
+    } else if bits & 2 != 0 {
+        x = clip.left;
+        y = along(y0, x, x0, dy, dx);
+    }
+    if bits & 4 != 0 && y >= clip.bottom {
+        y = clip.bottom - 1;
+        x = along(x0, y, y0, dx, dy);
+    } else if bits & 8 != 0 && y < clip.top {
+        y = clip.top;
+        x = along(x0, y, y0, dx, dy);
+    }
+    (x, y)
+}
+
 /// `gfx_fill_polygon` (`1fe6:4d7d`): a polygon in one colour, clipped to the buffer, if
 /// it faces the viewer: with `t` the top corner (the highest; of those the leftmost,
 /// the last one listed on a tie), `n` the next and `p` the one before, `(n.x - t.x) *
@@ -326,9 +420,14 @@ pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
         let mut i = top;
         loop {
             let j = (i + forward) % n;
-            // shortcut: edges are walked unclipped, the rows and spans cut to the
-            // buffer, where the original moves their ends onto it (T-121 part 2).
-            walk(&mut table, column, corners[i], corners[j]);
+            edge(
+                &mut table,
+                &clip,
+                low | high != 0,
+                column,
+                corners[i],
+                corners[j],
+            );
             i = j;
             if corners[i].1 >= max_y {
                 break;
@@ -471,6 +570,39 @@ mod tests {
         // lower end, it writes 8 + 1 into row 2, where the first edge's row starts at 10.
         let fb = filled((24, 7), &[(16, 0), (8, 3), (2, 5), (20, 5)]);
         assert_eq!(ascii(&fb)[2], ".........7777777777.....");
+        insta::assert_snapshot!(ascii(&fb).join("\n"));
+    }
+
+    #[test]
+    fn a_clipped_edge_is_walked_from_where_it_meets_the_edge() {
+        // (2, 0) to (-4, 4) meets x = 0 at y = 4 + 4 * 4 / -6 = 2 (truncated); the rows
+        // below get the left edge's x; the walk is (0, 2) to (2, 0).
+        let fb = filled((8, 6), &[(2, 0), (-4, 4), (6, 4)]);
+        assert_eq!(
+            ascii(&fb),
+            [
+                "..7.....", ".777....", "77777...", "777777..", "7777777.", "........"
+            ]
+        );
+        // (3, 0) to (9, 8) meets x = 7 at y = 8 - 2 * 8 / 6 = 6, the bottom itself: it is
+        // moved again, to y = 5 and x = 9 - 3 * 6 / 8 = 7.
+        let fb = filled((8, 6), &[(3, 0), (0, 5), (9, 8)]);
+        assert_eq!(
+            ascii(&fb),
+            [
+                "...7....", "...77...", "..7777..", ".777777.", ".777777.", "77777777"
+            ]
+        );
+        // (2, 7) to (3, 9) is wholly below: it writes nothing, where moved onto row 5 it
+        // would start that row at 1.
+        let fb = filled((8, 6), &[(4, 0), (2, 7), (3, 9), (7, 5)]);
+        assert_eq!(ascii(&fb)[5], "..777777");
+        // (2, -3) to (-3, 2) passes outside the corner: moved once, to (-1, 0) and (0, -1),
+        // it is still out, and its rows get the left edge's x, as `a` is not past it.
+        let fb = filled((8, 6), &[(2, -3), (-3, 2), (4, 5), (7, -1)]);
+        assert_eq!(ascii(&fb)[..3], ["77777777", "77777777", "7777777."]);
+        // Clipped on every side.
+        let fb = filled((16, 10), &[(6, -3), (-4, 3), (9, 13), (20, 5)]);
         insta::assert_snapshot!(ascii(&fb).join("\n"));
     }
 
