@@ -60,12 +60,6 @@ pub(crate) const SHELL: u16 = 6;
 pub(crate) const HOMING: u16 = 7;
 pub(crate) const MISSILE: u16 = 8;
 
-/// The scout's eye height (+0x1c), which its plasma gun fires from: 0x0d00 less 8 a
-/// step of its stance (`docs/render.md`, "The camera").
-fn scout_eye(stance: u8) -> u16 {
-    0x0d00u16.wrapping_sub(8 * u16::from(stance))
-}
-
 fn kind_number(kind: ObjectKind) -> usize {
     usize::from(u16::from(kind))
 }
@@ -264,7 +258,8 @@ pub fn fire(
             (shot.flight, shot.arming, shot.speed) = (Flight::Homing, h.arming, h.speed);
             shot.target = Some(target);
             let lift = match kind {
-                ObjectKind::Scout => scout_eye(m.stance).wrapping_sub(gun.height),
+                // The scout's plasma gun fires from below its eye.
+                ObjectKind::Scout => m.eye_height.wrapping_sub(gun.height),
                 _ => gun.height,
             };
             z = base.wrapping_add(i32::from(lift as i16));

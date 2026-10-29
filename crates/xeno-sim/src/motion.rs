@@ -201,10 +201,15 @@ pub fn steer_and_speed(
     if kind == ObjectKind::Scout {
         if m.speed != 0 {
             (m.stance, m.stance_target) = (STANDING, STANDING);
-        } else if m.stance < m.stance_target {
-            m.stance += 1;
-        } else if m.stance > m.stance_target {
-            m.stance -= 1;
+        } else if m.stance != m.stance_target {
+            // `sim_step_scout_stance`: a step, and the eye height by the stance.
+            if m.stance < m.stance_target {
+                m.stance += 1;
+            } else {
+                m.stance -= 1;
+            }
+            let drop = i16::from(m.stance as i8).wrapping_shl(3) as u16;
+            m.eye_height = tables.walk.scout_eye.wrapping_sub(drop);
         }
     }
     if changed {
@@ -362,16 +367,17 @@ pub const FOOTSTEP_SCORPION: u8 = 14;
 pub const FOOTSTEP_SCOUT: u8 = 15;
 
 /// One tick of a robot's walking animation after its move (`docs/render.md`,
-/// "Walking"): the step counter and the legs that make footsteps. `ticks` is the
-/// pass count (`DS:0x62c6`); `footstep` hears each footstep event.
-// shortcut: only the legs that make footsteps are kept; the other animations (the
-// scorpion's legs, arms, tails) and the model height's bob wait for T-101 and T-114.
+/// "Walking"): the step counter, the legs that make footsteps, and the model height
+/// (+0x12) and the humanoid's eye height that go with them (`docs/sim.md`, "Heights").
+/// `ticks` is the pass count (`DS:0x62c6`); `footstep` hears each footstep event.
+// shortcut: only the legs that make footsteps are kept; the scorpion's legs and the
+// scout's other legs wait for T-120.
 pub fn walk(
     walk: &Walk,
     kind: ObjectKind,
     heading: u16,
     ticks: u16,
-    m: &mut Movement,
+    (m, model_height): (&mut Movement, &mut u16),
     mut footstep: impl FnMut(u8),
 ) {
     m.stride = m.stride.wrapping_add((m.speed >> 3) as u8);
@@ -402,7 +408,10 @@ pub fn walk(
             }
         }
         ObjectKind::Scorpion if m.speed != 0 && step % 2 == 0 => footstep(FOOTSTEP_SCORPION),
-        ObjectKind::Scout if m.speed != 0 => stride(&mut m.legs, &walk.scout_legs, FOOTSTEP_SCOUT),
+        ObjectKind::Scout if m.speed != 0 => {
+            stride(&mut m.legs, &walk.scout_legs, FOOTSTEP_SCOUT);
+            *model_height = walk.scout_height.wrapping_add(walk.scout_bob[step]);
+        }
         ObjectKind::Scout if m.target_heading != heading || m.stance == STANDING => {
             (m.stride, m.legs) = (0, [0; 2]);
         }
@@ -410,8 +419,16 @@ pub fn walk(
             // shortcut: stances past 0x3f would read past the 4 entries; none occur.
             let crouch = walk.scout_crouch.get(usize::from(m.stance >> 4));
             m.legs = [crouch.copied().unwrap_or(0); 2];
+            let drop = u16::from(m.stance).wrapping_shl(3);
+            *model_height = walk.scout_crouched.wrapping_sub(drop);
         }
         _ => {}
+    }
+    // The humanoid's are set every tick, moving or not, by the step before a still
+    // one's counter is cleared.
+    if kind == ObjectKind::Humanoid {
+        *model_height = walk.humanoid_height.wrapping_add(walk.humanoid_bob[step]);
+        m.eye_height = walk.humanoid_eye;
     }
 }
 
@@ -722,7 +739,8 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             if let Some(e) = world.get_mut(id)
                 && let State::Robot(m) = &mut e.state
             {
-                walk(&tables.walk, e.kind, e.heading, ticks, m, |event| {
+                let parts = (&mut *m, &mut e.model_height);
+                walk(&tables.walk, e.kind, e.heading, ticks, parts, |event| {
                     events.push(Event::Sound {
                         event,
                         only_for: Some(id),
@@ -748,15 +766,25 @@ pub(crate) mod tests;
 /// Made-up tables for tests: a true quarter sine (the last entry 0, as the original's),
 /// a turn step of 0x100, a weak drive at 0x28, two speed tables (the speed, and half
 /// of it) and programs numbered `10 * mission + kind`.
-/// Made-up walking tables: legs `step & 3` and `(step + 2) & 3`, crouched `stance / 16`.
+/// Made-up walking tables: legs `step & 3` and `(step + 2) & 3`, crouched `stance / 16`;
+/// model heights 0x0a00 (humanoid) and 0x0c80 (scout) plus `0x10 * step`, crouched
+/// `0x0c90 - 8 * stance`; eyes 0x0f80 and `0x0d00 - 8 * stance`.
 #[cfg(test)]
 pub(crate) fn synthetic_walk() -> Walk {
     let legs = |shift: u8| std::array::from_fn(|k| (k as u8 + shift) & 3);
+    let bob = std::array::from_fn(|k| 0x10 * k as u16);
     Walk {
         humanoid_legs: [legs(0), legs(2)],
         humanoid_arms: [legs(0), legs(1)],
         scout_legs: [legs(0), legs(2)],
         scout_crouch: [0, 1, 2, 3],
+        humanoid_height: 0x0a00,
+        humanoid_bob: bob,
+        humanoid_eye: 0x0f80,
+        scout_height: 0x0c80,
+        scout_bob: bob,
+        scout_crouched: 0x0c90,
+        scout_eye: 0x0d00,
     }
 }
 

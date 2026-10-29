@@ -372,5 +372,9 @@ leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,
 cs:[bx + table]` of each routine): the step counter and the two legs that make
 footsteps (`Movement::stride`, `legs`, loaded from the file and in the state hash, as
 is the pass count `World::ticks`), and it reports the footsteps as
-`motion::Event::Sound` for the robot (`xeno-app` plays them on its console). The
-other animations and the model height's bob are not kept yet (T-101, T-114).
+`motion::Event::Sound` for the robot (`xeno-app` plays them on its console). It also
+sets the model height (+0x12) by the step (the humanoid every tick, the scout while it
+moves or crouches) and the humanoid's eye height, from the bob tables and bases read
+through the `add ax, cs:[bx + table]` of each routine (`Walk::humanoid_bob`,
+`scout_bob`; `docs/sim.md`, "Heights", T-119). The scorpion's legs and the scout's
+other legs are T-120.

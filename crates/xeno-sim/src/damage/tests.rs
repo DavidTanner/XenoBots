@@ -254,6 +254,8 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
         let mut world = world();
         let mut random = Random::seeded(1);
         let base_at = world.get(EntityId(slot)).unwrap().position;
+        world.get_mut(EntityId(slot)).unwrap().z = Fixed(0x4_0000);
+        let mut sunk = 0;
         let radii = |w: &World| -> Vec<(u16, Position)> {
             w.iter()
                 .filter(|(_, e)| matches!(e.state, State::Explosion { .. }))
@@ -329,6 +331,18 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
                 matches!(e.state, State::Explosion { frame: 0..=1, ticks, .. } if ticks == template + 1)
             });
             assert_eq!(new, template < 5, "run {runs}");
+            // Each explosion sinks from the base's z by up to 0x7ff.
+            for (_, e) in world
+                .iter()
+                .filter(|(_, e)| e.kind == ObjectKind::Other(13))
+            {
+                assert!(
+                    (0x4_0000 - 0x7ff..=0x4_0000).contains(&e.z.0),
+                    "{:#x}",
+                    e.z.0
+                );
+                sunk += usize::from(e.z.0 < 0x4_0000);
+            }
             if runs <= 20 {
                 for (r, p) in radii(&world) {
                     assert_eq!(r, 0x2800);
@@ -348,6 +362,7 @@ fn a_destroyed_base_ends_the_mission_after_its_end_script() {
             assert!(events.contains(&Event::MissionOver { won }));
             break;
         }
+        assert!(sunk > 0);
     }
 }
 

@@ -1,8 +1,9 @@
 //! What the port reads from the user's `xeno.exe` to move robots (`docs/sim.md`,
 //! "Movement"): the sine table the velocity comes from, each kind's turn step, the
 //! drive level under which a robot goes at half speed, the scorpion's speed tables, and
-//! the program each path mission gives each kind, and the leg frames of the walking
-//! animations (`docs/render.md`, "Walking"). Game data, read at run time; each
+//! the program each path mission gives each kind, and the leg frames and model and eye
+//! heights of the walking animations (`docs/render.md`, "Walking"; `docs/sim.md`,
+//! "Heights"). Game data, read at run time; each
 //! table is found through an instruction that uses it, after checking that
 //! instruction's bytes.
 
@@ -64,6 +65,20 @@ pub(crate) const SCOUT_CROUCH_AT: usize = 0xc829;
 /// while walking (+0xff, +0x100).
 pub(crate) const HUMANOID_ARMS_AT: [usize; 2] = [0xae74, 0xaedb];
 const LEG_OP: &[u8] = &[0x2e, 0x8a, 0x87];
+/// The model heights (+0x12) and eye heights (+0x1c) the walks and the scout's stance
+/// set (`docs/sim.md`, "Heights"): in the humanoid's walk (`1000:ad67`) `mov ax, base`,
+/// `add ax, cs:[bx + table]`, `mov [di + 0x12], ax`, `mov ax, eye`, `mov [di + 0x1c],
+/// ax`; in the scout's (`1000:c799`) `mov ax, base`, `shl bx, 1`, `add ax, cs:[bx +
+/// table]`, `mov [di + 0x12], ax`; crouched (`1000:c845`) `neg ax`, `add ax, base`,
+/// `mov [di + 0x12], ax`; in its stance step (`1000:c5c8`) `cbw`, `shl ax, 1` three
+/// times, `neg ax`, `add ax, eye`, `mov [di + 0x1c], ax`.
+pub(crate) const HUMANOID_BOB_AT: usize = 0xada6;
+pub(crate) const SCOUT_BOB_AT: usize = 0xc7e3;
+pub(crate) const SCOUT_CROUCHED_AT: usize = 0xc845;
+pub(crate) const SCOUT_EYE_AT: usize = 0xc5c8;
+const ADD_TABLE: &[u8] = &[0x2e, 0x03, 0x87];
+const TO_MODEL_HEIGHT: &[u8] = &[0x89, 0x45, 0x12];
+const TO_EYE_HEIGHT: &[u8] = &[0x89, 0x45, 0x1c];
 /// Steps in a walking animation's tables.
 pub const STEPS: usize = 16;
 /// A scout's stances run from 0 to 0x30, so its crouched legs are read by stance / 16
@@ -181,8 +196,8 @@ pub struct WeaponKeys {
     pub scorpion_bits: [u8; 2],
 }
 
-/// The leg frames of the walking animations that make footsteps, by step
-/// (`docs/render.md`, "Walking").
+/// The leg frames of the walking animations that make footsteps, by step, and the
+/// model and eye heights they set (`docs/render.md`, "Walking").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Walk {
     /// The humanoid's legs, +0x101 and +0x102.
@@ -193,6 +208,16 @@ pub struct Walk {
     pub scout_legs: [[u8; STEPS]; 2],
     /// A scout's four legs when it stands still crouched, by stance / 16.
     pub scout_crouch: [u8; CROUCHES],
+    /// The humanoid's model height by step: `height + bob[step]`; its eye height.
+    pub humanoid_height: u16,
+    pub humanoid_bob: [u16; STEPS],
+    pub humanoid_eye: u16,
+    /// The scout's model height by step while it moves; still and crouched,
+    /// `crouched - 8 * stance`; its eye height `eye - 8 * stance` as the stance steps.
+    pub scout_height: u16,
+    pub scout_bob: [u16; STEPS],
+    pub scout_crouched: u16,
+    pub scout_eye: u16,
 }
 
 fn bytes(image: &[u8], at: usize, n: usize) -> Result<&[u8], FormatError> {
@@ -288,6 +313,26 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         weapons: weapons::read_image(image, ds)?,
         bases: base::read_image(image, ds)?,
         walk: Walk {
+            humanoid_height: operand(image, HUMANOID_BOB_AT, &[0xb8])?,
+            humanoid_bob: bob(image, HUMANOID_BOB_AT + 3)?,
+            humanoid_eye: match *bytes(image, HUMANOID_BOB_AT + 11, 6)? {
+                [0xb8, lo, hi, 0x89, 0x45, 0x1c] => u16::from_le_bytes([lo, hi]),
+                _ => return Err(invalid(HUMANOID_BOB_AT + 11, "not the eye height's set")),
+            },
+            scout_height: operand(image, SCOUT_BOB_AT, &[0xb8])?,
+            scout_bob: bob(image, SCOUT_BOB_AT + 5)?,
+            scout_crouched: after(
+                image,
+                SCOUT_CROUCHED_AT,
+                &[0xf7, 0xd8, 0x05],
+                TO_MODEL_HEIGHT,
+            )?,
+            scout_eye: after(
+                image,
+                SCOUT_EYE_AT,
+                &[0x98, 0xd1, 0xe0, 0xd1, 0xe0, 0xd1, 0xe0, 0xf7, 0xd8, 0x05],
+                TO_EYE_HEIGHT,
+            )?,
             humanoid_arms: [
                 legs(image, HUMANOID_ARMS_AT[0])?,
                 legs(image, HUMANOID_ARMS_AT[1])?,
@@ -317,6 +362,29 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
 fn legs(image: &[u8], at: usize) -> Result<[u8; STEPS], FormatError> {
     let table = usize::from(operand(image, at, LEG_OP)?);
     Ok(bytes(image, table, STEPS)?.try_into().expect("16 bytes"))
+}
+
+/// A walk's model heights by step, through the `add ax, cs:[bx + table]`, `mov [di +
+/// 0x12], ax` at `at` (words, by twice the step).
+fn bob(image: &[u8], at: usize) -> Result<[u16; STEPS], FormatError> {
+    let table = usize::from(operand(image, at, ADD_TABLE)?);
+    if bytes(image, at + 5, 3)? != TO_MODEL_HEIGHT {
+        return Err(invalid(at + 5, "not the model height's set"));
+    }
+    let mut bob = [0; STEPS];
+    for (i, b) in bob.iter_mut().enumerate() {
+        *b = word(image, table + 2 * i)?;
+    }
+    Ok(bob)
+}
+
+/// The word after the instruction bytes `op` at `at`, followed by `then`.
+fn after(image: &[u8], at: usize, op: &[u8], then: &[u8]) -> Result<u16, FormatError> {
+    let value = operand(image, at, op)?;
+    if bytes(image, at + op.len() + 2, then.len())? != then {
+        return Err(invalid(at, "not followed by the expected store"));
+    }
+    Ok(value)
 }
 
 /// The speed a set-speed routine at `at` asks for: `mov word [di + 0x28], speed`,
@@ -581,6 +649,13 @@ mod tests {
         assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
         assert_eq!(motion.walk.humanoid_arms[1][..3], [1, 2, 3]);
         assert_eq!(motion.walk.scout_crouch[3], 3);
+        let w = &motion.walk;
+        assert_eq!((w.humanoid_height, w.humanoid_eye), (0x0a00, 0x0f80));
+        assert_eq!((w.humanoid_bob[1], w.scout_bob[15]), (0x10, 0xf0));
+        assert_eq!(
+            (w.scout_height, w.scout_crouched, w.scout_eye),
+            (0x0c80, 0x0c90, 0x0d00)
+        );
         assert_eq!(motion.gears.humanoid, [-20, -10, 0, 10, 20]);
         assert_eq!(motion.gears.scout, [-30, 0, 30]);
         let g = &motion.gears;
@@ -619,6 +694,14 @@ mod tests {
             (HUMANOID_LEGS_AT[1], 0x3e),
             (SCOUT_LEGS_AT[0] + 2, 0x86),
             (SCOUT_CROUCH_AT + 1, 0x8b),
+            (HUMANOID_BOB_AT, 0xb9),
+            (HUMANOID_BOB_AT + 9, 0x13),
+            (HUMANOID_BOB_AT + 16, 0x1d),
+            (SCOUT_BOB_AT + 6, 0x02),
+            (SCOUT_CROUCHED_AT + 1, 0xd9),
+            (SCOUT_CROUCHED_AT + 6, 0x1c),
+            (SCOUT_EYE_AT, 0x99),
+            (SCOUT_EYE_AT + 14, 0x12),
             (GEAR_OPS[1] + 1, 0xa6),
             (0x8400 + 6, 7),
             (0x8418 + 6, 2),
@@ -679,6 +762,12 @@ mod tests {
         for legs in &w.humanoid_legs {
             assert!(legs.iter().all(|&f| f < 5) && legs.contains(&0));
         }
+        // The bobs stay within a 256th of a unit over their bases, down to 0 in a
+        // stride; crouching starts from the scout's standing model height.
+        for bob in [&w.humanoid_bob, &w.scout_bob] {
+            assert!(bob.iter().all(|&b| b <= 0x100) && bob.contains(&0));
+        }
+        assert!(w.humanoid_eye > w.humanoid_height && w.scout_crouched == w.scout_height);
         // The arms swing below their raised frame, 5.
         assert!(w.humanoid_arms.iter().flatten().all(|&f| f < 5));
         let scout = w.scout_legs.iter().flatten().chain(&w.scout_crouch);
