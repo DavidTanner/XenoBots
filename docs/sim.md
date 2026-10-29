@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -15,6 +15,8 @@ tested headless in CI. It depends only on `xeno-formats`.
   `Parked::resume(random)` gives the word back and returns the `Sim`. A parked mission
   has no word, so it cannot tick or draw. **`Sim::end()`** ends a mission and returns
   the word. See "The run's random word".
+- **`Sim::save(&loaded, program_table)`** writes the running world into a copy of the
+  loaded scenario, as a save does (see "Saving the world (T-116)").
 - **`Sim::tick(events)`** runs one retrace with the input that arrived for it
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
   `Sim::run(log, n)` ticks until `n` retraces have run, each with its events from an
@@ -1337,6 +1339,58 @@ and checks: every object is loaded, one per slot; each side's count of each kind
 the parser's; each side has one base (`docs/formats/usg.md`); every unit has orders;
 a side has at most 38 units (its unit list); and the robots and bases fit the
 40-object pool, the relays and obstacles the 200-object one (`usg.md`, `DCBS`).
+
+## Saving the world (T-116)
+
+A T-090 pass on `xeno.exe` read what a save writes of the running mission
+(`file_write_save_game`, `1000:f01b`; `usg.md`, "Save files"): every object in the
+object table, in slot order, with **nothing skipped**: robots, bases, relays,
+obstacles, shots, explosions, mines and removed objects (kind 15) alike, each record
+`0x172` or `0x34` bytes by its kind's pool flag (`DS:0xe7c7` bit 0), its slot and
+reference count from the table. Before writing, `scen_pack_all_objects` (`1000:f0f4`)
+runs each kind's pack routine (`DS:0xe81c`): only the three robot kinds have one
+(humanoid `1000:b427`, scorpion `9c6c`, scout `cbff`; the base's `690b` and every other
+kind's `f848` are a bare `ret`). A robot's routine turns its script pointer into the
+saved form (`1000:4826`: less the program table's address `DS:0x4ff4`, ORed with
+0xa000) and its target (+0xe6, a pointer) into its slot (`1000:f656`; 0xffff for none),
+counting one more reference on the target (`1000:f6a6`). After the write
+`scen_unpack_all_objects` puts both back (`1000:4833` restores a pointer marked 0xa0
+without restarting; `1000:f6bb` drops the extra reference). Every other reference an
+object holds (a goal object, a shot's or tail missile's target, the scorpion's missile,
+the base's robot being repaired) is a slot already and is written as it is; the base's
+selected unit (+0x3c) is a pointer written as it is. The path tables and the clock
+(`DS:0x7d46`, hour to month) are written whole.
+
+So a save resumes a mission as it stood, except what loading itself redoes
+(`usg.md`, "Loading"): every robot restarts the program it was given (the scripts'
+pointers, waits, stacks and flags start over) and drops its target, and what the
+original carries from mission to mission (the stagger, the walking count, the lock
+window, the worked-out point, the call signs taken) is not in the file.
+
+**The port.** `Sim::save(&loaded, program_table)` gives `loaded` (the scenario the host
+keeps: terrain, briefing, sky and each object's bytes as loaded) with the world written
+over it: `SHDR`'s hour to sixtieths from `World::clock` (the day and month stay
+`loaded`'s, the campaign's calendar), every object in the world over the loaded object
+of the same slot and kind (bytes the sim does not keep stay as loaded), and both path
+tables (count, missions, weights and points; the editor's mix, the counts of robots on
+a path and leftover points stay). Robots get their movement, orders, script (packed as
+above), panel, guns and kind's parts; `IN_FIELD` follows `IN_BASE`; bases their tick,
+counts, kills, losses, depot, damage and `GONE`; relays their damage; shots and
+explosions their fields by kind (`usg.md`, "Kinds made during play"). An object made in
+play starts from zeros, a reference count of 1 and the lowest index free in its pool.
+`Sim::load` reads shots and explosions back (`pack::unpack_made`; a missile's damage is
+the kind's). The shots no longer keep what their objects do not: a tail missile's
+damage (its blast has its own points) and a missile's climb (used once, when fired), so
+the state hash changes for a mission with those shots in flight.
+
+`pack`'s tests run the synthetic mission with a relay deployed, a lock, a recall, one of
+each shot and an explosion, save and load it: the world comes back equal to the running
+one with the loader's resets applied, and saving and loading again changes no byte and
+no hash. `real_assets_stock_missions_save_and_load_back` does the same for every stock
+scenario after 4,500 ticks (fights, shots and relays in play), then runs both copies
+2,000 ticks more to the same hash. Shortcuts: the reference counts are the loaded ones
+(T-154); a relay, shot or explosion made in play has no set-up bytes beyond what the
+sim keeps (T-148).
 
 ## The mission clock (T-102)
 

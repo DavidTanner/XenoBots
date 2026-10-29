@@ -251,6 +251,11 @@ impl Object {
         Ok(Object::read(&mut std::io::Cursor::new(record))?)
     }
 
+    /// The object as a `DCBS` record, as [`write`] writes it.
+    pub fn to_record(&self) -> Vec<u8> {
+        binary(self)
+    }
+
     /// Bit 3 of the flags: the scenario editor writes 0 for human, 8 for alien.
     pub fn side(&self) -> Side {
         if self.flags & flag::ALIEN == 0 {

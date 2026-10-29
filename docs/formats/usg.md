@@ -663,6 +663,15 @@ that size, indexes the records and sets the selection's record offset (`DS:0x5ff
 | 0x16 | 8 | `unknown_16` | `DS:0x5fad`..`0x5fb4`: no instruction names them (a search of every absolute operand); leftover memory |
 | 0x1e | size | `table` | The scenario table as `scendef.bin` lays it out, each record's `state` as it stands, then the end marker and whatever else the buffer holds to its last paragraph (`scendef.md`) |
 
+**The running world (T-116).** The objects are written as `scen_write_dcbs` writes
+them (above, "Writing"): every slot of the object table in use, whatever its kind
+(shots, explosions, mines and removed objects included), after the pack routines,
+which only robots have (`DS:0xe81c`: the script pointer to its saved form and the
+target to a slot, one more reference counted on it while saved). The reference count
+written is the table's (`DS:0xe2c6`); stock files hold 0, 1 and once 0xfff2.
+`xeno_sim::Sim::save` packs the port's world this way (`docs/sim.md`, "Saving the
+world (T-116)").
+
 The game-loaded flag (`DS:0x6005`), the selection's offset and the open levels
 (`DS:0x5ff5`..`0x5fff`) are not saved; the reader and the campaign check rebuild them.
 
