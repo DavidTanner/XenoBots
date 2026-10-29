@@ -884,4 +884,71 @@ mod tests {
         let c0 = Camera { viewer: 0, ..c };
         assert_eq!(colours(&c0, &[hill(0, 40)]), [7, 8, FLAT_SKY, GROUND]);
     }
+
+    /// Every stock hill, from 1.2 to 8 radii in front with the eye at its top (cut by
+    /// every side of the view when near), fills some pixels in the hill program's
+    /// colours (57 to 61).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_stock_hills_fill_in_their_colours() {
+        use xeno_formats::{lzexe, usg};
+        let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+            return;
+        };
+        // `cargo test` runs in the crate directory; resolve against the workspace root.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir);
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let name = |p: &std::path::Path| p.file_name().unwrap().to_string_lossy().to_lowercase();
+        let exe = files.iter().find(|p| name(p) == "xeno.exe").unwrap();
+        let v = xeno_formats::view3d::read(&lzexe::unpack(&std::fs::read(exe).unwrap()).unwrap())
+            .unwrap();
+        let mut hills = 0;
+        for path in files.iter().filter(|p| name(p).ends_with(".usg")) {
+            let scenario = usg::parse(&std::fs::read(path).unwrap()).unwrap();
+            for f in scenario.terrain.iter().flat_map(|t| &t.features) {
+                if f.shape.first() != Some(&usg::TerrainFeature::HILL) {
+                    continue;
+                }
+                hills += 1;
+                for tenths in [12, 20, 40, 80] {
+                    let d = (i32::from(f.radius) << 8) / 10 * tenths;
+                    let c = Camera {
+                        x: f.x,
+                        y: f.y - d,
+                        z: f.z,
+                        ..camera(0)
+                    };
+                    let node = RenderNode {
+                        object: TERRAIN,
+                        position: [f.x, f.y, f.z],
+                        radius: f.radius,
+                        shape: Some(Shape {
+                            radius: f.radius,
+                            diagonal: f.diagonal,
+                            height: f.height,
+                            program: f.shape.clone(),
+                        }),
+                        ..node(0, 0, 0)
+                    };
+                    let node = RenderNode {
+                        distance: d as u32,
+                        ..node
+                    };
+                    let mut fb = Framebuffer::new(Size::MODE_13H);
+                    fb.draw_view(&v, &c, &[node], &[], None);
+                    assert!(
+                        fb.pixels().iter().any(|p| (57..=61).contains(p)),
+                        "{}: {f:?} from {tenths} tenths",
+                        name(path)
+                    );
+                }
+            }
+        }
+        assert!(hills > 0);
+    }
 }

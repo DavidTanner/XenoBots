@@ -326,6 +326,87 @@ So, in real numbers, with `d` the node's approximate distance:
 is drawn 1:1 about 0.24 units away. Perspective divides by the approximate distance,
 not by the depth `Z`, which only decides what is behind.
 
+## The polygon fill (T-121)
+
+`gfx_fill_polygon` (`1fe6:4d7d`; `AL` the colour, `DS:SI` a corner count then the
+corners, each a y word then an x word) fills the terrain's triangles and quads
+(`docs/formats/usg.md`, "The shape ops") and the maps' octagons. It works in the
+current surface's clip rectangle (the record at `[DS:0x634]`: +6 top, +8 left, +0xa
+bottom, +0xc right, the last two one past the edge; the port takes the whole buffer).
+
+1. **Scan.** One pass over the corners finds the top corner (the smallest y; on a tie
+   the smallest x, the later corner on a full tie), the smallest and largest x and the
+   largest y. The largest x starts at 0, not at the first corner's x.
+2. **Bounding-box reject.** Each of the box's two corners (smallest x and y, largest x
+   and y) gets four bits: y above the top, y below the bottom (`bottom < y`, so a
+   corner on the bottom row itself is not below), x left of the left edge, x right
+   of `right - 1`. Each bit is the **sign of the 16-bit difference** (`lahf` keeps the
+   sign flag, not sign xor overflow), so it is wrong when the difference overflows:
+   a box from y = -32,700 to 300 counts as wholly below a 200-row buffer and is
+   dropped. If the two corners share a bit, nothing is drawn; if any bit is set, every
+   edge goes through the clipper below.
+3. **Facing.** As before (T-101): with `t` the top corner, `n` the next and `p` the
+   one before, drawn only when `(n.x - t.x) * (p.y - t.y) < (n.y - t.y) * (p.x -
+   t.x)`, in 32 bits. When any of the four differences overflows 16 bits, every
+   coordinate is halved first (an arithmetic shift) and the differences are taken of
+   the halves: `(n.x >> 1) - (t.x >> 1)`, not the difference halved.
+4. **Edges.** A table holds a left and a right x for every row (`DS:0x29e4`, 4 bytes a
+   row). The **left chain** walks forward from the top corner and writes the left
+   column, the **right chain** backward and writes the right one; each walks an edge
+   at a time (`gfx_walk_polygon_edge`, `1fe6:60ea`, from the earlier corner `a` to the
+   later `b`) and stops after the edge whose end is on the largest y, so the bottom
+   edge of a flat-bottomed polygon is not walked. Rows no edge writes keep what an
+   earlier polygon left there.
+5. **Spans.** Rows from the larger of the smallest y and the top to the smaller of the
+   largest y and `bottom - 1` are filled from the left x up to, not including, the
+   right x; a row whose right x is not past its left (unsigned) is skipped. The x's
+   are not clipped here: the edges are.
+
+**Walking an edge.** The walker always starts at the endpoint with the smaller x (`a`
+on a tie; an unsigned compare) and steps x up, so an edge is the same pixels whichever
+way the chain goes. Rows step down when the start is above the other end, else up
+(an unsigned compare; a level edge steps up). With `D` the larger of the two
+differences and `m` the other (x-major when `|dx| > |dy|`, else y-major, so a 45°
+edge is y-major), the error starts at `-(D >> 1)`; each step along the major axis
+adds `m` and, when the error is then not negative, steps the minor axis and takes
+`D` off. In closed form, the minor axis has moved `(i * m - (D >> 1) + D) / D`
+after step `i >= 1`. `D + 1` pixels are walked, so for `D = 1, m = 0` (a level edge
+one pixel long) the second pixel is a row up.
+
+- **Left column:** each row gets the x of its first pixel (the smallest). An
+  x-major edge then writes one more value, its last x plus 1, into the row past its
+  end in the walking direction. Down a chain that row belongs to the next edge, which
+  overwrites it, but an edge that goes down-left is walked upward from its lower end,
+  so the extra value lands on the row above its upper corner, which the previous edge
+  wrote: the left x there becomes that corner's x plus 1.
+- **Right column:** each row gets its last pixel's x plus 1, so an edge's pixels are
+  inside the polygon on both sides.
+
+Within a chain, the later edge wins a row both write (the corner rows).
+
+**Clipping an edge** (when the polygon's box needs it): `a` and `b` get the four bits
+again, now as true signed compares.
+
+- Both above, or both below: nothing is written.
+- Both left of the left edge, or both right of `right - 1`: the rows from the larger
+  of `a.y` and the top to the smaller of `b.y` and the bottom (inclusive) get the left
+  edge's x, or `right`, in this edge's column.
+- Otherwise each outside endpoint is moved onto the rectangle, in the order: past the
+  right (x = `right - 1`), else past the left (x = left), with `y += (x' - x) * dy /
+  dx`; then, if its y is still at or past the bottom, y = `bottom - 1`, else if above
+  the top, y = top, with `x = x0 + (y' - y0) * dx / dy` from the endpoint as it was
+  before the x step. `dx` and `dy` are `b - a` (or, if either overflows 16 bits, the
+  difference of the halves, as in the facing test), the products 32 bits and the
+  divisions truncating (`idiv`). The ends are then tested again: still sharing an
+  outside bit, the side fill above; both inside, the walk; anything else is not
+  clipped twice: the edge's rows get the left edge's x if the moved `a.x` is not past
+  the left, else `right`.
+- Before the walk, the rows from the larger of the original `a.y` and the top up to
+  the moved `a.y` (exclusive) get the left edge's x, and the rows from the moved `b.y`
+  to the smaller of the original `b.y` and the bottom (inclusive) get `right`; the
+  two swap when `dx` and `dy` have opposite signs. The walk then overwrites the moved
+  ends' own rows.
+
 ## The review's view (T-047)
 
 View mode 0x1a's list is camera, `1000:374e` (fills the buffer with colour
@@ -374,7 +455,8 @@ and bearing by `xeno_sim`'s `approx_distance` and `bearing`, the coarse one
 region, the bounding box `review::region` measures. `LoadedModel::single_view` and
 `quarter_turn` are the other two loaders. `xeno_render::shape` runs the terrain
 nodes' programs (the hill and block programs are read from the user's `xeno.exe` by
-`xeno_formats::view3d`), with a scan fill that is not yet the original's edge walker.
+`xeno_formats::view3d`), filled by `shape::fill_polygon` (above, "The polygon fill
+(T-121)").
 Each object's z and model height and the viewed robot's eye height are the sim's
 (`Entity::z`, `Entity::model_height`, `Movement::eye_height`; `docs/sim.md`,
 "Heights"). Not yet: the scorpion's tail and claws (+0x105 to +0x109, T-151) and the

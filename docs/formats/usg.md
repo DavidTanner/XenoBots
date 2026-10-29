@@ -197,13 +197,15 @@ midpoint) and a quad (midpoint, the ring point between, the next midpoint, the c
 in colours 57 to 61. The block program makes its points with op 0x04 and fills six
 quads in colours 7 to 14.
 
-**The polygon fill** (`1fe6:4d7d`): the corners' bounding box is tested against the
-buffer's clip rectangle, then the polygon is drawn only if it faces the viewer: from
-the top corner `t` (smallest y; on a tie the smallest x, the later corner on a full
-tie), with `n` the next corner and `p` the one before, only when `(n.x - t.x) * (p.y -
-t.y) < (n.y - t.y) * (p.x - t.x)` (corners anticlockwise on screen). Edges are walked
-into a table of a left and a right x per row (`1fe6:60ea`, clipped), and each row in the
-clip rectangle is filled from the left x up to, not including, the right x.
+**The polygon fill** (`gfx_fill_polygon`, `1fe6:4d7d`): the corners' bounding box is
+tested against the buffer's clip rectangle, then the polygon is drawn only if it faces
+the viewer: from the top corner `t` (smallest y; on a tie the smallest x, the later
+corner on a full tie), with `n` the next corner and `p` the one before, only when `(n.x
+- t.x) * (p.y - t.y) < (n.y - t.y) * (p.x - t.x)` (corners anticlockwise on screen).
+Edges are walked into a table of a left and a right x per row
+(`gfx_walk_polygon_edge`, `1fe6:60ea`, clipped), and each row in the clip rectangle is
+filled from the left x up to, not including, the right x. The pixel rules are in
+`docs/render.md`, "The polygon fill (T-121)".
 
 ### `DCBS`: objects
 

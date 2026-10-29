@@ -180,43 +180,183 @@ pub fn draw(
     run(fb, &mut r, &shape.program, builtins);
 }
 
-/// `1fe6:4d7d`: a convex polygon in one colour, clipped to the buffer, if it faces the
-/// viewer: with `t` the top corner (the highest; of those the leftmost, the last one
-/// listed on a tie), `n` the next and `p` the one before, `(n.x - t.x) * (p.y - t.y) <
-/// (n.y - t.y) * (p.x - t.x)`, so its corners run anticlockwise on screen.
-// shortcut: the edge walker (`1fe6:60ea`) is not traced; spans here run from the
-// leftmost to the rightmost edge crossing at each row, right end excluded as the
-// original's span fill does. Trace it for pixel-exact edges.
-pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
-    let n = corners.len();
-    let Some(top) = (0..n).rev().min_by_key(|&i| (corners[i].1, corners[i].0)) else {
-        return;
-    };
-    let p = |i: usize| (i64::from(corners[i].0), i64::from(corners[i].1));
-    let (t, prev, next) = (p(top), p((top + n - 1) % n), p((top + 1) % n));
-    if (next.0 - t.0) * (prev.1 - t.1) - (next.1 - t.1) * (prev.0 - t.0) >= 0 {
-        return;
+/// The fill's clip rectangle (`[DS:0x634]` +6, +8, +0xa, +0xc; bottom and right one
+/// past the edge): the whole buffer.
+struct Clip {
+    top: i16,
+    left: i16,
+    bottom: i16,
+    right: i16,
+}
+
+impl Clip {
+    /// A point's outside bits: x past `right - 1` (1), x left of the edge (2), y below
+    /// the bottom (4, `bottom < y`), y above the top (8), by `less`.
+    fn bits(&self, (x, y): Point, less: fn(i16, i16) -> bool) -> u8 {
+        u8::from(less(self.right - 1, x))
+            | u8::from(less(x, self.left)) << 1
+            | u8::from(less(self.bottom, y)) << 2
+            | u8::from(less(y, self.top)) << 3
     }
-    let (width, height) = (fb.surface().width as i64, fb.surface().height as i64);
-    let low = corners.iter().map(|c| i64::from(c.1)).max().unwrap_or(0);
-    let stride = fb.surface().width;
-    for y in t.1.max(0)..=low.min(height - 1) {
-        let crossings = (0..n).flat_map(|i| {
-            let (a, b) = (p(i), p((i + 1) % n));
-            let (lo, hi) = if a.1 <= b.1 { (a, b) } else { (b, a) };
-            match (y < lo.1 || y > hi.1, hi.1 == lo.1) {
-                (true, _) => vec![],
-                (false, true) => vec![lo.0, hi.0],
-                (false, false) => vec![lo.0 + (hi.0 - lo.0) * (y - lo.1) / (hi.1 - lo.1)],
-            }
-        });
-        let (left, right) = crossings.fold((i64::MAX, i64::MIN), |(l, r), x| (l.min(x), r.max(x)));
-        let (left, right) = (left.max(0), right.min(width));
-        if left < right {
-            let row = y as usize * stride;
-            fb.pixels_mut()[row + left as usize..row + right as usize].fill(colour);
+}
+
+/// The bounding box's compare: the sign of the 16-bit difference, wrong when it
+/// overflows (`lahf` keeps the sign flag alone).
+fn sign_less(a: i16, b: i16) -> bool {
+    a.wrapping_sub(b) < 0
+}
+
+/// The edge table: a left and a right x a row, rows 0 to the bottom (writes past it
+/// land elsewhere in the original and are dropped here).
+struct Table(Vec<[i16; 2]>);
+
+impl Table {
+    fn set(&mut self, row: i32, column: usize, x: i16) {
+        if let Some(entry) = usize::try_from(row).ok().and_then(|r| self.0.get_mut(r)) {
+            entry[column] = x;
         }
     }
+}
+
+/// `gfx_walk_polygon_edge` (`1fe6:60ea`) for an edge inside the clip rectangle
+/// (`1fe6:6336` the left column, 0, and `1fe6:6461` the right, 1): the edge from `a` to
+/// `b`, walked from the end with the smaller x.
+fn walk(table: &mut Table, column: usize, a: Point, b: Point) {
+    // The original compares unsigned, the same for the clipped ends' 0..=bottom.
+    let ((mut x, y0), (x1, y1)) = if b.0 < a.0 { (b, a) } else { (a, b) };
+    let dx = x1.wrapping_sub(x) as u16;
+    let (dy, step) = if y0 >= y1 {
+        (y0.wrapping_sub(y1) as u16, -1)
+    } else {
+        (y1.wrapping_sub(y0) as u16, 1)
+    };
+    let mut row = i32::from(y0);
+    let left = column == 0;
+    if dy < dx {
+        let mut err = -((dx as i16) >> 1);
+        let mut count = dx.wrapping_add(1);
+        if left {
+            table.set(row, column, x);
+        }
+        loop {
+            x = x.wrapping_add(1);
+            count = count.wrapping_sub(1);
+            if count == 0 {
+                // The left walker's last write lands one row past the end.
+                row += i32::from(left) * step;
+                return table.set(row, column, x);
+            }
+            err = err.wrapping_add(dy as i16);
+            if err >= 0 {
+                if !left {
+                    table.set(row, column, x);
+                }
+                row += step;
+                err = err.wrapping_sub(dx as i16);
+                if left {
+                    table.set(row, column, x);
+                }
+            }
+        }
+    }
+    let mut err = -((dy as i16) >> 1);
+    let mut count = dy.wrapping_add(1);
+    x = x.wrapping_add(i16::from(!left));
+    loop {
+        table.set(row, column, x);
+        row += step;
+        count = count.wrapping_sub(1);
+        if count == 0 {
+            return;
+        }
+        err = err.wrapping_add(dx as i16);
+        if err >= 0 {
+            x = x.wrapping_add(1);
+            err = err.wrapping_sub(dy as i16);
+        }
+    }
+}
+
+/// `gfx_fill_polygon` (`1fe6:4d7d`): a polygon in one colour, clipped to the buffer, if
+/// it faces the viewer: with `t` the top corner (the highest; of those the leftmost,
+/// the last one listed on a tie), `n` the next and `p` the one before, `(n.x - t.x) *
+/// (p.y - t.y) < (n.y - t.y) * (p.x - t.x)`, so its corners run anticlockwise on
+/// screen. The edges and spans are `docs/render.md`'s, "The polygon fill (T-121)".
+// shortcut: rows no edge writes (only for corners that are not convex) are left
+// empty, where the original fills them from what an earlier polygon left in its
+// table; keep the table between calls if a capture needs it.
+pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
+    let Some(&(_, first_y)) = corners.first() else {
+        return;
+    };
+    let (width, height) = (fb.surface().width, fb.surface().height);
+    let (mut top, mut min_y, mut max_y, mut min_x, mut max_x) = (0, i16::MAX, first_y, i16::MAX, 0);
+    for (i, &(x, y)) in corners.iter().enumerate() {
+        if y <= min_y {
+            if y < min_y || x <= corners[top].0 {
+                top = i;
+            }
+            min_y = y;
+        } else {
+            max_y = max_y.max(y);
+        }
+        (min_x, max_x) = (min_x.min(x), max_x.max(x));
+    }
+    let clip = Clip {
+        top: 0,
+        left: 0,
+        bottom: height as i16,
+        right: width as i16,
+    };
+    let (low, high) = (
+        clip.bits((min_x, min_y), sign_less),
+        clip.bits((max_x, max_y), sign_less),
+    );
+    let n = corners.len();
+    let (t, next, prev) = (
+        corners[top],
+        corners[(top + 1) % n],
+        corners[(top + n - 1) % n],
+    );
+    if low & high != 0 || !faces(t, next, prev) {
+        return;
+    }
+    let mut table = Table(vec![[0; 2]; height + 1]);
+    for (column, forward) in [(0, 1), (1, n - 1)] {
+        let mut i = top;
+        loop {
+            let j = (i + forward) % n;
+            // shortcut: edges are walked unclipped, the rows and spans cut to the
+            // buffer, where the original moves their ends onto it (T-121 part 2).
+            walk(&mut table, column, corners[i], corners[j]);
+            i = j;
+            if corners[i].1 >= max_y {
+                break;
+            }
+        }
+    }
+    let rows = min_y.max(clip.top)..=max_y.min(clip.bottom - 1);
+    let w = width as i16;
+    for (row, &[left, right]) in table.0.iter().enumerate() {
+        // The clipped edges keep both in 0..=width, where the original's unsigned
+        // compare is this one.
+        let (left, right) = (left.clamp(0, w) as usize, right.clamp(0, w) as usize);
+        if rows.contains(&(row as i16)) && right > left {
+            fb.pixels_mut()[row * width + left..row * width + right].fill(colour);
+        }
+    }
+}
+
+/// The facing test, in 32 bits; when a corner difference overflows 16 bits, of the
+/// halved coordinates.
+fn faces(t: Point, n: Point, p: Point) -> bool {
+    let pairs = [(n.0, t.0), (n.1, t.1), (p.0, t.0), (p.1, t.1)];
+    let [nx, ny, px, py] = if pairs.iter().any(|&(a, b)| a.checked_sub(b).is_none()) {
+        pairs.map(|(a, b)| i32::from((a >> 1) - (b >> 1)))
+    } else {
+        pairs.map(|(a, b)| i32::from(a - b))
+    };
+    (nx * py).wrapping_sub(ny * px) < 0
 }
 
 #[cfg(test)]
@@ -301,11 +441,12 @@ mod tests {
         let mut fb = Framebuffer::new(Size::new(8, 6));
         // Top (3, 1), then down-left, then down-right: anticlockwise on screen. Each
         // row runs from the left edge up to, not including, the right one.
+        // The edges' own pixels are inside on both sides.
         fill_polygon(&mut fb, &[(3, 1), (1, 4), (5, 4)], 7);
         assert_eq!(
             ascii(&fb),
             [
-                "........", "........", "........", "..77....", ".7777...", "........"
+                "........", "...7....", "...77...", "..7777..", ".77777..", "........"
             ]
         );
         // The other way round faces away.
@@ -316,6 +457,119 @@ mod tests {
         let mut fb = Framebuffer::new(Size::new(4, 3));
         fill_polygon(&mut fb, &[(-5, -5), (-5, 9), (9, 9), (9, -5)], 2);
         assert!(fb.pixels().iter().all(|&p| p == 2));
+    }
+
+    fn filled(size: (usize, usize), corners: &[Point]) -> Framebuffer {
+        let mut fb = Framebuffer::new(Size::new(size.0, size.1));
+        fill_polygon(&mut fb, corners, 7);
+        fb
+    }
+
+    #[test]
+    fn a_left_edge_walked_upward_writes_the_row_above_its_corner() {
+        // Two down-left edges on the left chain, the second x-major: walked from its
+        // lower end, it writes 8 + 1 into row 2, where the first edge's row starts at 10.
+        let fb = filled((24, 7), &[(16, 0), (8, 3), (2, 5), (20, 5)]);
+        assert_eq!(ascii(&fb)[2], ".........7777777777.....");
+        insta::assert_snapshot!(ascii(&fb).join("\n"));
+    }
+
+    #[test]
+    fn overflowing_differences_are_taken_of_the_halves() {
+        // Exactly, -1 (facing); halved, (8500 - -8500) * 0 - 0 * 8500 = 0 (not).
+        let fb = filled((8, 6), &[(-17000, 0), (17000, 1), (17001, 1)]);
+        assert!(fb.pixels().iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn the_box_test_reads_the_sign_of_the_difference() {
+        // 6 - -32765 overflows to negative: the box's top counts as below the
+        // bottom, as its bottom (300) is, so nothing is drawn.
+        let fb = filled((8, 6), &[(3, -32765), (-100, 300), (100, 300)]);
+        assert!(fb.pixels().iter().all(|&p| p == 0));
+    }
+
+    /// The traced rules restated per pixel (`docs/render.md`, "The polygon fill"), for
+    /// corners inside the buffer: an edge is the `D + 1` pixels of a line from its end
+    /// with the smaller x, the minor axis moved `(i * m - D / 2 + D) / D` (at most `i`)
+    /// after step `i`; a row's left x is the first pixel's of the last left-chain edge on it, the
+    /// right x one past the last pixel's of the last right-chain edge on it, and an
+    /// x-major left edge writes its last x + 1 one row past its last pixel.
+    fn reference(corners: &[Point], (w, h): (usize, usize)) -> Vec<bool> {
+        let n = corners.len();
+        let c = |i: usize| (i64::from(corners[i].0), i64::from(corners[i].1));
+        let top = (0..n).rev().min_by_key(|&i| (c(i).1, c(i).0)).unwrap();
+        let (t, next, prev) = (c(top), c((top + 1) % n), c((top + n - 1) % n));
+        let mut mask = vec![false; w * h];
+        if (next.0 - t.0) * (prev.1 - t.1) >= (next.1 - t.1) * (prev.0 - t.0) {
+            return mask;
+        }
+        let max_y = (0..n).map(|i| c(i).1).max().unwrap();
+        let mut rows = vec![[0i64; 2]; h + 2];
+        for (column, forward) in [(0, 1), (1, n - 1)] {
+            let mut i = top;
+            loop {
+                let j = (i + forward) % n;
+                let (a, b) = (c(i), c(j));
+                let (p0, p1) = if b.0 < a.0 { (b, a) } else { (a, b) };
+                let s = if p0.1 >= p1.1 { -1 } else { 1 };
+                let (dx, dy) = (p1.0 - p0.0, (p1.1 - p0.1).abs());
+                let (major, minor) = (dx.max(dy), dx.min(dy));
+                // At most one minor step a major step (only `D = 1` meets it).
+                let moved = |i: i64| match i {
+                    0 => 0,
+                    _ => i.min((i * minor - major / 2 + major) / major),
+                };
+                let pixels: Vec<(i64, i64)> = (0..=major)
+                    .map(|i| match dy < dx {
+                        true => (p0.0 + i, p0.1 + s * moved(i)),
+                        false => (p0.0 + moved(i), p0.1 + s * i),
+                    })
+                    .collect();
+                let mut ends = std::collections::BTreeMap::new();
+                for &(x, y) in &pixels {
+                    let e = ends.entry(y).or_insert((x, x));
+                    *e = (e.0.min(x), e.1.max(x));
+                }
+                for (y, (first, last)) in ends {
+                    rows[(y + 1) as usize][column] = if column == 0 { first } else { last + 1 };
+                }
+                if column == 0 && dy < dx {
+                    let (x, y) = pixels[pixels.len() - 1];
+                    rows[(y + s + 1) as usize][0] = x + 1;
+                }
+                i = j;
+                if c(i).1 >= max_y {
+                    break;
+                }
+            }
+        }
+        for y in t.1..=max_y.min(h as i64 - 1) {
+            let [left, right] = rows[(y + 1) as usize];
+            for x in left..right {
+                mask[y as usize * w + x as usize] = true;
+            }
+        }
+        mask
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn polygons_inside_fill_as_the_traced_rules(
+            corners in proptest::collection::vec((0i16..20, 0i16..14), 3..=4)
+        ) {
+            let fb = filled((20, 14), &corners);
+            let mask: Vec<bool> = fb.pixels().iter().map(|&p| p != 0).collect();
+            proptest::prop_assert_eq!(mask, reference(&corners, (20, 14)));
+        }
+
+        #[test]
+        fn polygons_anywhere_stay_in_the_buffer(
+            corners in proptest::collection::vec((-40i16..60, -40i16..60), 3..=8)
+        ) {
+            let fb = filled((20, 14), &corners);
+            proptest::prop_assert!(fb.pixels().iter().all(|&p| p == 0 || p == 7));
+        }
     }
 
     #[test]
