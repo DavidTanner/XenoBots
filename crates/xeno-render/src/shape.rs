@@ -905,4 +905,183 @@ mod tests {
         assert!(!run(&mut fb, &mut r, &[0x12, 0x26, 0], builtins));
         assert_eq!(r.point(0xe8), (0, 0));
     }
+
+    /// Ten units ahead, and the test buffer's size.
+    const CENTRE: [i32; 3] = [0, 10 << 16, 0];
+    const SIZE: (u16, u16) = (100, 60);
+    const NONE: Builtins = Builtins {
+        block: &[],
+        hill: &[],
+    };
+
+    /// `program` run from [`CENTRE`] with [`shape`]'s sizes and `turn`.
+    fn ran(program: &[u8], turn: [Trig; 2]) -> (Run<'static>, Vec<u8>) {
+        let c: &'static Camera = Box::leak(Box::new(camera()));
+        let s: &'static Shape = Box::leak(Box::new(Shape {
+            turn,
+            ..shape(program)
+        }));
+        let mut fb = Framebuffer::new(Size::new(SIZE.0.into(), SIZE.1.into()));
+        let mut r = Run::new(c, CENTRE, s);
+        assert!(run(&mut fb, &mut r, &s.program, NONE));
+        (r, fb.pixels().to_vec())
+    }
+
+    /// A run to project the expected points with, at `height`.
+    fn expect(height: i16) -> Run<'static> {
+        let (r, _) = ran(&[], [Trig::default(), ONE]);
+        Run { height, ..r }
+    }
+
+    #[test]
+    fn op_0x02_makes_points_on_the_axes_at_twice_the_diagonal() {
+        // The diagonal is half a unit: the points are a unit out, a quarter unit below.
+        let (r, _) = ran(&[0x02, 0], [Trig::default(), ONE]);
+        // 11 ahead: 230 / 4 / 11 = 5 down; a unit left of 10 ahead: 23 left.
+        assert_eq!((r.point(0xfc), r.point(0xf8)), ((50, 35), (27, 35)));
+        let mut e = expect(-0x40);
+        assert_eq!(r.point(0xf4), e.project(0, -1 << 16, SIZE));
+        assert_eq!(r.point(0xf0), e.project(1 << 16, 0, SIZE));
+        assert_eq!(r.point(0xec), (50, 35));
+        // The centre a quarter unit up, and the height back as it was.
+        assert_eq!((r.point(0xe8), r.height), ((50, 25), 0x40));
+    }
+
+    #[test]
+    fn ops_0x04_to_0x08_turn_corners_by_the_heading_less_the_bearing() {
+        // The radius is a unit, the diagonal half: corners (x, y) across and in depth
+        // before the turn, each into the first slot at the height and negated into the
+        // second at the height below.
+        type Corners<'a> = &'a [((i32, i32), (u8, u8))];
+        let (r, d) = (1 << 16, 1 << 15);
+        let ops: [(u8, Corners); 3] = [
+            (
+                0x04,
+                &[
+                    ((d, r), (0xfc, 0xe0)),
+                    ((-d, r), (0xf8, 0xe4)),
+                    ((-d, -r), (0xf4, 0xe8)),
+                    ((d, -r), (0xf0, 0xec)),
+                ],
+            ),
+            (
+                0x06,
+                &[
+                    ((0, r), (0xfc, 0xe0)),
+                    ((-d, 0), (0xf8, 0xe4)),
+                    ((0, -r), (0xf4, 0xe8)),
+                    ((d, 0), (0xf0, 0xec)),
+                ],
+            ),
+            (
+                0x08,
+                &[
+                    ((r, 0), (0xfc, 0xd0)),
+                    ((d, d), (0xf8, 0xd4)),
+                    ((0, r), (0xf4, 0xd8)),
+                    ((-d, d), (0xf0, 0xdc)),
+                    ((-r, 0), (0xec, 0xc0)),
+                    ((-d, -d), (0xe8, 0xc4)),
+                    ((0, -r), (0xe4, 0xc8)),
+                    ((d, -d), (0xe0, 0xcc)),
+                ],
+            ),
+        ];
+        let half = Trig {
+            magnitude: 0x8000,
+            ..Trig::default()
+        };
+        let minus_one = Trig {
+            negative: true,
+            ..ONE
+        };
+        // Sine and cosine, and where they turn (x, y) to, anticlockwise.
+        type Turn = fn((i32, i32)) -> (i32, i32);
+        let turns: [([Trig; 2], Turn); 4] = [
+            ([Trig::default(), ONE], |(x, y)| (x, y)),
+            ([ONE, Trig::default()], |(x, y)| (-y, x)),
+            ([minus_one, Trig::default()], |(x, y)| (y, -x)),
+            ([half, half], |(x, y)| ((x - y) / 2, (x + y) / 2)),
+        ];
+        // The camera looks along +y with no turn: across and depth are x and y.
+        let (mut up, mut down) = (expect(0x40), expect(-0x40));
+        for (op, corners) in ops {
+            for (i, (turn, turned)) in turns.into_iter().enumerate() {
+                let (got, _) = ran(&[op, 0], turn);
+                for &(corner, (first, second)) in corners {
+                    let (x, y) = turned(corner);
+                    let at = format!("op {op:#x}, turn {i}, {corner:?}");
+                    assert_eq!(got.point(first), up.project(x, y, SIZE), "{at}");
+                    assert_eq!(got.point(second), down.project(-x, -y, SIZE), "{at}");
+                }
+                assert_eq!(got.height, 0x40);
+            }
+        }
+    }
+
+    #[test]
+    fn op_0x22_makes_points_beside_the_base_one_from_leftover_registers() {
+        let (mut r, _) = ran(&[0x22, 0], [Trig::default(), ONE]);
+        // The height, a quarter unit, to the sides and in depth, a quarter unit below.
+        let h = 0x4000;
+        let mut e = expect(-0x40);
+        assert_eq!(r.point(0xe0), e.project(-h, h, SIZE));
+        assert_eq!(r.point(0xd0), e.project(h, -h, SIZE));
+        assert_eq!(r.point(0xc8), e.project(h, h, SIZE));
+        assert_eq!(r.point(0xec), e.project(0, 0, SIZE));
+        // The second's depth is the first's x (45) and the mantissa of its divisor
+        // (10.25 units: 0xa40) halved, as a 16.16, less the height.
+        assert_eq!(r.point(0xe0).0, 45);
+        let depth = (45 << 16 | 0x520) - h;
+        assert_eq!(r.point(0xd8), e.project(-h, depth, SIZE));
+        let mut f = expect(-0x40);
+        f.beside((-h, h), SIZE);
+        assert_eq!(f.bx, 0x520);
+        // Behind, the divisor is |X|: 3 units (0x300 with 8 bits shifted out).
+        f.beside((3 << 16, -11 << 16), SIZE);
+        assert_eq!(f.bx, 0x180);
+        assert_eq!((r.point(0xe8), r.height), ((50, 25), 0x40));
+        // The base is the last point turned to the camera by `1000:20f4`.
+        let p = r.project(1 << 16, 0, SIZE);
+        assert_eq!(r.beside((0, 0), SIZE), p);
+    }
+
+    #[test]
+    fn op_0x24_extends_a_point_by_half_the_way_from_another() {
+        let c = camera();
+        let s = shape(&[]);
+        let mut r = Run::new(&c, CENTRE, &s);
+        r.set(0xfc, (3, -3));
+        r.set(0xf8, (0, 0));
+        r.set(0xf4, (20000, 0));
+        r.set(0xf0, (-20000, 0));
+        let mut fb = Framebuffer::new(Size::new(4, 4));
+        let program = [0x24, 0xec, 0xfc, 0xf8, 0x24, 0xe8, 0xf4, 0xf0, 0];
+        assert!(run(&mut fb, &mut r, &program, NONE));
+        // 9 >> 1 and -9 >> 1 (rounded down); 80,000 >> 1 kept to 16 bits.
+        assert_eq!(r.point(0xec), (4, -5));
+        assert_eq!(r.point(0xe8), (40000u16 as i16, 0));
+    }
+
+    #[test]
+    fn the_block_op_runs_the_built_in_box_program() {
+        // A made-up box program: op 0x04's corners, then the top face.
+        let builtins = Builtins {
+            block: &[0x04, 0x10, 0xfc, 0xf8, 0xf4, 0xf0, 7, 0],
+            hill: &[],
+        };
+        let s = Shape {
+            turn: [Trig::default(), ONE],
+            ..shape(&[0x12, 0])
+        };
+        let colours = |z: i32| {
+            let c = Camera { z, ..camera() };
+            let mut fb = Framebuffer::new(Size::new(100, 60));
+            draw(&mut fb, &c, CENTRE, &s, builtins);
+            fb.pixels().contains(&7)
+        };
+        // From a unit up the top shows; from below it faces away.
+        assert!(colours(1 << 16));
+        assert!(!colours(-1 << 16));
+    }
 }

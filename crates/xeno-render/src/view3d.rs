@@ -888,10 +888,11 @@ mod tests {
 
     /// Every stock hill, from 1.2 to 8 radii in front with the eye at its top (cut by
     /// every side of the view when near), fills some pixels in the hill program's
-    /// colours (57 to 61).
+    /// colours (57 to 61); every stock block (the editor's closing record), from 1.2 to
+    /// 8 times its largest size, in the block program's (7 to 14), turned or not.
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
-    fn real_assets_stock_hills_fill_in_their_colours() {
+    fn real_assets_stock_terrain_fills_in_its_colours() {
         use xeno_formats::{lzexe, usg};
         let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
             return;
@@ -908,16 +909,26 @@ mod tests {
         let exe = files.iter().find(|p| name(p) == "xeno.exe").unwrap();
         let v = xeno_formats::view3d::read(&lzexe::unpack(&std::fs::read(exe).unwrap()).unwrap())
             .unwrap();
-        let mut hills = 0;
+        let (zero, one) = (camera(0).sin, camera(0).cos);
+        let mut seen = [0, 0];
         for path in files.iter().filter(|p| name(p).ends_with(".usg")) {
             let scenario = usg::parse(&std::fs::read(path).unwrap()).unwrap();
             for f in scenario.terrain.iter().flat_map(|t| &t.features) {
-                if f.shape.first() != Some(&usg::TerrainFeature::HILL) {
-                    continue;
-                }
-                hills += 1;
-                for tenths in [12, 20, 40, 80] {
-                    let d = (i32::from(f.radius) << 8) / 10 * tenths;
+                let (kind, colours, size) = match f.shape.first() {
+                    Some(&usg::TerrainFeature::HILL) => (0, 57..=61, f.radius),
+                    Some(&usg::TerrainFeature::BLOCK) => {
+                        (1, 7..=14, f.radius.max(f.diagonal).max(f.height))
+                    }
+                    _ => continue,
+                };
+                seen[kind] += 1;
+                for (tenths, turn) in [
+                    (12, [zero, one]),
+                    (20, [one, zero]),
+                    (40, [zero, one]),
+                    (80, [one, zero]),
+                ] {
+                    let d = (i32::from(size) << 8) / 10 * tenths;
                     let c = Camera {
                         x: f.x,
                         y: f.y - d,
@@ -933,7 +944,7 @@ mod tests {
                             diagonal: f.diagonal,
                             height: f.height,
                             program: f.shape.clone(),
-                            ..Shape::default()
+                            turn,
                         }),
                         ..node(0, 0, 0)
                     };
@@ -944,13 +955,13 @@ mod tests {
                     let mut fb = Framebuffer::new(Size::MODE_13H);
                     fb.draw_view(&v, &c, &[node], &[], None);
                     assert!(
-                        fb.pixels().iter().any(|p| (57..=61).contains(p)),
+                        fb.pixels().iter().any(|p| colours.contains(p)),
                         "{}: {f:?} from {tenths} tenths",
                         name(path)
                     );
                 }
             }
         }
-        assert!(hills > 0);
+        assert!(seen.iter().all(|&n| n > 0), "{seen:?}");
     }
 }

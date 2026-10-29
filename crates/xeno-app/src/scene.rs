@@ -418,4 +418,47 @@ mod tests {
         let scout = camera(&world, EntityId(5), &view, &tables).unwrap();
         assert_eq!(scout.z, 0x0c80);
     }
+
+    #[test]
+    fn terrain_shapes_turn_by_the_heading_less_the_bearing() {
+        let tables = crate::mission::tests::test_assets().motion;
+        let mut world = World::default();
+        world.insert(EntityId(2), entity(ObjectKind::Humanoid, 0, 0, State::None));
+        let eye = Camera {
+            heading: 0,
+            ..camera(&world, EntityId(2), &view(), &tables).unwrap()
+        };
+        let feature = |x: i16, y: i16| TerrainFeature {
+            size: 0x18,
+            kind: TerrainFeature::BLOCK,
+            point_slots: 8,
+            x: Fixed::from_int(x).0,
+            y: Fixed::from_int(y).0,
+            z: 0,
+            radius: 0x100,
+            diagonal: 0x100,
+            height: 0x100,
+            shape: vec![TerrainFeature::BLOCK, 0],
+        };
+        let terrain = [feature(0, 10), feature(10, 0)];
+        let nodes = nodes(&world, &view(), &eye, &tables, &terrain);
+        let at = |x: i16| nodes.iter().find(|n| n.position[0] == Fixed::from_int(x).0);
+        let turn = |x: i16| at(x).map(|n| (n.bearing, n.shape.as_ref().unwrap().turn));
+        let one = Trig {
+            magnitude: 0xffff,
+            one: true,
+            negative: false,
+        };
+        // Ahead, no turn: sine 0. To the right, a quarter turn: the heading (0) less
+        // it is a quarter turn back, sine -1.
+        assert_eq!(turn(0), Some((0, [Trig::default(), one])));
+        let right = Trig {
+            negative: true,
+            ..one
+        };
+        assert_eq!(
+            turn(10).map(|(b, [sin, _])| (b, sin)),
+            Some((0x4000, right))
+        );
+    }
 }
