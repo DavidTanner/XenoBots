@@ -28,6 +28,10 @@ fn shot(world: &World, id: u16) -> Shot {
     }
 }
 
+fn z(world: &World, id: u16) -> i32 {
+    world.get(EntityId(id)).unwrap().z.0
+}
+
 fn hit_points(events: &[Event]) -> usize {
     events
         .iter()
@@ -78,7 +82,7 @@ fn a_humanoid_s_homing_shot_waits_turns_on_its_target_and_hits_it() {
     // height up, with no speed until its first turn.
     let s = shot(&world, 0);
     assert_eq!(
-        (s.flight, s.z, s.damage, s.target),
+        (s.flight, z(&world, 0), s.damage, s.target),
         (Flight::Homing, 0xe00, 4, Some(EntityId(6)))
     );
     assert_eq!(
@@ -143,7 +147,10 @@ fn a_wild_shell_arcs_and_falls_to_the_ground_heard_only_if_it_does_more_than_1()
     let cannon = tables.weapons.guns[5];
     assert!(fire(&mut world, EntityId(4), &cannon, &tables, &mut random).is_some());
     let s = shot(&world, 0);
-    assert_eq!((s.flight, s.z, s.damage), (Flight::Shell, 0x900, 2));
+    assert_eq!(
+        (s.flight, z(&world, 0), s.damage),
+        (Flight::Shell, 0x900, 2)
+    );
     let mut ticks = 0;
     let mut events = Vec::new();
     while world
@@ -304,7 +311,10 @@ fn the_tail_missile_waits_boosts_then_homes_and_blasts_its_target() {
     let tail = tables.weapons.guns[3];
     assert!(fire(&mut world, EntityId(4), &tail, &tables, &mut random).is_some());
     let s = shot(&world, 0);
-    assert_eq!((s.flight, s.z, s.turn), (Flight::Tail, 0x19c0, 0x16c));
+    assert_eq!(
+        (s.flight, z(&world, 0), s.turn),
+        (Flight::Tail, 0x19c0, 0x16c)
+    );
     for _ in 0..20 {
         tick_shots(&mut world, &mut random);
     }

@@ -33,8 +33,6 @@ pub enum Flight {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shot {
     pub flight: Flight,
-    /// +0x0c: its height, 16.16.
-    pub z: i32,
     /// Added to x, y and z every step (1/65,536ths).
     pub velocity: [i16; 3],
     pub speed: u16,
@@ -111,14 +109,9 @@ fn offset(at: Position, dx: i16, dy: i16) -> Position {
     }
 }
 
-/// Where the shot `id`'s object is: an object's z is 0, a shot's its own.
-// shortcut: robots, bases and the rest keep no z (T-101), so they stand at 0; hills
-// would lift them.
+/// An object's height (+0x0c).
 fn height(e: &Entity) -> i32 {
-    match e.state {
-        State::Shot(s) => s.z,
-        _ => 0,
-    }
+    e.z.0
 }
 
 /// The heading robot `id` aims a shot of `lead` speed at its target (`1000:4549`):
@@ -217,10 +210,10 @@ pub fn fire(
         at = offset(at, dx, dy);
     }
     let base = height(me);
+    let mut z;
     let target = m.target.filter(|&t| world.get(t).is_some());
     let mut shot = Shot {
         flight: Flight::Shell,
-        z: base,
         velocity: [0; 3],
         speed: 0,
         climb: 0,
@@ -243,12 +236,12 @@ pub fn fire(
             (shot.flight, shot.turn, shot.target) = (Flight::Tail, t.turn, Some(target));
             // Its blast has its own points; the object keeps no damage (T-116).
             shot.damage = 0;
-            shot.z = base.wrapping_add(i32::from(t.height));
+            z = base.wrapping_add(i32::from(t.height));
         }
         SHELL => {
             let s = &w.shell;
             (shot.arming, shot.speed) = (s.arming, s.speed);
-            shot.z = base.wrapping_add(i32::from(s.height));
+            z = base.wrapping_add(i32::from(s.height));
             let spread = |mask: u16, r: &mut Random| (r.word() & mask).wrapping_sub(mask / 2 + 1);
             if m.target.is_some() {
                 let spread = spread(s.spread, random);
@@ -274,17 +267,17 @@ pub fn fire(
                 ObjectKind::Scout => scout_eye(m.stance).wrapping_sub(gun.height),
                 _ => gun.height,
             };
-            shot.z = base.wrapping_add(i32::from(lift as i16));
+            z = base.wrapping_add(i32::from(lift as i16));
         }
         MISSILE => {
             let ms = &w.missile;
             (shot.flight, shot.arming, shot.speed) = (Flight::Missile, ms.arming, ms.speed);
             (shot.life, shot.damage) = (ms.life, ms.damage);
-            shot.z = base.wrapping_add(i32::from(gun.height as i16));
+            z = base.wrapping_add(i32::from(gun.height as i16));
             let spread = (random.word() & ms.spread).wrapping_sub(ms.spread / 2 + 1);
             let aimed = m.target.and_then(|t| world.get(t)).map(|t| {
                 let level = crate::sense::true_distance(at, t.position);
-                (aim_height(tables, t).wrapping_sub(shot.z), level)
+                (aim_height(tables, t).wrapping_sub(z), level)
             });
             // The climb is not kept: the object has no field for it (T-116).
             let climb;
@@ -299,7 +292,7 @@ pub fn fire(
             };
             shot.velocity = velocity3(tables, shot_heading, climb, ms.speed as i16);
             // It moves once as it is made, and keeps its model's heading.
-            at = step(at, &mut shot);
+            (at, z) = step(at, z, &shot);
             shot_heading = ms.heading;
         }
         _ => return Some(slot),
@@ -310,6 +303,8 @@ pub fn fire(
             kind: gun.kind.into(),
             side,
             position: at,
+            z: Fixed(z),
+            model_height: 0,
             heading: shot_heading,
             radius: 0,
             damage: Damage::None,
@@ -319,10 +314,10 @@ pub fn fire(
     Some(slot)
 }
 
-/// One step of the shot's velocity.
-fn step(at: Position, s: &mut Shot) -> Position {
-    s.z = s.z.wrapping_add(i32::from(s.velocity[2]));
-    offset(at, s.velocity[0], s.velocity[1])
+/// One step of the shot's velocity from `at`, height `z`.
+fn step(at: Position, z: i32, s: &Shot) -> (Position, i32) {
+    let z = z.wrapping_add(i32::from(s.velocity[2]));
+    (offset(at, s.velocity[0], s.velocity[1]), z)
 }
 
 /// The first object in slot order a shot at `at`, height `z`, is over and hits
@@ -409,17 +404,19 @@ fn blast(
     }
 }
 
-/// An explosion from `template` where a shot ends, and the explosions' sound unless
+/// An explosion from `template` where shot `id` ends, and the explosions' sound unless
 /// `quiet` (`sim_spawn_explosion`, then `snd_play_sound_effect`).
 fn burst(
     world: &mut World,
-    at: Position,
+    id: EntityId,
     template: Explosion,
     quiet: bool,
     tables: &Tables,
     events: &mut Vec<Event>,
 ) {
-    spawn_explosion(world, at, tables.damage.explosion_kind, template);
+    if let Some(&Entity { position, z, .. }) = world.get(id) {
+        spawn_explosion(world, position, z, tables.damage.explosion_kind, template);
+    }
     if !quiet {
         events.push(Event::Sound {
             event: tables.weapons.blast_sound,
@@ -437,21 +434,19 @@ enum End {
 
 /// Moves shot `id` a step and looks for the ground and, once armed, a hit.
 fn fly(world: &mut World, id: EntityId, s: &mut Shot, tables: &Tables) -> End {
-    let Some(e) = world.get(id) else {
+    let Some(e) = world.get_mut(id) else {
         return End::Flying;
     };
-    let at = step(e.position, s);
-    if let Some(e) = world.get_mut(id) {
-        e.position = at;
-    }
-    if world.terrain.below_ground(at, Fixed(s.z)) {
+    let (at, z) = step(e.position, e.z.0, s);
+    (e.position, e.z) = (at, Fixed(z));
+    if world.terrain.below_ground(at, Fixed(z)) {
         return End::Ground;
     }
     if s.arming != 0 {
         s.arming -= 1;
         return End::Flying;
     }
-    find_hit(world, id, at, s.z, tables).map_or(End::Flying, End::Hit)
+    find_hit(world, id, at, z, tables).map_or(End::Flying, End::Hit)
 }
 
 /// The target of a homing shot or tail missile, if still there.
@@ -490,6 +485,7 @@ pub fn tick(
     let Some(&Entity {
         state: State::Shot(mut s),
         position,
+        z,
         heading,
         ..
     }) = world.get(id)
@@ -509,11 +505,10 @@ pub fn tick(
                     break;
                 }
             }
-            let at = world.get(id).map_or(position, |e| e.position);
             match end {
-                End::Ground => burst(world, at, w.shell.ground, quiet, tables, events),
+                End::Ground => burst(world, id, w.shell.ground, quiet, tables, events),
                 End::Hit(o) => {
-                    burst(world, at, w.shell.hit, quiet, tables, events);
+                    burst(world, id, w.shell.hit, quiet, tables, events);
                     crate::damage::hit(world, o, s.damage, tables, random, events);
                 }
                 End::Flying => {}
@@ -532,7 +527,7 @@ pub fn tick(
                     world.remove(id);
                     return;
                 };
-                let (to, climb, _) = home(tables, position, s.z, t);
+                let (to, climb, _) = home(tables, position, z.0, t);
                 s.climb = climb;
                 heading = turn(heading, to, h.turn);
                 s.velocity = velocity3(tables, heading, s.climb, s.speed as i16);
@@ -550,7 +545,6 @@ pub fn tick(
         }
         Flight::Tail => return tick_tail(world, id, s, heading, tables, random, events),
     };
-    let at = world.get(id).map_or(position, |e| e.position);
     let (hit, ground) = match s.flight {
         Flight::Missile => (w.missile.hit, w.missile.ground),
         _ => (w.homing.hit, w.homing.ground),
@@ -563,9 +557,9 @@ pub fn tick(
             return;
         }
         // Only the shell's explosion on the ground is heard.
-        End::Ground if s.flight != Flight::Shell => burst(world, at, ground, true, tables, events),
+        End::Ground if s.flight != Flight::Shell => burst(world, id, ground, true, tables, events),
         End::Hit(o) if s.flight != Flight::Shell => {
-            burst(world, at, hit, false, tables, events);
+            burst(world, id, hit, false, tables, events);
             crate::damage::hit(world, o, s.damage, tables, random, events);
         }
         _ => {}
@@ -606,7 +600,8 @@ fn tick_tail(
             }
             s.velocity = velocity3(tables, heading, s.climb, s.speed as i16);
             if let Some(e) = world.get_mut(id) {
-                e.position = step(e.position, &mut s);
+                let (at, z) = step(e.position, e.z.0, &s);
+                (e.position, e.z) = (at, Fixed(z));
             }
             return store(world, s, heading);
         }
@@ -619,26 +614,27 @@ fn tick_tail(
     let Some(e) = world.get(id) else {
         return;
     };
-    let position = e.position;
+    let (position, mut z) = (e.position, e.z.0);
     let blasts = match target(world, &s).and_then(|o| world.get(o)) {
         None => true,
         Some(target) => {
-            let (to, climb, distance) = home(tables, position, s.z, target);
+            let (to, climb, distance) = home(tables, position, z, target);
             if distance >> 24 == 0 && (distance >> 8) as u16 <= t.near {
                 s.climb = (climb as i16).clamp(-(t.dive as i16), t.dive as i16) as u16;
             }
             heading = turn(heading, to, s.turn);
             s.velocity = velocity3(tables, heading, s.climb, s.speed as i16);
-            let at = step(position, &mut s);
+            let at;
+            (at, z) = step(position, z, &s);
             if let Some(e) = world.get_mut(id) {
-                e.position = at;
+                (e.position, e.z) = (at, Fixed(z));
             }
-            if world.terrain.below_ground(at, Fixed(s.z)) {
-                burst(world, at, t.explosion, false, tables, events);
+            if world.terrain.below_ground(at, Fixed(z)) {
+                burst(world, id, t.explosion, false, tables, events);
                 world.remove(id);
                 return;
             }
-            let hit = find_hit(world, id, at, s.z, tables).is_some();
+            let hit = find_hit(world, id, at, z, tables).is_some();
             if !hit {
                 return store(world, s, heading);
             }
@@ -647,9 +643,9 @@ fn tick_tail(
     };
     let at = world.get(id).map_or(position, |e| e.position);
     if blasts {
-        blast(world, at, s.z, (t.points, t.radius), tables, random, events);
+        blast(world, at, z, (t.points, t.radius), tables, random, events);
     }
-    burst(world, at, t.explosion, false, tables, events);
+    burst(world, id, t.explosion, false, tables, events);
     // shortcut: removal makes the original's kind 15 for two ticks (`1000:f5a4`); the
     // port frees the slot at once, as it does every object's.
     world.remove(id);

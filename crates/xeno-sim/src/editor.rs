@@ -13,7 +13,7 @@ use crate::orders::{Orders, Robot};
 use crate::pack::SAVED_SCRIPT;
 use crate::terrain::{Paths, Terrain};
 use crate::world::side_code;
-use crate::{Damage, Entity, EntityId, Position, Sim, State, World, damage, script};
+use crate::{Damage, Entity, EntityId, Fixed, Position, Sim, State, World, damage, script};
 
 /// What a press places.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,8 @@ impl Sim {
                         kind: ObjectKind::Obstacle,
                         side: Side::Human,
                         position: at,
+                        z: Fixed(0),
+                        model_height: 0,
                         heading: 0,
                         radius: OBSTACLE_RADIUS,
                         damage: Damage::None,
@@ -211,6 +213,8 @@ impl Sim {
                 kind,
                 side,
                 position: at,
+                z: Fixed(o.z),
+                model_height: o.model_height,
                 heading,
                 radius: o.radius,
                 damage: Damage::of(&o),

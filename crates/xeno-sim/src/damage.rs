@@ -9,7 +9,7 @@ use xeno_formats::usg::{ObjectKind, Side};
 use crate::motion::{Event, Tables, movement};
 use crate::orders::RobotKind;
 use crate::random::Random;
-use crate::world::{Components, Damage, Entity, EntityId, Position, State, World};
+use crate::world::{Components, Damage, Entity, EntityId, Fixed, Position, State, World};
 
 /// The event a hit posts to the robot's script.
 const EVENT_HIT: u8 = 7;
@@ -36,7 +36,7 @@ pub fn hit(
     let Some(e) = world.get_mut(id) else {
         return;
     };
-    let (d, kind, at) = (&tables.damage, e.kind, e.position);
+    let (d, kind, at, z) = (&tables.damage, e.kind, e.position, e.z);
     match (RobotKind::of(kind), &mut e.damage, &mut e.state) {
         (Some(kind), Damage::Robot(parts), _) => {
             // shortcut: the screen flash is the console's (T-104).
@@ -73,7 +73,7 @@ pub fn hit(
             let (sum, carry) = (*taken as u8).overflowing_add(points);
             *taken = sum.into();
             if carry || sum >= d.relay_removed {
-                spawn_explosion(world, at, d.explosion_kind, d.relay_explosion);
+                spawn_explosion(world, at, z, d.explosion_kind, d.relay_explosion);
                 world.remove(id);
                 events.push(Event::Destroyed(id));
             }
@@ -125,7 +125,7 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
     let Some(e) = world.get(id) else {
         return;
     };
-    let (side, at) = (e.side, e.position);
+    let (side, at, z) = (e.side, e.position, e.z);
     let other = match side {
         Side::Human => Side::Alien,
         Side::Alien => Side::Human,
@@ -141,7 +141,7 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
         }
     }
     let d = &tables.damage;
-    spawn_explosion(world, at, d.explosion_kind, d.robot_explosion);
+    spawn_explosion(world, at, z, d.explosion_kind, d.robot_explosion);
     world.units[usize::from(crate::world::side_code(side))].retain(|&u| u != id);
     world.orders.remove(id.0);
     world.remove(id);
@@ -152,13 +152,15 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
     events.push(Event::Destroyed(id));
 }
 
-/// An explosion of `kind` at `at` from `template` (`sim_spawn_explosion`), in the
-/// lowest free slot; none if the slots or the small objects' pool are full.
+/// An explosion of `kind` at `at`, height `z` (the object it replaces), from `template`
+/// (`sim_spawn_explosion`), in the lowest free slot; none if the slots or the small
+/// objects' pool are full.
 // shortcut: a freed slot is reused at once; the original waits for the robots that
 // target the object to let go of it (T-112).
 pub(crate) fn spawn_explosion(
     world: &mut World,
     at: Position,
+    z: Fixed,
     kind: u16,
     template: Explosion,
 ) -> Option<EntityId> {
@@ -167,6 +169,8 @@ pub(crate) fn spawn_explosion(
         kind: kind.into(),
         side: Side::Human,
         position: at,
+        z,
+        model_height: 0,
         heading: template.heading,
         radius: 0x800,
         damage: Damage::None,
@@ -207,7 +211,7 @@ pub fn step_base_end(
     let Some(e) = world.get(id) else {
         return;
     };
-    let (at, won) = (e.position, e.side == Side::Alien);
+    let (at, z, won) = (e.position, e.z, e.side == Side::Alien);
     let State::Base { end_step, .. } = e.state else {
         return;
     };
@@ -238,8 +242,13 @@ pub fn step_base_end(
         _ => (None, 0, end_step),
     };
     if let Some(t) = template {
-        let explosion =
-            spawn_explosion(world, at, d.explosion_kind, end.explosions[usize::from(t)]);
+        let explosion = spawn_explosion(
+            world,
+            at,
+            z,
+            d.explosion_kind,
+            end.explosions[usize::from(t)],
+        );
         // shortcut: when no explosion could be made the original moves whatever its
         // allocator left in `SI`; the port moves nothing (the 200-object pool is full).
         let mut scatter = || i32::from((random.word() & 0x3fff) as i16 - 0x2000);

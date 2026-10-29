@@ -191,19 +191,22 @@ pub fn deploy(
 /// `1000:cc69`: a relay in the lowest free slot at robot `id`'s position, set up
 /// (`1000:cc2a`) folded, unpowered and on no side (+0x16 cleared). False with no room.
 fn make(world: &mut World, id: EntityId, radius: u16, random: &mut Random) -> bool {
-    let (Some(slot), Some(at)) = (
+    let (Some(slot), Some((at, z))) = (
         crate::damage::alloc_small(world),
-        world.get(id).map(|e| e.position),
+        world.get(id).map(|e| (e.position, e.z)),
     ) else {
         return false;
     };
     // shortcut: the relay's clock (+0x1e), a random byte, is drawn but not kept, nor
-    // its state, stage, power and links: relays have no tick until T-148.
+    // its state, stage, look, model height, power and links: relays have no tick until
+    // T-148.
     _ = random.word();
     let relay = Entity {
         kind: ObjectKind::Relay,
         side: Side::Human,
         position: at,
+        z,
+        model_height: 0,
         heading: 0,
         radius,
         damage: Damage::Taken(0),
@@ -265,6 +268,8 @@ mod tests {
             kind: ObjectKind::Relay,
             side: Side::Alien,
             position: at(128.6, 129.0),
+            z: Fixed(0),
+            model_height: 0,
             heading: 0,
             radius: 0x500,
             damage: Damage::Taken(0),

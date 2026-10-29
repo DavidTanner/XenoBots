@@ -51,6 +51,11 @@ pub struct Entity {
     pub kind: ObjectKind,
     pub side: Side,
     pub position: Position,
+    /// +0x0c: its height, 16.16 (a robot's is the ground's, set as it moves).
+    pub z: Fixed,
+    /// +0x12: where its model's anchor sits above `z`, in 1/65,536ths of a unit
+    /// (`docs/render.md`, "A node"); a walking robot's bobs.
+    pub model_height: u16,
     /// +0x10: 65,536 to a turn.
     pub heading: u16,
     /// +0x14: 8.8 fixed point.
@@ -131,6 +136,9 @@ impl Depot {
 pub struct Movement {
     /// +0x1a: the tick counter, stepping by 2.
     pub tick: u8,
+    /// +0x1c: the eye height, the 3D view's camera above `z` (`docs/render.md`, "The
+    /// camera"), in 1/65,536ths of a unit.
+    pub eye_height: u16,
     /// +0x1e, +0x20: added to x and y every tick, in 1/65,536ths.
     pub velocity: (i16, i16),
     /// +0x23 without bit 7 (the program bit, kept in the [`OrderBook`]): bit 0 no
@@ -280,6 +288,7 @@ impl Movement {
         };
         Movement {
             tick: r.tick,
+            eye_height: r.eye_height,
             velocity: (r.velocity_x, r.velocity_y),
             mode: r.mode & !usg::Robot::PROGRAM,
             speed: r.speed,
@@ -356,6 +365,7 @@ impl StateHash for State {
             State::Robot(m) => {
                 h.u8(0);
                 h.bytes(&[m.tick, m.mode]);
+                h.u16(m.eye_height);
                 h.u16(m.velocity.0 as u16);
                 h.u16(m.velocity.1 as u16);
                 h.u16(m.speed as u16);
@@ -428,7 +438,6 @@ impl StateHash for State {
             State::Shot(s) => {
                 h.u8(4);
                 h.u8(s.flight as u8);
-                h.i32(s.z);
                 s.velocity.iter().for_each(|&v| h.u16(v as u16));
                 for n in [s.speed, s.climb, s.age, s.arming, s.life, s.turn] {
                     h.u16(n);
@@ -618,6 +627,8 @@ impl World {
                         x: Fixed(o.x),
                         y: Fixed(o.y),
                     },
+                    z: Fixed(o.z),
+                    model_height: o.model_height,
                     heading: o.heading,
                     radius: o.radius,
                     damage: Damage::of(o),
@@ -758,6 +769,8 @@ impl StateHash for World {
             h.u8(side_code(e.side));
             h.i32(e.position.x.0);
             h.i32(e.position.y.0);
+            h.i32(e.z.0);
+            h.u16(e.model_height);
             h.u16(e.heading);
             h.u16(e.radius);
             e.damage.state_hash(h);
@@ -797,6 +810,8 @@ mod tests {
                 x: Fixed::from_int(x),
                 y: Fixed::from_int(y),
             },
+            z: Fixed(0),
+            model_height: 0,
             heading: 0,
             radius: 0xa00,
             damage: Damage::None,
@@ -831,7 +846,13 @@ mod tests {
         assert_ne!(hash(&a), hash(&b));
         b.get_mut(EntityId(2)).unwrap().side = Side::Human;
         assert_eq!(hash(&a), hash(&b));
-        // So do a turn and damage.
+        // So do a height, a model height, a turn and damage.
+        b.get_mut(EntityId(7)).unwrap().z.0 += 1;
+        assert_ne!(hash(&a), hash(&b));
+        b.get_mut(EntityId(7)).unwrap().z.0 -= 1;
+        b.get_mut(EntityId(7)).unwrap().model_height = 1;
+        assert_ne!(hash(&a), hash(&b));
+        b.get_mut(EntityId(7)).unwrap().model_height = 0;
         b.get_mut(EntityId(7)).unwrap().heading = 1;
         assert_ne!(hash(&a), hash(&b));
         b.get_mut(EntityId(7)).unwrap().heading = 0;
@@ -906,6 +927,13 @@ mod tests {
             panic!("the scorpion moves")
         };
         m.grid.step ^= 0x40;
+        assert_ne!(hash(&moved), hash(&world));
+        // So is the eye height.
+        let mut moved = world.clone();
+        let State::Robot(m) = &mut moved.get_mut(EntityId(5)).unwrap().state else {
+            panic!("the scorpion moves")
+        };
+        m.eye_height ^= 1;
         assert_ne!(hash(&moved), hash(&world));
         // Fractions are kept: the plain fixture's humanoid is at (95.5, 136.25).
         let plain = xeno_formats::usg::parse(&xeno_formats::fixtures::synthetic_usg()).unwrap();

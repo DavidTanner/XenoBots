@@ -60,6 +60,8 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
             kind: ObjectKind::Humanoid,
             side: Side::Alien,
             position: at(10, 10),
+            z: Fixed(0),
+            model_height: 0,
             heading: 0,
             radius: 0xa00,
             damage: Damage::Robot(Components {
@@ -79,6 +81,8 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
             kind: ObjectKind::Base,
             side: Side::Alien,
             position: at(0, 0),
+            z: Fixed(0),
+            model_height: 0,
             heading: 0,
             radius: 0x2300,
             damage: Damage::Taken(0),

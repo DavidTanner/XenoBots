@@ -64,7 +64,7 @@ impl World {
     // shortcut: the reference counts are the loaded ones (stock files hold 0, 1 and
     // junk; the port reads none), not the live counts with the pack's one a target (T-154).
     // shortcut: relays, shots and explosions made in play keep only what the sim keeps
-    // (no relay set-up bytes, flags beyond the side, or model heights; T-148).
+    // (no relay set-up bytes or flags beyond the side; T-148).
     pub fn save(&self, loaded: &Scenario, program_table: u16) -> Scenario {
         let w = self;
         let mut s = loaded.clone();
@@ -142,7 +142,9 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
     r.u16(0, e.kind.into());
     r.i32(4, e.position.x.0);
     r.i32(8, e.position.y.0);
+    r.i32(0x0c, e.z.0);
     r.u16(0x10, e.heading);
+    r.u16(0x12, e.model_height);
     r.u16(0x14, e.radius);
     let side = side_code(e.side) * flag::ALIEN;
     r.u8(0x16, (r.get(0x16) & !flag::ALIEN) | side);
@@ -207,7 +209,6 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             r.put(0x1a, &[*last, *ticks, *countdown]);
         }
         State::Shot(s) => {
-            r.i32(0x0c, s.z);
             for &(at, f) in layout(s.flight) {
                 match f {
                     Field::Damage | Field::Phase | Field::Frame => r.u8(at, f.get(s) as u8),
@@ -230,6 +231,7 @@ fn robot(
 ) {
     r.u8(0x17, m.status);
     r.u8(0x1a, m.tick);
+    r.u16(0x1c, m.eye_height);
     r.u16(0x1e, m.velocity.0 as u16);
     r.u16(0x20, m.velocity.1 as u16);
     let mut mode = m.mode;
@@ -446,7 +448,6 @@ pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Table
             };
             let mut s = Shot {
                 flight,
-                z: o.z,
                 velocity: [0; 3],
                 speed: 0,
                 climb: 0,

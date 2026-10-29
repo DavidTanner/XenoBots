@@ -80,6 +80,8 @@ fn entities() -> impl Strategy<Value = Vec<(u16, Entity)>> {
                         kind: ObjectKind::from(kind),
                         side,
                         position,
+                        z: Fixed(0),
+                        model_height: 0,
                         heading,
                         radius: 0xa00,
                         damage: Damage::Taken(taken),

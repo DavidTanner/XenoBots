@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -127,8 +127,8 @@ by the state at +0x1b, and the walking animation. The movement routine
    nothing), and it takes a hit of 0 points (`sim_damage_object` with AL 0, AH 1).
    The velocity is **not** recomputed, so the robot keeps going the same way until its
    speed next steps (the next tick, or up to 8 ticks for a scorpion; each tick inside
-   negates the speed again). Otherwise its height is set to the ground's, which is 0
-   outside a hill.
+   negates the speed again). Otherwise its height is set to the ground's, which is
+   always 0 there (below, "Heights").
 
 **Velocity** (`sim_update_robot_velocity`, `1000:d41c`, through
 `sim_scale_by_heading`, `1000:03ad`). It is worked out only when the heading or the
@@ -226,8 +226,7 @@ move each robot walks (`motion::walk`, `docs/render.md`, "Walking"): its step co
 and footstep legs step, and its footsteps are `Event::Sound`s (13 to 15) for it.
 
 The scripts (T-053, below) call `head_for_path_point` and
-`join_nearest_path_point`. Left out until their tasks: the scout's height at +0x1c
-(T-101), the path census (`sim_count_units_on_paths`) and the base's other phases.
+`join_nearest_path_point`. Left out until their tasks: the path census (`sim_count_units_on_paths`) and the base's other phases.
 Where the original reads past a table (a scorpion speed table or entry past the
 last, a path slot over 7, a mission over 6) the port takes the last entry or does
 nothing; `advance_path_point` gives up after 16 tries where the original would loop
@@ -907,7 +906,8 @@ change nothing the sim reads).
 Shortcuts, each named in the code: the screen flash and the messages (T-104); the call sign's slot, the roster's redraw and selection and the view's
 change (T-103, T-104); a freed slot is reused
 at once (the original waits for the robots targeting the object to let go, T-112);
-the explosion's height and +0x19 are not kept (T-100 draws it).
++0x19 is not kept (T-100 draws it); the explosion's z is the destroyed object's
+(T-119).
 
 ## Weapons and shots (T-114)
 
@@ -1046,9 +1046,8 @@ shot kinds (`shot::fire` with a gun, `State::Shot` ticked by `motion::tick` in s
 order), the lead, the hit search and the blast through `damage::hit`, and the
 explosions from their templates. A shot is freed after the damage it does, so an
 explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
-each named in the code: robots, bases and the rest stand at z 0 (T-101); in the field
-by kind (T-147); the coarse bearing for the lead and the missile's level distance
-(T-146); a gone target is an empty slot or one a shot or explosion took; removal
+each named in the code: in the field by kind (T-147); the coarse bearing for the lead
+and the missile's level distance (T-146); a gone target is an empty slot or one a shot or explosion took; removal
 frees the slot at once.
 
 Part 2 (`t-114-fire`): `xeno_sim::weapons` has the trigger (`weapons::trigger`, from
@@ -1177,8 +1176,8 @@ A base's look (+0x18, `State::Base::look`, from the file and in the state hash) 
 by one as the step becomes 4 and 14: the frame of its model in the 3D view
 (`docs/render.md`).
 
-Shortcuts, each named in the code: the explosions' height (the sim keeps no z yet;
-T-101); with the small objects' pool full the original moves
+Shortcuts, each named in the code: the explosions' drop is drawn and not applied
+(T-119 part 2); with the small objects' pool full the original moves
 whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
 or a resumed ended mission) stay where they are, where the original's table runs into
 code.
@@ -1299,6 +1298,65 @@ is launched four ticks later (`real_assets_the_alien_base_launches_a_robot_it_to
 Shortcuts, named in the code: the damage total +0xf9 the repairs and the launch go by
 is not kept (T-140), so any part not whole counts as damaged; the repaired robot's slot
 holds no reference.
+
+## Heights (T-119)
+
+A T-090 pass on `xeno.exe` read who writes an object's z (+0x0c), its model height
+(+0x12, where its model's anchor sits above z in the 3D view, `docs/render.md`) and a
+robot's eye height (+0x1c, the camera above z). All three are in 1/65,536ths of a unit
+(a z is 16.16; the other two are words added to its low word).
+
+**z.** `sim_alloc_object_slot` (`1000:f4b1`) clears every new object from +4, so an
+object starts at 0 unless its set-up copies one: an explosion (`1000:e79a`) and a relay
+(`1000:cc69`) take x, y and z from the object they come from; a shot is made at its
+maker's z plus its gun's height (`docs/sim.md`, "Weapons and shots"). A robot's moves
+end in `sim_check_robot_against_hills` (`1000:d50f`): `sim_test_point_in_hill`
+(`1000:4446`) and, only when that fails, `sim_set_height_to_ground` (`1000:436c`). Both
+walk the `MAPP` records for the first hill (kind 0x14) whose radius holds the point, so
+the second never finds one: **a robot's z is set to 0 on every move that does not end
+in a hill**, and a move into a hill leaves it as it was. Open hills (0x16) are tested by
+neither (no stock file has one), so robots drive through them at 0; the hills a robot
+stands on top of in the 3D view would need a z the code never writes. The launch
+(`1000:6716`) sets z to 0. Nothing else writes a robot's z.
+
+**The explosions' drop.** The base's end script (`docs/sim.md`, "The mission's end")
+calls `sim_lower_explosion_randomly` (`1000:e751`) after each of its explosions: a
+random word, `& 0x7ff`, negated and sign-extended, is added to the 32-bit z, so each
+sinks by 0 to 0x7ff below the base's z. When the explosion could not be made, the
+original lowers whatever the allocator left in `SI`.
+
+**The model height** is set when an object is made (humanoid 0x0a00 `1000:aba7`,
+scorpion 0x0a80 `1000:92df`, scout 0x0c80 `1000:c458`; 0 for shots and explosions; a
+relay's by its stage, T-148) and then by the walking animations (`docs/render.md`,
+"Walking"), each run at the end of the robot's move:
+
+- the humanoid's (`1000:ad67`) on **every** tick, moving or not: `0x0a00 +
+  CS:0xaf31[step]` (words), the step being the counter's (+0x105) after the speed is
+  added and before a still robot's counter is cleared, so the tick it stops still
+  shows its last step; its eye height is set to 0x0f80 there too;
+- the scout's (`1000:c799`): moving, `0x0c80 + CS:0xc880[step]` (words); still and
+  crouched (heading reached, stance not 0x30), `0x0c80 - 8 * stance` (+0x10b);
+  turning or standing still, unchanged.
+
+The scorpion's walk leaves both alone, so a scorpion keeps 0x0a80 and 0x0b80.
+
+**The eye height** is set when a robot is made (above) and by the humanoid's walk
+(0x0f80, every tick); the scout's stance step (`sim_step_scout_stance`, `1000:c5a3`)
+sets it to `0x0d00 - 8 * stance` (the stance sign-extended) each time the stance moves
+one towards its target, and nothing else does: a scout made at 0x0a00 keeps it until it
+first crouches or rises. (The same step sets +0x13e to 3, which the console reads.)
+Every stock scout is saved at 0x0b80, its standing height.
+
+### The port (T-119)
+
+Part 1 (`t-119`): `Entity::z` (+0x0c) and `Entity::model_height` (+0x12) for every
+object and `Movement::eye_height` (+0x1c) for robots, loaded from the file, in the state
+hash and packed into saves (`World::save`; a shot's z is its object's, no longer a field
+of `Shot`). `motion::travel` sets a robot's z to `Terrain::ground_height` when it does
+not hit a hill; the launch sets it to 0; an explosion takes the z of the object it
+replaces (`damage::spawn_explosion`), a relay its deployer's, a shot its maker's.
+`xeno-app`'s `scene` takes the camera's z and eye height and each node's z and model
+height from the sim (`scene::heights` is gone). The state hash changes.
 
 ## Loading a scenario
 

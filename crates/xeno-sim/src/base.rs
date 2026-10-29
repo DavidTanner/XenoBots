@@ -228,7 +228,7 @@ pub fn launch(
     let (State::Robot(m), Damage::Robot(c)) = (&mut e.state, &mut e.damage) else {
         return;
     };
-    e.position = at;
+    (e.position, e.z) = (at, Fixed(0));
     c.equipment &= !Bits::IN_BASE;
     // `mov byte [di + 0x24], 100`, checked by the reader.
     c.helm = 100;

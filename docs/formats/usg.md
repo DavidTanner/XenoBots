@@ -134,7 +134,9 @@ is less than +0x10 (the distance shifted to 8.8). The tests take the first recor
 contains the point:
 
 - `sim_set_height_to_ground` (hills only): inside, z = +0x0c + +0x14; outside every
-  hill, z = 0.
+  hill, z = 0. Its one caller (`sim_check_robot_against_hills`, `1000:d50f`) runs it
+  only when `sim_test_point_in_hill`, the same test, failed, so a robot's z is set to 0
+  on every move that does not end in a hill (T-119; `docs/sim.md`, "Heights").
 - `sim_test_below_ground` (`1000:43d6`, every kind): whether a point is below the
   ground: inside a feature, below +0x0c + +0x14; elsewhere, below 0. The shots' ticks
   (`1000:e1ee` and the falling shot's `1000:e2f2`) end a shot there. So to a shot a
@@ -260,9 +262,9 @@ bytes, and `Body` the rest by kind (`Robot`, with the kind's `Parts` from +0xfe,
 | 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved. Some stock files repeat a number |
 | 0x04 | 4 | `x` | Position, 16.16 |
 | 0x08 | 4 | `y` | |
-| 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object. The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
+| 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object, and a robot's is set to 0 on every move (`docs/sim.md`, "Heights"). The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
 | 0x10 | 2 | `heading` | 65,536 to a turn. The editor's arrow keys step it by 0xb6 (a degree). The 3D view's render node copies it (`mxx.md`) |
-| 0x12 | 2 | `model_height` | The model's height above z in the 3D view, added to z's low word (`docs/render.md`): set per kind when an object is made (0x0a00 humanoid, 0x0a80 scorpion, 0x0c80 scout, 0 shots; a relay's from a table by its stage); humanoids and scouts bob it as they walk |
+| 0x12 | 2 | `model_height` | The model's height above z in the 3D view, added to z's low word (`docs/render.md`): set per kind when an object is made (0x0a00 humanoid, 0x0a80 scorpion, 0x0c80 scout, 0 shots and explosions; a relay's from a table by its stage); humanoids set it every tick and scouts while they walk or crouch (`docs/render.md`, "Walking"). Stock humanoids hold 0x0a40 to 0x0b00, scouts 0x0c80 to 0x0d00 |
 | 0x14 | 2 | `radius` | Set per kind when an object is made: base 35, scorpion 18, humanoid and scout 10, obstacle 13, relay 5 (as 8.8 numbers; the 3D view takes them as 1/65,536ths of a unit, like a z's low word, so a robot's radius is 10/256 of a unit there, `docs/render.md`). Contact checks take both radii off the distance; the render node keeps the whole part |
 | 0x16 | 1 | `flags` | Bits below |
 | 0x17 | 1 | `status` | State bits below (T-107) |
@@ -301,7 +303,7 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 |---|---|---|---|
 | 0x18 | 2 | `serial` | A random number 0 to 511 drawn when made. The robot's name is the kind's two letters, `-`, and its last three digits (`1fe6:7f38`); nothing else reads it |
 | 0x1a, 0x1b | 1, 1 | `tick`, `state` | A tick counter stepping by 2 (kept to 0..=0x1e for scorpions and scouts), and a state number; each picks a routine from the kind's table every tick (the tables at `DS:0x6ac0` humanoid, `0x6720` scorpion, `0x6eb0` scout hold the scan, the lock warning and the contact check below). A scorpion steps its speed when the counter's low four bits are 0 (T-052, `docs/sim.md`, "Movement"). The state's routines are not traced |
-| 0x1c | 2 | `eye_height` | The camera's height above z (`docs/render.md`, "The camera"): when made 0x0f80 humanoid, 0x0b80 scorpion, 0x0a00 scout (its stance moves it) |
+| 0x1c | 2 | `eye_height` | The camera's height above z (`docs/render.md`, "The camera"): when made 0x0f80 humanoid (set again every tick), 0x0b80 scorpion, 0x0a00 scout (set from its stance each time the stance steps). Every stock scout holds 0x0b80, its standing height |
 | 0x1e, 0x20 | 2, 2 | `velocity_x`, `velocity_y` | Added, sign-extended, to `x` and `y` every tick (1/65,536ths). Worked out from the heading and speed only when either changes: `speed * sin(heading)`, `speed * cos(heading)` |
 | 0x22 | 1 | `program_panel` | The console's program panel (`1000:d2d1`, `d34c`): bit 7 while a program is being picked, bit 0 flips which half of the kind's programs it shows; cleared once one is picked (`DS:0x7183` by kind) |
 | 0x23 | 1 | `mode` | Bit 7 (`Robot::PROGRAM`): the **program** drives (T-052, T-111: the script steps every tick only with it; recall, a path's program and F3 set it, the drive keys, F2 and choosing a program on the console clear it; T-043 named it manual); bit 3: recalled (every robot's next tick gives it program 4 and clears the bit); bits 4 and 5 take 0x40 off or add 0x40 to the target heading every tick (the pilot's turn keys); bit 1 (`BUMPED`): it ran into something (below); bit 0: the alien base gives it no path |
