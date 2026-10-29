@@ -31,7 +31,7 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
             drive: 0xff,
             stance: STANDING,
             stance_target: STANDING,
-            speed_table: 0,
+            relays: 0,
             ..Movement::default()
         }),
     }

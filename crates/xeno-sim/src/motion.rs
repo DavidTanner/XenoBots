@@ -175,7 +175,7 @@ pub fn steer_and_speed(
     let limit = |m: &Movement| limit_speed(m.target_speed, m.drive, helm, tables.weak_drive);
     let wanted = match kind {
         ObjectKind::Scorpion if m.tick & 0xf != 0 => None,
-        ObjectKind::Scorpion => Some(map_scorpion_speed(tables, m.speed_table, limit(m))),
+        ObjectKind::Scorpion => Some(map_scorpion_speed(tables, m.relays, limit(m))),
         // A scout moves only standing: asked to move, it first stands up.
         ObjectKind::Scout if m.target_speed != 0 && m.stance != STANDING => {
             m.stance_target = STANDING;

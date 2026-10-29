@@ -4,9 +4,16 @@
 //! (`xeno_formats::net`, in `Tables::net`).
 
 use xeno_formats::net::Line;
-use xeno_formats::usg::ObjectKind;
+use xeno_formats::usg::{ObjectKind, Side};
 
-use crate::world::{Position, World};
+use crate::motion::{Event, Tables};
+use crate::random::Random;
+use crate::world::{Damage, Entity, EntityId, Position, State, World};
+
+/// +0xfd bit 7: the relay deployer is damaged.
+const DEPLOYER_DAMAGED: u8 = 0x80;
+/// +0xdc bit 3: a relay was deployed (the console's frames).
+const DEPLOYED: u8 = 0x08;
 
 /// A scorpion's line of cells (+0x10a..+0x114): the cell it is at, the line's two
 /// lengths (+0x10e, +0x110), the error between them (+0x112), and the cell's step
@@ -127,6 +134,83 @@ pub fn advance(grid: &mut Grid, line: Line, to: Position) -> Option<i16> {
         *x = x.wrapping_sub(second.wrapping_mul(2));
         Some(*x)
     }
+}
+
+/// The relays robot `id` can deploy (`1000:9aec`): those it carries (+0x118), none
+/// while its deployer is damaged.
+pub fn relays(world: &World, id: EntityId) -> u8 {
+    match world.get(id) {
+        Some(Entity {
+            damage: Damage::Robot(c),
+            ..
+        }) if c.equipment & DEPLOYER_DAMAGED != 0 => 0,
+        Some(Entity {
+            state: State::Robot(m),
+            ..
+        }) => m.relays,
+        _ => 0,
+    }
+}
+
+/// Robot `id` deploys a relay where it stands (`sim_deploy_relay`, `1000:9b01`; the
+/// scorpion's U and opcode 0x83): with one to deploy and room for it, a relay is made
+/// (`1000:cc69`), the "deployed" message posted, one fewer carried, +0xdc bit 3 set
+/// and the sound played for the robot; else the "no relay" message. Returns whether
+/// one was deployed.
+pub fn deploy(
+    world: &mut World,
+    id: EntityId,
+    tables: &Tables,
+    random: &mut Random,
+    events: &mut Vec<Event>,
+) -> bool {
+    let net = &tables.net;
+    let made = relays(world, id) > 0 && make(world, id, net.radius, random);
+    let Some(e) = world.get_mut(id) else {
+        return false;
+    };
+    if let (true, Damage::Robot(c)) = (made, &mut e.damage) {
+        c.weapons |= DEPLOYED;
+    }
+    let State::Robot(m) = &mut e.state else {
+        return false;
+    };
+    if !made {
+        m.panel.post(net.no_relay);
+        return false;
+    }
+    m.panel.post(net.deployed);
+    m.relays -= 1;
+    events.push(Event::Sound {
+        event: net.sound,
+        only_for: Some(id),
+    });
+    true
+}
+
+/// `1000:cc69`: a relay in the lowest free slot at robot `id`'s position, set up
+/// (`1000:cc2a`) folded, unpowered and on no side (+0x16 cleared). False with no room.
+fn make(world: &mut World, id: EntityId, radius: u16, random: &mut Random) -> bool {
+    let (Some(slot), Some(at)) = (
+        crate::damage::alloc_small(world),
+        world.get(id).map(|e| e.position),
+    ) else {
+        return false;
+    };
+    // shortcut: the relay's clock (+0x1e), a random byte, is drawn but not kept, nor
+    // its state, stage, power and links: relays have no tick until T-148.
+    _ = random.word();
+    let relay = Entity {
+        kind: ObjectKind::Relay,
+        side: Side::Human,
+        position: at,
+        heading: 0,
+        radius,
+        damage: Damage::Taken(0),
+        state: State::None,
+    };
+    world.insert(slot, relay);
+    true
 }
 
 #[cfg(test)]

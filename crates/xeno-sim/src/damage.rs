@@ -162,14 +162,7 @@ fn spawn_explosion(
     kind: u16,
     template: Explosion,
 ) -> Option<EntityId> {
-    let small = world
-        .iter()
-        .filter(|(_, e)| !matches!(e.kind, ObjectKind::Base) && RobotKind::of(e.kind).is_none())
-        .count();
-    let slot = (0..SLOTS).find(|&s| world.get(EntityId(s)).is_none())?;
-    if small >= SMALL_POOL {
-        return None;
-    }
+    let slot = alloc_small(world)?;
     let explosion = Entity {
         kind: kind.into(),
         side: Side::Human,
@@ -184,8 +177,19 @@ fn spawn_explosion(
             countdown: template.ticks,
         },
     };
-    world.insert(EntityId(slot), explosion);
-    Some(EntityId(slot))
+    world.insert(slot, explosion);
+    Some(slot)
+}
+
+/// `sim_alloc_object_slot` (`1000:f4b1`) for an object of the small pool: the lowest
+/// free slot, none if the slots or the pool of 200 are full.
+pub(crate) fn alloc_small(world: &World) -> Option<EntityId> {
+    let small = world
+        .iter()
+        .filter(|(_, e)| !matches!(e.kind, ObjectKind::Base) && RobotKind::of(e.kind).is_none())
+        .count();
+    let slot = (0..SLOTS).find(|&s| world.get(EntityId(s)).is_none())?;
+    (small < SMALL_POOL).then_some(EntityId(slot))
 }
 
 /// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run

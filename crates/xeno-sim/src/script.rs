@@ -10,6 +10,7 @@ use crate::motion::{
     Event, Tables, base_position, head_for_path_point, join_nearest_path_point, match_gear,
     movement, robot, shift,
 };
+use crate::net;
 use crate::orders::RobotKind;
 use crate::random::Random;
 use crate::terrain::approx_distance;
@@ -810,7 +811,39 @@ fn run(
             let result = u16::from(m.goal & bits);
             set_flags(m, false, result, false);
         }
-        // shortcut: the relay net (T-113) is not ported: the script stays here.
+        (0x7e, _) => m.grid = net::start(tables.net.line(program), position, m.destination),
+        (0x7f, _) => match net::advance(&mut m.grid, tables.net.line(program), m.destination) {
+            // The end: the cell compared equal, then the carry set.
+            None => set_flags(m, true, 0, true),
+            Some(last) => set_flags(m, false, last as u16, true),
+        },
+        (0x80, _) => {
+            world.point = Position {
+                x: Fixed::from_int(m.grid.cell.0),
+                y: Fixed::from_int(m.grid.cell.1),
+            }
+        }
+        (0x81, _) => {
+            let cell = m.grid.cell;
+            let there = net::relay_at(world, cell);
+            if let Some(m) = movement(world, id) {
+                set_flags(m, !there, 0, false);
+            }
+        }
+        (0x82, _) => {
+            let n = net::relays(world, id);
+            if let Some(m) = movement(world, id) {
+                set_flags(m, n < 1, u16::from(n.wrapping_sub(1)), false);
+            }
+        }
+        // The zero and sign come from the sound and message routines; no script
+        // reads them.
+        (0x83, _) => {
+            let deployed = net::deploy(world, id, tables, random, events);
+            set_carry(world, id, !deployed);
+        }
+        // Opcodes past the table's 136 halt on themselves (the original jumps
+        // through other memory).
         _ => m.script.pointer = i.at,
     }
 }
