@@ -6,6 +6,7 @@
 //! table is found through an instruction that uses it, after checking that
 //! instruction's bytes.
 
+use crate::base::{self, Bases};
 use crate::damage::{self, Damage};
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
@@ -119,6 +120,8 @@ pub struct Motion {
     pub net: Net,
     /// The weapons and their shots (`xeno_formats::weapons`).
     pub weapons: Weapons,
+    /// The bases' tick (`xeno_formats::base`).
+    pub bases: Bases,
     pub walk: Walk,
     /// The string segment, where the scripts' messages are.
     pub strings: Strings,
@@ -283,6 +286,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         sensing: sensing::read_image(image, ds)?,
         net: net::read_image(image)?,
         weapons: weapons::read_image(image, ds)?,
+        bases: base::read_image(image, ds)?,
         walk: Walk {
             humanoid_arms: [
                 legs(image, HUMANOID_ARMS_AT[0])?,
@@ -510,6 +514,7 @@ mod tests {
         crate::fixtures::synthetic_sensing(&mut image, DS);
         crate::fixtures::synthetic_net(&mut image);
         crate::fixtures::synthetic_weapons(&mut image, DS);
+        crate::fixtures::synthetic_bases(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(

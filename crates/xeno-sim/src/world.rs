@@ -69,7 +69,8 @@ pub enum State {
     /// A base: +0x41, its tick count; +0x2c and +0x2b, the enemy robots it has
     /// destroyed and its own side's lost; +0x16 bit 0, destroyed; +0x30, the step of
     /// its end script once destroyed (`docs/sim.md`, "The mission's end"); +0x18, its
-    /// look in the 3D view, the frame of its model (`docs/render.md`).
+    /// look in the 3D view, the frame of its model (`docs/render.md`); +0x21..=+0x27,
+    /// the count its tick makes (`docs/sim.md`, "The bases' phases").
     Base {
         tick: u8,
         kills: u8,
@@ -77,6 +78,7 @@ pub enum State {
         destroyed: bool,
         end_step: u16,
         look: u8,
+        counts: [u8; 7],
     },
     /// An explosion (`docs/sim.md`, "Damage"): its frame (+0x18) up to the last
     /// (+0x1a), the ticks a frame (+0x1b) and the ticks left of this one (+0x1c).
@@ -308,7 +310,8 @@ impl State {
                 losses: b.losses,
                 destroyed: object.flags & usg::flag::GONE != 0,
                 end_step: b.end_step,
-                look: b.unknown_18.0[0],
+                look: b.look,
+                counts: b.counts,
             },
             _ => State::None,
         }
@@ -368,10 +371,12 @@ impl StateHash for State {
                 destroyed,
                 end_step,
                 look,
+                counts,
             } => {
                 h.u8(1);
                 h.bytes(&[tick, kills, losses, u8::from(destroyed), look]);
                 h.u16(end_step);
+                h.bytes(&counts);
             }
             State::Explosion {
                 frame,

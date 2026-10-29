@@ -229,10 +229,20 @@ fn a_blast_halves_its_points_for_each_step_out_from_half_its_radius() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(3));
     // Robots at 0.25, 0.375 and 0.5 units from the blast, and one past its radius.
     let mut world = World::default();
-    for (slot, x) in [(1, 0x4000), (2, 0x6000), (3, 0x8000), (4, 0x8100)] {
+    for (slot, x) in [
+        (1, 0x4000),
+        (2, 0x6000),
+        (3, 0x8000),
+        (4, 0x8100),
+        (5, 0x4000),
+    ] {
         let mut r = robot(ObjectKind::Scout, Side::Human, 0, 0);
         r.position.x = Fixed(x);
         world.insert(EntityId(slot), r);
+    }
+    // Slot 5 is in its base, out of the field (T-115).
+    if let Some(Damage::Robot(c)) = world.get_mut(EntityId(5)).map(|e| &mut e.damage) {
+        c.equipment = xeno_formats::usg::Robot::IN_BASE;
     }
     let mut events = Vec::new();
     // Radius 0.5 units (0x80): full points to 0x40, half to 0x60, a quarter to 0x90.
@@ -252,7 +262,10 @@ fn a_blast_halves_its_points_for_each_step_out_from_half_its_radius() {
         };
         events.iter().filter(|&&e| e == hit).count()
     };
-    assert_eq!([worn(1), worn(2), worn(3), worn(4)], [1, 1, 1, 0]);
+    assert_eq!(
+        [worn(1), worn(2), worn(3), worn(4), worn(5)],
+        [1, 1, 1, 0, 0]
+    );
     // Over 80 points destroys: 160 does it only within half the radius, 255 within
     // three quarters.
     let destroyed = |points: u8| {

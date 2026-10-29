@@ -618,7 +618,16 @@ pub struct ScoutParts {
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Base {
-    pub unknown_18: Unknown<0x13>,
+    /// +0x18: its look in the 3D view, the frame of its model.
+    pub look: u8,
+    pub unknown_19: Unknown<7>,
+    /// +0x20: the relays in store.
+    pub relays: u8,
+    /// +0x21..=+0x27, the count the tick makes every 256 ticks for the situation
+    /// room: the side's relays in the field (all relays deployed count for the human
+    /// side), then humanoids, scorpions and scouts, each in the base and in the field.
+    pub counts: [u8; 7],
+    pub unknown_28: Unknown<3>,
     /// +0x2b: the side's robots lost this mission.
     pub losses: u8,
     /// +0x2c: enemy robots destroyed this mission.

@@ -52,6 +52,7 @@ pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
             destroyed: false,
             end_step: 0,
             look: 0,
+            counts: [0; 7],
         },
     }
 }

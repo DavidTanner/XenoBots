@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -1139,10 +1139,10 @@ no win or loss; what runs it is not traced.
 - A **base** ticks as above: the path phase (T-052) and phase 15's end; the other
   phases count each side's robots by kind and state for the situation room, take in
   robots that come home (phase 9: within a short distance they leave the field),
-  run two counters fed by the situation room's sliders (11 and 12; not traced) and,
+  run two counters fed by the situation room's sliders (11 and 12) and,
   for the alien base, launch the robots inside it (13); a second routine by +0x2d
-  moves those three sliders (+0x39 to +0x3b).
-  None of these decide a result; the port keeps only the path phase and the end.
+  moves those three sliders (+0x39 to +0x3b). None of these decide a result; T-115
+  traced them ("The bases' phases" below).
 - A **relay** (`sim_tick_relay`, `1000:ccd9`, created) counts +0x1e and every 16
   ticks runs a routine by its state +0x1f (table `DS:0x6fc7`: states 0, 2, 4, 6, 8,
   10): it is set up in stages (+0x20, 0 to 3; out of the field until up), joins the
@@ -1180,6 +1180,108 @@ T-101); with the small objects' pool full the original moves
 whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
 or a resumed ended mission) stay where they are, where the original's table runs into
 code.
+
+## The bases' phases (T-115)
+
+A T-090 pass read the rest of `sim_tick_base` (`1000:6300`). Each tick it adds one to
++0x41 and calls the routine its low four bits pick from the table at `DS:0x5aea`
+(read through the `call [bx + table]` at `1000:630b`), then the slider routine its
++0x2d picks from the table at `DS:0x5b0a` (`1000:6316`). By phase:
+
+| Phase | Routine | Runs when | What it does |
+|---|---|---|---|
+| 0 | `1000:631b` | every 16 | Marks situation room panels for a redraw (the +0xc7..+0xcd bytes); every 128, two more |
+| 1 | `1000:ecae` (far `2000:8186`) | every 16, alien base | Counts the robots on each alien path into the path records (+8 to +0xb; `usg.md`, "How paths are used"); the editor's display only |
+| 2 | `1000:ea0e` | every 16 | The alien base's path phase (T-052) |
+| 4 | `1000:6331` | every 256, in mode S | A redraw mark |
+| 5 | `1000:6344` | every 256 (+0x41 & 0xf0 clear) | **The count**, below |
+| 6 | `1000:6542` | every 16 | The roster's five rows from its scroll (+0x4c) into +0x42 (T-103's roster) |
+| 9 | `1000:63dd` | every 128 (+0x41 & 0x70 clear) | **The take-in**, below |
+| 11 | `1000:648b` | every 16 | **Relays made**, below |
+| 12 | `1000:64af` | every 16 | **Repairs**, below |
+| 13 | `1000:6515` | every 16, alien base | **The launch**, below |
+| 15 | `1000:68c1` | every 16 | The mission's end (T-055) |
+| 3, 7, 8, 10, 14 | `1000:63dc` | | `ret` |
+
+**The count** (phase 5) clears +0x21..+0x27 and walks the whole object table: every
+object of the base's side (+0x16 bit 3) adds one by kind: a relay to +0x21, a humanoid
+to +0x22 if it is in the base (+0xfd bit 2) else +0x23, a scorpion to +0x24 / +0x25, a
+scout to +0x26 / +0x27. A deployed relay has the side bit clear (T-113), so the human
+base counts every deployed relay and the alien base none. +0x20 is not touched: it is
+the relays in store (25 or 26 in stock files; phase 11). The situation room's status
+panel shows +0x20..+0x27 (T-127).
+
+**The take-in** (phase 9) remembers the base's side, then walks the object table in
+slot order. For each robot (+0x16 bit 5) of that side it works out the distance from
+the base (`1000:08ec`, the `max + min/2` distance, "Movement"): 256 units or more (`DH`
+not 0, which includes every robot already in a base) it skips; out of reach (the
+distance's 8.8 value over 0x3a, read from the `cmp ax` at `1000:642c`, a little under
+a quarter of a unit) it clears +0xfd bit 1 and goes on; in reach it calls `1000:6445`
+and **stops**, whatever that did. `1000:6445` does nothing if +0xfd bit 1 is set (the
+robot was taken in, or launched, and has not left the reach since). Otherwise it sets
++0xfd bits 1 (`ENTERING_BASE`) and 2 (`IN_BASE`), clears +0x16 bit 6 (`IN_FIELD`),
+turns the console to the base if the robot is on view (`1000:7ee7`), flips the top bit
+of the position's x and y (`xor byte [di + 7], 0x80` and `[di + 0xb]`: half the 16.16
+range away, so no distance, scan, shot or contact reaches it), asks for speed 0 (+0x28)
+and hands it to its pilot (`order_switch_to_manual`, `1000:d446`: the program bit
+cleared and event 0xb if it was set). So one robot is taken in per run, every 128
+ticks. A robot comes this near only when sent there: the recall (F3, program 4, RET
+BASE) drives it to the base's position.
+
+**Relays made** (phase 11): +0x19 += +0x3b (the third slider); on a carry the word
++0xb5 goes up by one, and once it reaches 600 (`cmp` at `1000:6497`) with fewer than
+70 relays in store (+0x20, `cmp` at `649f`), +0x20 goes up by one and +0xb5 restarts.
+At the stock 0x40 that is a relay every 600 * 4 * 16 ticks, about 9 minutes at 70 Hz.
+
+**Repairs** (phase 12): +0x1c += +0x3a (the second slider); once it reaches 0x1800 it
+restarts and one repair step is made on the robot whose slot is +0x1a (0xffff none in
+stock files). With no robot there (the slot empty, `1000:f691`; an `int3` the DOS
+handler ignores precedes the search), it takes the first robot in its unit list (+0x4d,
+38 entries) that is in the base (+0xfd bit 2) and damaged (+0xf9 not 0), takes a
+reference on its slot (`f656`, `f6a6`) and keeps the slot in +0x1a; none, 0xffff.
+Otherwise `2000:7e5f` makes one step (`2000:7e6d`) and then, if the robot's damage
+total +0xf9 is 0, releases it (`f6bb`) and clears +0x1a. A step mends the first of, in
+order: the helm (+0x24 up 4 and rounded down to a multiple of 4, until 100), the power
+(+0x4e, the same), the first weapon (+0xdc bit 0, and +0xf6 bit 6 its destroyed bit),
+the second (+0xdc bit 1, +0xf6 bit 7), +0xdc bit 2, the targeting computer (+0xec bit
+0), the visual and thermal cameras, the map, the radar and the sensors (+0xf6 bits 0
+to 4); with nothing of those, the kind's restock (`1000:df87` by `DS:0x723f`: nothing
+for humanoids and scouts; a scorpion takes relays from the store up to 12 carried,
++0x118 from +0x20, clears +0xdc bit 3, gets 6 tail missiles (+0x122) and its deployer
+mended, +0xfd bit 7). At the stock 0x40 a step is every 96 runs (0x1800 / 0x40), about
+22 s.
+
+**The launch** (phase 13, alien base only, +0x16 bit 3): every robot in the unit list
+that is in the base with +0xf9 at 0 (whole) is launched by `1000:6716`: its x and y
+become the base's (+4..+0xb copied), z 0, +0xfd bit 2 cleared (bit 1 stays, so the
+take-in leaves it until it has driven out of reach), `IN_FIELD` set, +0x2c bit 7 (on a
+path) cleared, +0xf7 (contacts) 0, then the new robot's orders (`1000:d2b6`: +0x23 = 0,
+helm 100, speed 0, +0x25 = 0, program 9 through `order_set_program`, the program bit
+set without an event). The alien path phase then gives it a random path and its
+mission's program (T-052). The situation room's F2 and launch button do the same for
+the player's selected unit (`1000:6704`, T-135).
+
+**The sliders** (`DS:0x5b0a` by +0x2d, every tick while it is not 0): 1 and 2 lower and
+raise +0x39 (the net's power, T-113: a base powers relays to +0x39 / 4), 3 and 4 +0x3a
+(repairs), 5 and 6 +0x3b (relays made); 0 and 7 nothing. Lowering takes 2 off (only
+from 4 up) and adds it to the pool +0x38; raising adds 2 (only up to 0xfd), taken from
+the pool if it holds 4 or more, else 2 from one of the other two sliders (the first if
+it is 4 or more and the second is not, the second likewise) or 1 from each. The four
+add up to 0x100 (stock: 0, 0x80, 0x40, 0x40). Then the power rows are marked for a
+redraw. What sets +0x2d is the situation room's arrows (T-127).
+
+### The port (T-115)
+
+`xeno_formats::base` reads the phase table through the tick's call, checks the count's
+and take-in's routines, and reads their masks and the reach. `xeno_sim::base::tick` is
+the base's tick: the count of +0x41 and the path (2), count (5), take-in (9) and end
+(15) phases. `State::Base::counts` holds +0x21..+0x27 (loaded, in the state hash, so
+the hash changes). A robot taken in gets bits 1 and 2 in `Components::equipment`, its
+position flipped as the original's, speed 0 asked for and its pilot driving, and
+`motion::Event::TakenIn`; `xeno-tool simulate` prints "N taken in". Shots and blasts
+skip a robot in its base, as `IN_FIELD` is cleared and set with bit 2. Phases 0, 1, 4
+and 6 are display only and not ported. `base`'s `real_assets_a_recalled_robot_is_taken_in`:
+scen00a's slot 2, recalled, drives home and is taken in (tick 3234 with seed 1).
 
 ## Loading a scenario
 
