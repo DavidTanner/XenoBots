@@ -863,6 +863,7 @@ mod tests {
                 diagonal: 0xaab,
                 height: 0x100,
                 program: vec![0x14, 0],
+                ..Shape::default()
             }),
             position: [x << 16, y << 16, 0],
             ..node(x, y, y.unsigned_abs())
@@ -932,6 +933,7 @@ mod tests {
                             diagonal: f.diagonal,
                             height: f.height,
                             program: f.shape.clone(),
+                            ..Shape::default()
                         }),
                         ..node(0, 0, 0)
                     };

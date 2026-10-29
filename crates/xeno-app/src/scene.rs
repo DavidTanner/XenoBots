@@ -96,9 +96,10 @@ pub fn nodes(
     world: &World,
     view: &View3d,
     camera: &Camera,
-    atan: &[u16],
+    tables: &Tables,
     terrain: &[TerrainFeature],
 ) -> Vec<RenderNode> {
+    let atan = &tables.atan;
     let from = xeno_sim::Position {
         x: xeno_sim::Fixed(camera.x),
         y: xeno_sim::Fixed(camera.y),
@@ -126,13 +127,16 @@ pub fn nodes(
         })
     });
     // The terrain records come first, in file order (`gfx_emit_terrain_render_node`).
-    // shortcut: their heading (+0x08, `[DS:0x1486] << 4`) only turns the untraced
-    // point ops' shapes, so it is left at 0.
+    // Their heading (+0x08) is `[DS:0x1486] << 4`, the retraces the developer's fill
+    // benchmark took (unlock word 2's Ctrl+Alt+F11 and F12, `docs/formats/key.md`): 0
+    // from load, and the port has no benchmark.
     let terrain = terrain.iter().map(|f| {
         let centre = xeno_sim::Position {
             x: xeno_sim::Fixed(f.x),
             y: xeno_sim::Fixed(f.y),
         };
+        let bearing = bearing(atan, from, centre);
+        let turn = 0u16.wrapping_sub(bearing);
         RenderNode {
             object: TERRAIN,
             model: 0,
@@ -140,7 +144,7 @@ pub fn nodes(
             position: [f.x, f.y, f.z],
             radius: f.radius,
             distance: approx_distance(from, centre).0 as u32,
-            bearing: bearing(atan, from, centre),
+            bearing,
             frames: Vec::new(),
             size: None,
             shape: Some(Shape {
@@ -148,6 +152,10 @@ pub fn nodes(
                 diagonal: f.diagonal,
                 height: f.height,
                 program: f.shape.clone(),
+                turn: [
+                    trig(tables, turn),
+                    trig(tables, 0x4000u16.wrapping_sub(turn)),
+                ],
             }),
         }
     });
@@ -188,7 +196,7 @@ pub fn draw_from(
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
 ) {
-    let nodes = nodes(world, view, camera, &tables.atan, terrain);
+    let nodes = nodes(world, view, camera, tables, terrain);
     buffer.draw_view(view, camera, &nodes, models, sky);
 }
 
@@ -383,7 +391,7 @@ mod tests {
         let eye = camera(&world, EntityId(2), &view, &tables).unwrap();
         // The humanoid's eye height on its z.
         assert_eq!((eye.z, eye.viewer, eye.heading), (0x1_0f80, 2, 0x1234));
-        let nodes = nodes(&world, &view, &eye, &tables.atan, &[]);
+        let nodes = nodes(&world, &view, &eye, &tables, &[]);
         let summary: Vec<_> = nodes
             .iter()
             .map(|n| (n.object, n.model, n.frames.clone(), n.size))
