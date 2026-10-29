@@ -379,3 +379,45 @@ fn the_gear_opcodes_step_the_gear_and_the_set_speeds_match_it() {
     assert_eq!(seen, [(56, 8), (95, 10), (56, 8), (28, 6), (0, 4)]);
     assert_eq!(m(&world).script.pointer, 0x105, "past every gear opcode");
 }
+
+#[test]
+fn the_target_opcodes_look_lock_measure_and_steer() {
+    // Look, test +0xe6 against 0xffff, push the target's distance, steer to it, is it
+    // a base? Halt.
+    let (mut world, tables) = setup(&[0x71, 0x37, 0xe6, 0xff, 0xff, 0x6b, 0x6c, 0x73, 0x0a]);
+    let mut enemy = world.get(EntityId(1)).unwrap().clone();
+    (enemy.side, enemy.position) = (Side::Human, at(14, 10));
+    world.insert(EntityId(2), enemy);
+    steps(&mut world, &tables, 31);
+    assert_eq!(m(&world).target, Some(EntityId(2)));
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & ZERO, 0, "a target is not 0");
+    steps(&mut world, &tables, 2);
+    assert_eq!(top(&m(&world), true), 0x400);
+    assert_eq!(m(&world).target_heading, 0x4000);
+    assert_eq!(m(&world).goal, Movement::GOAL_POINT, "put back");
+    assert_eq!(m(&world).script.flags & CARRY, 0);
+    steps(&mut world, &tables, 31);
+    assert_eq!(m(&world).script.flags & CARRY, CARRY, "not a base");
+    // With no enemy near, the look and the steering set the carry.
+    let (mut world, tables) = setup(&[0x71, 0x0a]);
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & CARRY, CARRY);
+    let (mut world, tables) = setup(&[0x6c, 0x0a]);
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & CARRY, CARRY);
+}
+
+#[test]
+fn steering_for_the_nearest_enemy_sets_the_carry_with_none() {
+    let (mut world, tables) = setup(&[0x63, 0x0a]);
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & CARRY, CARRY);
+    let (mut world, tables) = setup(&[0x63, 0x0a]);
+    let mut enemy = world.get(EntityId(1)).unwrap().clone();
+    (enemy.side, enemy.position) = (Side::Human, at(6, 10));
+    world.insert(EntityId(2), enemy);
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & CARRY, 0);
+    assert_eq!(m(&world).target_heading, 0xc000);
+}

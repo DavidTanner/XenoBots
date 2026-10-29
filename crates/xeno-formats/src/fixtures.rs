@@ -1559,7 +1559,8 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
 /// `0x9720`, `0x9740` with the scan at entry 15, the lock's upkeep at 5, 6, 5 (code
 /// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320) and the
 /// lock warning's decay after it; scanning ranges 0x500, 0x600, 0x700 and locking
-/// ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`).
+/// ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`); the lock's messages 0x40 to
+/// 0x49 in `MESSAGES_AT`'s order and its sound event 26.
 pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
     use crate::sensing::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1585,6 +1586,10 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
             &[op(&[0xb8], arc), op(&[0xbb], range), op(&[0xe8], call)].concat(),
         );
     }
+    for (i, at) in MESSAGES_AT.into_iter().enumerate() {
+        put(at, &op(&[0xbe], 0x40 + i as u16));
+    }
+    put(LOCK_SOUND_AT, &op(&[0xb8], 52));
 }
 
 /// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0xb180

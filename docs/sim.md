@@ -412,8 +412,8 @@ and bearing (the destination and the robot's own base), zigzag, random turns, st
 hold here, joining the nearest path point, the targeting check and the path commands;
 events dispatch to the header's or the tables' handlers.
 
-Shortcuts, each named in the code: an opcode not ported (sensing and object goals,
-T-112; weapons, T-114; the relay net, T-113)
+Shortcuts, each named in the code: an opcode not ported (object goals and the
+worked-out point, T-112's part 3; weapons, T-114; the relay net, T-113)
 **halts the script on itself**, so a robot keeps its speed and heading; opcode 0x74
 puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
 log and 0x76's copies are T-129); the 64-tick object-goal
@@ -565,6 +565,19 @@ its walk, at the entries of its kind's tick table that `Motion::sensing` names.
 hashed. Part 1 (`t-112`): the scan, with its events 1 and 2. A unit is a robot by
 kind: every stock robot has +0x16 bit 5 and nothing else does, and the port keeps
 no flags byte.
+
+Part 2 (`t-112-target`): the lock (`sense::lock`), its upkeep and the warning at
+their tick-table entries, looking for enemies (0x71, `sense::look`) and steering for
+the nearest (0x63), the target opcodes 0x6b, 0x6c and 0x73, goal bit 3, and the field
++0xe6 for the scripts' test. `Movement` keeps the target (+0xe6, cleared at load),
+its distance and bearing (+0xe8, +0xea) and `locked_on` (+0xed); `World::lock_window`
+keeps `DS:0x7201` and `0x7203`; the targeting and warning bits are the robot's
+`Components`. All hashed. Messages go to the robot's panel and the lock's sound is a
+`motion::Event::Sound` for the robot. Shortcuts, each named in the code: the true
+distance is exact in x and y (no z); the upkeep's bearing is the coarse one; the
+target's ECM never breaks a lock (T-136); a locked base is not marked spotted; the
+field +0xe6 reads the target's slot plus one, not a pointer; the lock window starts
+at 0 each mission; a target is gone when its slot is empty or holds another kind.
 
 ## The cockpit keys (T-105)
 

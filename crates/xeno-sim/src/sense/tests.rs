@@ -1,7 +1,7 @@
 use super::*;
 use crate::motion::synthetic_tables;
 use crate::motion::tests::robot;
-use crate::world::{Fixed, Movement, State};
+use crate::world::{Components, Damage, Fixed, Movement, State};
 use xeno_formats::usg::{ObjectKind, Side};
 
 fn m(world: &World, id: u16) -> Movement {
@@ -94,4 +94,169 @@ fn within_is_the_original_distance_to_the_range_inclusive() {
     assert!(!within(a, b(4 << 16, (2 << 16) + 0x200), 0x500));
     // Past 256 units nothing is in range, whatever the range.
     assert!(!within(a, b(256 << 16, 0), 0xffff));
+}
+
+fn parts_of(world: &World, id: u16) -> Components {
+    match world.get(EntityId(id)).unwrap().damage {
+        Damage::Robot(c) => c,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn looking_locks_the_nearest_enemy_in_the_locking_range() {
+    let mut world = world();
+    let t = synthetic_tables();
+    let text = t.sensing.messages;
+    // A cloaked alien nearer than the scout at 3 units is skipped.
+    world.insert(EntityId(5), robot(ObjectKind::Scout, Side::Alien, 101, 101));
+    movement(&mut world, EntityId(5)).unwrap().status |= status::CLOAKED;
+    let mut events = Vec::new();
+    assert!(look(&mut world, EntityId(1), &t, &mut events));
+    let me = m(&world, 1);
+    assert_eq!(me.target, Some(EntityId(2)));
+    assert_eq!(me.target_distance, 0x300, "the true distance, 8.8");
+    assert_ne!(me.status & status::TRACKING, 0);
+    assert_ne!(m(&world, 2).status & status::SPOTTED, 0);
+    assert_eq!(me.panel.queue[0], text.locked);
+    assert_eq!(
+        events,
+        [Event::Sound {
+            event: t.sensing.lock_sound,
+            only_for: Some(EntityId(1))
+        }]
+    );
+    // Again: the same target, refused.
+    assert!(look(&mut world, EntityId(1), &t, &mut events));
+    assert_eq!(m(&world, 1).panel.queue[1], text.already);
+    // No enemy within 8 units: a message.
+    for id in [2, 3, 5] {
+        world.get_mut(EntityId(id)).unwrap().position.x = Fixed::from_int(109);
+    }
+    let mut world2 = world.clone();
+    movement(&mut world2, EntityId(1)).unwrap().target = None;
+    assert!(!look(&mut world2, EntityId(1), &t, &mut events));
+    assert!(m(&world2, 1).panel.queue.contains(&text.none_found));
+}
+
+#[test]
+fn a_lock_is_refused_damaged_out_of_range_or_on_itself() {
+    let t = synthetic_tables();
+    let text = t.sensing.messages;
+    let mut world = world();
+    // 6 units is within the humanoid's 8, 8 is not.
+    lock(&mut world, EntityId(1), EntityId(3), &t, &mut Vec::new());
+    assert_eq!(m(&world, 1).target, Some(EntityId(3)));
+    world.get_mut(EntityId(2)).unwrap().position.x = Fixed::from_int(108);
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    assert_eq!(
+        m(&world, 1).panel.queue[..2],
+        [text.locked, text.out_of_range]
+    );
+    movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
+    lock(&mut world, EntityId(1), EntityId(1), &t, &mut Vec::new());
+    // Its own side: locked, with a warning.
+    lock(&mut world, EntityId(1), EntityId(4), &t, &mut Vec::new());
+    assert_eq!(m(&world, 1).target, Some(EntityId(4)));
+    assert_eq!(
+        m(&world, 1).panel.queue[..3],
+        [text.itself, text.friendly, text.relocked]
+    );
+    let mut world = world.clone();
+    if let Damage::Robot(c) = &mut world.get_mut(EntityId(1)).unwrap().damage {
+        c.targeting |= 1;
+    }
+    movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    assert_eq!(m(&world, 1).target, Some(EntityId(4)));
+    assert_eq!(m(&world, 1).panel.queue[0], text.targeting_damaged);
+    // A cloaked robot cannot be locked, silently.
+    let mut world = self::world();
+    movement(&mut world, EntityId(2)).unwrap().status |= status::CLOAKED;
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    assert_eq!(
+        (m(&world, 1).target, m(&world, 1).panel.queue[0]),
+        (None, 0)
+    );
+}
+
+#[test]
+fn the_upkeep_warns_the_target_and_works_out_its_bits() {
+    let t = synthetic_tables();
+    let mut world = world();
+    // Due ahead and 2 units off: in the humanoid's arc (0x1000) and range (0x300).
+    world.get_mut(EntityId(2)).unwrap().position = Position {
+        x: Fixed::from_int(100),
+        y: Fixed::from_int(102),
+    };
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    step_at(&mut world, 10);
+    assert_eq!(world.lock_window, (0x1000, 0x300));
+    assert_eq!(parts_of(&world, 1).targeting, 6);
+    assert_eq!(
+        (m(&world, 1).target_bearing, m(&world, 1).target_distance),
+        (0, 0x200)
+    );
+    assert_eq!(m(&world, 2).locked_on, 0xff);
+    // A quarter turn off and 3 units: neither bit.
+    world.get_mut(EntityId(2)).unwrap().position = Position {
+        x: Fixed::from_int(103),
+        y: Fixed::from_int(100),
+    };
+    step_at(&mut world, 10);
+    assert_eq!(parts_of(&world, 1).targeting, 0);
+    // The target's warning: event 3 once, then it fades over 8 halvings.
+    let warn_at = |world: &mut World| {
+        movement(world, EntityId(2)).unwrap().tick = 12;
+        step(world, EntityId(2), &t);
+    };
+    warn_at(&mut world);
+    assert_eq!(m(&world, 2).script.events, 1 << EVENT_LOCKED_ON);
+    assert_ne!(parts_of(&world, 2).systems & 0x20, 0);
+    movement(&mut world, EntityId(2)).unwrap().script.events = 0;
+    for _ in 0..6 {
+        warn_at(&mut world);
+    }
+    assert_eq!(m(&world, 2).script.events, 0);
+    assert_ne!(parts_of(&world, 2).systems & 0x20, 0);
+    warn_at(&mut world);
+    assert_eq!(parts_of(&world, 2).systems & 0x20, 0);
+}
+
+#[test]
+fn the_upkeep_loses_a_far_target_and_drops_a_destroyed_one() {
+    let t = synthetic_tables();
+    let text = t.sensing.messages;
+    let mut world = world();
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    // Kept while its last distance is within the locking range, even if now past.
+    world.get_mut(EntityId(2)).unwrap().position.x = Fixed::from_int(109);
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, Some(EntityId(2)));
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, None);
+    assert_eq!(m(&world, 1).script.events, 1 << EVENT_LOST);
+    assert!(m(&world, 1).panel.queue.contains(&text.lost));
+    // Gone: dropped with no event.
+    let mut world = self::world();
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    world.remove(EntityId(2));
+    step_at(&mut world, 10);
+    assert_eq!((m(&world, 1).target, m(&world, 1).script.events), (None, 0));
+    assert!(m(&world, 1).panel.queue.contains(&text.destroyed));
+    // No target: in the arc.
+    step_at(&mut world, 10);
+    assert_eq!(parts_of(&world, 1).targeting, 4);
+}
+
+#[test]
+fn steering_for_the_nearest_enemy_takes_the_scanning_range() {
+    let t = synthetic_tables();
+    let mut world = world();
+    assert!(steer_to_nearest(&mut world, EntityId(1), &t));
+    assert_eq!(m(&world, 1).target_heading, 0x4000);
+    assert_eq!(m(&world, 1).target, None, "not locked");
+    // 6 units is past the humanoid's 5.
+    world.remove(EntityId(2));
+    assert!(!steer_to_nearest(&mut world, EntityId(1), &t));
 }
