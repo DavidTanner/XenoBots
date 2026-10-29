@@ -194,23 +194,19 @@ fn aim_height(tables: &Tables, t: &Entity) -> i32 {
 }
 
 /// Robot `id` fires `gun` (each gun's routine from the shot's allocation on). Returns
-/// whether a slot was free; the set-up may still drop the shot (a homing shot or tail
-/// missile whose target is gone), as the original frees it.
+/// the slot it took, none if none was free; the set-up may still drop the shot (a
+/// homing shot or tail missile whose target is gone), as the original frees it.
 pub fn fire(
     world: &mut World,
     id: EntityId,
     gun: &Gun,
     tables: &Tables,
     random: &mut Random,
-) -> bool {
-    let Some(slot) = alloc_small(world) else {
-        return false;
-    };
-    let Some(me) = world.get(id) else {
-        return false;
-    };
+) -> Option<EntityId> {
+    let slot = alloc_small(world)?;
+    let me = world.get(id)?;
     let State::Robot(m) = me.state else {
-        return false;
+        return None;
     };
     let w = &tables.weapons;
     let (kind, side, heading) = (me.kind, me.side, me.heading);
@@ -240,7 +236,7 @@ pub fn fire(
     match gun.kind {
         TAIL => {
             let Some(target) = target else {
-                return true;
+                return Some(slot);
             };
             let t = &w.tail;
             (shot.flight, shot.turn, shot.target) = (Flight::Tail, t.turn, Some(target));
@@ -266,7 +262,7 @@ pub fn fire(
         }
         HOMING => {
             let Some(target) = target else {
-                return true;
+                return Some(slot);
             };
             let h = &w.homing;
             (shot.flight, shot.arming, shot.speed) = (Flight::Homing, h.arming, h.speed);
@@ -301,7 +297,7 @@ pub fn fire(
             at = step(at, &mut shot);
             shot_heading = ms.heading;
         }
-        _ => return true,
+        _ => return Some(slot),
     }
     world.insert(
         slot,
@@ -315,7 +311,7 @@ pub fn fire(
             state: State::Shot(shot),
         },
     );
-    true
+    Some(slot)
 }
 
 /// One step of the shot's velocity.

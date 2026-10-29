@@ -73,7 +73,7 @@ fn a_humanoid_s_homing_shot_waits_turns_on_its_target_and_hits_it() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
     let mut world = duel(1);
     let cannon = tables.weapons.guns[0];
-    assert!(fire(&mut world, EntityId(4), &cannon, &tables, &mut random));
+    assert!(fire(&mut world, EntityId(4), &cannon, &tables, &mut random).is_some());
     // The lowest free slot, at the muzzle (heading 0: the first offset), its gun's
     // height up, with no speed until its first turn.
     let s = shot(&world, 0);
@@ -120,13 +120,16 @@ fn a_homing_shot_without_a_target_is_not_made() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
     let mut world = duel(1);
     world.remove(EntityId(6));
-    assert!(fire(
-        &mut world,
-        EntityId(4),
-        &tables.weapons.guns[0],
-        &tables,
-        &mut random
-    ));
+    assert!(
+        fire(
+            &mut world,
+            EntityId(4),
+            &tables.weapons.guns[0],
+            &tables,
+            &mut random
+        )
+        .is_some()
+    );
     assert_eq!(world.len(), 1);
 }
 
@@ -138,7 +141,7 @@ fn a_wild_shell_arcs_and_falls_to_the_ground_heard_only_if_it_does_more_than_1()
         m.target = None;
     }
     let cannon = tables.weapons.guns[5];
-    assert!(fire(&mut world, EntityId(4), &cannon, &tables, &mut random));
+    assert!(fire(&mut world, EntityId(4), &cannon, &tables, &mut random).is_some());
     let s = shot(&world, 0);
     assert_eq!((s.flight, s.z, s.damage), (Flight::Shell, 0x900, 2));
     let mut ticks = 0;
@@ -286,7 +289,7 @@ fn the_tail_missile_waits_boosts_then_homes_and_blasts_its_target() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(5));
     let mut world = duel(2);
     let tail = tables.weapons.guns[3];
-    assert!(fire(&mut world, EntityId(4), &tail, &tables, &mut random));
+    assert!(fire(&mut world, EntityId(4), &tail, &tables, &mut random).is_some());
     let s = shot(&world, 0);
     assert_eq!((s.flight, s.z, s.turn), (Flight::Tail, 0x19c0, 0x16c));
     for _ in 0..20 {
@@ -331,13 +334,16 @@ fn a_missile_flies_straight_and_ends_with_its_life() {
     if let Some(m) = movement(&mut world, EntityId(4)) {
         m.target = None;
     }
-    assert!(fire(
-        &mut world,
-        EntityId(4),
-        &tables.weapons.guns[1],
-        &tables,
-        &mut random
-    ));
+    assert!(
+        fire(
+            &mut world,
+            EntityId(4),
+            &tables.weapons.guns[1],
+            &tables,
+            &mut random
+        )
+        .is_some()
+    );
     let s = shot(&world, 0);
     assert_eq!(
         (s.flight, s.life, s.damage, s.climb),

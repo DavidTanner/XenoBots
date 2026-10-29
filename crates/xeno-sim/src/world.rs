@@ -153,8 +153,32 @@ pub struct Movement {
     // opcodes would overwrite its gear and light there in the original. No stock
     // program gives them a net.
     pub grid: Grid,
+    pub guns: Guns,
     pub script: Script,
     pub panel: Panel,
+}
+
+/// A robot's weapons (`docs/sim.md`, "Weapons and shots"); the fire request and the
+/// humanoid's ready bits are +0xdc's, in [`Components::weapons`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Guns {
+    /// +0x50: the battery firing takes from.
+    pub energy: u8,
+    /// The two weapons' cool-downs: the humanoid's +0x108 and +0x109, the scout's +0x105
+    /// and +0x106, the scorpion's cannon's +0x11f and its missile's reload +0x125.
+    pub cooldown: [u16; 2],
+    /// The scorpion's cannon rounds (+0x120), the scout's shells (+0x107).
+    pub rounds: u16,
+    /// The scorpion's tail missiles (+0x122), the fire requests its burst still queues
+    /// (+0x11e), the barrels that fired (+0x11d) and its missile in flight (+0x123).
+    pub missiles: u8,
+    pub burst: u8,
+    pub fired: u8,
+    pub missile: Option<EntityId>,
+    /// The humanoid's arms' frames (+0xff, +0x100) and how far each is raised to fire
+    /// (+0x103, +0x104: 0 down, 1 rising, 2 ready, 3 lowering).
+    pub arms: [u8; 2],
+    pub raised: [u8; 2],
 }
 
 /// A robot's script state (`docs/sim.md`, "Orders"); the program running is in the
@@ -186,6 +210,29 @@ impl Movement {
 
     fn of(r: &usg::Robot, status: u8) -> Movement {
         use usg::Parts;
+        let slot = |s: u16| (s != 0xffff).then_some(EntityId(s));
+        let guns = match &r.parts {
+            Parts::Humanoid(p) => Guns {
+                cooldown: p.cooldowns.map(u16::from),
+                arms: [p.frames[1], p.frames[2]],
+                raised: p.arms_raised,
+                ..Guns::default()
+            },
+            Parts::Scorpion(p) => Guns {
+                cooldown: [p.cooldown.into(), p.reload],
+                rounds: p.rounds,
+                missiles: p.missiles,
+                burst: p.burst,
+                fired: p.fired,
+                missile: slot(p.missile),
+                ..Guns::default()
+            },
+            Parts::Scout(p) => Guns {
+                cooldown: p.cooldowns.map(u16::from),
+                rounds: p.shells.into(),
+                ..Guns::default()
+            },
+        };
         // (gear, stride, legs, stance and its target, relays) by kind.
         let (gear, stride, legs, stance, relays) = match &r.parts {
             Parts::Humanoid(p) => (p.gear, p.step, [p.frames[3], p.frames[4]], (0, 0), 0),
@@ -227,6 +274,10 @@ impl Movement {
             target_distance: r.target_distance,
             target_bearing: r.target_bearing,
             locked_on: r.locked_on,
+            guns: Guns {
+                energy: r.energy,
+                ..guns
+            },
             grid: match &r.parts {
                 Parts::Scorpion(p) => Grid::of(&p.grid.0),
                 _ => Grid::default(),
@@ -293,6 +344,12 @@ impl StateHash for State {
                 h.u16(g.lengths.1);
                 h.u16(g.error as u16);
                 h.u8(g.step);
+                let g = m.guns;
+                h.bytes(&[g.energy, g.missiles, g.burst, g.fired]);
+                h.bytes(&[g.arms[0], g.arms[1], g.raised[0], g.raised[1]]);
+                g.cooldown.iter().for_each(|&c| h.u16(c));
+                h.u16(g.rounds);
+                h.u16(g.missile.map_or(0xffff, |t| t.0));
                 let s = m.script;
                 h.u16(s.pointer);
                 h.u16(s.wait);

@@ -59,6 +59,9 @@ const MAX_GEARS: usize = 16;
 pub(crate) const HUMANOID_LEGS_AT: [usize; 2] = [0xadbe, 0xadcc];
 pub(crate) const SCOUT_LEGS_AT: [usize; 2] = [0xc7bf, 0xc7d1];
 pub(crate) const SCOUT_CROUCH_AT: usize = 0xc829;
+/// `mov al, cs:[bx + table]` in the humanoid's arms (`1000:ae23`, `ae8a`): their swing
+/// while walking (+0xff, +0x100).
+pub(crate) const HUMANOID_ARMS_AT: [usize; 2] = [0xae74, 0xaedb];
 const LEG_OP: &[u8] = &[0x2e, 0x8a, 0x87];
 /// Steps in a walking animation's tables.
 pub const STEPS: usize = 16;
@@ -181,6 +184,8 @@ pub struct WeaponKeys {
 pub struct Walk {
     /// The humanoid's legs, +0x101 and +0x102.
     pub humanoid_legs: [[u8; STEPS]; 2],
+    /// The humanoid's arms' swing while walking, +0xff and +0x100.
+    pub humanoid_arms: [[u8; STEPS]; 2],
     /// The scout's legs, +0x103 and +0x104 (+0xff and +0x100 follow them).
     pub scout_legs: [[u8; STEPS]; 2],
     /// A scout's four legs when it stands still crouched, by stance / 16.
@@ -279,6 +284,10 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         net: net::read_image(image)?,
         weapons: weapons::read_image(image, ds)?,
         walk: Walk {
+            humanoid_arms: [
+                legs(image, HUMANOID_ARMS_AT[0])?,
+                legs(image, HUMANOID_ARMS_AT[1])?,
+            ],
             humanoid_legs: [
                 legs(image, HUMANOID_LEGS_AT[0])?,
                 legs(image, HUMANOID_LEGS_AT[1])?,
@@ -565,6 +574,7 @@ mod tests {
         assert_eq!(motion.atan[255], 0xff00);
         assert_eq!(motion.script_speeds[4], [20, 35, -15]);
         assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
+        assert_eq!(motion.walk.humanoid_arms[1][..3], [1, 2, 3]);
         assert_eq!(motion.walk.scout_crouch[3], 3);
         assert_eq!(motion.gears.humanoid, [-20, -10, 0, 10, 20]);
         assert_eq!(motion.gears.scout, [-30, 0, 30]);
@@ -664,6 +674,8 @@ mod tests {
         for legs in &w.humanoid_legs {
             assert!(legs.iter().all(|&f| f < 5) && legs.contains(&0));
         }
+        // The arms swing below their raised frame, 5.
+        assert!(w.humanoid_arms.iter().flatten().all(|&f| f < 5));
         let scout = w.scout_legs.iter().flatten().chain(&w.scout_crouch);
         assert!(scout.into_iter().all(|&f| f < 12));
         assert!(w.scout_legs.iter().all(|legs| legs.contains(&0)));

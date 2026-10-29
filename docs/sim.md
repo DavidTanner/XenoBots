@@ -590,7 +590,7 @@ ENGAGING, GO TO UNIT, SHADOW, PURSUE, DETECT and COMMANDO run; `sense`'s
 `real_assets_two_stock_robots_find_and_close_on_each_other` shows scen00a's first
 human humanoid and first alien robot, 7 units apart, lock each other and stand under
 2 units apart within two minutes. Shortcuts, each named in the code: firing (0x7d)
-does nothing (T-114); a weapon is never cooling down or out of rounds (T-114); an
+did nothing and a weapon was never cooling down or out of rounds (both done by T-114); an
 object goal on an empty slot gives the point 0xffff; the point carries over no
 mission. Nothing sets an object goal yet: only the consoles' map-mode press does
 (T-133).
@@ -1048,6 +1048,24 @@ each named in the code: robots, bases and the rest stand at z 0 (T-101); in the 
 by kind (T-147); the coarse bearing for the lead and the missile's level distance
 (T-146); the scout fires from its eye height when made (T-120); a gone target is an
 empty slot or one a shot or explosion took; removal frees the slot at once.
+
+Part 2 (`t-114-fire`): `xeno_sim::weapons` has the trigger (`weapons::trigger`, from
+opcode 0x7d and `Pilot::Fire`, which `xeno-app` maps to Space, `1000:d0da`), the three
+weapon steps at their tick-table entries after the sensing ones (`weapons::step`), the
+humanoid's arms after its walk (`weapons::arms`, with the swing tables now in
+`Motion::walk`), the energy check, the weapons' messages and their once-only bit, and
+the weapon state's cooling and none-left bits (`weapons::state_bits`, read by
+`sense::weapon_state`); the scorpion's weapon key posts its empty message by the
+count's low byte. `Movement::guns` keeps the energy, cool-downs, rounds or shells,
+missiles, burst, barrels fired, the missile in flight, and the humanoid's arm frames and
+raise, loaded from the file and hashed (the state hash changes). The guns' sounds are
+`Event::Sound`, for the robot unless the gun's is heard by all. `weapons`'
+`real_assets_two_stock_robots_fight`: scen00a's two robots of the closing test fire
+dozens of shots in five minutes and both are hit and worn. Shortcuts, each named in the
+code: the ECM's and cloak's times are not counted down (T-136); the missile camera's
+switch is the console's (T-134); the arms' swing step is the legs'; nothing recharges
+the energy or sets `ON_BATTERY` (T-148's signal), so stock robots fire freely. A robot
+worn by many small hits is not destroyed until its damage total is kept (T-140).
 
 ## The mission's end (T-055)
 

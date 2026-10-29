@@ -18,13 +18,14 @@ pub mod script;
 pub mod sense;
 pub mod shot;
 pub mod terrain;
+pub mod weapons;
 pub mod world;
 
 pub use clock::Clock;
 pub use random::Random;
 pub use rate::Rate;
 pub use world::{
-    Census, Components, Damage, Entity, EntityId, Fixed, Movement, Position, State, World,
+    Census, Components, Damage, Entity, EntityId, Fixed, Guns, Movement, Position, State, World,
 };
 
 use hash::{StateHash, StateHasher};
@@ -217,6 +218,10 @@ impl Sim {
             net::deploy(&mut self.world, id, tables, &mut self.random, &mut events);
             return events;
         }
+        if key == Pilot::Fire {
+            weapons::trigger(&mut self.world, id, tables);
+            return events;
+        }
         if matches!(
             key,
             Pilot::Left | Pilot::Right | Pilot::Faster | Pilot::Slower
@@ -239,7 +244,7 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
-            Pilot::Deploy => {}
+            Pilot::Deploy | Pilot::Fire => {}
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -301,6 +306,8 @@ pub enum Pilot {
     OtherWeapon,
     /// The scorpion's U: a relay deployed where it stands (`net::deploy`).
     Deploy,
+    /// Space: the kind's trigger (`weapons::trigger`), as the scripts' opcode 0x7d.
+    Fire,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input

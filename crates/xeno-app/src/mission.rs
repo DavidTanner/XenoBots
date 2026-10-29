@@ -111,9 +111,9 @@ mod handler {
     /// Consoles: F5, F6 and the humanoid's F9 select a weapon (`docs/sim.md`, "The
     /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
-    /// W, E with the stance each sets, and the scorpion's U (`docs/sim.md`, "The
-    /// cockpit keys").
-    pub const PILOT: [(u16, Pilot); 20] = [
+    /// W, E with the stance each sets, the scorpion's U and Space, the trigger
+    /// (`1000:d0da`; `docs/sim.md`, "The cockpit keys").
+    pub const PILOT: [(u16, Pilot); 21] = [
         (0xd131, Pilot::Weapon(0)),
         (0xd142, Pilot::Weapon(1)),
         (0xb20c, Pilot::OtherWeapon),
@@ -134,6 +134,7 @@ mod handler {
         (0xc2f8, Pilot::Stance(0x30)),
         (0xc2b3, Pilot::Stance(0)),
         (0x9afa, Pilot::Deploy),
+        (0xd0da, Pilot::Fire),
     ];
 }
 
@@ -2423,6 +2424,7 @@ pub mod tests {
                 // Legs that never leave frame 0: no footsteps.
                 walk: motion::Walk {
                     humanoid_legs: [[0; motion::STEPS]; 2],
+                    humanoid_arms: [[0; motion::STEPS]; 2],
                     scout_legs: [[0; motion::STEPS]; 2],
                     scout_crouch: [0; motion::CROUCHES],
                 },

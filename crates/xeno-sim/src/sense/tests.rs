@@ -312,12 +312,15 @@ fn real_assets_two_stock_robots_find_and_close_on_each_other() {
     };
     // ENGAGE locks at once and drives at high speed; the alien's scan finds the human
     // within 256 ticks and event 1 runs ENGAGING. Within two minutes both hold each
-    // other as targets and stand under 2 units apart, where ENGAGING stops.
+    // other as targets and stand under 2 units apart, where ENGAGING stops. (They
+    // fire too, and a hit on a targeting computer can drop a lock later: T-114.)
+    let mut met = false;
     for _ in 0..70 * 120 {
         _ = sim.tick(&[]);
+        met |= m(&sim.world, human.0).target == Some(alien)
+            && m(&sim.world, alien.0).target == Some(human)
+            && m(&sim.world, alien.0).contacts > 0
+            && apart(&sim) < 0x1f4;
     }
-    assert_eq!(m(&sim.world, human.0).target, Some(alien));
-    assert_eq!(m(&sim.world, alien.0).target, Some(human));
-    assert!(m(&sim.world, alien.0).contacts > 0);
-    assert!(apart(&sim) < 0x1f4, "{:#x}", apart(&sim));
+    assert!(met, "{:#x}", apart(&sim));
 }

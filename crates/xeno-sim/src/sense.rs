@@ -381,9 +381,8 @@ fn warn(world: &mut World, id: EntityId) {
 /// The weapon state word of robot `id`'s weapon `w` (opcodes 0x78 to 0x7a, the kinds'
 /// routines through `1000:d0e9` and `d10d`): the weapon's number in the high byte;
 /// in the low, bit 0 present, 1 cooling down, 2 and 3 the target in the arc and in
-/// range (+0xec bits 2 and 1), 4 selected, 5 short of drive, 6 out of rounds.
-// shortcut: the cool-downs and the scorpion's rounds are T-114's, so a weapon is
-// never cooling down or out of rounds.
+/// range (+0xec bits 2 and 1), 4 selected, 5 short of drive, 6 none left
+/// (`weapons::state_bits`).
 pub fn weapon_state(world: &World, id: EntityId, w: usize, tables: &Tables) -> u16 {
     let Some((kind, _, m)) = robot(world, id) else {
         return 0;
@@ -399,7 +398,7 @@ pub fn weapon_state(world: &World, id: EntityId, w: usize, tables: &Tables) -> u
     } else {
         hit == 0
     };
-    let mut bits = u8::from(present);
+    let mut bits = u8::from(present) | crate::weapons::state_bits(world, id, w);
     if c.targeting & IN_ARC != 0 {
         bits |= 0x04;
     }
