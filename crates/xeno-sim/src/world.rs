@@ -173,10 +173,12 @@ pub struct Movement {
     /// +0x118: the relays a scorpion carries; half of it picks its speed table.
     pub relays: u8,
     /// The walking animation's step counter (humanoid +0x105, scorpion +0x116, scout
-    /// +0x10a) and the leg frames that make footsteps (humanoid +0x101 and +0x102,
-    /// scout +0x103 and +0x104; `docs/render.md`, "Walking").
+    /// +0x10a) and the frame bytes +0xff to +0x104 (`legs[k]` is +0xff + k) its legs
+    /// are (`docs/render.md`, "Walking"): the humanoid's +0x101 and +0x102 (its +0xff
+    /// and +0x100 are its arms, [`Guns::arms`], and 0 here), the scorpion's six, the
+    /// scout's +0xff, +0x100, +0x103 and +0x104 (+0x101 and +0x102 as loaded).
     pub stride: u8,
-    pub legs: [u8; 2],
+    pub legs: [u8; 6],
     /// +0x17: the status bits (`usg::status`): cloak, ECM, spotted, tracking and the
     /// count to the next scan.
     pub status: u8,
@@ -274,14 +276,19 @@ impl Movement {
                 ..Guns::default()
             },
         };
-        // (gear, stride, legs, stance and its target, relays) by kind.
+        // (gear, stride, legs, stance and its target, relays) by kind; the frames start
+        // at +0xfe.
+        let frames = |f: &[u8]| -> [u8; 6] { f[1..7].try_into().expect("+0xff to +0x104") };
         let (gear, stride, legs, stance, relays) = match &r.parts {
-            Parts::Humanoid(p) => (p.gear, p.step, [p.frames[3], p.frames[4]], (0, 0), 0),
-            Parts::Scorpion(p) => (0, p.step, [0; 2], (0, 0), p.relays),
+            Parts::Humanoid(p) => {
+                let [.., a, b] = p.frames;
+                (p.gear, p.step, [0, 0, a, b, 0, 0], (0, 0), 0)
+            }
+            Parts::Scorpion(p) => (0, p.step, frames(&p.frames), (0, 0), p.relays),
             Parts::Scout(p) => (
                 p.gear,
                 p.step,
-                [p.frames[5], p.frames[6]],
+                frames(&p.frames),
                 (p.stance, p.stance_target),
                 0,
             ),
@@ -377,7 +384,8 @@ impl StateHash for State {
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
                 h.u8(m.relays);
-                h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
+                h.u8(m.stride);
+                h.bytes(&m.legs);
                 h.bytes(&[m.status, m.contacts, m.locked_on]);
                 h.u16(m.target.map_or(0xffff, |t| t.0));
                 h.u16(m.target_distance);

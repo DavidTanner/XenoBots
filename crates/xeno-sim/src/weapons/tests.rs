@@ -91,6 +91,24 @@ fn a_humanoid_raises_its_arm_then_fires_when_cooled_and_in_the_arc() {
 }
 
 #[test]
+fn a_walking_humanoid_swings_its_arms_by_its_legs_step_and_settles_them_still() {
+    let walk = synthetic_tables().walk;
+    let mut world = armed(ObjectKind::Humanoid);
+    let (m, c) = robot_parts(&mut world, EntityId(4)).unwrap();
+    // Step 6: the arms' tables `step & 3` and `(step + 1) & 3`.
+    (m.speed, m.stride) = (0x80, 0x60);
+    arms(&walk, 1, m, c);
+    assert_eq!(m.guns.arms, [2, 3]);
+    // Still: down a frame a tick, every tick.
+    m.speed = 0;
+    arms(&walk, 1, m, c);
+    assert_eq!(m.guns.arms, [1, 2]);
+    arms(&walk, 2, m, c);
+    arms(&walk, 3, m, c);
+    assert_eq!(m.guns.arms, [0, 0]);
+}
+
+#[test]
 fn a_damaged_weapon_raises_no_arm_and_a_destroyed_one_shows_its_broken_arm() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
     let mut world = armed(ObjectKind::Humanoid);

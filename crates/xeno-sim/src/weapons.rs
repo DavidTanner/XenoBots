@@ -365,8 +365,8 @@ fn scout(
 /// arm steps every 4 passes, lifting to its raised frame, then making its weapon
 /// ready, waiting for it to fire, and lowering; otherwise it swings while walking and
 /// settles a frame a tick when still. A destroyed weapon's arm shows its broken frame.
-// shortcut: the swing's step is the legs' (`counter >> 4`), as the original's BX is
-// taken to be after the legs' routine; T-120 checks the arms against DOSBox.
+/// The swing's step is the legs' (`counter >> 4`): `1000:ad80` sets BX, and neither the
+/// legs' routine nor the footstep (which saves it) changes it before the arms (T-120).
 pub fn arms(walk: &Walk, ticks: u16, m: &mut Movement, c: &mut Components) {
     let step = usize::from(m.stride >> 4);
     for w in 0..2 {

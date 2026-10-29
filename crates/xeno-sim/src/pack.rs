@@ -279,8 +279,8 @@ fn robot(
                 &[
                     g.arms[0],
                     g.arms[1],
-                    m.legs[0],
-                    m.legs[1],
+                    m.legs[2],
+                    m.legs[3],
                     g.raised[0],
                     g.raised[1],
                 ],
@@ -299,6 +299,7 @@ fn robot(
                 r.u16(0x10a + 2 * i, v);
             }
             r.u8(0x114, n.step);
+            r.put(0xff, &m.legs);
             r.u8(0x116, m.stride);
             r.u8(0x118, m.relays);
             r.put(0x11d, &[g.fired, g.burst, g.cooldown[0] as u8]);
@@ -309,7 +310,8 @@ fn robot(
         }
         Some(RobotKind::Scout) => {
             let c = g.cooldown.map(|c| c as u8);
-            r.put(0x103, &[m.legs[0], m.legs[1], c[0], c[1], g.rounds as u8]);
+            r.put(0xff, &m.legs);
+            r.put(0x105, &[c[0], c[1], g.rounds as u8]);
             r.put(0x109, &[m.gear, m.stride, m.stance, m.stance_target]);
         }
         None => {}

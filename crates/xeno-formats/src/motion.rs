@@ -61,6 +61,10 @@ const MAX_GEARS: usize = 16;
 pub(crate) const HUMANOID_LEGS_AT: [usize; 2] = [0xadbe, 0xadcc];
 pub(crate) const SCOUT_LEGS_AT: [usize; 2] = [0xc7bf, 0xc7d1];
 pub(crate) const SCOUT_CROUCH_AT: usize = 0xc829;
+/// The scorpion's six (`1000:95dd`): each `mov al, cs:[bx + table]`, `mov [di + leg],
+/// al`, 9 bytes apart; the legs are +0xff to +0x104, not in that order.
+pub(crate) const SCORPION_LEGS_AT: usize = 0x95e3;
+pub const SCORPION_LEGS: usize = 6;
 /// `mov al, cs:[bx + table]` in the humanoid's arms (`1000:ae23`, `ae8a`): their swing
 /// while walking (+0xff, +0x100).
 pub(crate) const HUMANOID_ARMS_AT: [usize; 2] = [0xae74, 0xaedb];
@@ -208,6 +212,8 @@ pub struct Walk {
     pub scout_legs: [[u8; STEPS]; 2],
     /// A scout's four legs when it stands still crouched, by stance / 16.
     pub scout_crouch: [u8; CROUCHES],
+    /// The scorpion's legs, +0xff to +0x104 in that order.
+    pub scorpion_legs: [[u8; STEPS]; SCORPION_LEGS],
     /// The humanoid's model height by step: `height + bob[step]`; its eye height.
     pub humanoid_height: u16,
     pub humanoid_bob: [u16; STEPS],
@@ -348,6 +354,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
             scout_crouch: legs(image, SCOUT_CROUCH_AT)?[..CROUCHES]
                 .try_into()
                 .expect("4 bytes"),
+            scorpion_legs: scorpion_legs(image)?,
         },
         strings: Strings(
             image
@@ -362,6 +369,25 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
 fn legs(image: &[u8], at: usize) -> Result<[u8; STEPS], FormatError> {
     let table = usize::from(operand(image, at, LEG_OP)?);
     Ok(bytes(image, table, STEPS)?.try_into().expect("16 bytes"))
+}
+
+/// The scorpion's six leg tables, each put by the leg its `mov [di + leg], al` stores.
+fn scorpion_legs(image: &[u8]) -> Result<[[u8; STEPS]; SCORPION_LEGS], FormatError> {
+    let mut tables = [None; SCORPION_LEGS];
+    for i in 0..SCORPION_LEGS {
+        let at = SCORPION_LEGS_AT + 9 * i;
+        let leg = match *bytes(image, at + 5, 4)? {
+            [0x88, 0x85, lo, hi] => usize::from(u16::from_le_bytes([lo, hi])),
+            _ => return Err(invalid(at + 5, "not a leg's store")),
+        };
+        let slot = leg
+            .checked_sub(0xff)
+            .and_then(|k| tables.get_mut(k))
+            .filter(|t| t.is_none())
+            .ok_or_else(|| invalid(at + 5, "not one of the six legs"))?;
+        *slot = Some(legs(image, at)?);
+    }
+    Ok(tables.map(|t| t.expect("six different legs")))
 }
 
 /// A walk's model heights by step, through the `add ax, cs:[bx + table]`, `mov [di +
@@ -649,6 +675,9 @@ mod tests {
         assert_eq!(motion.walk.humanoid_legs[1][..3], [2, 3, 0]);
         assert_eq!(motion.walk.humanoid_arms[1][..3], [1, 2, 3]);
         assert_eq!(motion.walk.scout_crouch[3], 3);
+        // Leg +0xff + k is `(step + k) % 6`, whatever order the stores come in.
+        assert_eq!(motion.walk.scorpion_legs[1][..3], [1, 2, 3]);
+        assert_eq!(motion.walk.scorpion_legs[5][..3], [5, 0, 1]);
         let w = &motion.walk;
         assert_eq!((w.humanoid_height, w.humanoid_eye), (0x0a00, 0x0f80));
         assert_eq!((w.humanoid_bob[1], w.scout_bob[15]), (0x10, 0xf0));
@@ -773,6 +802,11 @@ mod tests {
         let scout = w.scout_legs.iter().flatten().chain(&w.scout_crouch);
         assert!(scout.into_iter().all(|&f| f < 12));
         assert!(w.scout_legs.iter().all(|legs| legs.contains(&0)));
+        // The scorpion's six run through their 6 frames, each leg at a different phase.
+        for legs in &w.scorpion_legs {
+            assert!((0..6).all(|f| legs.contains(&f)) && legs.iter().all(|&f| f < 6));
+        }
+        assert!((1..6).all(|k| w.scorpion_legs[k] != w.scorpion_legs[0]));
         // Gears rise from reverse through a stop, and the scripts' speeds are gears;
         // the scorpion's steps meet its script speeds' ends.
         let g = &motion.gears;

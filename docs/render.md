@@ -208,6 +208,20 @@ arithmetically by 3 to it (the low byte, wrapping) and takes `step = counter >> 
 | Scorpion | +0x116 | legs +0xff, +0x101, +0x103, +0x100, +0x102, +0x104 from the six 16-byte tables at `CS:0x964b`, `0x965b`, `0x966b`, `0x967b`, `0x968b`, `0x969b` | every 8 ticks each leg not at 0 steps up one, 6 wrapping to 0 |
 | Scout | +0x10a | +0xff and +0x103 = `CS:0xc860[step]`, +0x100 and +0x104 = `CS:0xc870[step]`; model height `0x0c80 + CS:0xc880[step]` (words) | turning, or standing (stance 0x30): counter and the four 0; otherwise (crouched, still) all four `CS:0xc8a0[stance >> 4]`, model height `0x0c80 - 8 * stance` |
 
+Every branch of the scout's walk sets all four of its legs, so +0xff and +0x100 are
+always +0x103's and +0x104's frames after its first tick. Its +0x101 and +0x102
+(frames 3 and 4) are written by nothing in `xeno.exe` (no store to either offset in
+the scout's code): they stay as loaded. The scorpion's six tables are read in the
+order of the stores, `+0xff, +0x101, +0x103, +0x100, +0x102, +0x104`, so the port reads
+each table with the leg its `mov [di + leg], al` names (T-120). The step BX the
+humanoid's arms swing by is the legs' (`1000:ad80` sets it; the legs' routine and the
+footstep, which pushes it, leave it alone), so `CS:0xaf11` and `0xaf21` are read with the
+same step as the legs.
+
+The scorpion's routine (`1000:95a2`) first sets +0x107 (frame 9, part of the tail) to 0
+when it has missiles (+0x122) and its reload (+0x125) is 0, else 1, then the legs, then
+`1000:96ab` (T-151's).
+
 The tables are in the code segment (`CS:x` is image offset `x`). The humanoid's arms
 (+0xff, +0x100) follow its weapons (`1000:ae23`, `ae8a`: raised through +0x103 and
 +0x104 while firing, otherwise swung by `CS:0xaf11[step]` while walking and settled to
@@ -376,5 +390,6 @@ is the pass count `World::ticks`), and it reports the footsteps as
 sets the model height (+0x12) by the step (the humanoid every tick, the scout while it
 moves or crouches) and the humanoid's eye height, from the bob tables and bases read
 through the `add ax, cs:[bx + table]` of each routine (`Walk::humanoid_bob`,
-`scout_bob`; `docs/sim.md`, "Heights", T-119). The scorpion's legs and the scout's
-other legs are T-120.
+`scout_bob`; `docs/sim.md`, "Heights", T-119). The humanoid's arms swing by the same
+step (`xeno_sim::weapons::arms`). The scout's four legs walk and crouch (T-120); the
+scorpion's six are read (`Walk::scorpion_legs`) but not yet stepped (T-120 part 2).

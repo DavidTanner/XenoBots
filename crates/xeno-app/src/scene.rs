@@ -53,17 +53,17 @@ pub fn camera(world: &World, id: EntityId, view: &View3d, tables: &Tables) -> Op
 }
 
 /// The frames the sim keeps, from the kind's frame bytes (`docs/render.md`, "Frame
-/// numbers"): the legs that make footsteps, the humanoid's arms, a base's look, an
+/// numbers"): the humanoid's arms and legs, the scout's legs, a base's look, an
 /// explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0); the
-/// others are 0 (the remaining walking animations, T-120).
+/// others are 0 (the scorpion's, T-120 part 2).
 fn frames(e: &Entity) -> Vec<u8> {
     match (e.kind, e.state) {
         (ObjectKind::Humanoid, State::Robot(m)) => {
             let [a, b] = m.guns.arms;
-            vec![0, a, b, m.legs[0], m.legs[1]]
+            vec![0, a, b, m.legs[2], m.legs[3]]
         }
         (_, State::Shot(s)) => vec![s.frame],
-        (ObjectKind::Scout, State::Robot(m)) => vec![0, 0, 0, 0, 0, m.legs[0], m.legs[1]],
+        (ObjectKind::Scout, State::Robot(m)) => [&[0][..], &m.legs].concat(),
         (_, State::Base { look, .. }) => vec![look],
         (_, State::Explosion { frame, .. }) => vec![frame],
         _ => Vec::new(),
@@ -299,7 +299,7 @@ mod tests {
     fn nodes_come_from_the_world_by_kind_far_to_near() {
         let tables = crate::mission::tests::test_assets().motion;
         let walking = State::Robot(Movement {
-            legs: [3, 4],
+            legs: [0, 0, 3, 4, 0, 0],
             eye_height: 0x0f80,
             guns: xeno_sim::Guns {
                 arms: [1, 2],
