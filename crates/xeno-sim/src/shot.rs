@@ -62,10 +62,11 @@ const SHELL: u16 = 6;
 const HOMING: u16 = 7;
 const MISSILE: u16 = 8;
 
-/// The scout's eye height when made (+0x1c), which its plasma gun fires from.
-// shortcut: the scout's stance moves its eye (`docs/render.md`), which the sim does not
-// keep; upgrade with T-120's crouch.
-const SCOUT_EYE: u16 = 0x0a00;
+/// The scout's eye height (+0x1c), which its plasma gun fires from: 0x0d00 less 8 a
+/// step of its stance (`docs/render.md`, "The camera").
+fn scout_eye(stance: u8) -> u16 {
+    0x0d00u16.wrapping_sub(8 * u16::from(stance))
+}
 
 fn kind_number(kind: ObjectKind) -> usize {
     usize::from(u16::from(kind))
@@ -268,7 +269,7 @@ pub fn fire(
             (shot.flight, shot.arming, shot.speed) = (Flight::Homing, h.arming, h.speed);
             shot.target = Some(target);
             let lift = match kind {
-                ObjectKind::Scout => SCOUT_EYE.wrapping_sub(gun.height),
+                ObjectKind::Scout => scout_eye(m.stance).wrapping_sub(gun.height),
                 _ => gun.height,
             };
             shot.z = base.wrapping_add(i32::from(lift as i16));

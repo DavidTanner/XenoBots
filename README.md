@@ -92,8 +92,9 @@ review is the original's reference of the robots, with its pages, texts, keys an
 buttons from your `xeno.exe`, and each page's robot walks and turns in its view by
 the original's scripts.
 A mission ends won or lost when a base is destroyed, after the base's end (about 7.5
-seconds of explosions): the alien base won, yours lost. Robots do not shoot yet, so in
-a mission Ctrl+W destroys the alien base and Ctrl+L yours (Ctrl+C ends it with the
+seconds of explosions): the alien base won, yours lost. Robots lock on and fire at each
+other (Space fires the viewed robot's selected weapon), but a base takes 300 points, so
+in a mission Ctrl+W destroys the alien base and Ctrl+L yours (Ctrl+C ends it with the
 campaign won). Then the original's cutscene plays from your files, `win.vcl`,
 `slose.vcl` or `nlose.vcl` (by the robot console you opened last), or `triumph.vcl`,
 with its caption and the mission's kills, losses and points; after a training mission,
@@ -109,7 +110,7 @@ your `mgavideo.dvr` (the system cursor is hidden over the picture). See
 | Training menu | Click a button, or H, N, S or C: training mission. ESC or Alt+Q (or the last button): back |
 | Review | Tab or the next button (left click): next page. Alt+Tab: previous page. ESC, Alt+Q or the exit button: back to the map room |
 | Mission, situation room | Click a roster row (left) or Tab / Alt+Tab: select a unit. Space or J, the third button below the roster, or a right click on a row: that unit's console. The arrow buttons scroll the roster. O: the orders view, which types the scenario's briefing (S, M, R, C pick the other views, placeholders). Alt+Q, the bottom button or the top-left corner: end the mission (back to the map room). Ctrl+W, Ctrl+L: destroy the alien base or yours, standing in for shots; the base's explosions are heard (T-061), and about 7.5 seconds later the mission ends won or lost and plays its cutscene (a training mission goes straight back). Ctrl+C: end it with the campaign won (a placeholder) |
-| Mission, robot console | Click the program panel: left the next program, right the previous (and the robot back to its program). F4: next program. F2: automatic (the program drives). F3: manual (the pilot drives). Tab / Alt+Tab or the bottom-right button (left / right): next / previous unit. ESC, Alt+Q or the top-left corner: situation room. Ctrl+W, Ctrl+L, Ctrl+C as above |
+| Mission, robot console | Click the program panel: left the next program, right the previous (and the robot back to its program). F4: next program. F2: automatic (the program drives). F3: manual (the pilot drives). Space: fire. Tab / Alt+Tab or the bottom-right button (left / right): next / previous unit. ESC, Alt+Q or the top-left corner: situation room. Ctrl+W, Ctrl+L, Ctrl+C as above |
 | Cutscene after a mission | Any key but P (ESC too): skip it, then the map room. P: pause until the next key |
 
 `--screen test-card` shows a test card (a synthetic pattern) instead. Its white marker moves one pixel per frame of the
