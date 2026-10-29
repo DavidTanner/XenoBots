@@ -747,9 +747,9 @@ impl Screens {
         // retrace's input (`docs/sim.md`, "Movement").
         if matches!(self.screen, Mission(_))
             && self.next.is_none()
-            && let Some(won) = self.mission.tick(events.iter().copied())
+            && let Some(request) = self.mission.tick(events.iter().copied())
         {
-            self.act(End(if won { Ending::Won } else { Ending::Lost }));
+            self.mission_request(request);
         }
         if matches!(self.screen, Mission(_)) && self.next.is_none() {
             self.mission.check_noise(&self.mission_assets);
@@ -894,6 +894,9 @@ impl Screens {
             MissionRequest::End => {
                 log::info!("mission: ended with no result");
                 self.act(Go(MapRoom));
+            }
+            MissionRequest::Over { won } => {
+                self.act(End(if won { Ending::Won } else { Ending::Lost }));
             }
         }
     }
@@ -2406,5 +2409,57 @@ pub(crate) mod tests {
                 assert!(facets > 0, "{view:?}: hill {h} not drawn");
             }
         }
+    }
+
+    /// In the net-builder training (N), a unit recalled from the situation room (Tab,
+    /// F3) and watched on its console (Space) is taken in: the view turns to the
+    /// situation room, and F2 there launches it at the base's position.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_f2_launches_the_selected_unit_taken_in() {
+        use xeno_sim::{EntityId, base::in_base};
+        let Some(mut screens) = real_screens(Training) else {
+            return;
+        };
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        let press = |screens: &mut Screens, fb: &mut Framebuffer, code| {
+            screens.retrace(&[down(code)], fb);
+            screens.retrace(&[up(code)], fb);
+        };
+        let run = |screens: &mut Screens, fb: &mut Framebuffer, n| {
+            (0..n).for_each(|_| screens.retrace([], fb));
+        };
+        run(&mut screens, fb, 100);
+        press(&mut screens, fb, 0x31);
+        run(&mut screens, fb, 100);
+        assert_eq!(screens.screen(), Mission(View::SitRoom));
+        // Tab, F3, Space.
+        for code in [0x0f, 0x3d, 0x39] {
+            press(&mut screens, fb, code);
+        }
+        run(&mut screens, fb, 40);
+        let mission::Viewed::Robot(slot) = screens.mission().viewed() else {
+            panic!("not on a console");
+        };
+        let unit = |screens: &Screens| {
+            let e = screens.mission().world().get(EntityId(slot)).unwrap();
+            (in_base(&e.damage), e.position)
+        };
+        let taken = (0..20_000).find(|_| {
+            screens.retrace([], fb);
+            unit(&screens).0
+        });
+        assert!(taken.is_some(), "not taken in");
+        run(&mut screens, fb, 40);
+        assert_eq!(screens.screen(), Mission(View::SitRoom));
+        assert_eq!(screens.mission().viewed(), mission::Viewed::Base);
+        press(&mut screens, fb, 0x3c);
+        let world = screens.mission().world();
+        let at = world.get(world.base(xeno_formats::usg::Side::Human).unwrap());
+        let (inside, position) = unit(&screens);
+        assert!(!inside, "launched");
+        // At the base, moved on by at most a tick.
+        let d = xeno_sim::terrain::approx_distance(at.unwrap().position, position);
+        assert!(d.0 < 0x1000, "{d:?}");
     }
 }

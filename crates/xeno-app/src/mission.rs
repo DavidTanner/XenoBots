@@ -106,8 +106,10 @@ mod handler {
     ];
     pub const DISPLAY_ZOOM_IN: u16 = 0xda0e;
     pub const DISPLAY_ZOOM_OUT: u16 = 0xda37;
-    /// Situation room: F3 recalls the selected unit (`1000:675e`).
+    /// Situation room: F3 recalls the selected unit (`1000:675e`), F2 launches it
+    /// from the base (`1000:6704`).
     pub const RECALL: u16 = 0x675e;
+    pub const LAUNCH: u16 = 0x6704;
     /// Consoles: F5, F6 and the humanoid's F9 select a weapon (`docs/sim.md`, "The
     /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
@@ -480,6 +482,8 @@ pub enum Request {
     Show(View),
     /// The mission is over, with no result (the quit flag).
     End,
+    /// A destroyed base's end script is over: won or lost.
+    Over { won: bool },
 }
 
 /// Where a press captured the pointer.
@@ -805,9 +809,18 @@ impl Mission {
             .collect()
     }
 
-    /// The next (`step` 1) or previous robot after `from`, wrapping.
-    fn step_robot(&self, from: Option<u16>, step: isize) -> Option<u16> {
-        let robots = self.robots();
+    /// Whether robot `slot` is in its base (+0xfd bit 2).
+    fn in_base(&self, slot: u16) -> bool {
+        let e = self.world().get(EntityId(slot));
+        e.is_some_and(|e| xeno_sim::base::in_base(&e.damage))
+    }
+
+    /// The next (`step` 1) or previous robot after `from`, wrapping; with `in_field`,
+    /// skipping the others in the base, as the consoles do (`1000:7db2`, `7dd9`; the
+    /// situation room's roster steps through them all, `1000:67e8`, `680c`).
+    fn step_robot(&self, from: Option<u16>, step: isize, in_field: bool) -> Option<u16> {
+        let mut robots = self.robots();
+        robots.retain(|&r| !in_field || Some(r) == from || !self.in_base(r));
         let i = from.and_then(|s| robots.iter().position(|&r| r == s));
         let n = robots.len() as isize;
         if n == 0 {
@@ -854,8 +867,10 @@ impl Mission {
         }
     }
 
+    /// Space, J, the view button and a roster row's right release (`1000:6852`,
+    /// `587a`): the selected unit's console, unless it is in the base.
     fn view_selected(&mut self) -> Option<Request> {
-        let slot = self.selected?;
+        let slot = self.selected.filter(|&s| !self.in_base(s))?;
         self.view_robot(slot).map(Request::Show)
     }
 
@@ -906,6 +921,17 @@ impl Mission {
         }
     }
 
+    /// The situation room launches its selected unit, if it is in the base
+    /// (`Sim::launch`).
+    fn launch(&mut self) {
+        if let (Run::Running(sim), Some(slot)) = (&mut self.run, self.selected) {
+            for event in sim.launch(EntityId(slot)) {
+                log::debug!("situation room: {event:?}");
+            }
+            self.dirty = true;
+        }
+    }
+
     /// A cockpit key acts on robot `slot` through the running sim; a parked mission
     /// changes nothing.
     fn pilot(&mut self, slot: u16, key: Pilot) {
@@ -921,24 +947,33 @@ impl Mission {
     }
 
     /// One retrace of the mission's world with that retrace's input, if it runs (a
-    /// parked mission waits). What it did goes to the log. `Some(won)` once a
-    /// destroyed base's end script is over (`docs/sim.md`, "The mission's end").
-    pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Option<bool> {
+    /// parked mission waits). What it did goes to the log. [`Request::Over`] once a
+    /// destroyed base's end script is over (`docs/sim.md`, "The mission's end"); the
+    /// base's view when the robot on view is taken in (`1000:6460`, `7ee7`).
+    pub fn tick<'a>(
+        &mut self,
+        events: impl IntoIterator<Item = &'a InputEvent>,
+    ) -> Option<Request> {
         // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
         let (Run::Running(sim), None, None) = (&mut self.run, &self.terrain, &self.dialog) else {
             return None;
         };
-        let mut over = None;
+        let (mut over, mut taken) = (None, false);
         for event in sim.tick(events) {
             log::debug!("mission: retrace {}: {event:?}", sim.retrace());
-            if let xeno_sim::motion::Event::MissionOver { won } = event {
-                over = Some(won);
+            match event {
+                xeno_sim::motion::Event::MissionOver { won } => over = Some(won),
+                xeno_sim::motion::Event::TakenIn(r) => taken |= self.viewed == Viewed::Robot(r.0),
+                _ => {}
             }
             Self::hear(self.viewed, &mut self.sounds, event);
         }
         // The views are drawn from the world, which just moved.
         self.dirty = true;
-        over
+        match over {
+            Some(won) => Some(Request::Over { won }),
+            None => taken.then(|| self.base()),
+        }
     }
 
     /// Keeps a sound `event` that is heard everywhere, or only while its object's
@@ -1122,7 +1157,7 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::NEXT_UNIT | handler::PREVIOUS_UNIT) => {
                 let step = if handler == handler::NEXT_UNIT { 1 } else { -1 };
-                let next = self.step_robot(Some(slot), step)?;
+                let next = self.step_robot(Some(slot), step, true)?;
                 self.view_robot(next).map(Request::Show)
             }
             (Viewed::Base, handler::END) => (word == ALT_Q).then_some(Request::End),
@@ -1138,6 +1173,10 @@ impl Mission {
             (Viewed::Base, handler::VIEW_SELECTED) => self.view_selected(),
             (Viewed::Base, handler::RECALL) => {
                 self.recall();
+                None
+            }
+            (Viewed::Base, handler::LAUNCH) => {
+                self.launch();
                 None
             }
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
@@ -1160,7 +1199,7 @@ impl Mission {
                 } else {
                     -1
                 };
-                let next = self.step_robot(self.selected, step);
+                let next = self.step_robot(self.selected, step, false);
                 self.select_unit(next);
                 None
             }
@@ -1418,7 +1457,7 @@ impl Mission {
             // shortcut: which unit the roster picks next (`sim_remove_unit_from_list`,
             // `1fe6:6e71`) is not traced: the first; upgrade with T-128.
             self.selected = None;
-            let first = self.step_robot(None, 1);
+            let first = self.step_robot(None, 1, false);
             self.select_unit(first);
         }
     }
@@ -1757,7 +1796,7 @@ impl Mission {
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
-                let next = self.step_robot(Some(slot), if right { -1 } else { 1 })?;
+                let next = self.step_robot(Some(slot), if right { -1 } else { 1 }, true)?;
                 self.view_robot(next).map(Request::Show)
             }
             Target::Corner => match self.viewed {
@@ -1811,10 +1850,7 @@ impl Mission {
                 None
             }
             button::LAUNCH => {
-                log::info!(
-                    "situation room: launching unit {:?} needs units in the base (T-135)",
-                    self.selected
-                );
+                self.launch();
                 None
             }
             _ => {
@@ -2929,7 +2965,7 @@ pub mod tests {
             m.destroy_base(side);
             let ended = (1..=33 * 16).find_map(|t| m.tick([]).map(|w| (t, w)));
             assert!(
-                ended.is_some_and(|(t, w)| t > 32 * 16 && w == won),
+                ended.is_some_and(|(t, w)| t > 32 * 16 && w == Request::Over { won }),
                 "{ended:?}"
             );
         }
@@ -3113,6 +3149,48 @@ pub mod tests {
             (orders.program, orders.program_drives),
             (assets.motion.recall_program, true)
         );
+    }
+
+    /// The robot on view taken in turns the view to the base; it is then skipped by
+    /// the consoles' Tab and cannot be viewed, but the roster steps to it, and F2
+    /// launches it at the base's position.
+    #[test]
+    fn a_robot_taken_in_leaves_its_console_and_f2_launches_it() {
+        use xeno_formats::usg::Robot as Bits;
+        let mut assets = test_assets();
+        let mut m = mission(&assets);
+        // The fixture's human humanoid (slot 2) and scorpion (slot 5); the base, slot 0.
+        let (robot, other) = (2, 5);
+        assert_eq!(m.view_robot(robot), Some(View::Humanoid));
+        let Run::Running(sim) = &mut m.run else {
+            unreachable!()
+        };
+        let base = sim.world.get(EntityId(0)).unwrap().position;
+        if let Some(State::Base { tick, .. }) = sim.world.get_mut(EntityId(0)).map(|e| &mut e.state)
+        {
+            // The take-in's phase (9) comes next.
+            *tick = 8;
+        }
+        let e = sim.world.get_mut(EntityId(robot)).unwrap();
+        e.position = base;
+        if let xeno_sim::Damage::Robot(c) = &mut e.damage {
+            c.equipment &= !(Bits::ENTERING_BASE | Bits::IN_BASE);
+        }
+        assert_eq!(m.tick(&[]), Some(Request::Show(View::SitRoom)));
+        assert_eq!(m.viewed(), Viewed::Base);
+        assert!(m.in_base(robot));
+        // Not viewed from the roster; skipped by a console's Tab, not by the roster's.
+        m.select_unit(Some(robot));
+        assert_eq!(m.view_selected(), None);
+        assert_eq!(m.step_robot(Some(other), 1, true), Some(other));
+        assert_eq!(m.step_robot(Some(other), 1, false), Some(robot));
+        // F2 launches it (the synthetic tables give F2 the consoles' handler).
+        assets.views.situation.keys.insert(0, (0x3c, 0x6704));
+        m.key(0x3c, &assets);
+        let e = m.world().get(EntityId(robot)).unwrap();
+        assert_eq!(e.position, base);
+        assert!(!m.in_base(robot));
+        assert_eq!(m.view_selected(), Some(Request::Show(View::Humanoid)));
     }
 
     #[test]

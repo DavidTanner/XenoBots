@@ -1298,7 +1298,8 @@ path) cleared, +0xf7 (contacts) 0, then the new robot's orders (`1000:d2b6`: +0x
 helm 100, speed 0, +0x25 = 0, program 9 through `order_set_program`, the program bit
 set without an event). The alien path phase then gives it a random path and its
 mission's program (T-052). The situation room's F2 and launch button do the same for
-the player's selected unit (`1000:6704`, T-135).
+the player's selected unit (`1000:6704`, `5ba0`; `docs/screens.md`, "Launching"),
+with no check of its damage.
 
 **The sliders** (`DS:0x5b0a` by +0x2d, every tick while it is not 0): 1 and 2 lower and
 raise +0x39 (the net's power, T-113: a base powers relays to +0x39 / 4), 3 and 4 +0x3a
@@ -1331,12 +1332,34 @@ holds +0x20, +0x19, +0xb5, +0x1a, +0x1c, +0x38..+0x3b and +0x2d, loaded and hash
 `Sim::hold_slider(side, n)` sets (the situation room's arrows are T-127's). A robot
 launched gets `motion::Event::Launched` ("N launched" in `xeno-tool simulate`), and
 `base::launch` is the routine the situation room's F2 and launch button will call
-(T-135). In scen00a with seed 1 alien slot 34 comes home on its path at tick 11971 and
+(T-135: `Sim::launch`, below). In scen00a with seed 1 alien slot 34 comes home on its path at tick 11971 and
 is launched four ticks later (`real_assets_the_alien_base_launches_a_robot_it_took_in`).
 Shortcuts, named in the code: the repaired robot's slot holds no reference. The
 damage total +0xf9 the repairs and the launch go by is kept since T-140 (a repaired
 robot is released, and an alien robot launched, once its own tick has added its total
 up to 0).
+
+### The player's units in the base (T-135)
+
+A T-090 pass read the situation room's F2 (`1000:6704`) and launch button (`5ba0`):
+both launch the selected unit with `1000:6716` if it is in the base, and check nothing
+else (`docs/screens.md`, "Launching"). `Sim::launch(id)` is that call: a robot in its
+base (+0xfd bit 2) leaves at its side's base's position, whatever its damage total or
+repairs; any other robot is left alone. The take-in (`1000:6445`) also turns the view
+to the base when the robot taken in is the one on view (`1000:6460`, `7ee7`):
+`xeno-app`'s `Mission::tick` answers `motion::Event::TakenIn` for the robot on view
+with the situation room. A unit in the base cannot be viewed from the situation room
+(Space, J, the view button, a roster row's right release) and the consoles' Tab and
+unit-name button skip it; the situation room's Tab steps through it
+(`docs/screens.md`, "Switching views"). No stock scenario starts with a unit in its
+base (`real_assets_every_scenario_loads_with_its_units`). With seed 1, scen00a's slot
+2, hit for 6 points and recalled, is taken in at tick 3106 with a total of 5, repaired
+to 0 by tick 5989 and launched by `Sim::launch`
+(`real_assets_a_robot_taken_in_and_repaired_is_launched_by_f2`); in the net-builder
+training the first unit Tab selects (slot 21), recalled, is taken in about 1,900
+retraces later, its console turns to the situation room and F2 launches it
+(`xeno-app`'s `real_assets_f2_launches_the_selected_unit_taken_in`). The state hash
+does not change for a mission played without F2.
 
 ## Heights (T-119)
 
