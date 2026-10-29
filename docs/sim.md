@@ -1046,8 +1046,8 @@ explosions from their templates. A shot is freed after the damage it does, so an
 explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
 each named in the code: robots, bases and the rest stand at z 0 (T-101); in the field
 by kind (T-147); the coarse bearing for the lead and the missile's level distance
-(T-146); the scout fires from its eye height when made (T-120); a gone target is an
-empty slot or one a shot or explosion took; removal frees the slot at once.
+(T-146); a gone target is an empty slot or one a shot or explosion took; removal
+frees the slot at once.
 
 Part 2 (`t-114-fire`): `xeno_sim::weapons` has the trigger (`weapons::trigger`, from
 opcode 0x7d and `Pilot::Fire`, which `xeno-app` maps to Space, `1000:d0da`), the three
@@ -1066,6 +1066,12 @@ code: the ECM's and cloak's times are not counted down (T-136); the missile came
 switch is the console's (T-134); the arms' swing step is the legs'; nothing recharges
 the energy or sets `ON_BATTERY` (T-148's signal), so stock robots fire freely. A robot
 worn by many small hits is not destroyed until its damage total is kept (T-140).
+
+Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height by its stance
+(0x0d00 less 8 a stance step, as the 3D view's camera); `xeno-app`'s 3D view draws a
+shot at its own height with its frame, and the humanoid's arms with their frames.
+`xeno-app`'s Ctrl+W and Ctrl+L stay: a base takes 300 points, which no robot's program
+shoots at in a stock mission's first minutes (T-150).
 
 ## The mission's end (T-055)
 

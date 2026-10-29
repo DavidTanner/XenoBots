@@ -78,11 +78,16 @@ pub fn camera(
 }
 
 /// The frames the sim keeps, from the kind's frame bytes (`docs/render.md`, "Frame
-/// numbers"): the legs that make footsteps, a base's look, an explosion's frame; the
-/// others are 0 (T-114 and the remaining walking animations).
+/// numbers"): the legs that make footsteps, the humanoid's arms, a base's look, an
+/// explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0); the
+/// others are 0 (the remaining walking animations, T-120).
 fn frames(e: &Entity) -> Vec<u8> {
     match (e.kind, e.state) {
-        (ObjectKind::Humanoid, State::Robot(m)) => vec![0, 0, 0, m.legs[0], m.legs[1]],
+        (ObjectKind::Humanoid, State::Robot(m)) => {
+            let [a, b] = m.guns.arms;
+            vec![0, a, b, m.legs[0], m.legs[1]]
+        }
+        (_, State::Shot(s)) => vec![s.frame],
         (ObjectKind::Scout, State::Robot(m)) => vec![0, 0, 0, 0, 0, m.legs[0], m.legs[1]],
         (_, State::Base { look, .. }) => vec![look],
         (_, State::Explosion { frame, .. }) => vec![frame],
@@ -128,7 +133,11 @@ pub fn nodes(
     let objects = world.iter().filter_map(|(id, e)| {
         let kind = usize::from(u16::from(e.kind));
         let node_type = (*view.node_types.get(kind)?)?;
-        let (z, height) = heights.get(usize::from(id.0)).copied().unwrap_or_default();
+        let (mut z, height) = heights.get(usize::from(id.0)).copied().unwrap_or_default();
+        // A shot keeps its own height; its model height is 0 (`docs/formats/usg.md`).
+        if let State::Shot(s) = e.state {
+            z = s.z;
+        }
         Some(RenderNode {
             object: id.0,
             model: view.kind_models[kind],
@@ -292,13 +301,14 @@ mod tests {
         }
     }
 
-    /// Made-up tables: humanoids (model 0) and bases (model 16) make type 2 nodes,
-    /// kind 13 (model 10) type 6; nothing else makes one.
+    /// Made-up tables: humanoids (model 0), bases (model 16) and missiles (kind 8,
+    /// model 12) make type 2 nodes, kind 13 (model 10) type 6; nothing else makes one.
     fn view() -> View3d {
         let mut node_types = [None; 17];
         (node_types[0], node_types[3], node_types[13]) = (Some(2), Some(2), Some(6));
+        node_types[8] = Some(2);
         let mut kind_models = [0; 17];
-        (kind_models[3], kind_models[13]) = (16, 10);
+        (kind_models[3], kind_models[13], kind_models[8]) = (16, 10, 12);
         View3d {
             kind_models,
             frame_offsets: [0; 17],
@@ -324,6 +334,10 @@ mod tests {
         let walking = State::Robot(Movement {
             legs: [3, 4],
             stance: 0x10,
+            guns: xeno_sim::Guns {
+                arms: [1, 2],
+                ..xeno_sim::Guns::default()
+            },
             ..Movement::default()
         });
         let mut world = World::default();
@@ -346,6 +360,23 @@ mod tests {
         };
         world.insert(EntityId(9), entity(ObjectKind::Other(13), 1, 4, boom));
         world.insert(EntityId(11), entity(ObjectKind::Humanoid, 0, 4, walking));
+        // A missile 8 units off, 0x1800 up, spinning at frame 3.
+        let missile = State::Shot(xeno_sim::shot::Shot {
+            flight: xeno_sim::shot::Flight::Missile,
+            z: 0x1800,
+            velocity: [0; 3],
+            speed: 0,
+            climb: 0,
+            age: 0,
+            arming: 0,
+            life: 1,
+            damage: 8,
+            target: None,
+            turn: 0,
+            phase: 0,
+            frame: 3,
+        });
+        world.insert(EntityId(13), entity(ObjectKind::Other(8), 0, 8, missile));
         let mut heights = [(0, 0); 240];
         heights[2] = (0x1_0000, 0xa00);
         heights[11] = (0x2_f000, 0x2000);
@@ -364,15 +395,18 @@ mod tests {
             summary,
             [
                 (7, 16, vec![2], None),
+                (13, 12, vec![3], None),
                 (9, 10, vec![5], Some(0x1234)),
-                (11, 0, vec![0, 0, 0, 3, 4], None),
-                (2, 0, vec![0, 0, 0, 3, 4], None),
+                (11, 0, vec![0, 1, 2, 3, 4], None),
+                (2, 0, vec![0, 1, 2, 3, 4], None),
             ]
         );
+        // The shot at its own height.
+        assert_eq!(nodes[1].position[2], 0x1800);
         // The model height goes into the low word without a carry.
-        assert_eq!(nodes[2].position[2], 0x2_1000);
-        assert_eq!(nodes[3].position[2], 0x1_0a00);
-        assert_eq!(nodes[1].distance, 0x4_8000);
+        assert_eq!(nodes[3].position[2], 0x2_1000);
+        assert_eq!(nodes[4].position[2], 0x1_0a00);
+        assert_eq!(nodes[2].distance, 0x4_8000);
         // A scout's eye height falls as it crouches.
         let scout = camera(&world, EntityId(5), &view, &tables, &heights).unwrap();
         assert_eq!(scout.z, 0x0d00 - 0x80);

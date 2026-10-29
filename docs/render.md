@@ -194,7 +194,7 @@ model has animations. Who writes them:
 | Base | +0x18 | its damaged look, 0 to 2 |
 | Relay | +0x18 to +0x1d | its stage's look (`sim_tick_relay`, T-113) |
 | Explosion, cloak | +0x18 | the frame its tick steps (`docs/sim.md`, "Damage") |
-| Shots | +0x18 | their ticks (T-114) |
+| Shots | +0x18 | the missile's (kind 8) spinning frame, 0 to 3; 0 for the others (T-114) |
 | Obstacle | +0x18 | 0 (one frame) |
 
 **Walking.** Each robot's move routine ends, after the hills test, with its walking
