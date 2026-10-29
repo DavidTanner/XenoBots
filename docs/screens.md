@@ -1653,7 +1653,8 @@ original.
   display, Ctrl+E's flag and Ctrl+Alt+R (remove the relays). After each key the status
   rows are logged, built from the user's template and names as the original prints them
   on its debug screen. Ctrl+M opens the terrain editor (below). Ctrl+Alt+P (no
-  unlock, as in the original) opens the SAVE GAME dialog and writes the scenario with
+  unlock, as in the original) opens the SAVE GAME dialog and writes the mission as it
+  stands (`Mission::saved`: the sim's world over the scenario copy, T-116) with
   `usg::write` to the name chosen (`EDITED.USG` if the port cannot read the dialogs
   from `xeno.exe`); Ctrl+Alt+O opens the open dialog and reads the chosen file as the
   orders. Not done: Ctrl+Alt+B (T-145), Ctrl+C (T-103). The edits
@@ -1690,7 +1691,11 @@ original.
   mission (parked, so playing the loaded scenario resumes it); a file that does not
   read as a save starts a new campaign, logged. The map room's N and Q write it there
   once a save was loaded or a scenario played (`xeno-app/src/save.rs`). The world
-  written is the loaded scenario as loaded, not the running sim's (T-116).
+  written is the mission as it stands (T-116, `Mission::saved`: `World::save` over the
+  scenario copy, with the situation room's mode and map and the robots' second
+  displays), and `SHDR`'s day and month are the campaign's (a new campaign's month is
+  3); so a mission left with no result, saved and loaded, resumes where it stood, its
+  programs restarted as the original's loader restarts them.
 - **Not modelled**: the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.

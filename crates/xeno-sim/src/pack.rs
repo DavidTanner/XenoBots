@@ -2,14 +2,13 @@
 //! (`1000:f01b`) writes it from memory (`docs/sim.md`, "Saving the world (T-116)"):
 //! every object in slot order, after `scen_pack_all_objects` (`1000:f0f4`) puts each
 //! robot's script pointer and target in their saved form; both path tables; and the
-//! game clock. [`Sim::save`] packs; [`unpack_made`] reads back the kinds made during
+//! game clock. [`World::save`] packs; [`unpack_made`] reads back the kinds made during
 //! play that the sim keeps (shots and explosions) when a save is loaded.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, flag};
 
-use crate::Sim;
 use crate::motion::Tables;
 use crate::orders::RobotKind;
 use crate::shot::{Flight, HOMING, MISSILE, SHELL, Shot, TAIL};
@@ -52,7 +51,7 @@ fn big(kind: ObjectKind) -> bool {
     RobotKind::of(kind).is_some() || kind == ObjectKind::Base
 }
 
-impl Sim {
+impl World {
     /// `loaded` (the scenario as the host keeps it: its terrain, briefing and sky, and
     /// each object's bytes as loaded) with the world written over it: the clock's hour
     /// to tick in `SHDR` (the day and month stay `loaded`'s: the campaign's calendar),
@@ -67,7 +66,7 @@ impl Sim {
     // shortcut: relays, shots and explosions made in play keep only what the sim keeps
     // (no relay set-up bytes, flags beyond the side, or model heights; T-148).
     pub fn save(&self, loaded: &Scenario, program_table: u16) -> Scenario {
-        let w = &self.world;
+        let w = self;
         let mut s = loaded.clone();
         let (start, c) = (&mut s.header.start, w.clock);
         (start.hour, start.minute, start.second, start.tick) = (c.hour, c.minute, c.second, c.tick);
