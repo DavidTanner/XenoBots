@@ -15,7 +15,7 @@ tested headless in CI. It depends only on `xeno-formats`.
   `Parked::resume(random)` gives the word back and returns the `Sim`. A parked mission
   has no word, so it cannot tick or draw. **`Sim::end()`** ends a mission and returns
   the word. See "The run's random word".
-- **`Sim::save(&loaded, program_table)`** writes the running world into a copy of the
+- **`World::save(&loaded, program_table)`** writes the running world into a copy of the
   loaded scenario, as a save does (see "Saving the world (T-116)").
 - **`Sim::tick(events)`** runs one retrace with the input that arrived for it
   (`docs/game-loop.md`: the sim steps once per retrace, at the mode's rate).
@@ -1367,7 +1367,7 @@ pointers, waits, stacks and flags start over) and drops its target, and what the
 original carries from mission to mission (the stagger, the walking count, the lock
 window, the worked-out point, the call signs taken) is not in the file.
 
-**The port.** `Sim::save(&loaded, program_table)` gives `loaded` (the scenario the host
+**The port.** `World::save(&loaded, program_table)` gives `loaded` (the scenario the host
 keeps: terrain, briefing, sky and each object's bytes as loaded) with the world written
 over it: `SHDR`'s hour to sixtieths from `World::clock` (the day and month stay
 `loaded`'s, the campaign's calendar), every object in the world over the loaded object

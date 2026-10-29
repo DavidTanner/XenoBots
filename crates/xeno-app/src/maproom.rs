@@ -142,6 +142,9 @@ impl Assets {
     }
 }
 
+/// A new campaign's month (`scen_start_new_campaign`): April, from day 0.
+const NEW_MONTH: u8 = 3;
+
 /// The campaign as the map room sees it: the scenario table with each `state`, the
 /// progress (`DS:0x5f9b`), the last campaign mission's result (`DS:0x5fab`: 0xff
 /// for a new campaign, 0 while a mission has no result, 1 won, 2 lost, 3 since the
@@ -163,8 +166,10 @@ pub struct Campaign {
     pub won: bool,
     /// The scenario whose file is loaded (`DS:0x5f99`): playing it again resumes it.
     pub loaded: Option<usize>,
-    /// The calendar's day (`DS:0x7d4a`), advanced after each result.
+    /// The calendar's day (`DS:0x7d4a`), advanced after each result, and month
+    /// (`DS:0x7d4b`, 0 January), which only a save carries for now (T-124 rolls it).
     pub day: u8,
+    pub month: u8,
     /// A game is loaded (`DS:0x6005`): a save was read at log-in or a scenario played,
     /// so N and Q save.
     pub game_loaded: bool,
@@ -191,6 +196,7 @@ impl Campaign {
             won: false,
             loaded: None,
             day: 0,
+            month: NEW_MONTH,
             game_loaded: false,
             open: Open::default(),
             random: Some(random),

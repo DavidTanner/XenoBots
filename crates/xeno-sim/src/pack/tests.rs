@@ -1,4 +1,5 @@
 use super::*;
+use crate::Sim;
 use crate::motion::{movement, synthetic_tables};
 use crate::world::{Fixed, Position};
 use crate::{Pilot, Random};
@@ -6,7 +7,7 @@ use xeno_formats::fixtures::synthetic_mission_usg;
 
 /// Writes `sim`'s world into a save's bytes and loads them back, as the log-in does.
 fn round_trip(sim: &Sim, loaded: &Scenario, table: u16) -> (Vec<u8>, Scenario, Sim) {
-    let bytes = usg::write(&sim.save(loaded, table)).unwrap();
+    let bytes = usg::write(&sim.world.save(loaded, table)).unwrap();
     let back = usg::parse(&bytes).unwrap();
     let again = Sim::load(&back, Random::seeded(1), sim.tables.clone().unwrap());
     (bytes, back, again)
@@ -202,7 +203,7 @@ fn the_paths_go_back_over_their_loaded_slots() {
     paths.alien.slots[0].weight = 5;
     paths.human.count = 1;
     sim.set_paths(paths);
-    let saved = sim.save(&scenario, 0);
+    let saved = sim.world.save(&scenario, 0);
     let (alien, before) = (
         saved.alien_paths.unwrap(),
         scenario.alien_paths.clone().unwrap(),
@@ -219,7 +220,7 @@ fn the_paths_go_back_over_their_loaded_slots() {
     };
     let mut world = Sim::load(&bare, Random::seeded(3), synthetic_tables());
     world.world.paths.human = PathTable::default();
-    assert_eq!(world.save(&bare, 0).human_paths, None);
+    assert_eq!(world.world.save(&bare, 0).human_paths, None);
 }
 
 /// Every stock scenario, run five minutes of game time (fights, shots, explosions and

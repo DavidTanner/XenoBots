@@ -669,7 +669,7 @@ them (above, "Writing"): every slot of the object table in use, whatever its kin
 which only robots have (`DS:0xe81c`: the script pointer to its saved form and the
 target to a slot, one more reference counted on it while saved). The reference count
 written is the table's (`DS:0xe2c6`); stock files hold 0, 1 and once 0xfff2.
-`xeno_sim::Sim::save` packs the port's world this way (`docs/sim.md`, "Saving the
+`xeno_sim::World::save` packs the port's world this way (`docs/sim.md`, "Saving the
 world (T-116)").
 
 The game-loaded flag (`DS:0x6005`), the selection's offset and the open levels

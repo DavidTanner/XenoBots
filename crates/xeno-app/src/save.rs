@@ -2,10 +2,8 @@
 //! the loaded scenario's chunks with an `SDEF` chunk after `SHDR` holding the campaign.
 //! The log-in reads it ([`load`]); the map room's N and Q write it ([`write`]) once a
 //! game is loaded.
-//!
-//! shortcut: the chunks written are the loaded scenario as it was loaded (and edited),
-//! not the running sim's world or clock, so a mission resumed from a save starts over
-//! (T-116 writes the live world).
+//! The chunks are the mission as it stands (`Mission::saved`, T-116), so a mission
+//! left with no result resumes from the save.
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +45,8 @@ fn id(i: Option<usize>, campaign: &Campaign) -> u16 {
 }
 
 /// Reads a save into `campaign` as `scen_read_sdef` and the log-in do: the table, the
-/// counters and the result, the calendar's day from `SHDR`, then the campaign check.
+/// counters and the result, the calendar's day and month from `SHDR`, then the
+/// campaign check.
 /// Returns the map room's selection and the loaded scenario. On an error `campaign` is
 /// left as it was.
 pub fn load(bytes: &[u8], campaign: &mut Campaign) -> Result<(Option<usize>, Scenario), String> {
@@ -67,13 +66,14 @@ pub fn load(bytes: &[u8], campaign: &mut Campaign) -> Result<(Option<usize>, Sce
     campaign.won = save.campaign_won != 0;
     campaign.loaded = index(save.loaded, campaign);
     campaign.day = scenario.header.start.day;
+    campaign.month = scenario.header.start.month;
     campaign.game_loaded = true;
     campaign.check();
     Ok((index(save.selected, campaign), scenario))
 }
 
 /// Encodes the save `file_write_save_game` writes: `scenario`'s chunks with the
-/// campaign's day in its clock and the campaign as `SDEF`.
+/// campaign's day and month in its clock and the campaign as `SDEF`.
 pub fn write(
     campaign: &Campaign,
     selection: Option<usize>,
@@ -96,8 +96,7 @@ pub fn write(
     };
     save.set_scenarios(&campaign.table);
     let mut scenario = scenario.clone();
-    // shortcut: the month stays the scenario's; the port keeps no campaign month yet.
-    scenario.header.start.day = campaign.day;
+    (scenario.header.start.day, scenario.header.start.month) = (campaign.day, campaign.month);
     scenario.save = Some(save);
     usg::write(&scenario)
 }
@@ -116,6 +115,7 @@ mod tests {
         (campaign.progress, campaign.score, campaign.wins) = (2, 1500, 1);
         (campaign.losses, campaign.kills, campaign.robots_lost) = (2, 40, 9);
         (campaign.result, campaign.loaded, campaign.day) = (0, Some(3), 5);
+        campaign.month = 7;
         campaign.game_loaded = true;
         campaign.check();
         let scenario = usg::parse(&synthetic_usg()).unwrap();
@@ -125,7 +125,7 @@ mod tests {
         let (selection, loaded) = load(&bytes, &mut back).unwrap();
         assert_eq!(selection, Some(3));
         assert_eq!(loaded.objects, scenario.objects);
-        assert_eq!(loaded.header.start.day, 5);
+        assert_eq!((loaded.header.start.day, loaded.header.start.month), (5, 7));
         assert_eq!(back, campaign);
         // Written again, the same bytes.
         assert_eq!(write(&back, selection, &loaded).unwrap(), bytes);

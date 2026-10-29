@@ -1092,8 +1092,8 @@ impl Screens {
             && player.campaign.game_loaded
         {
             let path = self.login.save_dir.join(save::file_name(&player.name));
-            let written = match self.mission.scenario() {
-                Some(scenario) => save::write(&player.campaign, selection, scenario)
+            let written = match self.mission.saved(&self.mission_assets) {
+                Some(scenario) => save::write(&player.campaign, selection, &scenario)
                     .map_err(|e| e.to_string())
                     .and_then(|bytes| {
                         std::fs::create_dir_all(&self.login.save_dir)
@@ -1504,13 +1504,52 @@ pub(crate) mod tests {
         let c = &player.campaign;
         assert_eq!(c.table, saved.table);
         assert_eq!((c.score, c.wins, c.result, c.loaded), (1000, 1, 1, Some(0)));
-        assert_eq!((c.progress, c.day), (saved.progress, saved.day));
-        assert_eq!(selection, screens.map.selection());
         assert_eq!(
-            scenario.objects,
-            screens.mission().scenario().unwrap().objects
+            (c.progress, c.day, c.month),
+            (saved.progress, saved.day, saved.month)
         );
+        assert_eq!(selection, screens.map.selection());
+        // The mission's world as it stands.
+        let world = screens.mission().saved(&screens.mission_assets).unwrap();
+        assert_eq!(scenario.objects, world.objects);
         assert_eq!(save::write(c, selection, &scenario).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A mission left with no result is saved as it stands (T-116): the log-in loads
+    /// it where it stood, not where its file starts it.
+    #[test]
+    fn a_mission_left_with_no_result_is_saved_as_it_stands() {
+        let dir = std::env::temp_dir().join(format!("xeno-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut screens, _) = run(&presses(&[0x1c, 0x0f, 0x19]), Login, 300);
+        assert!(screens.mission().is_running());
+        screens.login.save_dir = dir.clone();
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        let ran = screens.mission().world().clock;
+        (0..200).for_each(|_| screens.retrace(&[], &mut fb));
+        assert_ne!(screens.mission().world().clock, ran, "the mission ran");
+        screens.act(Go(MapRoom));
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        assert_eq!(screens.campaign().result, 0, "no result");
+        let before = screens.mission().world().clone();
+        let file = screens.mission().file.clone();
+        screens.act(Go(Login));
+        let (mut player, loaded) = screens.login.player("A".into(), Random::seeded(9));
+        let (_, scenario) = loaded.unwrap();
+        let assets = &screens.mission_assets;
+        let random = player.campaign.take_random();
+        let resumed = MissionState::new(file.clone(), &scenario, random, &assets.motion);
+        let after = resumed.world();
+        assert_eq!((after.len(), after.clock), (before.len(), before.clock));
+        for (id, e) in before.iter() {
+            let a = after.get(id).unwrap();
+            assert_eq!(
+                (a.position, a.heading, a.damage),
+                (e.position, e.heading, e.damage)
+            );
+        }
+        assert_eq!(scenario.header.start.month, screens.campaign().month);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2126,10 +2165,8 @@ pub(crate) mod tests {
         let (_, scenario) = loaded.expect("A.LOG was written");
         assert_eq!(player.campaign.table, screens.campaign().table);
         assert_eq!(player.campaign.loaded, Some(1));
-        assert_eq!(
-            scenario.objects,
-            screens.mission().scenario().unwrap().objects
-        );
+        let world = screens.mission().saved(&screens.mission_assets).unwrap();
+        assert_eq!(scenario.objects, world.objects);
         std::fs::remove_dir_all(&screens.login.save_dir).unwrap();
     }
 

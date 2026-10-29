@@ -542,8 +542,8 @@ pub struct Mission {
     tint: Option<u8>,
     /// What the situation room's map shows (base +0x32, +0x36, +0x4f).
     map: MapState,
-    /// The scenario as loaded, which the editor's keys change and Ctrl+Alt+P saves
-    /// (and a save writes; T-116 for saving the running sim's world).
+    /// The scenario as loaded, which the editor's keys change; Ctrl+Alt+P and a save
+    /// write the world over it ([`Mission::saved`]).
     scenario: Option<Scenario>,
     editor: Editor,
     /// The terrain editor while it is open (Ctrl+M): the sim stands still.
@@ -635,11 +635,15 @@ impl Mission {
     /// run's random word back to `campaign`. The objects stay, as the original keeps
     /// them until another scenario loads, so the map room can run the mission again.
     pub fn park(&mut self, campaign: &mut Campaign) {
-        if let Run::Running(sim) = std::mem::take(&mut self.run) {
-            let (parked, random) = sim.park();
-            self.run = Run::Parked(parked);
-            campaign.give_random(random);
-        }
+        self.run = match std::mem::take(&mut self.run) {
+            Run::Running(sim) => {
+                let (parked, random) = sim.park();
+                campaign.give_random(random);
+                Run::Parked(parked)
+            }
+            // Parked already: it keeps its world.
+            parked => parked,
+        };
     }
 
     /// The mission goes on where it stopped, its sim taking the run's random word from
@@ -651,9 +655,43 @@ impl Mission {
         };
     }
 
-    /// The scenario as loaded (and edited), which a save writes.
+    /// The scenario as loaded (and edited).
+    #[cfg(test)]
     pub fn scenario(&self) -> Option<&Scenario> {
         self.scenario.as_ref()
+    }
+
+    /// The mission as `file_write_scenario` and `file_write_save_game` write it from
+    /// memory (T-116): the world packed over the scenario as loaded (and edited)
+    /// (`World::save`), with the views' state the mission starts from: the player's
+    /// base's main view mode and map, and each robot's second display. No `SDEF`.
+    pub fn saved(&self, assets: &Assets) -> Option<Scenario> {
+        // shortcut: without the editor's tables the saved script pointers are not
+        // offsets; the loader restarts every robot's program either way.
+        let table = assets.editor.as_ref().map_or(0, |e| e.program_table);
+        let mut s = self.world().save(self.scenario.as_ref()?, table);
+        s.save = None;
+        let human = self.world().base(Side::Human).map(|id| id.0);
+        for o in s.objects.iter_mut().flatten() {
+            match &mut o.body {
+                usg::Body::Base(b) if Some(o.slot) == human => {
+                    (b.view_mode, b.map_overlays, b.map_zoom) =
+                        (self.mode, self.map.overlays, self.map.zoom);
+                    b.map_centre = usg::Point {
+                        x: self.map.centre.x.0,
+                        y: self.map.centre.y.0,
+                    };
+                }
+                usg::Body::Robot(r) => {
+                    if let Some(d) = self.displays.get(&o.slot) {
+                        (r.display, r.zoom, r.map_zoom, r.pan) =
+                            (d.mode, d.zoom, d.map_zoom, d.pan);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(s)
     }
 
     #[cfg(test)]
@@ -1027,7 +1065,7 @@ impl Mission {
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
         if let Some((dialog, _)) = &mut self.dialog {
             let outcome = dialog.key(crate::screens::KeyWord(word));
-            self.close_dialog(outcome);
+            self.close_dialog(outcome, assets);
             return None;
         }
         if self.terrain.is_some() {
@@ -1091,7 +1129,7 @@ impl Mission {
                     Some(tables) => {
                         self.open_dialog(Purpose::SaveScenario, tables, &assets.save_dir)
                     }
-                    None => self.save_scenario(&assets.save_dir.join(SAVED_SCENARIO)),
+                    None => self.save_scenario(&assets.save_dir.join(SAVED_SCENARIO), assets),
                 }
                 None
             }
@@ -1455,7 +1493,7 @@ impl Mission {
 
     /// A dialog's key or click ended it (or not, with `None`): its caller goes on with
     /// the path chosen.
-    fn close_dialog(&mut self, outcome: Option<Outcome>) {
+    fn close_dialog(&mut self, outcome: Option<Outcome>, assets: &Assets) {
         let Some(outcome) = outcome else { return };
         let Some((dialog, purpose)) = self.dialog.take() else {
             return;
@@ -1467,7 +1505,7 @@ impl Mission {
             Outcome::Cancelled => return log::info!("mission: file dialog cancelled"),
         };
         match purpose {
-            Purpose::SaveScenario => self.save_scenario(&path),
+            Purpose::SaveScenario => self.save_scenario(&path, assets),
             Purpose::Orders => self.load_orders(&path),
             Purpose::LoadMap => self.load_map(&path),
             Purpose::SaveMap => self.save_map(&path),
@@ -1524,17 +1562,17 @@ impl Mission {
             dialog.mouse_down(button, at, tables);
         } else {
             let outcome = dialog.mouse_up(button, at, tables);
-            self.close_dialog(outcome);
+            self.close_dialog(outcome, assets);
         }
         true
     }
 
-    fn save_scenario(&self, path: &Path) {
-        let Some(scenario) = &self.scenario else {
+    fn save_scenario(&self, path: &Path, assets: &Assets) {
+        let Some(scenario) = self.saved(assets) else {
             log::info!("mission: nothing loaded to save");
             return;
         };
-        let written = usg::write(scenario)
+        let written = usg::write(&scenario)
             .map_err(|e| e.to_string())
             .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| e.to_string()));
         match written {
@@ -2439,6 +2477,26 @@ pub mod tests {
         Mission::new(file, scenario, Random::seeded(1), &assets.motion)
     }
 
+    /// A save carries the views' state the mission starts from: the situation room's
+    /// mode and map in the player's base, each robot's second display.
+    #[test]
+    fn a_saved_mission_starts_in_the_views_it_was_left_in() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        m.mode = 6;
+        (m.map.zoom, m.map.overlays) = (3, usg::Base::MAP_GRID);
+        m.displays.get_mut(&2).unwrap().mode = 1;
+        let saved = m.saved(&assets).unwrap();
+        assert_eq!(saved.save, None);
+        let again = Mission::new(m.file.clone(), &saved, Random::seeded(1), &assets.motion);
+        assert_eq!(
+            (again.mode, again.map.zoom, again.map.overlays),
+            (6, 3, 0x10)
+        );
+        assert_eq!(again.displays[&2], m.displays[&2]);
+        assert_eq!(again.world().clock, m.world().clock);
+    }
+
     /// The tint starts once per weight, again after a view is shown, and not in the
     /// situation room's mode 2.
     #[test]
@@ -2544,11 +2602,11 @@ pub mod tests {
         let saved = map::parse(&std::fs::read(dir.join(SAVED_TERRAIN)).unwrap()).unwrap();
         assert_eq!(saved.features.len(), 2);
         assert_eq!(saved.features[1], map::closing_block());
-        m.save_scenario(&dir.join(SAVED_SCENARIO));
+        m.save_scenario(&dir.join(SAVED_SCENARIO), &assets);
         // It reads back as saved (the terrain filled to a paragraph, as the game's).
         let bytes = std::fs::read(dir.join(SAVED_SCENARIO)).unwrap();
         let back = usg::parse(&bytes).unwrap();
-        assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
+        assert_eq!(back.objects, m.saved(&assets).unwrap().objects);
         assert_eq!(usg::write(&back).unwrap(), bytes);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -2607,7 +2665,8 @@ pub mod tests {
         m.key(enter, &assets);
         assert!(!m.dialog_open());
         let back = usg::parse(&std::fs::read(dir.join("T.USG")).unwrap()).unwrap();
-        assert_eq!(back.objects, m.scenario.as_ref().unwrap().objects);
+        assert_eq!(back.objects, m.saved(&assets).unwrap().objects);
+        assert_eq!(back.save, None);
 
         // The open dialog starts on `*.USG`; ESC cancels it.
         m.key(orders.0, &assets);
@@ -3148,10 +3207,11 @@ pub mod tests {
         assert!(m.is_running() && !campaign.has_random());
         click(&mut m, &assets, (130, 92), LEFT);
         assert_eq!(m.book().get(2).unwrap().orders, Orders::given(2));
-        // Parking twice gives back one word.
+        // Parking twice gives back one word and keeps the world.
         m.park(&mut campaign);
         m.park(&mut campaign);
         assert!(campaign.has_random());
+        assert_eq!(m.world().len(), 6);
     }
 
     #[test]
@@ -3586,6 +3646,56 @@ pub mod tests {
             assert_eq!(again.world.len(), sim.world.len(), "{name}");
             (0..200).for_each(|_| _ = again.tick(&[]));
         }
+    }
+
+    /// A stock mission run five minutes, left and saved to `<NAME>.LOG`, loads back
+    /// where it stood (T-116): every object where it was, the clock as it was; saved
+    /// and loaded again it is the same, and both copies go on identically.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_mission_left_saved_and_loaded_resumes() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let file = "scen00a.usg".to_string();
+        let mut m = Mission::new(
+            file.clone(),
+            &assets.scenarios[&file],
+            Random::seeded(1),
+            &assets.motion,
+        );
+        (0..4500).for_each(|_| _ = m.tick(&[]));
+        // Saved and loaded as the map room's N and the log-in do.
+        let save_and_load = |m: &Mission| {
+            let campaign = crate::maproom::tests::test_campaign();
+            let bytes = crate::save::write(&campaign, Some(0), &m.saved(&assets).unwrap()).unwrap();
+            let mut back = crate::maproom::tests::test_campaign();
+            let (_, scenario) = crate::save::load(&bytes, &mut back).unwrap();
+            Mission::new(file.clone(), &scenario, Random::seeded(2), &assets.motion)
+        };
+        let resumed = save_and_load(&m);
+        let (before, after) = (m.world(), resumed.world());
+        assert_eq!((after.len(), after.clock), (before.len(), before.clock));
+        for (id, e) in before.iter() {
+            let a = after.get(id).unwrap();
+            assert_eq!(
+                (a.kind, a.position, a.heading, a.damage),
+                (e.kind, e.position, e.heading, e.damage)
+            );
+        }
+        let (mut once, mut twice) = (resumed.clone(), save_and_load(&resumed));
+        assert_eq!(twice.world(), once.world());
+        for _ in 0..2000 {
+            _ = once.tick(&[]);
+            _ = twice.tick(&[]);
+        }
+        assert_eq!(twice.world(), once.world());
     }
 
     /// The pointer's regions (T-106): over each one, the widget the dispatcher hands
