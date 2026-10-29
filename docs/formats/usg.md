@@ -316,12 +316,12 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 | 0x2f | 1 | | Nothing reads or writes it |
 | 0x30 | 1 | `program_running` | That program, or a state the script entered by itself. Replaced by +0x2e at load (above) |
 | 0x31 | 1 | `stack_pointer` | The script's stack pointer: 10 empty, stepping down by 1 or 2 a push (T-053, `docs/sim.md`, "Orders") |
-| 0x32 | 1 | `goal` | What the robot heads for: bit 1 the point at `destination` (0x22 from a path, 2 from the hold order), bit 0 an object (`goal_object`, a reference held), bit 2 its own base, bit 3 its target (+0xe6), bit 4 a point the script worked out; 0 nothing (T-053) |
+| 0x32 | 1 | `goal` | What the robot heads for: bit 1 the point at `destination` (0x22 from a path, 2 from the hold order), bit 0 an object (`goal_object`, a reference held), bit 2 its own base, bit 3 its target (+0xe6), bit 4 a point the script worked out (`DS:0x4da4`); 0 nothing (T-053). The distance and the steering read bits 2 and 0 differently (`docs/sim.md`, "Sensing", T-112) |
 | 0x33 | 1 | `script_flags` | Bits 0, 6 and 7 the carry, zero and sign of the script's last test; bit 5 runs the script every tick and holds events off (an event's handler sets it) |
 | 0x34 | 2 | `script` | The script pointer (a data-segment offset in `DS:0x5034..0x5670`), saved as `0xa000` + its offset from the program table; flag bits in the top nibble restart the program given, or program 9, at load (`order_unpack_script_pointer`) |
-| 0x36 | 2 | `events` | Events waiting for the script, a bit each (event n is bit n): 3 a lock on it (below), 5 a hold point set, 7 hit, 9 something close ahead (the contact check), 0xa and 0xb the program or the pilot took over, 0xc crippled; others not traced (T-053) |
+| 0x36 | 2 | `events` | Events waiting for the script, a bit each (event n is bit n): 1 a scan found enemies where there were none, 2 none left, 3 a lock on it (below), 4 its lock lost, 5 a hold point or object goal set, 7 hit, 9 something close ahead (the contact check), 0xa and 0xb the program or the pilot took over, 0xc crippled; nothing posts 0, 6 or 8 (T-053, T-112) |
 | 0x38 | 2 | `wait` | The ticks the script waits before its next opcode; a program starts with a staggered wait (T-053) |
-| 0x3a | 2 | `goal_object` | The object of `goal` bit 0: a pointer in memory, its slot in a file (0xffff none) |
+| 0x3a | 2 | `goal_object` | The object of `goal` bit 0: its slot, in memory as in a file (0xffff none); `destination` then holds the robot's offset from it (T-112) |
 | 0x3c | 8 | `destination` | Where it is heading, x and y (16.16): a path point or its base |
 | 0x44 | 10 | `stack` | The script's stack (T-053) |
 | 0x4e | 1 | `power` | Power systems, 0 to 100; a hit can take 0 to 15 off |
@@ -335,9 +335,9 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 | 0xde, 0xdf | 1, 1 | `ecm`, `ecm_time` | ECM charges (0xff when made) and the ticks it stays on: F7 (`1000:d92e`) takes one and the energy, sets 20 and `ECM`; each tick counts it down and clears `ECM` at 0 (humanoid `1000:b08a`, scorpion `972e`, scout `c8ab`) |
 | 0xe0, 0xe1 | 1, 1 | `cloaks`, `cloak_time` | Sparkle cloaks (humanoid 10, scout 4 when made; scorpions none) and the ticks one lasts: F8 (`1000:d95e`) takes one and the energy, sets 120 and `CLOAKED`, and makes the sparkle (kind 14); counted down as `ecm_time` |
 | 0xe2..0xe5 | 1 each | `mines`, `alarm_buoys`, `ecm_buoys`, `decoys` | What keys 1 to 4 drop (`1000:d5e7`..`d64d`): proximity mines (kind 9), alarm buoys (11), ECM buoys (12) and EMI decoys (10) left. Scorpion 20, 8, 8, 4; scout 6, 2, 2, 6; humanoid none |
-| 0xe6 | 2 | `target` | The robot's target: an object pointer in memory, its slot in a file (0xffff: none). The loader clears it |
-| 0xe8 | 2 | `target_distance` | The target's distance in whole units (the middle word of the 16.16), worked out every tick the lock holds (`1000:d6e6`, from the kind's tick through `1000:d66f` with the kind's arc and range) |
-| 0xea | 2 | `target_bearing` | The bearing to the target (`1000:0545`) |
+| 0xe6 | 2 | `target` | The robot's target: an object pointer in memory (0 none; the scripts test it), its slot in a file (0xffff: none). The loader clears it. Set by a lock (`1000:d8af`), dropped by the upkeep (T-112) |
+| 0xe8 | 2 | `target_distance` | The target's true distance (`1000:0942`, a square root) as 8.8 (the middle word of the 16.16), worked out every 16 ticks while the lock holds (`1000:d6e6`, from the kind's tick table through `1000:d66f` with the kind's arc and range) and at the lock |
+| 0xea | 2 | `target_bearing` | The bearing to the target (`1000:0545`, the fine bearing) |
 | 0xec | 1 | `targeting` | Bit 0: the targeting computer is damaged (no lock holds). Bit 1: the target is closer than the range given (`DS:0x7203`); bit 2: within the arc (`DS:0x7201`) of the heading, or no target (stock robots have bit 2). The weapons fire only with bit 2 |
 | 0xed | 1 | `locked_on` | Another robot holds a lock on this one: its tick sets 0xff (`1000:d6ad`) unless this robot's ECM is on (then the lock is lost); this robot's tick halves it (`1000:dc95`), setting `systems` bit 5 and posting event 3 when it starts, clearing bit 5 at 0. The humanoid's console sounds an alarm while it is not 0 |
 | 0xee | 1 | `blink` | Steps by 2 (`1000:b318`); times the console's blinking and the lock alarm |

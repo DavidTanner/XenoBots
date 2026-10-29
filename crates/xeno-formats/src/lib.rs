@@ -35,6 +35,7 @@ pub mod review;
 pub mod rst;
 pub mod scendef;
 pub mod script;
+pub mod sensing;
 pub mod sequence;
 pub mod setup;
 pub mod sitroom;

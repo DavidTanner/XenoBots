@@ -11,6 +11,7 @@ use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
 use crate::script::{self, Scripts};
+use crate::sensing::{self, Sensing};
 use crate::{FormatError, sequence};
 
 /// `mov cx, ss:[bx + table + 2]` and `mov bx, ss:[bx + table]` in
@@ -107,6 +108,8 @@ pub struct Motion {
     pub scripts: Scripts,
     /// What damage does (`xeno_formats::damage`).
     pub damage: Damage,
+    /// What sensing reads (`xeno_formats::sensing`).
+    pub sensing: Sensing,
     pub walk: Walk,
     /// The string segment, where the scripts' messages are.
     pub strings: Strings,
@@ -266,6 +269,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         },
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
+        sensing: sensing::read_image(image, ds)?,
         walk: Walk {
             humanoid_legs: [
                 legs(image, HUMANOID_LEGS_AT[0])?,
@@ -486,6 +490,7 @@ mod tests {
         crate::fixtures::synthetic_walk(&mut image);
         crate::fixtures::synthetic_gears(&mut image, DS);
         crate::fixtures::synthetic_weapon_keys(&mut image, DS);
+        crate::fixtures::synthetic_sensing(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
@@ -515,7 +520,7 @@ mod tests {
                 at,
                 &[&[0xff, 0xa7][..], &table.to_le_bytes()].concat(),
             );
-            let routines = [0x9000, 0x9200, 0x9300].map(|r: u16| r + 8 * i as u16);
+            let routines = [0x9000, 0x9200, 0x9380].map(|r: u16| r + 8 * i as u16);
             for (kind, routine) in routines.into_iter().enumerate() {
                 let r = usize::from(routine);
                 put(

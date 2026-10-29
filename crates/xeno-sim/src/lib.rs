@@ -14,6 +14,7 @@ pub mod panel;
 pub mod random;
 pub mod rate;
 pub mod script;
+pub mod sense;
 pub mod terrain;
 pub mod world;
 

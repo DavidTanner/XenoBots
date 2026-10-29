@@ -2415,6 +2415,7 @@ pub mod tests {
                     xeno_formats::script::read_image(&image, 0x20000).unwrap()
                 },
                 damage: xeno_formats::fixtures::synthetic_damage_tables(),
+                sensing: xeno_formats::fixtures::synthetic_sensing_tables(),
                 // Legs that never leave frame 0: no footsteps.
                 walk: motion::Walk {
                     humanoid_legs: [[0; motion::STEPS]; 2],
