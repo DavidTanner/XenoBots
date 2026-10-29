@@ -936,6 +936,8 @@ impl Mission {
             }
             Self::hear(self.viewed, &mut self.sounds, event);
         }
+        // The views are drawn from the world, which just moved.
+        self.dirty = true;
         over
     }
 
@@ -2477,6 +2479,18 @@ pub mod tests {
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
         Mission::new(file, scenario, Random::seeded(1), &assets.motion)
+    }
+
+    /// Each tick of the world asks for the views again, so a console's 3D view and the
+    /// map follow the robots with no input.
+    #[test]
+    fn a_tick_redraws_the_views() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        m.take_dirty();
+        m.tick(&[]);
+        assert!(m.take_dirty());
+        assert!(!m.take_dirty());
     }
 
     /// A save carries the views' state the mission starts from: the situation room's
