@@ -394,18 +394,22 @@ pub fn walk(
             stride(&mut m.legs[2..4], &walk.humanoid_legs, FOOTSTEP_HUMANOID)
         }
         ObjectKind::Humanoid => {
-            // Still: the legs settle, one frame every 8 passes, 4 wrapping to 0.
+            // Still: the legs settle, one frame every 8 passes, 4 wrapping to 0 (the
+            // scorpion's the same, 5 wrapping).
             m.stride = 0;
             if ticks & 7 == 0 {
-                for leg in m.legs[2..4].iter_mut().filter(|l| **l != 0) {
-                    *leg = match leg.wrapping_add(1) {
-                        5 => 0,
-                        n => n,
-                    };
-                }
+                settle(&mut m.legs[2..4], 5);
             }
         }
-        ObjectKind::Scorpion if m.speed != 0 && step % 2 == 0 => footstep(FOOTSTEP_SCORPION),
+        ObjectKind::Scorpion if m.speed != 0 => {
+            for (leg, table) in m.legs.iter_mut().zip(&walk.scorpion_legs) {
+                *leg = table[step];
+            }
+            if step % 2 == 0 {
+                footstep(FOOTSTEP_SCORPION);
+            }
+        }
+        ObjectKind::Scorpion if ticks & 7 == 0 => settle(&mut m.legs, 6),
         ObjectKind::Scout if m.speed != 0 => {
             stride(&mut m.legs[4..], &walk.scout_legs, FOOTSTEP_SCOUT);
             // +0xff and +0x100 take +0x103's and +0x104's frames (`1000:c7c6`, `c7d8`).
@@ -446,6 +450,16 @@ pub(crate) fn movement(world: &mut World, id: EntityId) -> Option<&mut Movement>
     match &mut world.get_mut(id)?.state {
         State::Robot(m) => Some(m),
         _ => None,
+    }
+}
+
+/// Still legs settle: each not at 0 steps up a frame, `frames` (only) wrapping to 0.
+fn settle(legs: &mut [u8], frames: u8) {
+    for leg in legs.iter_mut().filter(|l| **l != 0) {
+        *leg = leg.wrapping_add(1);
+        if *leg == frames {
+            *leg = 0;
+        }
     }
 }
 

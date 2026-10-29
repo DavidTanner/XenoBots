@@ -433,6 +433,13 @@ fn a_scorpion_steps_on_every_even_step_and_a_still_scout_crouches() {
         })
         .collect();
     assert_eq!(heard, [1, 4, 5]);
+    // Its six legs at step 3: leg +0xff + k is `(3 + k) % 6`.
+    assert_eq!(m.legs, [3, 4, 5, 0, 1, 2]);
+    // Still, they settle every 8 ticks (5 wrapping to 0) and say nothing; the counter
+    // stays.
+    m.speed = 0;
+    assert!(footsteps(ObjectKind::Scorpion, &mut m, 8).is_empty());
+    assert_eq!((m.stride, m.legs), (0x30, [4, 5, 0, 0, 2, 3]));
     // A scout standing still, or turning, puts its four legs down; crouched it takes
     // them by its stance. Its +0x101 and +0x102 are never touched.
     let mut m = Movement {
@@ -757,6 +764,55 @@ fn real_assets_stock_robots_bob_as_they_walk() {
         }
     }
     assert!(bobbed > 1000, "{bobbed}");
+}
+
+#[test]
+#[ignore]
+fn real_assets_stock_robots_move_every_leg_as_they_walk() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    // The frames each kind's frame bytes +0xff to +0x104 took, as the stock programs
+    // drive them for five minutes (arms for the humanoid's +0xff and +0x100).
+    let mut seen = std::collections::BTreeMap::<_, [std::collections::BTreeSet<u8>; 6]>::new();
+    for name in ["scen00a.usg", "scen06a.usg", "ctrain.usg", "strain.usg"] {
+        let scenario = xeno_formats::usg::parse(&std::fs::read(dir.join(name)).unwrap()).unwrap();
+        let mut sim = crate::Sim::load(&scenario, Random::seeded(7), tables.clone());
+        for _ in 0..21_000 {
+            _ = sim.tick(&[]);
+            for (id, e) in sim.world.iter() {
+                let State::Robot(m) = e.state else { continue };
+                let mut legs = m.legs;
+                match e.kind {
+                    ObjectKind::Humanoid => legs[..2].copy_from_slice(&m.guns.arms),
+                    // The scout's +0xff and +0x100 walk with +0x103 and +0x104.
+                    ObjectKind::Scout => assert_eq!(legs[..2], legs[4..], "{name} {id:?}"),
+                    _ => {}
+                }
+                let kind = seen.entry(RobotKind::of(e.kind)).or_default();
+                for (frames, leg) in kind.iter_mut().zip(legs) {
+                    frames.insert(leg);
+                }
+            }
+        }
+    }
+    let moved = |kind, legs: &[usize], frames: u8| {
+        for &k in legs {
+            let s = &seen[&RobotKind::of(kind)][k];
+            assert!(
+                s.len() > 2 && s.iter().all(|&f| f < frames),
+                "{kind:?} {k}: {s:?}"
+            );
+        }
+    };
+    moved(ObjectKind::Humanoid, &[0, 1, 2, 3], 7);
+    moved(ObjectKind::Scorpion, &[0, 1, 2, 3, 4, 5], 6);
+    moved(ObjectKind::Scout, &[0, 1, 4, 5], 12);
 }
 
 #[test]

@@ -377,9 +377,9 @@ nodes' programs (the hill and block programs are read from the user's `xeno.exe`
 `xeno_formats::view3d`), with a scan fill that is not yet the original's edge walker.
 Each object's z and model height and the viewed robot's eye height are the sim's
 (`Entity::z`, `Entity::model_height`, `Movement::eye_height`; `docs/sim.md`,
-"Heights"). Not yet: only the frames the sim keeps are set (the humanoid's and scout's footstep legs,
-a base's look, an explosion's frame), the rest are 0; the sky is detail 1 only (the
-main view's).
+"Heights"). Not yet: the scorpion's tail and claws (+0x105 to +0x109, T-151) and the
+scout's +0x101 and +0x102 (as loaded) are the only robot frames the sim does not
+step; the sky is detail 1 only (the main view's).
 
 `xeno_sim::motion::walk` runs each robot's walking animation after its move with the
 leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,
@@ -391,5 +391,5 @@ sets the model height (+0x12) by the step (the humanoid every tick, the scout wh
 moves or crouches) and the humanoid's eye height, from the bob tables and bases read
 through the `add ax, cs:[bx + table]` of each routine (`Walk::humanoid_bob`,
 `scout_bob`; `docs/sim.md`, "Heights", T-119). The humanoid's arms swing by the same
-step (`xeno_sim::weapons::arms`). The scout's four legs walk and crouch (T-120); the
-scorpion's six are read (`Walk::scorpion_legs`) but not yet stepped (T-120 part 2).
+step (`xeno_sim::weapons::arms`). The scout's four legs walk and crouch, and the
+scorpion's six (`Walk::scorpion_legs`) walk and settle (T-120).
