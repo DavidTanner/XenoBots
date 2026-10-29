@@ -395,3 +395,54 @@ fn real_assets_the_alien_base_launches_a_robot_it_took_in() {
     }
     panic!("nothing launched: {taken:?}");
 }
+
+/// On stock data a robot worn by hits and recalled (scen00a's slot 2) is taken in,
+/// repaired while it waits, and launched by the situation room's F2 (`Sim::launch`):
+/// it stands at the base's position and runs the launch's program.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_robot_taken_in_and_repaired_is_launched_by_f2() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let launch_program = tables.bases.launch_program;
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, Random::seeded(1), tables);
+    let (id, base) = (EntityId(2), sim.world.base(Side::Human).unwrap());
+    let total = |sim: &crate::Sim| match sim.world.get(id).unwrap().damage {
+        Damage::Robot(c) => c.total,
+        _ => unreachable!(),
+    };
+    sim.hit(id, 6);
+    sim.recall(id);
+    assert!((1..=20_000).any(|_| sim.tick(&[]).contains(&Event::TakenIn(id))));
+    assert!(total(&sim) > 0, "worn");
+    // F2 before it is repaired would launch it as it is; wait for the repairs.
+    assert!((1..=60_000).any(|_| {
+        sim.tick(&[]);
+        total(&sim) == 0
+    }));
+    assert!(in_base(&sim.world.get(id).unwrap().damage));
+    assert!(sim.launch(id).contains(&Event::Launched(id)));
+    let at = sim.world.get(base).unwrap().position;
+    let e = sim.world.get(id).unwrap();
+    assert_eq!((e.position, e.z), (at, Fixed(0)));
+    assert!(!in_base(&e.damage));
+    let orders = sim.world.orders.get(id.0).unwrap().orders;
+    assert_eq!(
+        (orders.program, orders.program_drives),
+        (launch_program, true)
+    );
+    // Its program drives it on, and it is not taken in again on the way out.
+    for _ in 0..2_000 {
+        assert!(!sim.tick(&[]).contains(&Event::TakenIn(id)));
+    }
+    let e = sim.world.get(id).unwrap();
+    assert!(!in_base(&e.damage));
+}

@@ -1066,7 +1066,7 @@ pub fn synthetic_scripts(image: &mut [u8], ds: usize) {
 /// relay): a human base (slot 0), a human humanoid on program 1, the program driving (slot 2), a
 /// human relay (slot 3), a human scorpion on program 2 (slot 5) and an alien scout on
 /// program 2 (slot 7), at x 100 + slot, y 130, heading slot x 0x1000. The robots are
-/// units with helm 90 and power 80 and no script events; the base has taken 20 damage and starts in view
+/// units with helm 90 and power 80, out in the field, and no script events; the base has taken 20 damage and starts in view
 /// mode 0; the relay has taken 3. The other bytes are synthetic, and the other chunks
 /// are [`synthetic_usg_chunks`]'s.
 pub fn synthetic_mission_usg() -> Vec<u8> {
@@ -1090,6 +1090,8 @@ pub fn synthetic_mission_usg() -> Vec<u8> {
                 // No events waiting for the script.
                 data[at(0x36)..at(0x38)].fill(0);
                 data[at(0x4e)] = 80;
+                // Out in the field, not in or just out of the base (+0xfd bits 1, 2).
+                data[at(0xfd)] &= !0x06;
             }
             3 => {
                 data[at(0x2e)..at(0x30)].copy_from_slice(&20u16.to_le_bytes());

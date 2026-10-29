@@ -295,7 +295,7 @@ expression: "&objects[..3]"
                 clock: 6,
                 bump_wait: 77,
                 unknown_fc: 57,
-                equipment: 198,
+                equipment: 192,
                 parts: Humanoid(
                     HumanoidParts {
                         frames: [

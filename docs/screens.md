@@ -473,7 +473,13 @@ scroll), and it is saved with the object in a `.usg` file (`usg.md`, `DCBS`).
   console, if it is the player's (otherwise it refuses with a message).
 - In the situation room, Space, J and the third button below the roster
   (`1000:6852`) open the console of the robot selected in the roster; a right release
-  on a roster row does the same (`ui_sitroom_roster_on_mouse`, `1000:582d`).
+  on a roster row does the same (`ui_sitroom_roster_on_mouse`, `1000:582d`). Both do
+  nothing for a unit in the base (+0xfd bit 2), and the situation room's Tab and
+  Alt+Tab (`1000:67e8`, `680c`) step the roster's selection through the whole unit
+  list, units in the base included (T-135).
+- A robot taken into its base while its console is open (`1000:6445`, "The bases'
+  phases" in `docs/sim.md`) turns the view to its side's base (`1000:7ee7`), the
+  situation room.
 
 **Widget sets.** Every view starts with the same first widgets: type `0x0e` (no area),
 its picture (the whole screen), a corner hot spot (`0x158` in the consoles, `0x15a`
@@ -497,7 +503,7 @@ draw handler, which also starts colour records 0, 1, 16 and 17):
 | `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | The clock (`1000:61a5`), the status counts (`5979`: the base's +0x20 to +0x27 as two digits each, font 2, colour 0x1d), the selected unit's detail (`5a0e`) and the reserve bar (`614e`, +0x38); T-127 |
 | `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | The power rows (NET, REP, CON): left arrow (sprite 0x3f8 plus the pressed look), bar (`6047`, `60a0`, `60f7`: the base's +0x39, +0x3a, +0x3b over 8), right arrow (0x408); while an arrow is held the base's +0x2d is 1, 3 or 5 (left) or 2, 4 or 6 (right) for the row; T-127 |
 | `0x04` x2 | (89, 284, 131, 318), (142, 254, 182, 306) | Groups: their members are the widgets after the list, up to a zero type (the group's state names its first and last); the map controls and the mode buttons (below, "The roster, map controls and mode buttons (T-103)") |
-| `0x5a`, `0x5c`, `0x5e` | (170, 29, 178, 66), 8 rows lower each | Sprite buttons: launch the selected unit from the base (`1000:6716`, only for a unit in the base: it is put at the base's position and marked in the field), recall it (sets its +0x23 bit 3), and end the mission (the quit flag `DS:0xe87e`) |
+| `0x5a`, `0x5c`, `0x5e` | (170, 29, 178, 66), 8 rows lower each | Sprite buttons: launch the selected unit from the base (release `1000:5ba0`, as F2: below), recall it (sets its +0x23 bit 3), and end the mission (the quit flag `DS:0xe87e`) |
 
 A sprite button is drawn opaque with handle `base + [+0x40]`: a press or release on
 any of them flips the shared +0x40 between 0 and 8, so, as in the map room, all of
@@ -508,8 +514,18 @@ acts. The corner hot spot (`0x15a`) ends the mission too.
 Situation room keys (`DS:0x5b20`): Alt+Q ends the mission (ESC is listed but its
 handler only acts on Alt+Q); Space and J view the selected unit; Tab and Alt+Tab step
 the roster selection; O, S, M, R, C the main view's mode; F3 recalls the selected
-unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; T-135); = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1, F2 act
+unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; below); = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1 act
 on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
+
+**Launching (T-135).** F2 (`1000:6704`) and a release on the launch button
+(`1000:5ba0`) do the same: take the selected unit (the base's +0x3c), and if there is
+one and it is in the base (+0xfd bit 2), launch it (`1000:6716`, `docs/sim.md`, "The
+bases' phases": at the base's position, back in the field, with the launch's program).
+Nothing else is checked: a unit still damaged, or in repair, leaves as it is (the
+base's repairs go on with the slot they keep, +0x1a). F2 also marks two panels for a
+redraw (+0xc7, +0xcd = 3); the button flips the buttons' shared look (+0x40). The port
+calls `Sim::launch` for both. No stock scenario starts with a unit in its base: a unit
+comes in only when recalled (F3) and driven home.
 
 *The consoles* share most of their layout but not their positions. All three have:
 

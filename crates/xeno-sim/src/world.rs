@@ -986,6 +986,9 @@ mod tests {
                 objects.len(),
                 "{name}: every object, one a slot"
             );
+            // No stock scenario starts with a unit in its base (T-135).
+            let in_base = |(_, e): (EntityId, &Entity)| crate::base::in_base(&e.damage);
+            assert!(!world.iter().any(in_base), "{name}: a unit in the base");
             let (mut units, mut big, mut small) = (0, 0, 0);
             for side in [Side::Human, Side::Alien] {
                 // The parser's own count of each kind on this side.

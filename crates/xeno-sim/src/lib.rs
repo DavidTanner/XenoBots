@@ -267,6 +267,21 @@ impl Sim {
         }
     }
 
+    /// The situation room launches robot `id` (F2 `1000:6704`, its launch button
+    /// `5ba0`): only while it is in the base (+0xfd bit 2), and whatever its damage or
+    /// repairs, it leaves at its side's base's position (`base::launch`). Returns what
+    /// it did.
+    pub fn launch(&mut self, id: EntityId) -> Vec<Event> {
+        let mut events = Vec::new();
+        let (Some(tables), Some(e)) = (&self.tables, self.world.get(id)) else {
+            return events;
+        };
+        if let (true, Some(b)) = (base::in_base(&e.damage), self.world.base(e.side)) {
+            base::launch(&mut self.world, b, id, tables, &mut events);
+        }
+        events
+    }
+
     /// Side `side`'s base holds slider `slider` of the situation room's power rows
     /// (+0x2d: 1 to 6 lower and raise the net's power, repairs and relays made; 0
     /// none); each tick moves it (`docs/sim.md`, "The bases' phases").
@@ -539,6 +554,37 @@ mod tests {
         );
         // Making it drew a random word (the relay's clock).
         assert_ne!(sim.random.clone().word(), word);
+    }
+
+    #[test]
+    fn a_launch_puts_a_robot_in_the_base_at_the_base_s_position() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        use xeno_formats::usg::Robot as Bits;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let id = EntityId(2);
+        let set = |sim: &mut Sim, bits: u8, total: u8| {
+            if let Some(Damage::Robot(c)) = sim.world.get_mut(id).map(|e| &mut e.damage) {
+                (c.equipment, c.total) = (bits, total);
+            }
+        };
+        // In the field: nothing.
+        set(&mut sim, 0, 0);
+        let before = sim.state_hash();
+        assert!(sim.launch(id).is_empty());
+        assert_eq!(sim.state_hash(), before);
+        // In the base, still damaged (no repair is waited for): out at the base.
+        set(&mut sim, Bits::ENTERING_BASE | Bits::IN_BASE, 30);
+        sim.world.get_mut(id).unwrap().position.x.0 ^= i32::MIN;
+        let events = sim.launch(id);
+        assert!(events.contains(&Event::Launched(id)));
+        let base = sim.world.get(EntityId(0)).unwrap().position;
+        let e = sim.world.get(id).unwrap();
+        assert_eq!(e.position, base);
+        assert!(!base::in_base(&e.damage));
+        assert!(sim.world.orders.get(2).unwrap().orders.program_drives);
+        // Launched once: a second press does nothing.
+        assert!(sim.launch(id).is_empty());
     }
 
     #[test]
