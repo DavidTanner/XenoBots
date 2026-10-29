@@ -286,10 +286,15 @@ pub fn select_weapon(
     let w = &tables.weapon_keys;
     let k = usize::from(kind == ObjectKind::Scorpion) + 2 * usize::from(kind == ObjectKind::Scout);
     let damaged = w.scorpion_bits.get(usize::from(weapon));
-    // shortcut: the scorpion's weapon counts (+0x120, +0x122) are not kept until
-    // T-114, so its "empty" message is never posted.
+    // The count's low byte (`cmp byte [bx + di], 0`, by `DS:0x65f6`).
+    let empty = match tables.weapons.counts.get(usize::from(weapon)) {
+        Some(0x120) => m.guns.rounds as u8 == 0,
+        Some(0x122) => m.guns.missiles == 0,
+        _ => false,
+    };
     let messages = match damaged {
         Some(&bit) if k == 1 && weapons & bit != 0 => &w.scorpion_damaged,
+        _ if k == 1 && empty => &w.scorpion_empty,
         _ => &w.selected[k],
     };
     if let Some(&text) = messages.get(usize::from(weapon)) {
@@ -710,6 +715,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 m.panel.type_one(&tables.strings);
             }
             crate::sense::step(world, id, tables);
+            crate::weapons::step(world, id, tables, random, &mut events);
             let ticks = world.ticks;
             if let Some(e) = world.get_mut(id)
                 && let State::Robot(m) = &mut e.state
@@ -720,6 +726,11 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                         only_for: Some(id),
                     })
                 });
+                if e.kind == ObjectKind::Humanoid
+                    && let Damage::Robot(c) = &mut e.damage
+                {
+                    crate::weapons::arms(&tables.walk, ticks, m, c);
+                }
             }
         }
         if path_phase {
@@ -744,6 +755,7 @@ pub(crate) fn synthetic_walk() -> Walk {
     let legs = |shift: u8| std::array::from_fn(|k| (k as u8 + shift) & 3);
     Walk {
         humanoid_legs: [legs(0), legs(2)],
+        humanoid_arms: [legs(0), legs(1)],
         scout_legs: [legs(0), legs(2)],
         scout_crouch: [0, 1, 2, 3],
     }

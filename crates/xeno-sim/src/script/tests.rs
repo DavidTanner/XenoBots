@@ -512,6 +512,16 @@ fn the_weapon_state_opcodes_read_damage_drive_and_selection() {
 }
 
 #[test]
+fn opcode_0x7d_pulls_the_trigger() {
+    let (mut world, tables) = setup(&[0x7d, 0x0a]);
+    steps(&mut world, &tables, 1);
+    let Damage::Robot(c) = world.get(EntityId(1)).unwrap().damage else {
+        panic!("a robot")
+    };
+    assert_eq!(c.weapons & 0x80, 0x80);
+}
+
+#[test]
 fn the_net_opcodes_walk_the_line_and_deploy_relays() {
     // Start the line, the cell as the point, check for a relay, count, deploy, check
     // again, then step to the end.

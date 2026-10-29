@@ -804,9 +804,7 @@ fn run(
                 crate::motion::select_weapon(tables, kind, weapons, id, m, i.op - 0x7b, events);
             }
         }
-        // shortcut: firing (the fire request and the kinds' trigger routines) is
-        // T-114's; until then the script goes on as if it fired.
-        (0x7d, _) => {}
+        (0x7d, _) => crate::weapons::trigger(world, id, tables),
         (0x84, &Operand::Byte(bits)) => {
             let result = u16::from(m.goal & bits);
             set_flags(m, false, result, false);

@@ -1485,7 +1485,7 @@ pub fn synthetic_sensing_tables() -> crate::sensing::Sensing {
 
 /// Writes made-up walking tables (`crate::motion::Walk`) at 0xa100 up, with the
 /// instructions that read them: legs `step & 3` and `(step + 2) & 3` (humanoid, then
-/// scout), crouched legs `stance / 16`.
+/// scout), crouched legs `stance / 16`, the humanoid's arms `step & 3`, `(step + 1) & 3`.
 pub fn synthetic_walk(image: &mut [u8]) {
     use crate::motion::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1506,6 +1506,15 @@ pub fn synthetic_walk(image: &mut [u8]) {
     }
     put(SCOUT_CROUCH_AT, &[0x2e, 0x8a, 0x87, 0x40, 0xa1]);
     put(0xa140, &(0..STEPS as u8).collect::<Vec<_>>());
+    for (i, at) in HUMANOID_ARMS_AT.into_iter().enumerate() {
+        let table = 0xa150 + 0x10 * i as u16;
+        put(
+            at,
+            &[&[0x2e, 0x8a, 0x87][..], &table.to_le_bytes()].concat(),
+        );
+        let arms: Vec<u8> = (0..STEPS as u8).map(|k| (k + i as u8) & 3).collect();
+        put(usize::from(table), &arms);
+    }
 }
 
 /// Writes made-up movement tables (`crate::motion`) into a load image whose data
