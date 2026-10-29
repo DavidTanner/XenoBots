@@ -1485,7 +1485,8 @@ pub fn synthetic_sensing_tables() -> crate::sensing::Sensing {
 
 /// Writes made-up walking tables (`crate::motion::Walk`) at 0xa100 up, with the
 /// instructions that read them: legs `step & 3` and `(step + 2) & 3` (humanoid, then
-/// scout), crouched legs `stance / 16`, the humanoid's arms `step & 3`, `(step + 1) & 3`.
+/// scout), crouched legs `stance / 16`, the humanoid's arms `step & 3`, `(step + 1) & 3`,
+/// the scorpion's leg +0xff + k `(step + k) % 6`, stored in the original's order.
 pub fn synthetic_walk(image: &mut [u8]) {
     use crate::motion::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1545,6 +1546,20 @@ pub fn synthetic_walk(image: &mut [u8]) {
         );
         let arms: Vec<u8> = (0..STEPS as u8).map(|k| (k + i as u8) & 3).collect();
         put(usize::from(table), &arms);
+    }
+    for (i, leg) in [0u8, 2, 4, 1, 3, 5].into_iter().enumerate() {
+        let table = 0xa600 + 0x10 * u16::from(leg);
+        let at = SCORPION_LEGS_AT + 9 * i;
+        put(
+            at,
+            &[&[0x2e, 0x8a, 0x87][..], &table.to_le_bytes()].concat(),
+        );
+        put(
+            at + 5,
+            &[&[0x88, 0x85][..], &(0xff + u16::from(leg)).to_le_bytes()].concat(),
+        );
+        let frames: Vec<u8> = (0..STEPS as u8).map(|k| (k + leg) % 6).collect();
+        put(usize::from(table), &frames);
     }
 }
 

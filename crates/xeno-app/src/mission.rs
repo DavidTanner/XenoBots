@@ -2463,6 +2463,7 @@ pub mod tests {
                     humanoid_arms: [[0; motion::STEPS]; 2],
                     scout_legs: [[0; motion::STEPS]; 2],
                     scout_crouch: [0; motion::CROUCHES],
+                    scorpion_legs: [[0; motion::STEPS]; motion::SCORPION_LEGS],
                     humanoid_height: 0x0a00,
                     humanoid_bob: [0; motion::STEPS],
                     humanoid_eye: 0x0f80,

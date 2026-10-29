@@ -396,12 +396,12 @@ fn a_leg_coming_back_to_0_is_a_footstep() {
     };
     let heard = footsteps(ObjectKind::Humanoid, &mut m, 6);
     assert_eq!(heard, [(2, 13), (4, 13), (6, 13)]);
-    assert_eq!((m.stride, m.legs), (0x60, [2, 0]));
+    assert_eq!((m.stride, m.legs), (0x60, [0, 0, 2, 0, 0, 0]));
     // Still, the legs settle a frame every 8 ticks (4 wrapping to 0) and say nothing.
     m.speed = 0;
-    m.legs = [4, 2];
+    m.legs = [0, 0, 4, 2, 0, 0];
     assert!(footsteps(ObjectKind::Humanoid, &mut m, 8).is_empty());
-    assert_eq!((m.stride, m.legs), (0, [0, 3]));
+    assert_eq!((m.stride, m.legs), (0, [0, 0, 0, 3, 0, 0]));
     // At half that, a leg stays at 0 for two ticks: one footstep.
     let mut m = Movement {
         speed: 0x40,
@@ -414,6 +414,8 @@ fn a_leg_coming_back_to_0_is_a_footstep() {
         ..Movement::default()
     };
     assert_eq!(footsteps(ObjectKind::Scout, &mut m, 4), [(2, 15), (4, 15)]);
+    // Its +0xff and +0x100 walk with +0x103 and +0x104: step 0xc's `& 3`, `+ 2 & 3`.
+    assert_eq!((m.stride, m.legs), (0xc0, [0, 2, 0, 0, 0, 2]));
 }
 
 #[test]
@@ -431,22 +433,22 @@ fn a_scorpion_steps_on_every_even_step_and_a_still_scout_crouches() {
         })
         .collect();
     assert_eq!(heard, [1, 4, 5]);
-    // A scout standing still, or turning, puts its legs down; crouched it takes them
-    // by its stance.
+    // A scout standing still, or turning, puts its four legs down; crouched it takes
+    // them by its stance. Its +0x101 and +0x102 are never touched.
     let mut m = Movement {
         stance: STANDING,
         stride: 0x50,
-        legs: [3, 3],
+        legs: [3, 3, 1, 1, 3, 3],
         ..Movement::default()
     };
     assert!(footsteps(ObjectKind::Scout, &mut m, 1).is_empty());
-    assert_eq!((m.stride, m.legs), (0, [0, 0]));
+    assert_eq!((m.stride, m.legs), (0, [0, 0, 1, 1, 0, 0]));
     m.stance = 0x20;
     footsteps(ObjectKind::Scout, &mut m, 1);
-    assert_eq!(m.legs, [2, 2]);
+    assert_eq!(m.legs, [2, 2, 1, 1, 2, 2]);
     m.target_heading = 0x100;
     footsteps(ObjectKind::Scout, &mut m, 1);
-    assert_eq!(m.legs, [0, 0]);
+    assert_eq!(m.legs, [0, 0, 1, 1, 0, 0]);
 }
 
 #[test]

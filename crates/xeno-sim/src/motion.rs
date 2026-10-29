@@ -367,11 +367,9 @@ pub const FOOTSTEP_SCORPION: u8 = 14;
 pub const FOOTSTEP_SCOUT: u8 = 15;
 
 /// One tick of a robot's walking animation after its move (`docs/render.md`,
-/// "Walking"): the step counter, the legs that make footsteps, and the model height
-/// (+0x12) and the humanoid's eye height that go with them (`docs/sim.md`, "Heights").
-/// `ticks` is the pass count (`DS:0x62c6`); `footstep` hears each footstep event.
-// shortcut: only the legs that make footsteps are kept; the scorpion's legs and the
-// scout's other legs wait for T-120.
+/// "Walking"): the step counter, the leg frames, and the model height (+0x12) and the
+/// humanoid's eye height that go with them (`docs/sim.md`, "Heights"). `ticks` is the
+/// pass count (`DS:0x62c6`); `footstep` hears each footstep event.
 pub fn walk(
     walk: &Walk,
     kind: ObjectKind,
@@ -383,7 +381,7 @@ pub fn walk(
     m.stride = m.stride.wrapping_add((m.speed >> 3) as u8);
     let step = usize::from(m.stride >> 4);
     // A leg takes its frame for the step; one that comes back to 0 is a footstep.
-    let mut stride = |legs: &mut [u8; 2], tables: &[[u8; STEPS]; 2], event| {
+    let mut stride = |legs: &mut [u8], tables: &[[u8; STEPS]; 2], event| {
         for (leg, table) in legs.iter_mut().zip(tables) {
             let old = std::mem::replace(leg, table[step]);
             if *leg == 0 && old != 0 {
@@ -393,13 +391,13 @@ pub fn walk(
     };
     match kind {
         ObjectKind::Humanoid if m.speed != 0 => {
-            stride(&mut m.legs, &walk.humanoid_legs, FOOTSTEP_HUMANOID)
+            stride(&mut m.legs[2..4], &walk.humanoid_legs, FOOTSTEP_HUMANOID)
         }
         ObjectKind::Humanoid => {
             // Still: the legs settle, one frame every 8 passes, 4 wrapping to 0.
             m.stride = 0;
             if ticks & 7 == 0 {
-                for leg in m.legs.iter_mut().filter(|l| **l != 0) {
+                for leg in m.legs[2..4].iter_mut().filter(|l| **l != 0) {
                     *leg = match leg.wrapping_add(1) {
                         5 => 0,
                         n => n,
@@ -409,16 +407,19 @@ pub fn walk(
         }
         ObjectKind::Scorpion if m.speed != 0 && step % 2 == 0 => footstep(FOOTSTEP_SCORPION),
         ObjectKind::Scout if m.speed != 0 => {
-            stride(&mut m.legs, &walk.scout_legs, FOOTSTEP_SCOUT);
+            stride(&mut m.legs[4..], &walk.scout_legs, FOOTSTEP_SCOUT);
+            // +0xff and +0x100 take +0x103's and +0x104's frames (`1000:c7c6`, `c7d8`).
+            (m.legs[0], m.legs[1]) = (m.legs[4], m.legs[5]);
             *model_height = walk.scout_height.wrapping_add(walk.scout_bob[step]);
         }
         ObjectKind::Scout if m.target_heading != heading || m.stance == STANDING => {
-            (m.stride, m.legs) = (0, [0; 2]);
+            m.stride = 0;
+            scout_legs(&mut m.legs, 0);
         }
         ObjectKind::Scout => {
             // shortcut: stances past 0x3f would read past the 4 entries; none occur.
             let crouch = walk.scout_crouch.get(usize::from(m.stance >> 4));
-            m.legs = [crouch.copied().unwrap_or(0); 2];
+            scout_legs(&mut m.legs, crouch.copied().unwrap_or(0));
             let drop = u16::from(m.stance).wrapping_shl(3);
             *model_height = walk.scout_crouched.wrapping_sub(drop);
         }
@@ -445,6 +446,14 @@ pub(crate) fn movement(world: &mut World, id: EntityId) -> Option<&mut Movement>
     match &mut world.get_mut(id)?.state {
         State::Robot(m) => Some(m),
         _ => None,
+    }
+}
+
+/// A still scout's four legs, +0xff, +0x100, +0x103 and +0x104, all at `frame`; its
+/// +0x101 and +0x102 are never set.
+fn scout_legs(legs: &mut [u8; 6], frame: u8) {
+    for k in [0, 1, 4, 5] {
+        legs[k] = frame;
     }
 }
 
@@ -766,7 +775,8 @@ pub(crate) mod tests;
 /// Made-up tables for tests: a true quarter sine (the last entry 0, as the original's),
 /// a turn step of 0x100, a weak drive at 0x28, two speed tables (the speed, and half
 /// of it) and programs numbered `10 * mission + kind`.
-/// Made-up walking tables: legs `step & 3` and `(step + 2) & 3`, crouched `stance / 16`;
+/// Made-up walking tables: legs `step & 3` and `(step + 2) & 3`, crouched `stance / 16`,
+/// the scorpion's leg +0xff + k `(step + k) % 6`;
 /// model heights 0x0a00 (humanoid) and 0x0c80 (scout) plus `0x10 * step`, crouched
 /// `0x0c90 - 8 * stance`; eyes 0x0f80 and `0x0d00 - 8 * stance`.
 #[cfg(test)]
@@ -778,6 +788,7 @@ pub(crate) fn synthetic_walk() -> Walk {
         humanoid_arms: [legs(0), legs(1)],
         scout_legs: [legs(0), legs(2)],
         scout_crouch: [0, 1, 2, 3],
+        scorpion_legs: std::array::from_fn(|k| std::array::from_fn(|i| ((i + k) % 6) as u8)),
         humanoid_height: 0x0a00,
         humanoid_bob: bob,
         humanoid_eye: 0x0f80,
