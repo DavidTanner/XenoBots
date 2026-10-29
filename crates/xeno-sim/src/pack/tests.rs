@@ -43,7 +43,6 @@ fn as_loaded(running: &World, loaded: &World) -> World {
 fn shot(flight: Flight, n: u16) -> Shot {
     Shot {
         flight,
-        z: 0x1_2345 + i32::from(n),
         velocity: [-3 - n as i16, 4 + n as i16, -5],
         speed: 0x300 + n,
         climb: if matches!(flight, Flight::Tail | Flight::Homing) {
@@ -100,6 +99,10 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         }
     }
     sim.pilot(EntityId(2), Pilot::Faster);
+    // Heights the file did not hold.
+    let scout = sim.world.get_mut(EntityId(7)).unwrap();
+    (scout.z, scout.model_height) = (Fixed(0x3_0042), 0x0cb0);
+    movement(&mut sim.world, EntityId(7)).unwrap().eye_height = 0x0c58;
     let at = Position {
         x: Fixed(0x70_8000),
         y: Fixed(-0x10_0000),
@@ -117,6 +120,8 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
                 usg::Side::Human
             },
             position: at,
+            z: Fixed(0x1_2345 + i32::from(n as u16)),
+            model_height: 0,
             heading: 0x1234 + n as u16,
             radius: 0,
             damage: Damage::None,
@@ -127,6 +132,7 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
     crate::damage::spawn_explosion(
         &mut sim.world,
         at,
+        Fixed(-0x200),
         tables.damage.explosion_kind,
         tables.damage.robot_explosion,
     );

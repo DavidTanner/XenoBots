@@ -15,7 +15,7 @@ pub use xeno_formats::motion::Motion as Tables;
 use crate::orders::{Change, RobotKind};
 use crate::random::Random;
 use crate::terrain::{PathTable, Terrain, approx_distance};
-use crate::world::{Damage, EntityId, Movement, Position, State, World};
+use crate::world::{Damage, EntityId, Fixed, Movement, Position, State, World};
 
 /// Something a tick did that the rest of the game (or a log) may want.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,12 +321,13 @@ pub fn match_gear(tables: &Tables, kind: ObjectKind, m: &mut Movement) {
     }
 }
 
-/// The move, the hill bounce and the tick counter's step: `sim_move_*` after the
-/// script. Returns whether the robot ended inside a hill.
+/// The move, the hill bounce or the ground's height (`sim_check_robot_against_hills`),
+/// and the tick counter's step: `sim_move_*` after the script. Returns whether the
+/// robot ended inside a hill.
 pub fn travel(
     terrain: &Terrain,
     kind: ObjectKind,
-    position: &mut Position,
+    (position, z): (&mut Position, &mut Fixed),
     m: &mut Movement,
 ) -> bool {
     if kind_index(kind).is_none() {
@@ -335,11 +336,14 @@ pub fn travel(
     position.x.0 = position.x.0.wrapping_add(i32::from(m.velocity.0));
     position.y.0 = position.y.0.wrapping_add(i32::from(m.velocity.1));
     // Inside a hill: back off at the same speed. The velocity stays as it is until the
-    // speed next steps.
+    // speed next steps. Otherwise it stands on the ground (`sim_set_height_to_ground`),
+    // which tests the same hills, so it is always 0 there.
     let hit = terrain.hill_at(*position).is_some();
     if hit {
         m.speed = m.speed.wrapping_neg();
         m.target_speed = 0;
+    } else {
+        *z = terrain.ground_height(*position);
     }
 
     m.tick = m.tick.wrapping_add(2);
@@ -702,7 +706,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             crate::script::step(world, id, tables, random, &mut events);
             if let Some((e, terrain)) = world.entity_and_terrain(id)
                 && let State::Robot(m) = &mut e.state
-                && travel(terrain, e.kind, &mut e.position, m)
+                && travel(terrain, e.kind, (&mut e.position, &mut e.z), m)
             {
                 match_gear(tables, e.kind, m);
                 events.push(Event::HillHit(id));

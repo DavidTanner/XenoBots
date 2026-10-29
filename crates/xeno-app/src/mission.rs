@@ -1917,7 +1917,6 @@ impl Mission {
                 EntityId(slot),
                 view,
                 &assets.motion,
-                &scene::heights(self.scenario.as_ref()),
                 terrain,
                 &assets.models,
                 assets.skies.get(&self.file),
@@ -2007,7 +2006,6 @@ impl Mission {
         let d = self.display(slot);
         let mode = self.display_mode(slot, assets);
         let (world, motion) = (self.world(), &assets.motion);
-        let heights = scene::heights(self.scenario.as_ref());
         let terrain = self
             .scenario
             .as_ref()
@@ -2018,9 +2016,7 @@ impl Mission {
             Some(&CAMERA_VIEW) => {
                 let id = EntityId(slot);
                 let zoom_pan = (d.zoom, d.pan);
-                let Some(camera) =
-                    scene::second_camera(world, id, view, motion, &heights, zoom_pan)
-                else {
+                let Some(camera) = scene::second_camera(world, id, view, motion, zoom_pan) else {
                     return false;
                 };
                 let sky = assets.skies.get(&self.file);
@@ -2031,7 +2027,6 @@ impl Mission {
                     &camera,
                     view,
                     motion,
-                    &heights,
                     terrain,
                     models,
                     sky,

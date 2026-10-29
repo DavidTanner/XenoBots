@@ -2322,7 +2322,6 @@ pub(crate) mod tests {
             let mut plain = Framebuffer::new(Size::MODE_13H);
             plain.pixels_mut().copy_from_slice(&picture.pixels);
             let (_, _, width, height) = crate::review::region(&plain).unwrap();
-            let heights = crate::scene::heights(mission.scenario());
             let id = xeno_sim::EntityId(slot);
             let mut world = mission.world().clone();
             let at = world.get(id).unwrap().position;
@@ -2339,16 +2338,8 @@ pub(crate) mod tests {
             for (other, position) in near {
                 world.get_mut(id).unwrap().heading =
                     xeno_sim::script::bearing(&assets.motion.atan, at, position);
-                let camera =
-                    crate::scene::camera(&world, id, tables, &assets.motion, &heights).unwrap();
-                let nodes = crate::scene::nodes(
-                    &world,
-                    tables,
-                    &camera,
-                    &assets.motion.atan,
-                    &heights,
-                    &[],
-                );
+                let camera = crate::scene::camera(&world, id, tables, &assets.motion).unwrap();
+                let nodes = crate::scene::nodes(&world, tables, &camera, &assets.motion.atan, &[]);
                 let node = nodes.iter().find(|n| n.object == other.0).unwrap();
                 let size = (width as u16, height as u16);
                 let ((x, y), scale) = place(tables, &camera, node, true, size)
@@ -2403,7 +2394,6 @@ pub(crate) mod tests {
                     id,
                     tables,
                     &assets.motion,
-                    &heights,
                     std::slice::from_ref(hill),
                     &[],
                     None,

@@ -20,29 +20,11 @@ use xeno_sim::{Entity, EntityId, State, World};
 use crate::game_dir::GameFiles;
 use crate::review::MODEL_FILES;
 
-/// The objects' z (+0x0c) and model height (+0x12) by slot.
-pub type Heights = [(i32, u16); 240];
-
-/// shortcut: the sim keeps neither a z nor the model height, so both are the
-/// scenario's as loaded (0 for objects made since); hills, the walking bob and the
-/// explosions' drop are left out until the sim keeps them.
-pub fn heights(scenario: Option<&Scenario>) -> Heights {
-    let mut heights = [(0, 0); 240];
-    for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
-        if let Some(h) = heights.get_mut(usize::from(o.slot)) {
-            *h = (o.z, o.model_height);
-        }
-    }
-    heights
-}
-
-/// The eye height (+0x1c, `docs/render.md`, "The camera"): set per kind when a robot is
-/// made and as a scout's stance steps. Short code constants, kept here.
+/// The eye height (+0x1c, `docs/render.md`, "The camera"): a robot's, a signed word.
 fn eye_height(e: &Entity) -> i16 {
-    match (e.kind, e.state) {
-        (ObjectKind::Humanoid, _) => 0x0f80,
-        (ObjectKind::Scout, State::Robot(m)) => 0x0d00 - 8 * i16::from(m.stance),
-        _ => 0x0b80,
+    match e.state {
+        State::Robot(m) => m.eye_height as i16,
+        _ => 0,
     }
 }
 
@@ -56,19 +38,12 @@ pub(crate) fn trig(tables: &Tables, angle: u16) -> Trig {
 }
 
 /// The main view's camera on robot `id`: its x, y, z plus its eye height, its heading.
-pub fn camera(
-    world: &World,
-    id: EntityId,
-    view: &View3d,
-    tables: &Tables,
-    heights: &Heights,
-) -> Option<Camera> {
+pub fn camera(world: &World, id: EntityId, view: &View3d, tables: &Tables) -> Option<Camera> {
     let e = world.get(id)?;
-    let z = heights.get(usize::from(id.0)).map_or(0, |h| h.0);
     Some(Camera {
         x: e.position.x.0,
         y: e.position.y.0,
-        z: z.wrapping_add(eye_height(e).into()),
+        z: e.z.0.wrapping_add(eye_height(e).into()),
         heading: e.heading,
         sin: trig(tables, e.heading),
         cos: trig(tables, 0x4000u16.wrapping_sub(e.heading)),
@@ -102,10 +77,9 @@ pub fn second_camera(
     id: EntityId,
     view: &View3d,
     tables: &Tables,
-    heights: &Heights,
     (zoom, pan): (u8, u16),
 ) -> Option<Camera> {
-    let main = camera(world, id, view, tables, heights)?;
+    let main = camera(world, id, view, tables)?;
     let heading = main.heading.wrapping_add(pan);
     Some(Camera {
         heading,
@@ -123,7 +97,6 @@ pub fn nodes(
     view: &View3d,
     camera: &Camera,
     atan: &[u16],
-    heights: &Heights,
     terrain: &[TerrainFeature],
 ) -> Vec<RenderNode> {
     let from = xeno_sim::Position {
@@ -133,11 +106,7 @@ pub fn nodes(
     let objects = world.iter().filter_map(|(id, e)| {
         let kind = usize::from(u16::from(e.kind));
         let node_type = (*view.node_types.get(kind)?)?;
-        let (mut z, height) = heights.get(usize::from(id.0)).copied().unwrap_or_default();
-        // A shot keeps its own height; its model height is 0 (`docs/formats/usg.md`).
-        if let State::Shot(s) = e.state {
-            z = s.z;
-        }
+        let z = e.z.0;
         Some(RenderNode {
             object: id.0,
             model: view.kind_models[kind],
@@ -146,7 +115,7 @@ pub fn nodes(
             position: [
                 e.position.x.0,
                 e.position.y.0,
-                (z & !0xffff) | i32::from((z as u16).wrapping_add(height)),
+                (z & !0xffff) | i32::from((z as u16).wrapping_add(e.model_height)),
             ],
             radius: e.radius >> 8,
             distance: approx_distance(from, e.position).0 as u32,
@@ -196,17 +165,14 @@ pub fn draw(
     id: EntityId,
     view: &View3d,
     tables: &Tables,
-    heights: &Heights,
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
 ) -> bool {
-    let Some(camera) = camera(world, id, view, tables, heights) else {
+    let Some(camera) = camera(world, id, view, tables) else {
         return false;
     };
-    draw_from(
-        buffer, world, &camera, view, tables, heights, terrain, models, sky,
-    );
+    draw_from(buffer, world, &camera, view, tables, terrain, models, sky);
     true
 }
 
@@ -218,12 +184,11 @@ pub fn draw_from(
     camera: &Camera,
     view: &View3d,
     tables: &Tables,
-    heights: &Heights,
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
 ) {
-    let nodes = nodes(world, view, camera, &tables.atan, heights, terrain);
+    let nodes = nodes(world, view, camera, &tables.atan, terrain);
     buffer.draw_view(view, camera, &nodes, models, sky);
 }
 
@@ -294,6 +259,8 @@ mod tests {
                 x: Fixed::from_int(x),
                 y: Fixed::from_int(y),
             },
+            z: Fixed(0),
+            model_height: 0,
             heading: 0x1234,
             radius: 0x0a00,
             damage: Damage::None,
@@ -333,7 +300,7 @@ mod tests {
         let tables = crate::mission::tests::test_assets().motion;
         let walking = State::Robot(Movement {
             legs: [3, 4],
-            stance: 0x10,
+            eye_height: 0x0f80,
             guns: xeno_sim::Guns {
                 arms: [1, 2],
                 ..xeno_sim::Guns::default()
@@ -342,7 +309,14 @@ mod tests {
         });
         let mut world = World::default();
         world.insert(EntityId(2), entity(ObjectKind::Humanoid, 0, 0, walking));
-        world.insert(EntityId(5), entity(ObjectKind::Scout, 0, 3, walking));
+        let crouched = match walking {
+            State::Robot(m) => State::Robot(Movement {
+                eye_height: 0x0c80,
+                ..m
+            }),
+            _ => unreachable!(),
+        };
+        world.insert(EntityId(5), entity(ObjectKind::Scout, 0, 3, crouched));
         let base = State::Base {
             tick: 0,
             kills: 0,
@@ -365,7 +339,6 @@ mod tests {
         // A missile 8 units off, 0x1800 up, spinning at frame 3.
         let missile = State::Shot(xeno_sim::shot::Shot {
             flight: xeno_sim::shot::Flight::Missile,
-            z: 0x1800,
             velocity: [0; 3],
             speed: 0,
             climb: 0,
@@ -379,14 +352,18 @@ mod tests {
             frame: 3,
         });
         world.insert(EntityId(13), entity(ObjectKind::Other(8), 0, 8, missile));
-        let mut heights = [(0, 0); 240];
-        heights[2] = (0x1_0000, 0xa00);
-        heights[11] = (0x2_f000, 0x2000);
+        let mut stand = |id, z, model_height| {
+            let e = world.get_mut(EntityId(id)).unwrap();
+            (e.z, e.model_height) = (Fixed(z), model_height);
+        };
+        stand(13, 0x1800, 0);
+        stand(2, 0x1_0000, 0xa00);
+        stand(11, 0x2_f000, 0x2000);
         let view = view();
-        let eye = camera(&world, EntityId(2), &view, &tables, &heights).unwrap();
+        let eye = camera(&world, EntityId(2), &view, &tables).unwrap();
         // The humanoid's eye height on its z.
         assert_eq!((eye.z, eye.viewer, eye.heading), (0x1_0f80, 2, 0x1234));
-        let nodes = nodes(&world, &view, &eye, &tables.atan, &heights, &[]);
+        let nodes = nodes(&world, &view, &eye, &tables.atan, &[]);
         let summary: Vec<_> = nodes
             .iter()
             .map(|n| (n.object, n.model, n.frames.clone(), n.size))
@@ -409,8 +386,8 @@ mod tests {
         assert_eq!(nodes[3].position[2], 0x2_1000);
         assert_eq!(nodes[4].position[2], 0x1_0a00);
         assert_eq!(nodes[2].distance, 0x4_8000);
-        // A scout's eye height falls as it crouches.
-        let scout = camera(&world, EntityId(5), &view, &tables, &heights).unwrap();
-        assert_eq!(scout.z, 0x0d00 - 0x80);
+        // The eye height is the robot's own.
+        let scout = camera(&world, EntityId(5), &view, &tables).unwrap();
+        assert_eq!(scout.z, 0x0c80);
     }
 }

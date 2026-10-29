@@ -17,6 +17,8 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
         kind,
         side,
         position: at(x, y),
+        z: Fixed(0),
+        model_height: 0,
         heading: 0,
         radius: 0xa00,
         damage: Damage::Robot(Components {
@@ -42,6 +44,8 @@ pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
         kind: ObjectKind::Base,
         side,
         position: at(x, y),
+        z: Fixed(0),
+        model_height: 0,
         heading: 0,
         radius: 0x2300,
         damage: Damage::Taken(0),
@@ -158,7 +162,7 @@ fn step(world: &mut World, id: u16) -> bool {
         panic!()
     };
     steer_and_speed(&t, e.kind, 100, &mut e.heading, m);
-    travel(terrain, e.kind, &mut e.position, m)
+    travel(terrain, e.kind, (&mut e.position, &mut e.z), m)
 }
 
 #[test]
@@ -246,7 +250,10 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
     });
     // A tick of 0x7fff/65536 a unit; start just outside the radius.
     world.get_mut(EntityId(2)).unwrap().position.y = Fixed(Fixed::from_int(10).0 - 0x10);
+    world.get_mut(EntityId(2)).unwrap().z = Fixed(0x5_0000);
     assert!(step(&mut world, 2));
+    // A move into a hill leaves the height as it was.
+    assert_eq!(world.get(EntityId(2)).unwrap().z, Fixed(0x5_0000));
     let m = moving(&world, 2);
     assert_eq!(
         (m.speed, m.target_speed, m.velocity),
@@ -277,6 +284,24 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
         robot(ObjectKind::Scorpion, Side::Human, 0, 0).damage
     );
     assert_ne!(world.get(EntityId(2)).unwrap().position, before);
+}
+
+#[test]
+fn a_robot_that_moves_outside_the_hills_stands_at_0() {
+    let mut world = World::default();
+    world.terrain.features.push(Feature {
+        kind: TerrainFeature::OPEN_HILL,
+        centre: at(0, 0),
+        z: Fixed(0x1_0000),
+        radius: 0x0a00,
+        diagonal: 0x0600,
+        height: 0x0300,
+    });
+    world.insert(EntityId(2), robot(ObjectKind::Scout, Side::Human, 0, 0));
+    world.get_mut(EntityId(2)).unwrap().z = Fixed(0x5_0000);
+    // Over an open hill too: neither test sees one.
+    assert!(!step(&mut world, 2));
+    assert_eq!(world.get(EntityId(2)).unwrap().z, Fixed(0));
 }
 
 /// A world with an alien base (slot 0) at (0, 0) and its robots, and alien paths:

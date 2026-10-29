@@ -144,6 +144,7 @@ fn a_hit_wears_a_robot_point_by_point_and_posts_event_7() {
 fn a_robot_hit_over_the_threshold_is_destroyed_and_counted() {
     let mut world = world();
     let mut random = Random::seeded(1);
+    world.get_mut(EntityId(4)).unwrap().z = Fixed(0x2_8000);
     let events = hit_for(&mut world, 4, 0x51, &mut random);
     // Heard in every view, and no hit sound.
     let sound = Event::Sound {
@@ -163,8 +164,8 @@ fn a_robot_hit_over_the_threshold_is_destroyed_and_counted() {
     assert!(world.get(EntityId(4)).is_none());
     let e = world.get(EntityId(5)).unwrap();
     assert_eq!(
-        (e.kind, e.position, e.heading),
-        (ObjectKind::Other(13), at(4, 7), 0x140)
+        (e.kind, e.position, e.z, e.heading),
+        (ObjectKind::Other(13), at(4, 7), Fixed(0x2_8000), 0x140)
     );
     assert_eq!(
         e.state,
@@ -219,7 +220,13 @@ fn a_base_is_destroyed_at_300_and_a_relay_removed_at_20() {
 fn an_explosion_steps_its_frames_and_goes_after_the_last() {
     let tables = synthetic_tables();
     let mut world = World::default();
-    spawn_explosion(&mut world, at(1, 1), 13, tables.damage.robot_explosion);
+    spawn_explosion(
+        &mut world,
+        at(1, 1),
+        Fixed(0),
+        13,
+        tables.damage.robot_explosion,
+    );
     let mut random = Random::seeded(1);
     let frame = |w: &World| match w.get(EntityId(0)).map(|e| e.state) {
         Some(State::Explosion { frame, .. }) => Some(frame),

@@ -60,8 +60,7 @@ fn say(world: &mut World, id: EntityId, text: u16) {
 
 /// The true distance (`1000:0942`), 16.16.
 // shortcut: the square root of x and y's squares, exact; the original's also takes z
-// and rounds its own way. Upgrade when the sim keeps heights (T-101) or a DOSBox
-// comparison shows a difference.
+// and rounds its own way (`Entity::z`, kept since T-119). Upgrade with T-146.
 pub(crate) fn true_distance(a: Position, b: Position) -> u32 {
     let dx = i128::from(b.x.0) - i128::from(a.x.0);
     let dy = i128::from(b.y.0) - i128::from(a.y.0);

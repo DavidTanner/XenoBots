@@ -726,6 +726,8 @@ pub(crate) mod tests {
                 x: Fixed::from_int(x),
                 y: Fixed::from_int(y),
             },
+            z: Fixed(0),
+            model_height: 0,
             heading: 0x2000,
             radius: 0x0a00,
             damage: Damage::None,

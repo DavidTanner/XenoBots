@@ -339,9 +339,6 @@ are shared with the mission's 3D view (T-101), which still needs the projection 
   install). The map marks (types 0xa, 0xc, 0xe, 0x12) and the map table are in
   `docs/screens.md`, "The situation room's main view (T-103)".
 - The second display's extra steps (`1000:4164`, slot `0x5f0`) and the static (T-104).
-- Explosions' height: the end script lowers each by `random & 0x7ff` (`docs/sim.md`,
-  "The mission's end"); with the model height that gives its z, which the sim does
-  not keep (no object has a z there yet).
 
 ## In the port
 
@@ -364,9 +361,9 @@ region, the bounding box `review::region` measures. `LoadedModel::single_view` a
 `quarter_turn` are the other two loaders. `xeno_render::shape` runs the terrain
 nodes' programs (the hill and block programs are read from the user's `xeno.exe` by
 `xeno_formats::view3d`), with a scan fill that is not yet the original's edge walker.
-Not yet: each object's z and model height come from the scenario as loaded (the sim
-keeps neither, so hills, the walking bob of +0x12 and the explosions' drop are left
-out); only the frames the sim keeps are set (the humanoid's and scout's footstep legs,
+Each object's z and model height and the viewed robot's eye height are the sim's
+(`Entity::z`, `Entity::model_height`, `Movement::eye_height`; `docs/sim.md`,
+"Heights"). Not yet: only the frames the sim keeps are set (the humanoid's and scout's footstep legs,
 a base's look, an explosion's frame), the rest are 0; the sky is detail 1 only (the
 main view's).
 
