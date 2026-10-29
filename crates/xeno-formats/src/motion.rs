@@ -13,6 +13,7 @@ use crate::maproom::{invalid, word};
 use crate::net::{self, Net};
 use crate::script::{self, Scripts};
 use crate::sensing::{self, Sensing};
+use crate::weapons::{self, Weapons};
 use crate::{FormatError, sequence};
 
 /// `mov cx, ss:[bx + table + 2]` and `mov bx, ss:[bx + table]` in
@@ -113,6 +114,8 @@ pub struct Motion {
     pub sensing: Sensing,
     /// What the relay-net orders read (`xeno_formats::net`).
     pub net: Net,
+    /// The weapons and their shots (`xeno_formats::weapons`).
+    pub weapons: Weapons,
     pub walk: Walk,
     /// The string segment, where the scripts' messages are.
     pub strings: Strings,
@@ -274,6 +277,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         damage: damage::read_image(image, ds)?,
         sensing: sensing::read_image(image, ds)?,
         net: net::read_image(image)?,
+        weapons: weapons::read_image(image, ds)?,
         walk: Walk {
             humanoid_legs: [
                 legs(image, HUMANOID_LEGS_AT[0])?,
@@ -467,7 +471,7 @@ mod tests {
     /// numbered by mission and kind, an arctangent and script speeds, and the scripts
     /// of `synthetic_scripts`.
     fn synthetic() -> Vec<u8> {
-        let mut image = vec![0u8; DS + 0x9c00];
+        let mut image = vec![0u8; DS + 0xa000];
         put(&mut image, SINE_NEXT.0, &[0x36, 0x8b, 0x8f, 0x02, 0x01]);
         put(&mut image, SINE_AT.0, &[0x36, 0x8b, 0x9f, 0x00, 0x01]);
         for i in 0..SINE_ENTRIES {
@@ -496,6 +500,7 @@ mod tests {
         crate::fixtures::synthetic_weapon_keys(&mut image, DS);
         crate::fixtures::synthetic_sensing(&mut image, DS);
         crate::fixtures::synthetic_net(&mut image);
+        crate::fixtures::synthetic_weapons(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(
@@ -600,22 +605,22 @@ mod tests {
             (SCOUT_LEGS_AT[0] + 2, 0x86),
             (SCOUT_CROUCH_AT + 1, 0x8b),
             (GEAR_OPS[1] + 1, 0xa6),
-            (0xb100 + 6, 7),
-            (0xb118 + 6, 2),
-            (0xb120 + 14, 0xe9),
-            (0xb148 + 2, 0x0b),
-            (0xb150 + 9, 0x2d),
-            (0xb160 + 9, 4),
+            (0x8400 + 6, 7),
+            (0x8418 + 6, 2),
+            (0x8420 + 14, 0xe9),
+            (0x8448 + 2, 0x0b),
+            (0x8450 + 9, 0x2d),
+            (0x8460 + 9, 4),
             (KEY_TURN.0, 0x05),
             (WEAPON_KEYS.0 + 2, 0xa6),
-            (0xb190 + 3, 0x85),
-            (0xb1c0 + 0x08 + 7, 0xb9),
-            (0xb1c0 + 0x08 + 8, 0x0b),
-            (0xb1f0 + 1, 0xe5),
-            (0xb1f0 + 0x2d, 0x8a),
-            (0xb1f0 + 0x40 + 1, 0x0c),
+            (0x8490 + 3, 0x85),
+            (0x84c0 + 0x08 + 7, 0xb9),
+            (0x84c0 + 0x08 + 8, 0x0b),
+            (0x84f0 + 1, 0xe5),
+            (0x84f0 + 0x2d, 0x8a),
+            (0x84f0 + 0x40 + 1, 0x0c),
             (RECALL_AT + 3, 0x10),
-            (RECALL_AT + 6, 0xb1),
+            (RECALL_AT + 6, 0x84),
         ] {
             let mut image = synthetic();
             image[at] = value;

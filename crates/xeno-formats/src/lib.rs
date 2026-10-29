@@ -47,6 +47,7 @@ pub mod vcl;
 pub mod vgaintro;
 pub mod view3d;
 pub mod views;
+pub mod weapons;
 
 pub use error::FormatError;
 pub use palette::{Palette, Rgb};

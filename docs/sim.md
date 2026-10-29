@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -875,25 +875,8 @@ lower slot from the next.
 
 ### Weapons and shots (survey for T-114)
 
-Read only far enough to scope T-114. A humanoid's weapon step
-(`sim_step_humanoid_weapons`, `1000:b08a`) runs at tick phases 1 and 9 of +0x1a (every
-8 ticks): it counts down two timers (+0xdf, +0xe1, clearing +0x17 bits 1 and 0 at
-0) and the weapons' cool-downs (+0x108, +0x109); takes a fire request (+0xdc bit 7,
-set by the scripts' opcode 0x7d) for the selected weapon (+0xdd, set by opcodes 0x7b
-and 0x7c) when it is not damaged (setting +0x103 or +0x104, presumably the arm's
-animation, which later sets +0xdc bit 5 or 6); and fires a weapon whose bit is set,
-whose cool-down is 0 and with +0xec bit 2: with no target (+0xe6) a message; it needs
-energy (+0x50, 10 or 22 taken when +0xfd bit 0 is set) and makes a shot of kind 7 or 8
-at an offset by the heading's octant, with a sound, and a cool-down of 12 or 50 steps.
-A shot of kind 6 (`1000:e2c8`) falls (its vertical speed drops by 3 a step, two
-steps a tick), cannot hit anything for its first +0x20 ticks (T-107), explodes on the ground (`sim_test_below_ground`) or on hitting an object
-(`sim_find_shot_hit`, `1000:e8ac`: the first object with +0x16 bit 6 within its
-radius, and a side check) and then damages it by +0x22. A shot of kind 7
-(`1000:e3ca`) turns towards its target by at most 0x2d8 every 8 ticks. The weapon
-opcodes: 0x78 sets the carry unless a weapon is usable (present, enough drive, ...),
-0x79 and 0x7a push a weapon's state word, 0x7b and 0x7c select a weapon, 0x7d fires
-(by kind, through tables at `1000:d0e3`, `d107`, `d12b`, `d13c`). Scorpions and scouts
-have their own routines, not read.
+Superseded by "Weapons and shots (T-114)" below. The survey's "side check" after the
+hit search is the kinds' hit test: shots hit either side.
 
 ### The port (T-054)
 
@@ -923,6 +906,148 @@ Shortcuts, each named in the code: the screen flash and the messages (T-104); th
 change (T-103, T-104); a freed slot is reused
 at once (the original waits for the robots targeting the object to let go, T-112);
 the explosion's height and +0x19 are not kept (T-100 draws it).
+
+## Weapons and shots (T-114)
+
+A T-090 pass on `xeno.exe` read each kind's weapon step and trigger, the guns, the
+shots' set-ups and ticks, the hit search, the hit tests and the blast. The numbers are
+read from the user's `xeno.exe` by `xeno_formats::weapons` (`Motion::weapons`).
+
+**Firing.** Space and the scripts' opcode 0x7d (time 30) run `1000:d0da`, the kind's
+trigger through `cs:0xd0e3`: the humanoid's (`b242`) and the scout's (`ca46`) set the
+fire request (+0xdc bit 7); the scorpion's (`98f1`) sets its burst (+0x11e) to 5 and
+the request. Opcode 0x7d sets no flags.
+
+**The weapon steps** run from the kinds' tick tables (entries 1 and 9 for the
+humanoid, `1000:b08a`; 1 and 12 for the scorpion, `9713`; 1 and 11 for the scout,
+`c8ab`), so twice in 16 ticks. Each counts down the ECM's and cloak's times (+0xdf,
++0xe1, clearing +0x17 bits 1 and 0 at 0; the scorpion has no cloak) and the cool-downs,
+then:
+
+- **Humanoid**: the request (bit 7) is taken (cleared) and raises the selected
+  weapon's arm (+0x103 or +0x104 = 1) unless the weapon is damaged (+0xdc bit 0 or 1);
+  the walking animation (`1000:ae23`, `ae8a`, every tick after the legs) steps a
+  raised arm every 4 passes (`DS:0x62c6 & 3 = 0`): state 1 lifts its frame (+0xff,
+  +0x100) to 5, then sets +0xdc bit 5 or 6 (ready) and goes to 2; state 2 waits for
+  the bit to clear, then 3; state 3 lowers the frame to 0, then 0. Otherwise the arm
+  swings by `CS:0xaf11`/`0xaf21[step]` while walking and settles by one a tick when
+  still; a destroyed weapon (+0xf6 bit 6 or 7) shows frame 6. Back in the step, a
+  ready weapon whose cool-down (+0x108, +0x109) is 0 and with the target in the arc
+  (+0xec bit 2) fires: the ready bit is cleared; the cannon needs a target ("no
+  target" otherwise); both take energy (below); a shot is made (kind 7 the cannon,
+  kind 8 the missile) at the muzzle offset for the heading (an eighth of a quarter
+  turn from `DS:0x6a9f` or `0x6a7f`, turned by the quarter through `DS:0x708f`),
+  0xe80 up; sound 1 or 0 for the robot whose console is open; cool-down 12 or 50
+  steps. The cannon's shot does 4.
+- **Scorpion**: the burst counts down, each step setting the request; the cool-down
+  (+0x11f) counts down; a tail missile in flight (+0x123, a referenced slot) that is
+  gone is let go (+0x123 = 0xffff). The request is taken: weapon 0 the cannon
+  (`982d`): only in the arc, with rounds (+0x120, a word) and the cool-down 0 (each
+  failure silent), and energy; +0xdc bit 6 flips to pick a barrel, and the barrel's
+  damaged bit (0 or 1) stops it silently; +0x11d records the barrel that fired; a
+  shell (kind 6) of 1 point, sound 5 for everyone, one round fewer, cool-down 2. So a
+  burst of 5 requests fires 3 shells. Weapon 1 the tail missile (`978d`): with
+  missiles (+0x122), its reload (+0x125) at 0 (counted down at entry 9), not damaged
+  (+0xdc bit 2), a target, and energy (each failure a message); the last missile is
+  let go, a kind-5 object is made and referenced in +0x123, sound 12 for the robot,
+  the second display switches to the missile camera (+0xf0 keeps the mode, +0xef 3,
+  T-134), "missile launched", +0xfd bit 5, one fewer, reload 400 ticks.
+- **Scout**: weapon 0 the plasma gun (`c8ff`): a target ("no target"), the arc, its
+  cool-down (+0x105) 0, not damaged (bit 0), energy; a kind-7 shot of 2 points at the
+  muzzle (`DS:0x6c2c`) from the eye height (+0x1c) less 0x400; sound 1 for the robot;
+  cool-down 8. Weapon 1 the cannon (`c990`): the arc, shells (+0x107, "out of shells"),
+  cool-down (+0x106), not damaged (bit 1, a message), energy; a shell of 2 points
+  (the muzzle offsets from `DS:0x6c4c` are worked out and then not used), sound 5 for
+  the robot, a shell fewer, cool-down 3.
+
+**Energy** (`1000:d1b0`, with the amount: 10 and 22 the humanoid's, 1 the scorpion's
+and the scout's cannon, 10 the plasma): only on the battery (+0xfd bit 0) it comes off
++0x50; short, the energy goes to 0 and the gun fails with "insufficient power". The
+weapons' messages are posted only while +0xfd bit 5 is clear, which they then set; a
+shot fired clears it.
+
+**The weapon state** (opcodes 0x78 to 0x7a): bit 1 (cooling) is the weapon's
+cool-down not 0 (the scorpion's missile: its reload); bit 6 (none left) the
+scorpion's rounds or missiles, or the scout's shells, at 0. Opcode 0x78 ignores bit 1.
+
+**Shot kinds** (each kind's tick in `DS:0xe6e8`; the set-up runs with the maker in DI):
+
+- **Kind 6, the shell** (`1000:e235`, `e2c8`): its damage; arming 15 steps; speed
+  0x900; at the maker's x and y, 0x900 up. With a target (+0xe6) the heading is the
+  lead's (below, speed 0x1200) plus a random spread of `(random & 0x1ff) - 0x100`, and
+  it climbs 0x80; without, the maker's heading plus `(random & 0x7ff) - 0x400` and a
+  random climb `random & 0x7f`. The level velocity is `sim_scale_by_heading`'s. Each
+  tick it steps twice: x, y and z by the velocity, the climb less 3; below the ground
+  (`sim_test_below_ground`) it explodes (template `DS:0x7315`); once armed, a hit
+  explodes it (`0x732e`) and does its damage to the object hit. A shell of 1 point
+  explodes without the sound.
+- **Kind 7, the homing shot** (`e34a`, `e3ca`): its damage; arming 10 ticks; speed
+  0x400; at the muzzle; no velocity; the maker's heading; the maker's target
+  referenced (none: the shot is freed at once, after its sound and cool-down). Each
+  tick its age steps; at 300 it is freed. On the ticks its age is a multiple of 8 it
+  turns: to the target's coarse bearing by at most 0x2d8, climbing at the coarse
+  bearing of (the target's z plus its kind's height, `DS:0xe7a5` shifted left 8, less
+  its own; the level distance) (`1000:e95e`); the 3D velocity follows (`1000:045d`).
+  A gone target frees it. Then it moves; on the ground it explodes (`0x732e`)
+  quietly; once armed a hit explodes it (`0x7333`, sound 4) with its damage.
+- **Kind 8, the missile** (`e48a`, `e537`): arming 10; speed 0x300; life 960 ticks; at
+  the muzzle. A random spread `(random & 0x7f) - 0x40`; with a target the lead's
+  heading (speed 0x300) plus the spread and a climb at the bearing of (the height to
+  the target's top; the true distance, `1000:0519`); without, the maker's heading plus
+  the spread, level. It moves once when made and keeps the heading 0x40 (its model's).
+  Each tick its frame (+0x18) steps 0 to 3, its life counts down (freed at 0), it
+  moves; on the ground it explodes quietly, once armed a hit explodes it with sound 4
+  and 8 points. It does not turn.
+- **Kind 5, the tail missile** (`e08e`, `e0e8`): 0x19c0 above the scorpion, its
+  heading, the target referenced (none: freed), turn limit 0x16c. Phase 0 waits 20
+  ticks on the tail; phase 2 boosts for 20 ticks: speed from 0x100, 0x80 more a tick
+  up to 0x800, climb 0x16c, no ground or hit test; phase 4 homes every tick: the turn
+  limit grows by 0x16, it turns to the target's coarse bearing by the limit, and within
+  0x3c (8.8) of it the climb becomes the climb to it clamped to ±0xe38. On the ground
+  it explodes (`0x7338`, sound 4); on a hit, or with its target gone, a **blast** of
+  100 points in radius 100 (0x64, 8.8), then the explosion. It is removed as kind 15
+  (`1000:f5a4`).
+
+**The lead** (`1000:4549`, with the shot's speed): no target, the robot's heading; a
+target not a unit, the lock's bearing (+0xea); a unit: the offset to it in 8.8 (the
+middle words) and a quarter of its velocity are added up to five times, while a
+quarter of the speed as many times does not yet cover the offset in x and y (signed;
+the quarter speed is left in `DS:0x4da4`, the worked-out point's first word); then
+half a quarter of the velocity is taken back and the heading is the (fine) bearing to
+the result.
+
+**The hit search** (`sim_find_shot_hit`, `1000:e8ac`): the 240 slots in order; the
+first object in the field (+0x16 bit 6), not the shot, whose x and y are each within
+its radius of the shot's (`1000:0ec3`: the 16.16 difference's high word 0 and the low
+at most the radius) and whose kind's **hit test** (`DS:0xe761` through `1000:f6d0`)
+passes: robots of every kind but the humanoid, bases, relays and mines and buoys
+always; the humanoid when the shot is over its z by more than 0 and at most 0x1300;
+an obstacle when the shot's z is 0 to 0x8ff; shots, explosions, sparkles and removed
+objects never. There is no side check: shots hit friends. The object hit is kept
+(`DS:0x7313`) for the damage (`sim_damage_shot_target`, `1000:e954`, the points in AL,
+AH 1).
+
+**The blast** (`sim_damage_objects_in_radius`, `1000:e8eb`): every object in the
+field whose distance in three axes (`1000:0a11`: the largest axis, plus a quarter of
+the other level axis and a quarter of the smaller of the larger level axis and the
+height) is at most the radius (in 8.8, under 256 units) takes the points, halved for
+each step past half the radius (the step grows by half each time: past r/2 half,
+past 3r/4 a quarter, down to 0 points, which still is a hit). No side check, and the
+maker is not spared.
+
+### The port (T-114)
+
+Part 1 (`t-114`): `xeno_formats::weapons` reads the guns, the shots' numbers and
+explosions, the steps' tick-table entries, the hit tests, the kinds' heights and the
+messages through the instructions above. `xeno_sim::shot` makes and flies the four
+shot kinds (`shot::fire` with a gun, `State::Shot` ticked by `motion::tick` in slot
+order), the lead, the hit search and the blast through `damage::hit`, and the
+explosions from their templates. A shot is freed after the damage it does, so an
+explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
+each named in the code: robots, bases and the rest stand at z 0 (T-101); in the field
+by kind (T-147); the coarse bearing for the lead and the missile's level distance
+(T-146); the scout fires from its eye height when made (T-120); a gone target is an
+empty slot or one a shot or explosion took; removal frees the slot at once.
 
 ## The mission's end (T-055)
 

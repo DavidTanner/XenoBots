@@ -43,15 +43,15 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
         run(&["--check", "--screen", "test-card"]),
     );
     // Synthetic, not the game's: an LZEXE-packed image whose entry point loads DS =
-    // 0x20, with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
+    // 0x2000 (above the code, so the code's real addresses and the tables never meet), with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
     // Also made-up map room tables (`synthetic_map_room`), mission views, a training
     // menu and programs with their scripts (`synthetic_views`, `synthetic_scripts`) and a review
     // (`synthetic_review`), the campaign's rules (`synthetic_campaign`), and the
     // cutscenes after a mission and the captions' string segment (`synthetic_endings`),
     // and the movement tables (`synthetic_motion`).
-    let chain = 0x200 + 0xecac;
-    let mut image = vec![0u8; 0x1c000];
-    image[0x10..0x15].copy_from_slice(&[0xb8, 0x20, 0, 0x8e, 0xd8]);
+    let chain = 0x20000 + 0xecac;
+    let mut image = vec![0u8; 0x30000];
+    image[0x10..0x15].copy_from_slice(&[0xb8, 0, 0x20, 0x8e, 0xd8]);
     for i in 0..10 {
         let entry = [0x20u16, 0, 0, 0, 1, 0, 0, 0, 100 * (i + 1), 32, 64, 2, 0];
         let bytes: Vec<u8> = entry.iter().flat_map(|w| w.to_le_bytes()).collect();
@@ -59,16 +59,20 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
     }
     let mut relocations = vec![0x11];
     relocations.extend(xeno_formats::fixtures::synthetic_map_room(
-        &mut image, 0x200,
+        &mut image, 0x20000,
     ));
-    relocations.extend(xeno_formats::fixtures::synthetic_views(&mut image, 0x200));
-    relocations.extend(xeno_formats::fixtures::synthetic_review(&mut image, 0x200));
-    relocations.extend(xeno_formats::fixtures::synthetic_endings(&mut image, 0x200));
-    xeno_formats::fixtures::synthetic_scripts(&mut image, 0x200);
-    xeno_formats::fixtures::synthetic_campaign(&mut image, 0x200);
+    relocations.extend(xeno_formats::fixtures::synthetic_views(&mut image, 0x20000));
+    relocations.extend(xeno_formats::fixtures::synthetic_review(
+        &mut image, 0x20000,
+    ));
+    relocations.extend(xeno_formats::fixtures::synthetic_endings(
+        &mut image, 0x20000,
+    ));
+    xeno_formats::fixtures::synthetic_scripts(&mut image, 0x20000);
+    xeno_formats::fixtures::synthetic_campaign(&mut image, 0x20000);
     xeno_formats::fixtures::synthetic_motion(
         &mut image,
-        0x200,
+        0x20000,
         xeno_formats::fixtures::SYNTHETIC_MAP_ROOM_STRINGS,
     );
     relocations.sort_unstable();

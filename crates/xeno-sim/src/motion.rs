@@ -70,7 +70,7 @@ pub fn sine(table: &[u16], angle: u16) -> (u16, bool, bool) {
 
 /// `speed` times the sine of `angle`, as `sim_scale_by_heading` does each component:
 /// the high word of an unsigned multiply (the speed itself at 1.0), signed.
-fn component(table: &[u16], angle: u16, speed: i16) -> i16 {
+pub(crate) fn component(table: &[u16], angle: u16, speed: i16) -> i16 {
     let (magnitude, one, negative) = sine(table, angle);
     let size = speed.unsigned_abs();
     let mut v = if one {
@@ -667,7 +667,8 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
         let Some(e) = world.get_mut(id) else {
             continue;
         };
-        let (mut path_phase, mut is_robot, mut gone, mut end) = (false, false, false, false);
+        let (mut path_phase, mut is_robot, mut gone, mut end, mut shot) =
+            (false, false, false, false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -685,7 +686,11 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 end = *tick & 0xf == 0xf && *destroyed;
             }
             state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
+            State::Shot(_) => shot = true,
             State::None => {}
+        }
+        if shot {
+            crate::shot::tick(world, id, tables, random, &mut events);
         }
         if gone {
             world.remove(id);
@@ -796,6 +801,7 @@ pub(crate) fn synthetic_tables() -> Tables {
         damage: xeno_formats::fixtures::synthetic_damage_tables(),
         sensing: xeno_formats::fixtures::synthetic_sensing_tables(),
         net: xeno_formats::fixtures::synthetic_net_tables(),
+        weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
         walk: synthetic_walk(),
         strings: xeno_formats::motion::Strings(b"\0AB\r\xc3\0".to_vec()),
     }
