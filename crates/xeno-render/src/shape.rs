@@ -603,6 +603,10 @@ pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
     for (row, &[left, right]) in table.0.iter().enumerate() {
         // The clipped edges keep both in 0..=width, where the original's unsigned
         // compare is this one.
+        // shortcut: an unclipped edge can end its right x at width + 1 (a one-row
+        // edge in the last column, `docs/render.md`), which the original fills one
+        // pixel past the row into the next; it stops at the row's end here, so the
+        // last row never writes past the buffer. Upgrade if a capture shows the pixel.
         let (left, right) = (left.clamp(0, w) as usize, right.clamp(0, w) as usize);
         if rows.contains(&(row as i16)) && right > left {
             fb.pixels_mut()[row * width + left..row * width + right].fill(colour);
@@ -795,7 +799,8 @@ mod tests {
     /// with the smaller x, the minor axis moved `(i * m - D / 2 + D) / D` (at most `i`)
     /// after step `i`; a row's left x is the first pixel's of the last left-chain edge on it, the
     /// right x one past the last pixel's of the last right-chain edge on it, and an
-    /// x-major left edge writes its last x + 1 one row past its last pixel.
+    /// x-major left edge writes its last x + 1 one row past its last pixel. A span stops
+    /// at the row's end (`fill_polygon`'s shortcut, not the original's).
     fn reference(corners: &[Point], (w, h): (usize, usize)) -> Vec<bool> {
         let n = corners.len();
         let c = |i: usize| (i64::from(corners[i].0), i64::from(corners[i].1));
@@ -847,11 +852,26 @@ mod tests {
         }
         for y in t.1..=max_y.min(h as i64 - 1) {
             let [left, right] = rows[(y + 1) as usize];
-            for x in left..right {
+            for x in left..right.min(w as i64) {
                 mask[y as usize * w + x as usize] = true;
             }
         }
         mask
+    }
+
+    #[test]
+    fn a_one_row_edge_in_the_last_column_stops_at_the_row_end() {
+        // The right chain's last edge, (19, 1) to (19, 2), is y-major with D = 1, m =
+        // 0: its second pixel is (20, 2), so row 2's right x is 21. Once a proptest
+        // failure (T-159).
+        let corners = [(19, 1), (0, 0), (19, 2)];
+        let fb = filled((20, 14), &corners);
+        let row = |y: usize| &fb.pixels()[y * 20..y * 20 + 20];
+        assert_eq!(row(2).iter().position(|&p| p != 0), Some(14));
+        assert_eq!(row(2)[19], 7);
+        assert!(row(3).iter().all(|&p| p == 0));
+        let mask: Vec<bool> = fb.pixels().iter().map(|&p| p != 0).collect();
+        assert_eq!(mask, reference(&corners, (20, 14)));
     }
 
     proptest::proptest! {

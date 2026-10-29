@@ -363,7 +363,15 @@ bottom, +0xc right, the last two one past the edge; the port takes the whole buf
 5. **Spans.** Rows from the larger of the smallest y and the top to the smaller of the
    largest y and `bottom - 1` are filled from the left x up to, not including, the
    right x; a row whose right x is not past its left (unsigned) is skipped. The x's
-   are not clipped here: the edges are.
+   are not clipped here: the edges are. Each row is an unrolled `rep stosw`/`stosb`
+   from the row's start (`[DS:0x69c]`) plus the left x, so a right x past the clip
+   rectangle's right writes on past it. An unclipped polygon can do that: its box
+   only goes through the clipper when a corner is past `right - 1`, but a one-row
+   y-major edge (`D = 1, m = 0`, below) in the last column puts its second pixel at
+   x = `right`, so that row's right x is `right + 1` and the original fills one pixel
+   past the rectangle (in a full-width buffer, the next row's first pixel). The port
+   stops every span at the buffer's right edge instead (a `shortcut:` in
+   `fill_polygon`), so the last row never writes outside the buffer (T-159).
 
 **Walking an edge.** The walker always starts at the endpoint with the smaller x (`a`
 on a tie; an unsigned compare) and steps x up, so an edge is the same pixels whichever
