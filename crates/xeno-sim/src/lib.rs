@@ -16,6 +16,7 @@ pub mod random;
 pub mod rate;
 pub mod script;
 pub mod sense;
+pub mod shot;
 pub mod terrain;
 pub mod world;
 

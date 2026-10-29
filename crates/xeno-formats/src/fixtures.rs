@@ -1554,6 +1554,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_weapon_keys(image, ds);
     synthetic_sensing(image, ds);
     synthetic_net(image);
+    synthetic_weapons(image, ds);
 }
 
 /// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
@@ -1620,6 +1621,138 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
     put(ds + 0x9770, &[2, 0, 1, 0, 0xff, 0xff, 0xff, 0xff]);
 }
 
+/// Writes made-up weapon instructions (`crate::weapons`) after [`synthetic_sensing`]'s
+/// tick tables, with tables at `DS:0x9c00` up (past other fixtures' `DS + 0x9c00`): the steps at entries 1 and 9 (humanoid),
+/// 1 and 12 with the reload at 9 (scorpion), 1 and 11 (scout); the guns' energies,
+/// kinds, sounds, cool-downs, damages and heights as in the stock build, muzzle
+/// offsets `(0x100 * i, -0x200 * i)`; a burst of 5; the counts at +0x120 and +0x122;
+/// messages 0x60 to 0x66; the shots' numbers; explosions of frames 0x12 to 0x1e; the
+/// stock build's hit tests (code at 0x8100 up) and heights by kind.
+/// Panics if it would write over another fixture's bytes.
+pub fn synthetic_weapons(image: &mut [u8], ds: usize) {
+    use crate::weapons::*;
+    let mut put = |at: usize, bytes: &[u8]| {
+        let to = &mut image[at..at + bytes.len()];
+        assert!(to.iter().all(|&b| b == 0), "{at:#x} is taken");
+        to.copy_from_slice(bytes);
+    };
+    let site = |(_, op, wide): Site, v: u16| {
+        let v = v.to_le_bytes();
+        [op, &v[..1 + usize::from(wide)]].concat()
+    };
+    for (at, bytes) in STEPS {
+        put(at, bytes);
+    }
+    for (table, entries, routine) in [
+        (0x9700, &[1, 9][..], STEPS[0].0),
+        (0x9720, &[1, 12], STEPS[1].0),
+        (0x9720, &[9], STEPS[2].0),
+        (0x9740, &[1, 11], STEPS[3].0),
+    ] {
+        for n in entries {
+            put(ds + table + 2 * n, &(routine as u16).to_le_bytes());
+        }
+    }
+    let sound = |put: &mut dyn FnMut(usize, &[u8]), at: usize, event: u16, all: bool| {
+        let to = if all { SOUND_ALL } else { SOUND_VIEWED } as u16;
+        put(at, &site((at, &[0xb8], true), 2 * event));
+        put(
+            at + 3,
+            &site((at, &[0xe8], true), to.wrapping_sub(at as u16 + 6)),
+        );
+    };
+    // (energy, kind, sound, all, cooldown, damage, height, muzzle table)
+    let guns = [
+        (10, 7, 1, false, 12, 4, 0xe00, Some(0x9c00u16)),
+        (22, 8, 0, false, 50, 0, 0xe00, Some(0x9c20)),
+        (1, 6, 5, true, 2, 1, 0, None),
+        (1, 5, 12, false, 400, 0, 0, None),
+        (10, 7, 1, false, 8, 2, 0x400, Some(0x9c40)),
+        (1, 6, 5, false, 3, 2, 0, None),
+    ];
+    for (g, (energy, kind, event, all, cooldown, damage, height, table)) in GUNS.iter().zip(guns) {
+        put(g.energy, &[0xb0, energy]);
+        put(g.kind, &site((0, &[0xb8], true), kind));
+        sound(&mut put, g.sound, event, all);
+        put(g.cooldown.0, &site(g.cooldown, cooldown));
+        if let Some(s) = g.damage {
+            put(s.0, &site(s, damage));
+        }
+        if let Some(s) = g.height {
+            put(s.0, &site(s, height));
+        }
+        if let (Some(at), Some(table)) = (g.offsets, table) {
+            put(at, &site((0, &[0x8b, 0x87], true), table));
+            put(at + 4, &site((0, &[0x8b, 0x8f], true), table + 2));
+            for i in 0..8u16 {
+                let (x, y) = ((0x100 * i) as i16, -(0x200 * i as i16));
+                let at = ds + usize::from(table) + 4 * usize::from(i);
+                put(at, &[x.to_le_bytes(), y.to_le_bytes()].concat());
+            }
+        }
+    }
+    put(BURST.0, &site(BURST, 5));
+    put(COUNTS_AT.0, &site((0, COUNTS_AT.1, true), 0x9c60));
+    put(ds + 0x9c60, &[0x20, 0x01, 0x22, 0x01]);
+    for (i, at) in MESSAGES_AT.into_iter().enumerate() {
+        put(at, &site((0, &[0xbe], true), 0x60 + i as u16));
+    }
+    let numbers: [(&[Site], &[u16]); 4] = [
+        (
+            &SHELL,
+            &[15, 0x900, 0x900, 0x1200, 0x1ff, 0x7ff, 0x80, 0x7f, 3],
+        ),
+        (&HOMING, &[10, 0x400, 300, 7, 0x2d8]),
+        (&MISSILE, &[10, 0x300, 0x3c0, 0x7f, 0x300, 8, 0x40]),
+        (
+            &TAIL,
+            &[
+                0x19c0, 0x16c, 0x16, 20, 0x100, 0x80, 0x800, 0x16c, 20, 0x3c, 0xe38, 100, 100,
+            ],
+        ),
+    ];
+    for (sites, values) in numbers {
+        for (&s, &v) in sites.iter().zip(values) {
+            put(s.0, &site(s, v));
+        }
+    }
+    sound(&mut put, BLAST_SOUND_AT, 4, true);
+    for (i, at) in EXPLOSIONS_AT.into_iter().enumerate() {
+        let t = 0x9c64 + 5 * i as u16;
+        put(at, &site((0, &[0xb8], true), t));
+        put(ds + usize::from(t), &[0x12, 0x1e, i as u8 + 1, 0, 0]);
+    }
+    put(0x8100, &[0xf9, 0xc3, 0xf8, 0xc3]);
+    put(0x8104, &[0xb9, 0, 0, 0xba, 0, 0x13, 0xe8]);
+    put(
+        0x8110,
+        &[0x83, 0x7d, 0x0e, 0, 0x75, 0x09, 0x81, 0x7d, 0x0c, 0, 0x09],
+    );
+    put(HITS_AT.0, &site((0, HITS_AT.1, true), 0x9c90));
+    put(HEIGHTS_AT.0, &site((0, HEIGHTS_AT.1, true), 0x9cc0));
+    for kind in 0..KINDS {
+        let (hit, height): (u16, u16) = match kind {
+            0 => (0x8104, 10),
+            1 => (0x8100, 10),
+            2 | 4 => (0x8100, 6),
+            3 => (0x8100, 20),
+            9..=12 => (0x8100, 0),
+            16 => (0x8110, 6),
+            _ => (0x8102, 0),
+        };
+        put(ds + 0x9c90 + 2 * kind, &hit.to_le_bytes());
+        put(ds + 0x9cc0 + 2 * kind, &height.to_le_bytes());
+    }
+}
+
+/// [`synthetic_weapons`]' tables, read.
+pub fn synthetic_weapon_tables() -> crate::weapons::Weapons {
+    let mut image = vec![0; 0x1_a000];
+    synthetic_sensing(&mut image, 0x1_0000);
+    synthetic_weapons(&mut image, 0x1_0000);
+    crate::weapons::read_image(&image, 0x1_0000).expect("synthetic weapon tables")
+}
+
 /// Writes made-up relay-net instructions (`crate::net`): DENSE NET (13) on a mask of
 /// 0xfe, SPARSE NET (12) and the others on 0xfc, the others probing; deploying plays
 /// sound 25 and posts 0x50 (none) or 0x51 (deployed); relays of radius 0x500.
@@ -1651,7 +1784,7 @@ pub fn synthetic_net_tables() -> crate::net::Net {
     crate::net::read_image(&image).expect("synthetic net tables")
 }
 
-/// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0xb180
+/// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0x8480
 /// up and tables at `DS:0x96a0` up: sound 5; messages 0x10 and 0x11 (humanoid), 0x30
 /// and 0x31 (scout), the scorpion's 0x20, 0x21 loaded, 0x22, 0x23 empty, 0x24, 0x25
 /// damaged, its damaged bits 1 and 2; and the recall's program, 6.
@@ -1659,22 +1792,22 @@ pub fn synthetic_weapon_keys(image: &mut [u8], ds: usize) {
     use crate::motion::{RECALL_AT, WEAPON_KEYS};
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    put(WEAPON_KEYS.0, &op(WEAPON_KEYS.1, 0xb180));
-    put(0xb180, &[0x90, 0xb1, 0xf0, 0xb1, 0xc0, 0xb1]);
-    for (at, load, table) in [(0xb190, 0x10, 0x96a0u16), (0xb1c0, 0x08, 0x96a4)] {
+    put(WEAPON_KEYS.0, &op(WEAPON_KEYS.1, 0x8480));
+    put(0x8480, &[0x90, 0x84, 0xf0, 0x84, 0xc0, 0x84]);
+    for (at, load, table) in [(0x8490, 0x10, 0x96a0u16), (0x84c0, 0x08, 0x96a4)] {
         put(at, &[0x8a, 0xd8, 0x3a, 0x9d, 0xdd, 0x00, 0x74, 0x24]);
         put(at + load, &op(&[0x8b, 0xb7], table));
         put(at + load + 4, &[0xe8, 0, 0, 0xb8, 0x0a, 0]);
     }
     put(
-        0xb1f0,
+        0x84f0,
         &[0x32, 0xe4, 0x8b, 0xf0, 0x3a, 0x85, 0xdd, 0x00, 0x74, 0x3c],
     );
-    put(0xb1f0 + 0x18, &op(&[0x8a, 0x84], 0x96b4));
+    put(0x84f0 + 0x18, &op(&[0x8a, 0x84], 0x96b4));
     for (offset, table) in [(0x2d, 0x96a8), (0x33, 0x96ac), (0x39, 0x96b0)] {
-        put(0xb1f0 + offset, &op(&[0x8b, 0xb4], table));
+        put(0x84f0 + offset, &op(&[0x8b, 0xb4], table));
     }
-    put(0xb1f0 + 0x40, &[0xb8, 0x0a, 0]);
+    put(0x84f0 + 0x40, &[0xb8, 0x0a, 0]);
     let messages: Vec<u8> = [
         0x10u16, 0x11, 0x30, 0x31, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25,
     ]
@@ -1687,7 +1820,7 @@ pub fn synthetic_weapon_keys(image: &mut [u8], ds: usize) {
 }
 
 /// Writes made-up gear steps (`crate::motion::Gears`) with the routines that read
-/// them, code at 0xb100 up and tables at `DS:0x9640` up: humanoid gears -20, -10, 0,
+/// them, code at 0x8400 up and tables at `DS:0x9640` up: humanoid gears -20, -10, 0,
 /// 10, 20; scout gears -30, 0, 30; a scorpion step of 5 within -15..=25 (its up
 /// routine after an `int 3`, as the stock build's); turns of 0x80.
 pub fn synthetic_gears(image: &mut [u8], ds: usize) {
@@ -1697,7 +1830,7 @@ pub fn synthetic_gears(image: &mut [u8], ds: usize) {
     let words = |w: &[i16]| w.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<_>>();
     put(GEAR_OPS[0], &op(&[0xff, 0xa7], 0x9640));
     put(GEAR_OPS[1], &op(&[0xff, 0xa7], 0x9646));
-    let (up, down) = ([0xb100u16, 0xb150, 0xb120], [0xb118u16, 0xb160, 0xb138]);
+    let (up, down) = ([0x8400u16, 0x8450, 0x8420], [0x8418u16, 0x8460, 0x8438]);
     let routines: Vec<i16> = up.iter().chain(&down).map(|&r| r as i16).collect();
     put(ds + 0x9640, &words(&routines));
     for (kind, field, top, set, table, gears) in [
@@ -1705,11 +1838,11 @@ pub fn synthetic_gears(image: &mut [u8], ds: usize) {
             0,
             0x0b,
             8,
-            0xb140u16,
+            0x8440u16,
             0x9660u16,
             &[-20i16, -10, 0, 10, 20][..],
         ),
-        (2, 0x09, 4, 0xb148, 0x9680, &[-30, 0, 30]),
+        (2, 0x09, 4, 0x8448, 0x9680, &[-30, 0, 30]),
     ] {
         let at = usize::from(up[kind]);
         let call = set.wrapping_sub(up[kind] + 17);
@@ -1724,11 +1857,11 @@ pub fn synthetic_gears(image: &mut [u8], ds: usize) {
         put(ds + usize::from(table), &words(gears));
     }
     put(
-        0xb150,
+        0x8450,
         &[0xcc, 0x8b, 0x45, 0x28, 0x3d, 25, 0, 0x7d, 0x10, 0x05, 5, 0],
     );
     put(
-        0xb160,
+        0x8460,
         &[0x8b, 0x45, 0x28, 0x3d, 0xf1, 0xff, 0x7e, 0x10, 0x2d, 5, 0],
     );
     put(KEY_TURN.0, &op(KEY_TURN.1, 0x80));

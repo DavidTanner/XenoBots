@@ -156,7 +156,7 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
 /// lowest free slot; none if the slots or the small objects' pool are full.
 // shortcut: a freed slot is reused at once; the original waits for the robots that
 // target the object to let go of it (T-112).
-fn spawn_explosion(
+pub(crate) fn spawn_explosion(
     world: &mut World,
     at: Position,
     kind: u16,

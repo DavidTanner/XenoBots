@@ -86,6 +86,8 @@ pub enum State {
         ticks: u8,
         countdown: u8,
     },
+    /// A shot in flight (`crate::shot`).
+    Shot(crate::shot::Shot),
     /// Relays, obstacles and objects without a known layout do nothing yet.
     #[default]
     None,
@@ -322,6 +324,17 @@ impl StateHash for State {
             } => {
                 h.u8(3);
                 h.bytes(&[frame, last, ticks, countdown]);
+            }
+            State::Shot(s) => {
+                h.u8(4);
+                h.u8(s.flight as u8);
+                h.i32(s.z);
+                s.velocity.iter().for_each(|&v| h.u16(v as u16));
+                for n in [s.speed, s.climb, s.age, s.arming, s.life, s.turn] {
+                    h.u16(n);
+                }
+                h.bytes(&[s.damage, s.phase, s.frame]);
+                h.u16(s.target.map_or(0xffff, |t| t.0));
             }
             State::None => h.u8(2),
         }

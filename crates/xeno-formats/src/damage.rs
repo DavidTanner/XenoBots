@@ -183,7 +183,7 @@ fn robot(image: &[u8], ds: usize, kind: usize) -> Result<RobotDamage, FormatErro
     }
 }
 
-fn explosion(image: &[u8], ds: usize, at: usize) -> Result<Explosion, FormatError> {
+pub(crate) fn explosion(image: &[u8], ds: usize, at: usize) -> Result<Explosion, FormatError> {
     let t = ds + usize::from(operand(image, at, &[0xb8])?);
     Ok(Explosion {
         first: byte(image, t)?,
