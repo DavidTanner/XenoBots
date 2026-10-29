@@ -412,15 +412,16 @@ and bearing (the destination and the robot's own base), zigzag, random turns, st
 hold here, joining the nearest path point, the targeting check and the path commands;
 events dispatch to the header's or the tables' handlers.
 
-Shortcuts, each named in the code: an opcode not ported (the relay net, T-113)
-**halts the script on itself**, so a robot keeps its speed and heading; opcode 0x74
+Shortcuts, each named in the code: an opcode not ported (the relay net until T-113)
+**halted the script on itself**, so a robot kept its speed and heading; opcode 0x74
 puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
 log and 0x76's copies are T-129); firing (0x7d) does nothing until T-114; field
 opcodes read 0 at other offsets; return addresses are pushed as offsets from the
 script area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
 paths until a scan finds enemies, the human robots on ENGAGE look for enemies and
-close on them (T-112), and an alien scorpion on DENSE NET halts at once (T-113).
+close on them (T-112), and an alien scorpion on DENSE NET lays relays along its line
+(T-113).
 
 ## Sensing (T-112)
 
@@ -616,7 +617,7 @@ arrows act the same, and the keyboard's repeat repeats them.
 | 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine or buoy: with one left (+0xe2, +0xe4, +0xe3, +0xe5), an object of kind 9, 12, 11 or 10 is made (`1000:f4b1`) and set up (`e5ab`, `e63d`, `e602`, `e5e8`); else a message |
 | A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
-| C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays: C a message on the cargo (+0x118); D flips +0xfd bit 4 with a message; L apparently loads one (fewer than 12 carried, moving slower than 16) and U deploys one (+0x118 counts them, and picks the speed table; U sets +0xdc bit 3 and plays sound 25); not traced further (T-113) |
+| C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4 (the dump) with a message (T-149) |
 | S | `ddb0` | | the same | +0xfa = 0 (not traced) |
 | X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4; T-134) |
 | F1 | `cff3` | the same | the same | A box over the view until a key (not traced) |
@@ -663,7 +664,7 @@ its weapon's bit (+0xdc) is set, else the loaded one: its weapon counts are T-11
 so the empty one is never posted. `Sim::recall` sets +0x23 bit 3 (the situation
 room's F3 and recall button, for the selected unit); `motion::tick` gives a robot with
 it the recall's program (`Tables::recall_program`) and its program takes over, before
-it moves. The keys still to port are T-113 (relays), T-114 (fire), T-134 (pan) and
+it moves. U is `Pilot::Deploy` (T-113). The keys still to port are T-149 (the other relay keys), T-114 (fire), T-134 (pan) and
 T-135 to T-139.
 
 ## Relay nets (T-113)
@@ -763,7 +764,24 @@ nearest relay (`1000:f703` with kind 4) under 0x14 (0.08 units) away, with fewer
 `relay_at` (`2000:7faa`), and the line, `start` (0x7e) and `advance` (0x7f), on
 `net::Grid`, which `Movement::grid` keeps (+0x10a..+0x114, loaded from the file's
 scorpions and hashed: the state hash changes). Part 1 (`t-113`) is the trace and these
-checks; the opcodes and deploying are part 2.
+checks.
+
+Part 2 (`t-113-deploy`): the opcodes 0x7e to 0x83 in `xeno_sim::script` with the flags
+traced above, `net::relays` (the count) and `net::deploy` (`sim_deploy_relay`: the
+relay in the lowest free slot of the small pool, the messages, +0x118 one fewer,
++0xdc bit 3, sound 25), which the scorpion's U reaches through `Sim::pilot`
+(`Pilot::Deploy`; `xeno-app` maps `1000:9afa` to it). `Movement::relays` (+0x118, was
+`speed_table`) is the count, so a scorpion that lays relays speeds up as before. So
+SPARSE, DENSE and PROBE NET and DEPLOYING run;
+`script`'s `real_assets_a_stock_scorpion_on_dense_net_lays_relays` shows scen00a's
+alien scorpion, the other robots taken out, lay at least five relays in 20 minutes,
+each in a DENSE NET cell of its own within 0.04 units of the cell's point. Shortcuts,
+each named in the code: a laid relay has no tick (T-148): its clock's random word is
+drawn and dropped, and it never rises, links or powers anything; the net state
++0x10a..+0x114 is kept for every kind (a humanoid or scout running a net opcode would
+overwrite its gear and light in the original; none is given one). The L, C and D keys
+and the cargo dump are T-149. Saves still write the scenario as loaded, so laid
+relays are not saved.
 
 ## Damage (T-054)
 

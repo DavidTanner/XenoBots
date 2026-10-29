@@ -510,3 +510,151 @@ fn the_weapon_state_opcodes_read_damage_drive_and_selection() {
     steps(&mut world, &tables, 1);
     assert_eq!(m(&world).script.flags & CARRY, CARRY);
 }
+
+#[test]
+fn the_net_opcodes_walk_the_line_and_deploy_relays() {
+    // Start the line, the cell as the point, check for a relay, count, deploy, check
+    // again, then step to the end.
+    let (mut world, tables) = setup(&[0x7e, 0x80, 0x81, 0x82, 0x83, 0x81, 0x7f, 0x0a]);
+    world.orders.set_program(1, 13);
+    let carry = |w: &World| m(w).script.flags & CARRY != 0;
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).grid.cell, (10, 10));
+    steps(&mut world, &tables, 1);
+    assert_eq!(world.point, at(10, 10));
+    steps(&mut world, &tables, 1);
+    assert!(carry(&world), "no relay in the cell");
+    // None carried: the count sets the carry, and deploying fails with a message.
+    steps(&mut world, &tables, 1);
+    assert!(carry(&world));
+    steps(&mut world, &tables, 1);
+    assert!(carry(&world));
+    assert_eq!(m(&world).panel.queue[0], tables.net.no_relay);
+    assert_eq!(world.len(), 2);
+    // With one carried, it is deployed where the robot stands.
+    let (mut world, tables) = setup(&[0x7e, 0x80, 0x81, 0x82, 0x83, 0x81, 0x7f, 0x0a]);
+    world.orders.set_program(1, 13);
+    if let State::Robot(m) = &mut world.get_mut(EntityId(1)).unwrap().state {
+        m.relays = 1;
+    }
+    steps(&mut world, &tables, 4);
+    assert!(!carry(&world), "one carried");
+    let events = steps(&mut world, &tables, 1);
+    assert!(!carry(&world));
+    let relay = world.get(EntityId(2)).unwrap();
+    assert_eq!(
+        (relay.kind, relay.position),
+        (ObjectKind::Relay, at(10, 10))
+    );
+    assert_eq!((relay.side, relay.radius), (Side::Human, tables.net.radius));
+    assert_eq!(m(&world).relays, 0);
+    assert_eq!(m(&world).panel.queue[0], tables.net.deployed);
+    let sound = Event::Sound {
+        event: tables.net.sound,
+        only_for: Some(EntityId(1)),
+    };
+    assert_eq!(events, [sound]);
+    assert!(matches!(world.get(EntityId(1)).unwrap().damage,
+        Damage::Robot(c) if c.weapons & 8 != 0));
+    steps(&mut world, &tables, 1);
+    assert!(!carry(&world), "the relay stands in the cell");
+    // DENSE NET's cells from (10, 10) to (10, 20): diagonal first.
+    steps(&mut world, &tables, 1);
+    assert_eq!((m(&world).grid.cell, carry(&world)), ((12, 12), false));
+    // A damaged deployer has none to deploy.
+    if let Damage::Robot(c) = &mut world.get_mut(EntityId(1)).unwrap().damage {
+        c.equipment |= 0x80;
+    }
+    assert_eq!(net::relays(&world, EntityId(1)), 0);
+}
+
+#[test]
+fn the_line_s_end_sets_the_carry() {
+    let (mut world, tables) = setup(&[0x7e, 0x7f, 0x42, 0xfd]);
+    world.orders.set_program(1, 13);
+    let mut cells = Vec::new();
+    for _ in 0..40 {
+        steps(&mut world, &tables, 2);
+        cells.push(m(&world).grid.cell);
+        if m(&world).script.flags & CARRY != 0 {
+            break;
+        }
+    }
+    assert_eq!(cells.last(), Some(&net::cell(0xfe, at(10, 20))));
+    assert_eq!(cells.last(), Some(&(8, 20)));
+    assert!(m(&world).script.flags & CARRY != 0);
+}
+
+/// A stock alien scorpion on DENSE NET walks its line of cells and lays a relay in
+/// each empty one (`docs/sim.md`, "Relay nets"): scen00a's, with the mission's other
+/// robots taken out.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_stock_scorpion_on_dense_net_lays_relays() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, Random::seeded(7), tables);
+    let world = &sim.world;
+    let scorpion = *world
+        .units(Side::Alien)
+        .iter()
+        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Scorpion)
+        .unwrap();
+    assert_eq!(world.orders.get(scorpion.0).unwrap().orders.program, 13);
+    let others: Vec<EntityId> = world
+        .iter()
+        .filter(|&(id, e)| id != scorpion && RobotKind::of(e.kind).is_some())
+        .map(|(id, _)| id)
+        .collect();
+    for id in others {
+        sim.world.remove(id);
+    }
+    let stock: Vec<EntityId> = sim.world.iter().map(|(id, _)| id).collect();
+    let mut laid = Vec::new();
+    for _ in 0..70 * 60 * 20 {
+        _ = sim.tick(&[]);
+        for (id, e) in sim.world.iter() {
+            if e.kind == ObjectKind::Relay
+                && !stock.contains(&id)
+                && !laid.iter().any(|&(i, _)| i == id)
+            {
+                laid.push((id, e.position));
+            }
+        }
+    }
+    // Within 20 minutes it has laid one every few minutes along its line.
+    let m = m_of(&sim.world, scorpion);
+    assert!(laid.len() >= 5, "{laid:?}");
+    assert_eq!(usize::from(m.relays), 12 - laid.len());
+    // Each in a DENSE NET cell of its own, within 0.04 units of the cell's point.
+    let mut cells = Vec::new();
+    for &(_, at) in &laid {
+        let cell = net::lattice(at);
+        assert_eq!(net::cell(0xfe, at), cell);
+        let point = Position {
+            x: Fixed::from_int(cell.0),
+            y: Fixed::from_int(cell.1),
+        };
+        assert!(
+            crate::terrain::approx_distance(at, point).0 <= 0x0a00,
+            "{at:?}"
+        );
+        assert!(!cells.contains(&cell));
+        cells.push(cell);
+    }
+}
+
+fn m_of(world: &World, id: EntityId) -> Movement {
+    match world.get(id).unwrap().state {
+        State::Robot(m) => m,
+        other => panic!("{other:?}"),
+    }
+}

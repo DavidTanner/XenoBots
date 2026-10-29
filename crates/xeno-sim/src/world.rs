@@ -127,8 +127,8 @@ pub struct Movement {
     /// is its gear).
     pub stance: u8,
     pub stance_target: u8,
-    /// +0x118: a scorpion's speed table.
-    pub speed_table: u8,
+    /// +0x118: the relays a scorpion carries; half of it picks its speed table.
+    pub relays: u8,
     /// The walking animation's step counter (humanoid +0x105, scorpion +0x116, scout
     /// +0x10a) and the leg frames that make footsteps (humanoid +0x101 and +0x102,
     /// scout +0x103 and +0x104; `docs/render.md`, "Walking").
@@ -216,7 +216,7 @@ impl Movement {
             weapon: r.weapon,
             stance: stance.0,
             stance_target: stance.1,
-            speed_table: relays,
+            relays,
             stride,
             legs,
             status,
@@ -278,7 +278,7 @@ impl StateHash for State {
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
-                h.u8(m.speed_table);
+                h.u8(m.relays);
                 h.bytes(&[m.stride, m.legs[0], m.legs[1]]);
                 h.bytes(&[m.status, m.contacts, m.locked_on]);
                 h.u16(m.target.map_or(0xffff, |t| t.0));

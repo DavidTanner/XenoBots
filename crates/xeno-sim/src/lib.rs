@@ -212,6 +212,10 @@ impl Sim {
             Damage::Robot(c) => (e.kind, e.heading, c.weapons),
             _ => (e.kind, e.heading, 0),
         };
+        if key == Pilot::Deploy {
+            net::deploy(&mut self.world, id, tables, &mut self.random, &mut events);
+            return events;
+        }
         if matches!(
             key,
             Pilot::Left | Pilot::Right | Pilot::Faster | Pilot::Slower
@@ -234,6 +238,7 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
+            Pilot::Deploy => {}
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -293,6 +298,8 @@ pub enum Pilot {
     Weapon(u8),
     /// The humanoid's F9: the other weapon, as `Weapon`.
     OtherWeapon,
+    /// The scorpion's U: a relay deployed where it stands (`net::deploy`).
+    Deploy,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -478,6 +485,35 @@ mod tests {
         let before = sim.state_hash();
         assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());
         assert_eq!(sim.state_hash(), before);
+    }
+
+    #[test]
+    fn the_scorpion_s_u_deploys_a_relay_where_it_stands() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        // Slot 5 is a scorpion; the relay takes the lowest free slot, 1.
+        let (id, at) = (EntityId(5), sim.world.get(EntityId(5)).unwrap().position);
+        let carried = |sim: &Sim| net::relays(&sim.world, id);
+        motion::movement(&mut sim.world, id).unwrap().relays = 12;
+        // The fixture's deployer is damaged: none to deploy, and a message.
+        assert_eq!(carried(&sim), 0);
+        assert!(sim.pilot(id, Pilot::Deploy).is_empty());
+        if let Damage::Robot(c) = &mut sim.world.get_mut(id).unwrap().damage {
+            c.equipment &= 0x7f;
+        }
+        let before = carried(&sim);
+        let word = sim.random.clone().word();
+        let events = sim.pilot(id, Pilot::Deploy);
+        assert!(matches!(events[..], [Event::Sound { event: 25, .. }]));
+        assert_eq!(carried(&sim), before - 1);
+        let relay = sim.world.get(EntityId(1)).unwrap();
+        assert_eq!(
+            (relay.kind, relay.position),
+            (xeno_formats::usg::ObjectKind::Relay, at)
+        );
+        // Making it drew a random word (the relay's clock).
+        assert_ne!(sim.random.clone().word(), word);
     }
 
     #[test]
