@@ -1068,8 +1068,8 @@ switch is the console's (T-134); the arms' swing step is the legs'; nothing rech
 the energy or sets `ON_BATTERY` (T-148's signal), so stock robots fire freely. A robot
 worn by many small hits is not destroyed until its damage total is kept (T-140).
 
-Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height by its stance
-(0x0d00 less 8 a stance step, as the 3D view's camera); `xeno-app`'s 3D view draws a
+Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height (+0x1c, kept
+since T-119); `xeno-app`'s 3D view draws a
 shot at its own height with its frame, and the humanoid's arms with their frames.
 `xeno-app`'s Ctrl+W and Ctrl+L stay: a base takes 300 points, which no robot's program
 shoots at in a stock mission's first minutes (T-150).
@@ -1176,8 +1176,7 @@ A base's look (+0x18, `State::Base::look`, from the file and in the state hash) 
 by one as the step becomes 4 and 14: the frame of its model in the 3D view
 (`docs/render.md`).
 
-Shortcuts, each named in the code: the explosions' drop is drawn and not applied
-(T-119 part 2); with the small objects' pool full the original moves
+Shortcuts, each named in the code: with the small objects' pool full the original moves
 whatever its allocator left, the port nothing; steps of 0x24 or more (only from a file
 or a resumed ended mission) stay where they are, where the original's table runs into
 code.
@@ -1357,6 +1356,16 @@ not hit a hill; the launch sets it to 0; an explosion takes the z of the object 
 replaces (`damage::spawn_explosion`), a relay its deployer's, a shot its maker's.
 `xeno-app`'s `scene` takes the camera's z and eye height and each node's z and model
 height from the sim (`scene::heights` is gone). The state hash changes.
+
+Part 2 (`t-119-walk`): `xeno_formats::motion` reads the bob tables and the bases (`Walk`:
+humanoid and scout model heights and bobs, the scout's crouched base, the humanoid's eye
+height and the scout's stance eye base) through the instructions above, with byte
+checks. `motion::walk` sets the model height and the humanoid's eye height as traced;
+`motion::steer_and_speed` sets a scout's eye height on each stance step; the base's end
+lowers each explosion by its random word; the scout's plasma gun fires from its kept
+eye height. `real_assets_stock_robots_bob_as_they_walk`: four stock scenarios' robots,
+driven for two minutes, stand at z 0 and bob by their steps. The state hash changes
+again (every humanoid's height moves with its step; a still one settles to step 0's).
 
 ## Loading a scenario
 

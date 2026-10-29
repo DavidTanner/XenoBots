@@ -199,7 +199,6 @@ pub(crate) fn alloc_small(world: &World) -> Option<EntityId> {
 /// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run
 /// every 16 ticks): explosions on it, and at the last step the mission is over, won
 /// if the base is the alien one (`docs/sim.md`, "The mission's end").
-// shortcut: the explosions' height is not kept: the sim has no z yet (T-101).
 pub fn step_base_end(
     world: &mut World,
     id: EntityId,
@@ -257,13 +256,14 @@ pub fn step_base_end(
         } else {
             (0, 0)
         };
+        // Then lowered by a random amount (`sim_lower_explosion_randomly`).
+        let drop = i32::from(random.word() & 0x7ff);
         if let Some(x) = explosion.and_then(|x| world.get_mut(x)) {
             x.position.x.0 = x.position.x.0.wrapping_add(dx);
             x.position.y.0 = x.position.y.0.wrapping_add(dy);
+            x.z.0 = x.z.0.wrapping_sub(drop);
             x.radius = radius;
         }
-        // Lowered by a random amount (`sim_lower_explosion_randomly`).
-        random.word();
     }
     if let Some(State::Base { end_step, look, .. }) = world.get_mut(id).map(|e| &mut e.state) {
         *end_step = next;

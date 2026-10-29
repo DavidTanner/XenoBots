@@ -200,16 +200,17 @@ fn a_scout_stands_up_before_it_moves() {
     });
     step(&mut world, 3);
     assert_eq!(moving(&world, 3).stance_target, STANDING);
-    assert_eq!(
-        (moving(&world, 3).stance, moving(&world, 3).speed),
-        (0x2f, 0)
-    );
+    // Each stance step sets the eye height: 0x0d00 less 8 a step.
+    let m = moving(&world, 3);
+    assert_eq!((m.stance, m.speed, m.eye_height), (0x2f, 0, 0x0d00 - 0x178));
     step(&mut world, 3);
     step(&mut world, 3);
-    assert_eq!(
-        (moving(&world, 3).stance, moving(&world, 3).speed),
-        (0x30, 1)
-    );
+    let m = moving(&world, 3);
+    assert_eq!((m.stance, m.speed, m.eye_height), (0x30, 1, 0x0b80));
+    // Moving, nothing sets it.
+    set(&mut world, 3, |m| m.eye_height = 0x0a00);
+    step(&mut world, 3);
+    assert_eq!(moving(&world, 3).eye_height, 0x0a00);
 }
 
 #[test]
@@ -333,9 +334,56 @@ fn footsteps(kind: ObjectKind, m: &mut Movement, n: u16) -> Vec<(u16, u8)> {
     let walk = synthetic_walk();
     let mut heard = Vec::new();
     for t in 1..=n {
-        super::walk(&walk, kind, 0, t, m, |e| heard.push((t, e)));
+        super::walk(&walk, kind, 0, t, (m, &mut 0), |e| heard.push((t, e)));
     }
     heard
+}
+
+#[test]
+fn a_walk_bobs_the_model_height_by_its_step() {
+    let walk = synthetic_walk();
+    let mut height = 0;
+    let step = |kind, m: &mut Movement, height: &mut u16| {
+        super::walk(&walk, kind, 0, 1, (m, height), |_| {});
+    };
+    // A humanoid at a step a tick: 0x0a00 plus its step's bob, and its eye height.
+    let mut m = Movement {
+        speed: 0x80,
+        stride: 0x20,
+        ..Movement::default()
+    };
+    step(ObjectKind::Humanoid, &mut m, &mut height);
+    assert_eq!((height, m.eye_height), (0x0a30, 0x0f80));
+    // Stopping, it keeps the step it reached for a tick, then step 0's.
+    m.speed = 0;
+    step(ObjectKind::Humanoid, &mut m, &mut height);
+    assert_eq!(height, 0x0a30);
+    step(ObjectKind::Humanoid, &mut m, &mut height);
+    assert_eq!(height, 0x0a00);
+    // A moving scout bobs from 0x0c80; standing still keeps it; crouched it sinks by
+    // 8 a stance step from its own base.
+    let mut m = Movement {
+        speed: 0x80,
+        stride: 0x40,
+        stance: STANDING,
+        ..Movement::default()
+    };
+    step(ObjectKind::Scout, &mut m, &mut height);
+    assert_eq!(height, 0x0cd0);
+    m.speed = 0;
+    step(ObjectKind::Scout, &mut m, &mut height);
+    assert_eq!(height, 0x0cd0);
+    m.stance = 0x20;
+    step(ObjectKind::Scout, &mut m, &mut height);
+    assert_eq!(height, 0x0c90 - 0x100);
+    // A scorpion's is left alone, as is the eye height of all but the humanoid.
+    let mut m = Movement {
+        speed: 0x80,
+        eye_height: 0x0b80,
+        ..Movement::default()
+    };
+    step(ObjectKind::Scorpion, &mut m, &mut height);
+    assert_eq!((height, m.eye_height), (0x0c90 - 0x100, 0x0b80));
 }
 
 #[test]
@@ -656,6 +704,57 @@ fn real_assets_stock_scenarios_tick() {
         assert_eq!(run(true), run(true), "{name}");
         assert_ne!(run(true), run(false), "{name}");
     }
+}
+
+/// Every stock scenario's robots, driven for two minutes: each stands at z 0 (no
+/// stock file has an open hill, and the hills a robot backs out of leave it as it
+/// was), a humanoid's or moving scout's model height is its base plus a bob of its
+/// step, it changes as they walk, and a humanoid's eye height is its kind's.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_stock_robots_bob_as_they_walk() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let w = &tables.walk;
+    let mut bobbed = 0;
+    for name in ["scen00a.usg", "scen06a.usg", "strain.usg", "htrain.usg"] {
+        let scenario = xeno_formats::usg::parse(&std::fs::read(dir.join(name)).unwrap()).unwrap();
+        let mut sim = crate::Sim::load(&scenario, Random::seeded(7), tables.clone());
+        let ids: Vec<EntityId> = sim.world.iter().map(|(id, _)| id).collect();
+        for (n, id) in ids.into_iter().enumerate() {
+            if let Some(m) = movement(&mut sim.world, id) {
+                (m.target_speed, m.target_heading) = (63, (n as u16).wrapping_mul(0x2400));
+            }
+        }
+        let mut last = std::collections::BTreeMap::new();
+        for _ in 0..7200 {
+            _ = sim.tick(&[]);
+            for (id, e) in sim.world.iter() {
+                let State::Robot(m) = e.state else { continue };
+                assert_eq!(e.z, Fixed(0), "{name} {id:?}");
+                let base = match e.kind {
+                    ObjectKind::Humanoid => {
+                        assert_eq!(m.eye_height, w.humanoid_eye, "{name} {id:?}");
+                        Some((w.humanoid_height, &w.humanoid_bob))
+                    }
+                    ObjectKind::Scout if m.speed != 0 => Some((w.scout_height, &w.scout_bob)),
+                    _ => None,
+                };
+                if let Some((base, bob)) = base {
+                    let h = e.model_height.wrapping_sub(base);
+                    assert!(bob.contains(&h), "{name} {id:?}: {:#x}", e.model_height);
+                    bobbed += usize::from(last.insert(id, h).is_some_and(|l| l != h));
+                }
+            }
+        }
+    }
+    assert!(bobbed > 1000, "{bobbed}");
 }
 
 #[test]

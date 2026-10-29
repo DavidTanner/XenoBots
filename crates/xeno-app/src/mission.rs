@@ -2455,12 +2455,19 @@ pub mod tests {
                 net: xeno_formats::fixtures::synthetic_net_tables(),
                 weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
                 bases: xeno_formats::fixtures::synthetic_base_tables(),
-                // Legs that never leave frame 0: no footsteps.
+                // Legs that never leave frame 0: no footsteps; heights with no bob.
                 walk: motion::Walk {
                     humanoid_legs: [[0; motion::STEPS]; 2],
                     humanoid_arms: [[0; motion::STEPS]; 2],
                     scout_legs: [[0; motion::STEPS]; 2],
                     scout_crouch: [0; motion::CROUCHES],
+                    humanoid_height: 0x0a00,
+                    humanoid_bob: [0; motion::STEPS],
+                    humanoid_eye: 0x0f80,
+                    scout_height: 0x0c80,
+                    scout_bob: [0; motion::STEPS],
+                    scout_crouched: 0x0c80,
+                    scout_eye: 0x0d00,
                 },
                 strings: motion::Strings::default(),
             },
