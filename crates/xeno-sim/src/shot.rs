@@ -57,10 +57,10 @@ pub struct Shot {
 }
 
 /// The kinds of shot by their set-up routines.
-const TAIL: u16 = 5;
-const SHELL: u16 = 6;
-const HOMING: u16 = 7;
-const MISSILE: u16 = 8;
+pub(crate) const TAIL: u16 = 5;
+pub(crate) const SHELL: u16 = 6;
+pub(crate) const HOMING: u16 = 7;
+pub(crate) const MISSILE: u16 = 8;
 
 /// The scout's eye height (+0x1c), which its plasma gun fires from: 0x0d00 less 8 a
 /// step of its stance (`docs/render.md`, "The camera").
@@ -241,6 +241,8 @@ pub fn fire(
             };
             let t = &w.tail;
             (shot.flight, shot.turn, shot.target) = (Flight::Tail, t.turn, Some(target));
+            // Its blast has its own points; the object keeps no damage (T-116).
+            shot.damage = 0;
             shot.z = base.wrapping_add(i32::from(t.height));
         }
         SHELL => {
@@ -284,7 +286,9 @@ pub fn fire(
                 let level = crate::sense::true_distance(at, t.position);
                 (aim_height(tables, t).wrapping_sub(shot.z), level)
             });
-            (shot_heading, shot.climb) = match aimed {
+            // The climb is not kept: the object has no field for it (T-116).
+            let climb;
+            (shot_heading, climb) = match aimed {
                 // shortcut: the true distance takes z too (`1000:0942`); the port's is
                 // level (T-146).
                 Some((dz, level)) => (
@@ -293,7 +297,7 @@ pub fn fire(
                 ),
                 None => (heading.wrapping_add(spread), 0),
             };
-            shot.velocity = velocity3(tables, shot_heading, shot.climb, ms.speed as i16);
+            shot.velocity = velocity3(tables, shot_heading, climb, ms.speed as i16);
             // It moves once as it is made, and keeps its model's heading.
             at = step(at, &mut shot);
             shot_heading = ms.heading;

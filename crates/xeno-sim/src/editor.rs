@@ -10,6 +10,7 @@ use xeno_formats::usg::{Body, Object, ObjectKind, Side, TerrainFeature, flag};
 
 use crate::motion::Event;
 use crate::orders::{Orders, Robot};
+use crate::pack::SAVED_SCRIPT;
 use crate::terrain::{Paths, Terrain};
 use crate::world::side_code;
 use crate::{Damage, Entity, EntityId, Position, Sim, State, World, damage, script};
@@ -151,8 +152,7 @@ const KINDS: [KindBytes; 3] = [
 
 /// The program a new robot is given (`1000:d2b6`).
 const NEW_PROGRAM: u8 = 9;
-/// A saved script pointer's mark (`1000:4826`), and a saved "no target".
-const SAVED_SCRIPT: u16 = 0xa000;
+/// A saved "no target".
 const NO_TARGET: u16 = 0xffff;
 
 impl Sim {

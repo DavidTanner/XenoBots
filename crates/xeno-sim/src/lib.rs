@@ -12,6 +12,7 @@ pub mod input;
 pub mod motion;
 pub mod net;
 pub mod orders;
+mod pack;
 pub mod panel;
 pub mod random;
 pub mod rate;
@@ -74,6 +75,7 @@ impl Sim {
     /// move by `tables`.
     pub fn load(scenario: &Scenario, random: Random, tables: Tables) -> Sim {
         let mut world = World::from_scenario(scenario);
+        pack::unpack_made(&mut world, scenario, &tables);
         script::start_all(&mut world, scenario, &tables);
         // shortcut: the original carries the worked-out point from mission to mission
         // (from the image's value); every stock script works it out before using it.
