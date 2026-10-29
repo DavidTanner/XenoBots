@@ -156,11 +156,12 @@ diagonals) and one at the centre at z, and fills the facets between them in colo
 57 to 61. With the editor's values (z and +0x14 both a third of the radius) the ring
 lies on the ground.
 
-**The shape ops (T-101).** `gfx_draw_terrain_shape` reserves the record's
+**The shape ops (T-101, T-122).** `gfx_draw_terrain_shape` reserves the record's
 `point_slots` four-byte slots below its frame; an op's point operands are signed byte
-offsets of slots (multiples of 4, -0x04 down to -0x38 and beyond), each holding a
-projected screen point (y, then x). It reads the sine and cosine of the node's heading
-less the bearing (used only by the untraced ops) and the three sizes, the third as the
+offsets of slots (multiples of 4, -0x04 down to -0x40), each holding a
+projected screen point (y, then x). It keeps the sine and cosine of the node's heading
+less the bearing (`DS:0x2976`, `0x297a`, from `1000:05c0` and `05bb`; a terrain node's
+heading is 0 in play, below) and reads the three sizes, the third as the
 **current height** (8.8). Then, by op:
 
 - **0x26** (`1000:1cb0`, the hill's first op): the current height is negated, and
@@ -168,14 +169,43 @@ less the bearing (used only by the untraced ops) and the three sizes, the third 
   (-d, d), (-r, 0), (-d, -d), (0, -r), (d, -d), (r, 0), (d, d) from the centre
   (r the radius, d the diagonal size, both turned to 16.16; anticlockwise from +y).
   The current height is then set to 0 for good and the centre itself goes in slot -0x18.
-- **Projection** of an offset (`1000:20f4`): the centre plus the offset, at the current
-  height (shifted to 16.16) above the centre's z, relative to the camera and turned
-  as a model's anchor is (`docs/render.md`, "Projection"), giving the lateral `X` and
-  depth `Z`. In front (`Z` not negative) it is divided by the **larger of |X| and |Z|**
-  (not the approximate distance): `x = W/2 + int(float(X) * F / m)`, `y = H/2 -
-  int(float(z) * F / m)`, each 0x7fff if the addition overflows. Behind, `m = |X|` and
-  `x = W/2 ± int(F)` by the sign of `X` (the focal factor's width to that side), `y` as
-  before, with no overflow check.
+- **Projection** of an offset (`1000:20f4`): the centre plus the offset, relative to
+  the camera and turned as a model's anchor is (`docs/render.md`, "Projection"),
+  giving the lateral `X` and depth `Z`, which are kept as the **base** (`DS:0x1c80`,
+  `0x1c84`; before any op, the centre's, which the cone test has just left there).
+  Then `1000:2147`, at the current height (shifted to 16.16) above the centre's z: in
+  front (`Z` not negative) divided by the **larger of |X| and |Z|** (not the
+  approximate distance): `x = W/2 + int(float(X) * F / m)`, `y = H/2 - int(float(z) * F
+  / m)`, each 0x7fff if the addition overflows. Behind, `m = |X|` and `x = W/2 ±
+  int(F)` by the sign of `X` (the focal factor's width to that side), `y` as before,
+  with no overflow check. It returns with `CX` the point's x and `BX` the divisor's
+  mantissa halved (the division's `shr bx, 1`; as it is if 0 or 1).
+- **0x02** (`1000:1b86`): with the current height negated, five points: at twice the
+  diagonal size on the axes, (0, 2d), (-2d, 0), (0, -2d), (2d, 0), in slots -0x04 to
+  -0x10, and the centre in -0x14; then, the height restored, the centre in -0x18. The
+  offsets are on the world's axes: nothing turns them.
+- **0x04**, **0x06**, **0x08** (`1000:1d8d`, `1dd7`, `1e1d`): pairs of points through
+  `1000:205a`: an offset `(x, y)` across and in depth is turned by the angle above
+  (`1000:2233`, each term a size times the sine or cosine magnitude, 8.24, signed by
+  the trig sign and the call's flag byte, summed in 32 bits and shifted right 8 to a
+  16.16: `x cos - y sin` across, `x sin + y cos` in depth), and the base plus it goes
+  in the first slot at the current height, the base less it in the second at the
+  negated height (`1000:2147` directly: camera space, not the world's). With r the
+  radius and d the diagonal size, the first points, anticlockwise:
+  - 0x04, a box: (d, r), (-d, r), (-d, -r), (d, -r) in -0x04 to -0x10, the opposites in
+    -0x20, -0x1c, -0x18, -0x14;
+  - 0x06, a diamond: (0, r), (-d, 0), (0, -r), (d, 0), the same slots;
+  - 0x08, an octagon: (r, 0), (d, d), (0, r), (-d, d) in -0x04 to -0x10 with the
+    opposites in -0x30 to -0x24, then (-r, 0), (-d, -d), (0, -r), (d, -d) in -0x14 to
+    -0x20 with the opposites in -0x40 to -0x34 (16 slots).
+- **0x22** (`1000:1c20`): `h` the current height taken unsigned (8.8 to 16.16); with
+  the height negated, the base plus (-h, h) across and in depth in -0x20, then a point
+  meant to be the base plus (-h, -h) in -0x28, but `BX` and `CX` are never set for its
+  depth, which is what the last projection left (`CX:BX`, so about the previous point's
+  x in whole units) less `h`; then (h, -h) in -0x30, (h, h) in -0x38 and the base in
+  -0x14; with the height restored, the base in -0x18. Not turned.
+- **0x24** a b c (`1000:2008`): slot a = b extended by half the way from c, each
+  coordinate `(3b - c) >> 1` (32 bits, kept to 16).
 - **0x1c** a b c (`1000:1fc1`): slot a = the midpoint of b and c, each coordinate
   `(b + c) >> 1` without overflow.
 - **0x1e** a b c (`1000:1f75`): slot a = b plus a quarter of the way to c, `b + ((c -
@@ -186,16 +216,25 @@ less the bearing (used only by the untraced ops) and the three sizes, the third 
   `3b53:0x16c`), then go on.
 - **0x0a**: skips 8 bytes. **0x00**, **0x0c**, **0x18**, **0x1a**: end the whole shape.
   **0x20** sets a flag that moves a triangle's first corner and breaks into the
-  debugger (`int 3`): a developer's aid.
-- Not traced (no stock record uses them; only the block program does, and nothing
-  sees the block): the point ops 0x02, 0x04, 0x06, 0x08, 0x22 and 0x24, which turn
-  points by the shape's facing.
+  debugger (`int 3`): a developer's aid. An odd op indexes the handler table
+  (`DS:0x2988`) between two entries.
+
+No stock record uses the point ops but the hill's 0x26; the block program uses 0x04,
+and its one record in each file is where nothing sees it. A slot below the record's
+`point_slots` is below the stack pointer in the original, where later calls'
+return addresses can overwrite it; the port keeps it.
+
+The node's heading (+0x08, `gfx_emit_terrain_render_node`) is `[DS:0x1486] << 4`. Only
+the event reader's developer timing keys write `DS:0x1486` (unlock word 2's Ctrl+Alt+F11
+and F12, `key.md`: the retraces a run of polygon fills took, shown on the debug
+screen); it is 0 from load, so in play the angle is minus the bearing.
 
 The hill program is op 0x26; midpoints of ring points 0, 2, 4 and 6 with the centre;
 then for each quarter of the ring, two triangles (ring point, the next, the nearer
 midpoint) and a quad (midpoint, the ring point between, the next midpoint, the centre),
 in colours 57 to 61. The block program makes its points with op 0x04 and fills six
-quads in colours 7 to 14.
+quads (the box's faces) in colours 7 to 14. The built-in table holds more programs
+after the block's that no op runs.
 
 **The polygon fill** (`gfx_fill_polygon`, `1fe6:4d7d`): the corners' bounding box is
 tested against the buffer's clip rectangle, then the polygon is drawn only if it faces

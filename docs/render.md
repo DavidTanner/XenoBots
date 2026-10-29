@@ -170,7 +170,8 @@ of a unit (a 16.16's low word: a radius of 0x0a00 is 10/256 of a unit), while a
 terrain record's radius is 8.8 in units.
 
 A terrain node (`1000:41c0`): +0x04 type 8, +0x05 0, +0x06 the record's radius, +0x08
-`[DS:0x1486] << 4`, +0x0a to +0x15 the record's x, y and z, +0x1e the record's offset
+`[DS:0x1486] << 4` (a developer timing result, 0 in play: `docs/formats/usg.md`, "The
+shape ops"), +0x0a to +0x15 the record's x, y and z, +0x1e the record's offset
 in the `MAPP` buffer. Its near distance takes the whole radius off (+0x06 is shifted
 left 8 for every node, so an object's radius high byte is 1/256 of a unit there and a
 record's radius a whole one).
@@ -178,7 +179,9 @@ record's radius a whole one).
 **Type 8** (`1000:3595`): the viewer test (a terrain node's object is 0, so it never
 matches), the coarse cone, then the centre's depth (`Z` of the rotation) must not be
 negative; then `gfx_draw_terrain_shape` (`docs/formats/usg.md`, "The shape ops") with
-the node's heading less the bearing to it, and the pointer probe. No distance limit.
+the node's heading less the bearing to it (the coarse bearing, `1000:059e`), and the
+pointer probe. No distance limit. The cone test's rotation of the centre is left in
+`DS:0x1c80` and `0x1c84`, where the shape's camera-space ops start from.
 
 ### Frame numbers
 

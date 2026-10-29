@@ -235,7 +235,9 @@ fn run(fb: &mut Framebuffer, r: &mut Run, program: &[u8], builtins: Builtins) ->
             // opposite `height` below (`Run::pair`).
             op @ (0x04 | 0x06 | 0x08) => {
                 let (rad, d) = (r.shape.radius, r.shape.diagonal);
-                let pairs: &[((u16, u16), u16, (u8, u8))] = match op {
+                // The sizes (a, b), the flags and the two slots of each pair.
+                type Pair = ((u16, u16), u16, (u8, u8));
+                let pairs: &[Pair] = match op {
                     0x04 => &[
                         ((rad, d), 0, (0xfc, 0xe0)),
                         ((rad, d), 0xff, (0xf8, 0xe4)),
