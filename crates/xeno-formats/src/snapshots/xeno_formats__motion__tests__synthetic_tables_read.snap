@@ -1357,6 +1357,30 @@ Motion {
         ),
         lock_sound: 26,
     },
+    net: Net {
+        programs: [
+            13,
+            12,
+        ],
+        lines: [
+            Line {
+                mask: 254,
+                probe: false,
+            },
+            Line {
+                mask: 252,
+                probe: false,
+            },
+            Line {
+                mask: 252,
+                probe: true,
+            },
+        ],
+        sound: 25,
+        no_relay: 80,
+        deployed: 81,
+        radius: 1280,
+    },
     walk: Walk {
         humanoid_legs: [
             [

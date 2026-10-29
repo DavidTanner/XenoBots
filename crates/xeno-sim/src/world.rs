@@ -12,6 +12,7 @@ use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, Side};
 
 use crate::clock::Clock;
 use crate::hash::{StateHash, StateHasher};
+use crate::net::Grid;
 use crate::orders::OrderBook;
 use crate::panel::Panel;
 use crate::terrain::{Paths, Terrain};
@@ -60,6 +61,8 @@ pub struct Entity {
 }
 
 /// The per-tick state of an object (`docs/sim.md`, "Movement").
+// Robots are most objects, and the state is copied freely; boxing would lose `Copy`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum State {
     Robot(Movement),
@@ -143,6 +146,11 @@ pub struct Movement {
     pub target_bearing: u16,
     /// +0xed: another robot's lock on this one, halved every 16 ticks.
     pub locked_on: u8,
+    /// +0x10a..+0x114: a scorpion's line of relay-net cells (`net::Grid`).
+    // shortcut: kept for every kind; a humanoid's or scout's script running the net
+    // opcodes would overwrite its gear and light there in the original. No stock
+    // program gives them a net.
+    pub grid: Grid,
     pub script: Script,
     pub panel: Panel,
 }
@@ -217,6 +225,10 @@ impl Movement {
             target_distance: r.target_distance,
             target_bearing: r.target_bearing,
             locked_on: r.locked_on,
+            grid: match &r.parts {
+                Parts::Scorpion(p) => Grid::of(&p.grid.0),
+                _ => Grid::default(),
+            },
             // The rest is set when loading starts the program anew.
             script: Script {
                 events: r.events,
@@ -272,6 +284,13 @@ impl StateHash for State {
                 h.u16(m.target.map_or(0xffff, |t| t.0));
                 h.u16(m.target_distance);
                 h.u16(m.target_bearing);
+                let g = m.grid;
+                h.u16(g.cell.0 as u16);
+                h.u16(g.cell.1 as u16);
+                h.u16(g.lengths.0);
+                h.u16(g.lengths.1);
+                h.u16(g.error as u16);
+                h.u8(g.step);
                 let s = m.script;
                 h.u16(s.pointer);
                 h.u16(s.wait);
@@ -767,6 +786,13 @@ mod tests {
         assert_ne!(hash(&moved), hash(&world));
         let mut moved = world.clone();
         moved.paths.alien.slots[0].points[0].x.0 += 1;
+        assert_ne!(hash(&moved), hash(&world));
+        // The scorpion's line of net cells is hashed.
+        let mut moved = world.clone();
+        let State::Robot(m) = &mut moved.get_mut(EntityId(5)).unwrap().state else {
+            panic!("the scorpion moves")
+        };
+        m.grid.step ^= 0x40;
         assert_ne!(hash(&moved), hash(&world));
         // Fractions are kept: the plain fixture's humanoid is at (95.5, 136.25).
         let plain = xeno_formats::usg::parse(&xeno_formats::fixtures::synthetic_usg()).unwrap();

@@ -362,7 +362,7 @@ console's (T-043).
 | 0x105, 0x106 | +0x105 `step`, the walking counter; +0x106 unused | frames (the claws, stepped every 4 ticks unless damaged) | `cooldowns`: plasma gun 8, cannon 3 after a shot (the weapon step from `1000:c8ab`) |
 | 0x107 | unused | frames | `shells`: cannon shells, 80 when made ("out of cannon shells") |
 | 0x108, 0x109 | `cooldowns` of the two weapons, counted down every 8 ticks (T-054) | frames (the weapons' flashes from +0x11d) | +0x108 `light`; +0x109 `gear` (4 when made) |
-| 0x10a | `light`: the console light's step, 0 to 3 (`1000:a93e`) | `grid` to +0x114: the relay-net orders' line of cells (T-113) | `step`, the walking counter |
+| 0x10a | `light`: the console light's step, 0 to 3 (`1000:a93e`) | `grid` to +0x114, the relay-net orders' line of cells (`docs/sim.md`, "Relay nets"): +0x10a, +0x10c the cell (words), +0x10e, +0x110 the line's two lengths, +0x112 the error, +0x114 the step (2 or 4) with bits 7 and 6 for the directions negative | `step`, the walking counter |
 | 0x10b | `gear` (4 when made) | | `stance` (0x2f when made) |
 | 0x10c | widget state to +0x140 | | `stance_target` (0x30) |
 | 0x10d | | | widget state to +0x148 |
@@ -409,9 +409,11 @@ details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 | 0x4d | 2 | | The side's unit list, set at load |
 | 0xbd | 0x43 | `view_state` | The situation room's widget state (T-043) |
 
-**Relays** (0x34 bytes, `usg::Relay`, T-107). Made by `1000:cc2a` (the scorpion's U,
-`1000:cc69`, puts it at the scorpion's position and `1000:cca8` snaps it to the relay
-grid); ticked by `sim_tick_relay` (`1000:ccd9`):
+**Relays** (0x34 bytes, `usg::Relay`, T-107). Set up by `1000:cc2a`; a scorpion's
+deployment (U and the net opcode 0x83, `1000:cc69`) puts it at the scorpion's x, y and
+z exactly, with the side bit clear, and the editor (T-142) snaps it to the lattice
+(`1000:cca8`); the relay check (`2000:7faa`) takes every relay's cell on the lattice
+(`docs/sim.md`, "Relay nets"). Ticked by `sim_tick_relay` (`1000:ccd9`):
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|

@@ -10,6 +10,7 @@ use crate::damage::{self, Damage};
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
+use crate::net::{self, Net};
 use crate::script::{self, Scripts};
 use crate::sensing::{self, Sensing};
 use crate::{FormatError, sequence};
@@ -110,6 +111,8 @@ pub struct Motion {
     pub damage: Damage,
     /// What sensing reads (`xeno_formats::sensing`).
     pub sensing: Sensing,
+    /// What the relay-net orders read (`xeno_formats::net`).
+    pub net: Net,
     pub walk: Walk,
     /// The string segment, where the scripts' messages are.
     pub strings: Strings,
@@ -270,6 +273,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
         sensing: sensing::read_image(image, ds)?,
+        net: net::read_image(image)?,
         walk: Walk {
             humanoid_legs: [
                 legs(image, HUMANOID_LEGS_AT[0])?,
@@ -491,6 +495,7 @@ mod tests {
         crate::fixtures::synthetic_gears(&mut image, DS);
         crate::fixtures::synthetic_weapon_keys(&mut image, DS);
         crate::fixtures::synthetic_sensing(&mut image, DS);
+        crate::fixtures::synthetic_net(&mut image);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(

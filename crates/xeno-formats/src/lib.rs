@@ -27,6 +27,7 @@ pub mod mgavideo;
 pub mod motion;
 pub mod ms3;
 pub mod mxx;
+pub mod net;
 pub mod orders;
 pub mod packed;
 mod palette;

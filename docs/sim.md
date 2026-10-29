@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -343,7 +343,7 @@ return. Return (opcode 0x06) restores the pointer and the flags, clearing bit 5 
 | 0x74, 0x75, 0x76 | Messages (a word: the text's string-segment offset): to the robot's message panel; to its side's base log; to the log and every robot of the side (`docs/screens.md`, "The message panel (T-104)") |
 | 0x77 | A path command, a byte (`order_run_path_command`, table `DS:0x7d14`): 4 ask for the next point (+0x2c bit 6), 8 set +0x2c bit 4, 10 step a point back and head for it; 0, 2 and 6 do nothing |
 | 0x78 to 0x7d | Weapons: their state as flags or pushed; fire (time 30) |
-| 0x7e to 0x83 | The relay net: walk a line of grid cells from the robot to its destination (state at +0x10a..+0x114), the cell as the point, whether a relay stands there, deploy one |
+| 0x7e to 0x83 | The relay net ("Relay nets" below): start a line of grid cells from the robot to its destination (+0x10a..+0x114); step to its next cell (carry at the end); the cell as the worked-out point; carry unless a relay stands in the cell; carry with no relay carried; deploy one (carry when none was) |
 | 0x84 | Test +0x32 with a byte |
 | 0x86, 0x87 | Debug counters |
 
@@ -665,6 +665,105 @@ room's F3 and recall button, for the selected unit); `motion::tick` gives a robo
 it the recall's program (`Tables::recall_program`) and its program takes over, before
 it moves. The keys still to port are T-113 (relays), T-114 (fire), T-134 (pan) and
 T-135 to T-139.
+
+## Relay nets (T-113)
+
+A T-090 pass on `xeno.exe` read the net opcodes, the grid they walk, the relay check,
+the relay count and the deployment. The programs' grids and what deploying posts,
+plays and makes are read from the user's `xeno.exe` by `xeno_formats::net`
+(`Motion::net`).
+
+**The grid.** `1000:49cc` picks a mask by the running program (+0x30): DENSE NET (13)
+0xfe, SPARSE NET (12) 0xfc, any other (PROBE NET, 14) 0xfc, and a flag at
+`DS:0x4db3` set for the last (the probe). It leaves the mask at `DS:0x4db2`; every
+opcode that calls it puts 0xfe back, so between them the mask is always 0xfe (which
+the editor's relay placement reads, T-142). A point's **cell** (`1000:49a1`, on x and
+y's whole parts): each is rounded to the nearest multiple of the mask's lowest bit
+(the step: 2 or 4) by adding half the step and masking the low byte, then, where x
+and y differ in the step's bit, that bit is cleared in both. So cells lie on a
+diagonal lattice: dense cells two units apart along the diagonals, sparse and probe
+cells four.
+
+**The line** (opcode 0x7e, `1000:5258`): the robot's cell goes to +0x10a and +0x10c
+(words), and the destination's (+0x3c) is worked out. With `a` and `b` half the
+differences in x and y, the line runs in the lattice's own coordinates: `u = a + b`
+and `v = b - a` for the probe, `u = 2b` and `v = b - a` otherwise; on a grid of four
+both are halved again. Their sizes go to +0x10e and +0x110, the step (2 or 4) with
+bit 7 for `u` negative and bit 6 for `v` negative to +0x114, and the error to +0x112:
+`|u| / 2` when `|u| >= |v|`, else `-(|v| / 2)`. The opcode keeps no flags.
+
+**The next cell** (0x7f, `1000:52d8`): if the cell is the destination's (worked out
+again), the carry is set and nothing moves. Otherwise, with `s` the step signed by
+bit 7 and `t` by bit 6: an error at 0 or over loses +0x110 and the cell moves `s` in
+both x and y (a diagonal step); else the error gains +0x10e and the cell moves `-2t`
+in x (dense and sparse), or `t` in y and `-t` in x (the probe). The carry is cleared.
+It is Bresenham's line in the diagonal coordinates, so every cell stays on the
+lattice and the last is the destination's. Zero and sign are those of the last
+coordinate written (y after a diagonal step, x otherwise).
+
+**The other opcodes.** 0x80 (`1000:53ae`) makes the cell the worked-out point
+(`DS:0x4da4`: the cell's x and y as whole numbers, no flags kept). 0x81 (`53c5`) is
+the **relay check** (`1000:d15b`, far `2000:7faa`): every object of kind 4 in the 240
+slots, of either side and in any state, is put on the relays' lattice (`1000:cca8`:
+x and y's whole parts plus one with bit 0 cleared, then bit 1 cleared in both where
+they differ) and compared with the cell; one there clears the carry, none sets it
+(zero set either way). 0x82 (`53d3`) is the **relay count** (`1000:9aec`: +0x118, or
+0 while the deployer is damaged, +0xfd bit 7) compared with 1: carry with none.
+0x83 (`53dc`) **deploys** one, the carry set when it could not.
+
+**Deploying** (`sim_deploy_relay`, `1000:9b01`; the scorpion's U key runs it too,
+then redraws the console's cargo): with the deployer damaged or no relay carried, a
+message ("no relay", `Net::no_relay`) to the robot's panel and the carry set.
+Otherwise `1000:cc69` makes the relay: a slot of kind 4 (`sim_alloc_object_slot`; a
+full small pool of 200 sets the carry, as above), set up by `1000:cc2a` (state 0,
+folded; radius 5 (0x500); `TARGETABLE`; +0x18 and the stage 0; the clock +0x1e a
+random byte (one random word drawn); power and its side 0; the four links' words
+0xffff; the look and height for stage 0 by `1000:ccf0`), with the robot's x, y and z
+copied: **not snapped to the lattice**, and with the flags' side bit clear (a new
+relay is human until a net powers it). Then the "deployed" message (`Net::deployed`;
+to the robot's panel, or a base's log if a base made it, `1000:d53f`), one fewer
+relay carried, +0xdc bit 3 set (the console's frames; cleared when the base restocks
+the cargo, `1000:9b97`), and sound 25 for the robot whose console is open.
+
+**What the net programs do.** SPARSE, DENSE and PROBE NET share one script after
+their headers (event 1 and a hit run ENGAGING; 5 and 9 have handlers of their own). Without a
+destination (+0x32 bit 1) they post a message, stop and wait. Otherwise they start
+the line, then cell by cell: the cell becomes the point; while more than about 1 unit
+(0xfa) away they steer to it at high speed and recheck every 8 seconds; with a relay
+in the cell they step to the next; else within 0.4 units (0x64), with relays carried
+(else RET BASE, through state 4 and a restart), they creep to it at low speed,
+rechecking every second, until within 0x0a (0.04 units), stop and run DEPLOYING
+(state 15: wait 3 seconds, deploy if the cell is still empty, wait 3 more, leave the
+state). A deployment that fails sends it home (RET BASE, through state 4 and a
+restart), a cell still empty takes it back to the cell, and none left sends it home. At the line's end they drive to the destination within 0x32, stop,
+post a message to the panel and the log, ask for the next path point (path command
+4) and halt. So an alien scorpion on DENSE NET lays a relay in every empty cell
+between its path points, one every few units, until its 12 are gone.
+
+**The relay's tick** (`sim_tick_relay`, `1000:ccd9`; survey for T-148): +0x1e steps
+every tick, and when its low four bits are 0 the state's routine runs (`DS:0x6fc7`),
+then the look (`1000:ccf0`: colour +0x1d 1 unpowered, 0 human net, 2 alien by +0x16
+bits 4 and 3; frames +0x19..=+0x1c from `DS:0x6fbb[stage]`, height +0x12 from
+`DS:0x6fbf[stage]`). State 0 (folded): out of the field and unlinked, stage 0; it
+rises (state 2) once no scorpion is within 0x32 (`1000:f703`, the nearest object of
+a kind and its distance; carry when under the limit). State 2: stage up by one; at 3
+up (state 4). State 4: the links (`1000:cd88`, not traced), `IN_FIELD`,
+`RELAY_LINKED` while powered; a scorpion within 0x32 folds it (state 6). State 6:
+stage down; at 0 folded. State 8 does nothing; state 10 is `1000:cf7e` (not traced).
+So a relay a scorpion lays rises only after the scorpion moves on.
+
+**The other relay keys** (survey for T-149): L (`1000:9b2d` -> `9b34`) loads the
+nearest relay (`1000:f703` with kind 4) under 0x14 (0.08 units) away, with fewer than
+12 carried and the speed under 16, removing it; each refusal has its message. C
+(`8d7f`) and D (`9ab8`, the dump through +0xfd bit 4 and +0x11c) are not traced.
+
+### The port (T-113)
+
+`xeno_sim::net` has the grid: `cell` (`1000:49a1`), `lattice` (`1000:cca8`),
+`relay_at` (`2000:7faa`), and the line, `start` (0x7e) and `advance` (0x7f), on
+`net::Grid`, which `Movement::grid` keeps (+0x10a..+0x114, loaded from the file's
+scorpions and hashed: the state hash changes). Part 1 (`t-113`) is the trace and these
+checks; the opcodes and deploying are part 2.
 
 ## Damage (T-054)
 
