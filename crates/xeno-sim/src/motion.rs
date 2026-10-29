@@ -795,6 +795,7 @@ pub(crate) fn synthetic_tables() -> Tables {
         scripts: crate::script::tests::scripts(&[0x0a]),
         damage: xeno_formats::fixtures::synthetic_damage_tables(),
         sensing: xeno_formats::fixtures::synthetic_sensing_tables(),
+        net: xeno_formats::fixtures::synthetic_net_tables(),
         walk: synthetic_walk(),
         strings: xeno_formats::motion::Strings(b"\0AB\r\xc3\0".to_vec()),
     }
