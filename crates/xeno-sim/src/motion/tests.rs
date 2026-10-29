@@ -53,6 +53,7 @@ pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
             end_step: 0,
             look: 0,
             counts: [0; 7],
+            depot: Default::default(),
         },
     }
 }

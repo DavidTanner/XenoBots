@@ -6,4 +6,17 @@ Bases {
     count_mask: 240,
     take_in_mask: 112,
     reach: 58,
+    relay_wait: 48,
+    relays_most: 9,
+    repair_period: 256,
+    repair_step: 5,
+    whole: 90,
+    restock: (
+        10,
+        4,
+    ),
+    launch_program: 7,
+    slider_least: 6,
+    slider_most: 240,
+    slider_step: 3,
 }

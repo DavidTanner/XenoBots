@@ -351,6 +351,7 @@ mod tests {
             end_step: 0,
             look: 2,
             counts: [0; 7],
+            depot: Default::default(),
         };
         world.insert(EntityId(7), entity(ObjectKind::Base, 0, 9, base));
         let boom = State::Explosion {

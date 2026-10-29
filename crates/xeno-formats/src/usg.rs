@@ -620,7 +620,14 @@ pub struct ScoutParts {
 pub struct Base {
     /// +0x18: its look in the 3D view, the frame of its model.
     pub look: u8,
-    pub unknown_19: Unknown<7>,
+    /// +0x19: relays made: the third slider is added every 16 ticks, a carry counts
+    /// [`Base::relay_wait`].
+    pub relay_clock: u8,
+    /// +0x1a: the slot of the robot being repaired, 0xffff none.
+    pub repairing: u16,
+    /// +0x1c: repairs: the second slider is added every 16 ticks, a step at 0x1800.
+    pub repair_clock: u16,
+    pub unknown_1e: Unknown<2>,
     /// +0x20: the relays in store.
     pub relays: u8,
     /// +0x21..=+0x27, the count the tick makes every 256 ticks for the situation
@@ -632,7 +639,8 @@ pub struct Base {
     pub losses: u8,
     /// +0x2c: enemy robots destroyed this mission.
     pub kills: u8,
-    pub unknown_2d: u8,
+    /// +0x2d: the slider held in the situation room's power rows (1 to 6, 0 none).
+    pub slider: u8,
     /// +0x2e: damage taken. At 300 the base is destroyed ([`flag::GONE`]). Playing a
     /// campaign scenario adds 0, 50, 100 or 150 to the player's by its alert level.
     pub damage: u16,
@@ -648,7 +656,10 @@ pub struct Base {
     pub map_zoom: u8,
     /// +0x37: the situation room's main view mode (0, 2, 4, 6, 8: O, S, M, R, C).
     pub view_mode: u8,
-    pub unknown_38: Unknown<9>,
+    /// +0x38..=+0x3b: the power pool, then the sliders: the net's power, repairs and
+    /// relays made; they add up to 0x100.
+    pub power: [u8; 4],
+    pub unknown_3c: Unknown<5>,
     /// +0x41: counts the base's ticks; its low four bits pick the tick's routine
     /// (the alien base gives idle robots paths when they are 2).
     pub tick: u8,
@@ -660,7 +671,10 @@ pub struct Base {
     /// +0x59: the units' message log the situation room's mode C shows; the first
     /// slot with no text ends it.
     pub messages: [Message; 7],
-    pub unknown_b4: Unknown<9>,
+    pub unknown_b4: u8,
+    /// +0xb5: carries of [`Base::relay_clock`] towards the next relay made.
+    pub relay_wait: u16,
+    pub unknown_b7: Unknown<6>,
     /// +0xbd: the situation room's widget state.
     pub view_state: Unknown<0x43>,
     pub unknown_100: Unknown<0x72>,

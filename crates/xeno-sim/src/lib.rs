@@ -265,6 +265,20 @@ impl Sim {
         }
     }
 
+    /// Side `side`'s base holds slider `slider` of the situation room's power rows
+    /// (+0x2d: 1 to 6 lower and raise the net's power, repairs and relays made; 0
+    /// none); each tick moves it (`docs/sim.md`, "The bases' phases").
+    pub fn hold_slider(&mut self, side: xeno_formats::usg::Side, slider: u8) {
+        if let Some(State::Base { depot, .. }) = self
+            .world
+            .base(side)
+            .and_then(|b| self.world.get_mut(b))
+            .map(|e| &mut e.state)
+        {
+            depot.slider = slider;
+        }
+    }
+
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
     pub fn run(&mut self, log: &InputLog, retrace: u64) {
         while self.retrace < retrace {

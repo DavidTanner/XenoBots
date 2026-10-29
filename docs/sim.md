@@ -1272,8 +1272,8 @@ redraw. What sets +0x2d is the situation room's arrows (T-127).
 
 ### The port (T-115)
 
-`xeno_formats::base` reads the phase table through the tick's call, checks the count's
-and take-in's routines, and reads their masks and the reach. `xeno_sim::base::tick` is
+Part 1 (`t-115`): `xeno_formats::base` reads the phase table through the tick's
+call, checks the count's and take-in's routines, and reads their masks and the reach. `xeno_sim::base::tick` is
 the base's tick: the count of +0x41 and the path (2), count (5), take-in (9) and end
 (15) phases. `State::Base::counts` holds +0x21..+0x27 (loaded, in the state hash, so
 the hash changes). A robot taken in gets bits 1 and 2 in `Components::equipment`, its
@@ -1282,6 +1282,21 @@ position flipped as the original's, speed 0 asked for and its pilot driving, and
 skip a robot in its base, as `IN_FIELD` is cleared and set with bit 2. Phases 0, 1, 4
 and 6 are display only and not ported. `base`'s `real_assets_a_recalled_robot_is_taken_in`:
 scen00a's slot 2, recalled, drives home and is taken in (tick 3234 with seed 1).
+
+Part 2 (`t-115-launch`): `xeno_formats::base` also reads relays made (the wait and the
+most in store), the repairs' period, the repair step's size and whole value, the
+scorpion's restock, the launch's program and the sliders' least, most and step (with
+the pool routine's numbers checked against them). `State::Base::depot` (`Depot`)
+holds +0x20, +0x19, +0xb5, +0x1a, +0x1c, +0x38..+0x3b and +0x2d, loaded and hashed.
+`base::tick` runs phases 11, 12 and 13 and, every tick, the slider held, which
+`Sim::hold_slider(side, n)` sets (the situation room's arrows are T-127's). A robot
+launched gets `motion::Event::Launched` ("N launched" in `xeno-tool simulate`), and
+`base::launch` is the routine the situation room's F2 and launch button will call
+(T-135). In scen00a with seed 1 alien slot 34 comes home on its path at tick 11971 and
+is launched four ticks later (`real_assets_the_alien_base_launches_a_robot_it_took_in`).
+Shortcuts, named in the code: the damage total +0xf9 the repairs and the launch go by
+is not kept (T-140), so any part not whole counts as damaged; the repaired robot's slot
+holds no reference.
 
 ## Loading a scenario
 
