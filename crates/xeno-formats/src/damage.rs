@@ -35,10 +35,18 @@ const RADIUS_OP: &[u8] = &[0xc7, 0x44, 0x14];
 /// the mission.
 pub(crate) const END_STEP_AT: (usize, &[u8]) = (0x68dd, &[0x83, 0x7d, 0x30]);
 
+/// `call` at the end of each kind's tick (humanoid, scorpion, scout): the routine that
+/// adds up its damage total (+0xf9).
+pub(crate) const TOTAL_AT: [usize; 3] = [0xac0a, 0x9331, 0xc4af];
+/// `sim_destroy_robot`, which the total's routine calls at the kind's limit.
+pub(crate) const DESTROY_ROBOT: usize = 0xde51;
+
 /// The most entries a chance table has before its chances pass 255 (the stock
-/// tables have 10 and 12), and the most bits a component routine tries.
+/// tables have 10 and 12), the most bits a component routine tries, and the most
+/// weighted parts a damage total adds.
 const MAX_ENTRIES: usize = 32;
 const MAX_BITS: usize = 4;
+const MAX_WEIGHTS: usize = 16;
 
 /// What a component routine does to the robot hit, by its byte offsets in the
 /// object (`docs/formats/usg.md`, "Object fields").
@@ -64,6 +72,24 @@ pub struct RobotDamage {
     pub parts: Vec<(u8, Part)>,
 }
 
+/// How one robot kind adds up its damage total (+0xf9) at the end of every tick
+/// (humanoid `1000:afee`, scorpion `94e9`, scout `c6fd`; `docs/sim.md`, "The damage
+/// total (T-140)").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Total {
+    /// (offset, whole): a quarter of `whole - byte` (in a byte) is added, for the power
+    /// and the helm.
+    pub lost: [(u16, u8); 2],
+    /// (offset, bit, weight): the weight is added while the bit is set.
+    pub weights: Vec<(u16, u8, u8)>,
+    /// The total is capped at this.
+    pub most: u8,
+    /// At this or more the robot is crippled (+0xfd bit 6, event 12), below it not.
+    pub crippled: u8,
+    /// At this or more the robot is destroyed: a human robot, an alien one.
+    pub destroyed: [u8; 2],
+}
+
 /// An explosion's template (`sim_init_explosion_from_template`): frames `first` to
 /// `last`, each shown `ticks` ticks, and a heading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +105,8 @@ pub struct Explosion {
 pub struct Damage {
     /// Humanoid, scorpion, scout.
     pub robots: [RobotDamage; 3],
+    /// Each kind's damage total, by kind.
+    pub totals: [Total; 3],
     /// A base is destroyed once its damage reaches this.
     pub base_destroyed: u16,
     /// A relay is removed once its damage reaches this (or passes 255).
@@ -183,6 +211,90 @@ fn robot(image: &[u8], ds: usize, kind: usize) -> Result<RobotDamage, FormatErro
     }
 }
 
+/// The total's end: `cmp dl, most`, `jbe`, `mov dl, most`, `mov [di + 0xf9], dl`; `cmp
+/// dl, crippled`, `jc`; if +0xfd bit 6 is clear, set it and post event 12 (`mov al,
+/// 0xc`, `call`), else past; otherwise clear it; then `mov dh, human`, `test byte [di +
+/// 0x16], 8` (alien), `jz`, `mov dh, alien`, `cmp dl, dh`, `jc`, `call
+/// sim_destroy_robot`. The zeros at [`TAIL_ANY`] are the values read.
+pub(crate) const TAIL: [u8; 57] = [
+    0x80, 0xfa, 0, 0x76, 0x02, 0xb2, 0, 0x88, 0x95, 0xf9, 0x00, 0x80, 0xfa, 0, 0x72, 0x13, 0xf6,
+    0x85, 0xfd, 0x00, 0x40, 0x75, 0x11, 0x80, 0x8d, 0xfd, 0x00, 0x40, 0xb0, 0x0c, 0xe8, 0, 0, 0xeb,
+    0x05, 0x80, 0xa5, 0xfd, 0x00, 0xbf, 0xb6, 0, 0xf6, 0x45, 0x16, 0x08, 0x74, 0x02, 0xb6, 0, 0x3a,
+    0xd6, 0x72, 0x03, 0xe8, 0, 0,
+];
+const TAIL_ANY: [usize; 9] = [2, 6, 13, 31, 32, 41, 49, 55, 56];
+
+/// The near `call` at `at`'s target.
+fn call_target(image: &[u8], at: usize) -> Result<usize, FormatError> {
+    match image.get(at..at + 3) {
+        Some(&[0xe8, lo, hi]) => Ok(usize::from(
+            (at as u16 + 3).wrapping_add(u16::from_le_bytes([lo, hi])),
+        )),
+        _ => Err(invalid(at, "not a call")),
+    }
+}
+
+/// A kind's damage total, through the `call` at the end of its tick: `xor dl, dl`;
+/// twice `mov al, [di + offset]`, `neg al`, `add al, whole`, `shr al, 1` twice, `add
+/// dl, al`; then per part `test byte [di + offset], bit`, `jz`, and `add dl, weight` or
+/// `inc dl`; then [`TAIL`].
+fn total(image: &[u8], kind: usize) -> Result<Total, FormatError> {
+    let mut at = call_target(image, TOTAL_AT[kind])?;
+    let bad = |at| invalid(at, "not a damage total");
+    if image.get(at..at + 2) != Some(&[0x32, 0xd2]) {
+        return Err(bad(at));
+    }
+    at += 2;
+    let mut lost = [(0, 0); 2];
+    for l in &mut lost {
+        match *image.get(at..at + 13).ok_or_else(|| bad(at))? {
+            [
+                0x8a,
+                0x45,
+                offset,
+                0xf6,
+                0xd8,
+                0x04,
+                whole,
+                0xd0,
+                0xe8,
+                0xd0,
+                0xe8,
+                0x02,
+                0xd0,
+            ] => *l = (offset.into(), whole),
+            _ => return Err(bad(at)),
+        }
+        at += 13;
+    }
+    let mut weights = Vec::new();
+    loop {
+        let (part, len) = match *image.get(at..at + 10).ok_or_else(|| bad(at))? {
+            [0xf6, 0x85, lo, hi, bit, 0x74, 0x03, 0x80, 0xc2, w] => ((lo, hi, bit, w), 10),
+            [0xf6, 0x85, lo, hi, bit, 0x74, 0x02, 0xfe, 0xc2, _] => ((lo, hi, bit, 1), 9),
+            _ => break,
+        };
+        if weights.len() == MAX_WEIGHTS {
+            return Err(bad(at));
+        }
+        let (lo, hi, bit, w) = part;
+        weights.push((u16::from_le_bytes([lo, hi]), bit, w));
+        at += len;
+    }
+    let tail = image.get(at..at + TAIL.len()).ok_or_else(|| bad(at))?;
+    let fits = (0..TAIL.len()).all(|i| TAIL_ANY.contains(&i) || tail[i] == TAIL[i]);
+    if !fits || tail[2] != tail[6] || call_target(image, at + 54)? != DESTROY_ROBOT {
+        return Err(bad(at));
+    }
+    Ok(Total {
+        lost,
+        weights,
+        most: tail[2],
+        crippled: tail[13],
+        destroyed: [tail[41], tail[49]],
+    })
+}
+
 pub(crate) fn explosion(image: &[u8], ds: usize, at: usize) -> Result<Explosion, FormatError> {
     let t = ds + usize::from(operand(image, at, &[0xb8])?);
     Ok(Explosion {
@@ -221,6 +333,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Damage, FormatError> {
             robot(image, ds, 1)?,
             robot(image, ds, 2)?,
         ],
+        totals: [total(image, 0)?, total(image, 1)?, total(image, 2)?],
         base_destroyed: operand(image, BASE_AT.0, BASE_AT.1)?,
         relay_removed,
         explosion_kind: operand(image, EXPLOSION_KIND_AT, &[0xb8])?,
@@ -267,6 +380,17 @@ mod tests {
             (end.explosions[4].last, end.radii, end.last_step),
             (5, [0x2800, 0x4000], 0x24)
         );
+        let t = &damage.totals;
+        assert_eq!(t[0].lost, [(0x4e, 100), (0x24, 100)]);
+        assert_eq!(t[1].weights, [(0xfd, 0x80, 7), (0xdc, 8, 1)]);
+        assert_eq!(
+            t.each_ref().map(|t| (t.most, t.crippled, t.destroyed)),
+            [
+                (100, 50, [70, 35]),
+                (100, 40, [75, 40]),
+                (100, 40, [55, 30])
+            ]
+        );
         insta::assert_debug_snapshot!(damage);
     }
 
@@ -283,6 +407,14 @@ mod tests {
             END_EXPLOSIONS_AT[3],
             END_RADII_AT[1] + 2,
             END_STEP_AT.0 + 1,
+            // The totals: a call, a start, a quarter, the event, the cap twice and the
+            // call to `sim_destroy_robot`.
+            TOTAL_AT[0],
+            0x2000,
+            0x2100 + 5,
+            0x2226 + 29,
+            0x2030 + 6,
+            0x2226 + 55,
             // A component routine's `or` of another bit, and an unknown routine.
             0x803b,
             0x8020,
@@ -337,5 +469,21 @@ mod tests {
         );
         assert_eq!(end.last_step, 0x24);
         assert!(end.radii[0] < end.radii[1]);
+        // The totals `docs/sim.md` describes: the power and the helm quartered from 100,
+        // the weights, capped at 100, and the limits by kind.
+        let t = &damage.totals;
+        assert!(t.iter().all(|t| t.lost == [(0x4e, 100), (0x24, 100)]));
+        let weights = t
+            .each_ref()
+            .map(|t| t.weights.iter().map(|w| w.2).sum::<u8>());
+        assert_eq!(weights, [50, 60, 54]);
+        assert_eq!(
+            t.each_ref().map(|t| (t.most, t.crippled, t.destroyed)),
+            [
+                (100, 50, [70, 35]),
+                (100, 40, [75, 40]),
+                (100, 40, [55, 30])
+            ]
+        );
     }
 }

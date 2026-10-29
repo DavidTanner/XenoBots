@@ -1206,6 +1206,93 @@ Motion {
                 ],
             },
         ],
+        totals: [
+            Total {
+                lost: [
+                    (
+                        78,
+                        100,
+                    ),
+                    (
+                        36,
+                        100,
+                    ),
+                ],
+                weights: [
+                    (
+                        220,
+                        1,
+                        10,
+                    ),
+                    (
+                        236,
+                        1,
+                        10,
+                    ),
+                ],
+                most: 100,
+                crippled: 50,
+                destroyed: [
+                    70,
+                    35,
+                ],
+            },
+            Total {
+                lost: [
+                    (
+                        78,
+                        100,
+                    ),
+                    (
+                        36,
+                        100,
+                    ),
+                ],
+                weights: [
+                    (
+                        253,
+                        128,
+                        7,
+                    ),
+                    (
+                        220,
+                        8,
+                        1,
+                    ),
+                ],
+                most: 100,
+                crippled: 40,
+                destroyed: [
+                    75,
+                    40,
+                ],
+            },
+            Total {
+                lost: [
+                    (
+                        78,
+                        100,
+                    ),
+                    (
+                        36,
+                        100,
+                    ),
+                ],
+                weights: [
+                    (
+                        246,
+                        1,
+                        5,
+                    ),
+                ],
+                most: 100,
+                crippled: 40,
+                destroyed: [
+                    55,
+                    30,
+                ],
+            },
+        ],
         base_destroyed: 300,
         relay_removed: 20,
         explosion_kind: 13,
