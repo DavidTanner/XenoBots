@@ -147,6 +147,7 @@ fn describe(event: Event) -> String {
         Event::HillHit(id) => format!("{} hit a hill", id.0),
         Event::Destroyed(id) => format!("{} destroyed", id.0),
         Event::TakenIn(id) => format!("{} taken in", id.0),
+        Event::Launched(id) => format!("{} launched", id.0),
         Event::PathTaken { robot, slot } => format!("{} took path {slot}", robot.0),
         Event::Program(c) => format!("{} runs program {}", c.slot, c.after.program),
         Event::MissionOver { won: true } => "mission won".into(),

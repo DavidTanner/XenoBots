@@ -2000,33 +2000,72 @@ pub fn synthetic_file_dialogs(image: &mut [u8], ds: usize) -> Vec<usize> {
     vec![RUN + 1, ERROR + 0xc]
 }
 
-/// Writes a made-up base tick (`crate::base`): the phase table at `DS:0x5aea`, the
-/// count (phase 5) every 256 ticks and the take-in (phase 9) every 128 within 0x3a,
-/// at their stock addresses.
+/// Writes a made-up base tick (`crate::base`) at the stock addresses: the phase table
+/// at `DS:0x5aea`; the count (phase 5) every 256 ticks and the take-in (phase 9) every
+/// 128 within 0x3a; a relay made every 0x30 carries up to 9; a repair step every 0x100
+/// of 5 up to 90; the scorpion restocked to 10 relays and 4 missiles; program 7 at
+/// launch; sliders between 6 and 0xf0 by 3.
 pub fn synthetic_bases(image: &mut [u8], ds: usize) {
     use crate::base::*;
-    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
-    put(
+    let mut hex = |at: usize, text: &str| {
+        for (i, b) in text.split(' ').enumerate() {
+            image[at + i] = u8::from_str_radix(b, 16).expect("hex");
+        }
+    };
+    hex(
         TICK_AT,
-        &[
-            0xfe, 0x45, 0x41, 0x8a, 0x5d, 0x41, 0x83, 0xe3, 0x0f, 0xd0, 0xe3, 0xff, 0x97, 0xea,
-            0x5a,
-        ],
+        "fe 45 41 8a 5d 41 83 e3 0f d0 e3 ff 97 ea 5a 8a 5d 2d 32 ff d1 e3 ff 97 0a 5b",
     );
-    put(
-        ds + 0x5aea + 2 * usize::from(COUNT_PHASE),
-        &0x6344u16.to_le_bytes(),
+    for (phase, routine) in [
+        (5, "44 63"),
+        (9, "dd 63"),
+        (11, "8b 64"),
+        (12, "af 64"),
+        (13, "15 65"),
+    ] {
+        hex(ds + 0x5aea + 2 * phase, routine);
+    }
+    hex(0x6344, "f6 45 41 f0 75 4b c6 45 21");
+    hex(0x63dd, "f6 45 41 70 74 01");
+    hex(0x63dd + 0x4b, "8a c4 8a e2 3d 3a 00");
+    hex(
+        0x648b,
+        "8a 45 3b 00 45 19 73 1b ff 85 b5 00 81 bd b5 00 30 00 72 0f 80 7d 20 09 73",
     );
-    put(
-        ds + 0x5aea + 2 * usize::from(TAKE_IN_PHASE),
-        &0x63ddu16.to_le_bytes(),
+    hex(0x64af, "8a 45 3a 32 e4 01 45 1c 81 7d 1c 00 01 73");
+    hex(
+        REPAIR_AT,
+        "e8 0b 00 80 bc f9 00 00 74 02 f8 cb f9 cb 80 7c 24 5a 74 09 80 44 24 05 80 64 24 fc",
     );
-    put(
-        0x6344,
-        &[0xf6, 0x45, 0x41, 0xf0, 0x75, 0x4b, 0xc6, 0x45, 0x21],
+    hex(RESTOCK_AT, "8b 1c d1 e3 ff 97 3f 72");
+    hex(ds + 0x723f, "75 b3 97 9b 4d cb");
+    hex(0x9b97, "b8 0a 00 2a 84 18 01 9a");
+    hex(0x9b97 + 0x15, "c6 84 22 01 04");
+    hex(0x6515, "f6 45 16 08 74 26 8b 5d 4d b9 26 00");
+    hex(0x6515 + 0x25, "e8 d9 01");
+    hex(0x6716, "8b 45 04 89 44 04");
+    hex(0x6716 + 0x37, "e8 66 6b");
+    hex(0xd2b6, "c6 45 23 00 c6 45 24 64");
+    hex(0xd2b6 + 0x11, "b0 07");
+    hex(
+        ds + 0x5b0a,
+        "28 66 29 66 3a 66 56 66 67 66 83 66 94 66 28 66",
     );
-    put(0x63dd, &[0xf6, 0x45, 0x41, 0x70, 0x74, 0x01]);
-    put(0x63dd + 0x4b, &[0x8a, 0xc4, 0x8a, 0xe2, 0x3d, 0x3a, 0x00]);
+    for (lower, raise, at) in [
+        (0x6629, 0x663a, "39"),
+        (0x6656, 0x6667, "3a"),
+        (0x6683, 0x6694, "3b"),
+    ] {
+        hex(
+            lower,
+            &format!("80 7d {at} 06 72 0a 80 6d {at} 03 80 45 38"),
+        );
+        hex(raise, &format!("80 7d {at} f0 77 15 80 45"));
+    }
+    hex(
+        POOL_AT,
+        "80 7d 38 06 72 05 80 6d 38 03 c3 3c 06 72 08 80 fc 06 73 0c 2c 03 c3 80 fc 06 72 03 80 ec 03 c3 fe c8 fe cc c3",
+    );
 }
 
 /// The made-up numbers of [`synthetic_bases`].

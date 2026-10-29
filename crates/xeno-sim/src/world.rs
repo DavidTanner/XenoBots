@@ -79,6 +79,7 @@ pub enum State {
         end_step: u16,
         look: u8,
         counts: [u8; 7],
+        depot: Depot,
     },
     /// An explosion (`docs/sim.md`, "Damage"): its frame (+0x18) up to the last
     /// (+0x1a), the ticks a frame (+0x1b) and the ticks left of this one (+0x1c).
@@ -93,6 +94,36 @@ pub enum State {
     /// Relays, obstacles and objects without a known layout do nothing yet.
     #[default]
     None,
+}
+
+/// A base's relays, repairs and power sliders (`docs/sim.md`, "The bases' phases").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Depot {
+    /// +0x20: relays in store; +0x19 and +0xb5, the clock and carries making them.
+    pub relays: u8,
+    pub relay_clock: u8,
+    pub relay_wait: u16,
+    /// +0x1a: the robot being repaired; +0x1c, the repairs' clock.
+    pub repairing: Option<EntityId>,
+    pub repair_clock: u16,
+    /// +0x38..=+0x3b: the pool, the net's power, repairs and relays made.
+    pub power: [u8; 4],
+    /// +0x2d: the slider held (1 to 6), 0 none.
+    pub slider: u8,
+}
+
+impl Depot {
+    fn of(b: &usg::Base) -> Depot {
+        Depot {
+            relays: b.relays,
+            relay_clock: b.relay_clock,
+            relay_wait: b.relay_wait,
+            repairing: (b.repairing != 0xffff).then_some(EntityId(b.repairing)),
+            repair_clock: b.repair_clock,
+            power: b.power,
+            slider: b.slider,
+        }
+    }
 }
 
 /// A robot's movement fields (`usg::Robot`; `docs/formats/usg.md`, "Object fields").
@@ -312,6 +343,7 @@ impl State {
                 end_step: b.end_step,
                 look: b.look,
                 counts: b.counts,
+                depot: Depot::of(b),
             },
             _ => State::None,
         }
@@ -372,11 +404,17 @@ impl StateHash for State {
                 end_step,
                 look,
                 counts,
+                depot: d,
             } => {
                 h.u8(1);
                 h.bytes(&[tick, kills, losses, u8::from(destroyed), look]);
                 h.u16(end_step);
                 h.bytes(&counts);
+                h.bytes(&[d.relays, d.relay_clock, d.slider]);
+                h.bytes(&d.power);
+                h.u16(d.relay_wait);
+                h.u16(d.repairing.map_or(0xffff, |r| r.0));
+                h.u16(d.repair_clock);
             }
             State::Explosion {
                 frame,

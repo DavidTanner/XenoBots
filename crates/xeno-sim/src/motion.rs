@@ -36,6 +36,8 @@ pub enum Event {
     /// The robot came home and its base took it in (`docs/sim.md`, "The bases'
     /// phases").
     TakenIn(EntityId),
+    /// The robot left its base (`docs/sim.md`, "The bases' phases").
+    Launched(EntityId),
     /// Sound event `event` plays (`docs/formats/dsounds.md`, "Sound events"): for every
     /// view, or with `only_for` only while that object's console is open
     /// (`snd_play_sound_effect_if_viewed`).

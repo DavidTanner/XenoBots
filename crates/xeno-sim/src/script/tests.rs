@@ -90,6 +90,7 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
                 end_step: 0,
                 look: 0,
                 counts: [0; 7],
+                depot: Default::default(),
             },
         },
     );
