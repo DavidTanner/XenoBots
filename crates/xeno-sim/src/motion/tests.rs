@@ -28,6 +28,7 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
             targeting: 0,
             equipment: 0,
             systems: 0,
+            total: 0,
         }),
         state: State::Robot(Movement {
             drive: 0xff,

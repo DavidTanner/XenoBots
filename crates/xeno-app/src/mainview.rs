@@ -1028,6 +1028,7 @@ pub(crate) mod tests {
             targeting: 0,
             systems: 0,
             equipment: IN_BASE,
+            total: 0,
         });
         assert_eq!(robot_label(&e, &room), (AT_BASE_LABEL, b"A".to_vec()));
         label_robot_view(&mut buffer, &e, &inputs);

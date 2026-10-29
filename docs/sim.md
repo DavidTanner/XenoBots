@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-140)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -826,8 +826,7 @@ bit 7; the scout's weapons have no second bit); **nothing** (the last entry of e
 table, 255, which takes the rest of the chance). Each part that changes something
 shows a message in the robot's message panel (T-104). A robot hit for 80 or less
 survives the hit, worn down; but every tick it adds its damage up (+0xf9) and is
-destroyed when that reaches its kind's limit (T-107, `docs/formats/usg.md`, "Object
-fields"; not ported, T-140).
+destroyed when that reaches its kind's limit ("The damage total (T-140)" below).
 
 **Destroying a robot** (`sim_destroy_robot`, `1000:de51`; also the developer key
 Ctrl+D):
@@ -873,6 +872,45 @@ and shots (T-114) make explosions from other templates.
 The new slot can be above or below the slot ticking: `sim_tick_all_objects` walks the
 slots in order, so an explosion in a higher slot ticks in the same pass and one in a
 lower slot from the next.
+
+### The damage total (T-140)
+
+The last call of each robot kind's tick (`1000:ac0a` humanoid, `9331` scorpion,
+`c4af` scout, after the tick-table entry and the routine picked by +0x1b) adds its damage up into +0xf9
+(humanoid `1000:afee`, scorpion `94e9`, scout `c6fd`; the same code with the kind's
+numbers), in a byte, with wrapping adds:
+
+1. A quarter of the power lost and of the helm lost: `(100 - byte) >> 2` for +0x4e
+   and +0x24, worked out in a byte (a byte over 100 wraps to a large loss; the
+   repairs never go past 100 in the stock build).
+2. A weight for each damaged part whose bit is set, in this order. Humanoid: the
+   weapons (+0xdc bits 0 and 1) 10 each, the targeting computer (+0xec bit 0) 10, the
+   cameras, map and radar (+0xf6 bits 0 to 3) 5 each. Scorpion: the relay deployer
+   (+0xfd bit 7) 7, +0xdc bit 3 1 (an `inc`), +0xdc bits 0 to 2 8 each, +0xec bit 0
+   8, +0xf6 bits 0 to 3 5 each. Scout: +0xdc bits 0 and 1 12 each, +0xec bit 0 10,
+   +0xf6 bits 0 to 3 5 each. Nothing counts the sensors (+0xf6 bit 4) or a weapon's
+   destroyed bits (+0xf6 bits 6 and 7): they come with a damaged bit that does.
+3. Capped at 100 and written to +0xf9.
+4. At 50 (humanoid) or 40 (scorpion, scout) or more: if `CRIPPLED` (+0xfd bit 6) is
+   clear it is set and **event 12** posted; below that it is cleared.
+5. At the kind's limit or more the robot is destroyed (`sim_destroy_robot`, above):
+   humanoid 70, scorpion 75, scout 55 for a human robot; 35, 40 and 30 for an alien
+   one (+0x16 bit 3). So an alien robot is destroyed before it is ever crippled, and
+   a human one is crippled first (in the fight below with seed 7, the crippled human
+   humanoid drives home and is repaired).
+
+The total is also cleared for a new object (`1000:dd79`), read by the repairs and the
+alien base's launch (below, "The bases' phases"), which see it as the robot's last
+tick left it, and by the roster's icon and the situation room's detail panel.
+
+**The port.** `xeno_formats::damage::Total` reads each kind's numbers through the
+call at the end of its tick, checking the routine's bytes (the two quarters, each
+weighted test, the cap, the crippled bit and event, the side test and the call to
+`sim_destroy_robot`). `Components::total` keeps +0xf9 (loaded, hashed and saved, so
+the state hash changes); `damage::total` runs last in a robot's tick in
+`motion::tick`. `weapons`' `real_assets_two_stock_robots_fight` (seed 5): scen00a's two
+robots fight and the alien humanoid is worn to 35 and destroyed at tick 3838; with
+the limits out of reach the same fight leaves it standing at 35.
 
 ### Weapons and shots (survey for T-114)
 
@@ -1062,11 +1100,12 @@ missiles, burst, barrels fired, the missile in flight, and the humanoid's arm fr
 raise, loaded from the file and hashed (the state hash changes). The guns' sounds are
 `Event::Sound`, for the robot unless the gun's is heard by all. `weapons`'
 `real_assets_two_stock_robots_fight`: scen00a's two robots of the closing test fire
-dozens of shots in five minutes and both are hit and worn. Shortcuts, each named in the
+and both are hit and worn (since T-140, with seed 5, until the alien is destroyed by
+its damage total 55 s in). Shortcuts, each named in the
 code: the ECM's and cloak's times are not counted down (T-136); the missile camera's
 switch is the console's (T-134); the arms' swing step is the legs'; nothing recharges
 the energy or sets `ON_BATTERY` (T-148's signal), so stock robots fire freely. A robot
-worn by many small hits is not destroyed until its damage total is kept (T-140).
+worn by many small hits is destroyed by its damage total (T-140).
 
 Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height (+0x1c, kept
 since T-119); `xeno-app`'s 3D view draws a
@@ -1294,9 +1333,10 @@ launched gets `motion::Event::Launched` ("N launched" in `xeno-tool simulate`), 
 `base::launch` is the routine the situation room's F2 and launch button will call
 (T-135). In scen00a with seed 1 alien slot 34 comes home on its path at tick 11971 and
 is launched four ticks later (`real_assets_the_alien_base_launches_a_robot_it_took_in`).
-Shortcuts, named in the code: the damage total +0xf9 the repairs and the launch go by
-is not kept (T-140), so any part not whole counts as damaged; the repaired robot's slot
-holds no reference.
+Shortcuts, named in the code: the repaired robot's slot holds no reference. The
+damage total +0xf9 the repairs and the launch go by is kept since T-140 (a repaired
+robot is released, and an alien robot launched, once its own tick has added its total
+up to 0).
 
 ## Heights (T-119)
 

@@ -207,7 +207,7 @@ mod tests {
         assert_eq!((bases.relay_wait, bases.relays_most), (0x30, 9));
         assert_eq!(
             (bases.repair_period, bases.repair_step, bases.whole),
-            (0x100, 5, 90)
+            (0x100, 5, 100)
         );
         assert_eq!((bases.restock, bases.launch_program), ((10, 4), 7));
         assert_eq!(

@@ -4,7 +4,7 @@
 //! [`Tables::damage`]).
 
 use xeno_formats::damage::{Explosion, Part};
-use xeno_formats::usg::{ObjectKind, Side};
+use xeno_formats::usg::{self, ObjectKind, Side};
 
 use crate::motion::{Event, Tables, movement};
 use crate::orders::RobotKind;
@@ -13,6 +13,8 @@ use crate::world::{Components, Damage, Entity, EntityId, Fixed, Position, State,
 
 /// The event a hit posts to the robot's script.
 const EVENT_HIT: u8 = 7;
+/// The event the damage total posts when the robot becomes crippled.
+const EVENT_CRIPPLED: u8 = 12;
 /// Sound events (`docs/formats/dsounds.md`, "Sound events"): a robot hit, a robot
 /// destroyed (and a base's big explosion).
 const SOUND_HIT: u8 = 21;
@@ -79,6 +81,45 @@ pub fn hit(
             }
         }
         _ => {}
+    }
+}
+
+/// Robot `id`'s damage total (+0xf9), added up at the end of its kind's tick
+/// (humanoid `1000:afee`, scorpion `94e9`, scout `c6fd`): a quarter of the power and
+/// the helm lost and a weight per damaged part, in a byte, capped. At the crippled
+/// level `CRIPPLED` is set (event 12 when it is new), below it cleared; at its kind's
+/// limit for its side the robot is destroyed.
+pub fn total(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
+    let Some(e) = world.get_mut(id) else {
+        return;
+    };
+    let (Some(kind), Damage::Robot(c), State::Robot(m)) =
+        (RobotKind::of(e.kind), &mut e.damage, &mut e.state)
+    else {
+        return;
+    };
+    let t = &tables.damage.totals[kind.index()];
+    let mut parts = *c;
+    let mut sum = 0u8;
+    for &(offset, whole) in &t.lost {
+        let v = parts.byte(offset).map_or(whole, |b| *b);
+        sum = sum.wrapping_add(whole.wrapping_sub(v) >> 2);
+    }
+    for &(offset, bit, weight) in &t.weights {
+        if parts.byte(offset).is_some_and(|b| *b & bit != 0) {
+            sum = sum.wrapping_add(weight);
+        }
+    }
+    let sum = sum.min(t.most);
+    c.total = sum;
+    if sum < t.crippled {
+        c.equipment &= !usg::Robot::CRIPPLED;
+    } else if c.equipment & usg::Robot::CRIPPLED == 0 {
+        c.equipment |= usg::Robot::CRIPPLED;
+        crate::script::post(m, EVENT_CRIPPLED);
+    }
+    if sum >= t.destroyed[usize::from(crate::world::side_code(e.side))] {
+        destroy(world, id, tables, events);
     }
 }
 

@@ -484,6 +484,8 @@ pub struct Components {
     pub systems: u8,
     /// +0xfd: bit 7, a scorpion's relay deployer damaged.
     pub equipment: u8,
+    /// +0xf9: the damage added up at the end of every tick (`damage::total`).
+    pub total: u8,
 }
 
 impl Components {
@@ -512,6 +514,7 @@ impl Damage {
                 targeting: r.targeting,
                 systems: r.systems,
                 equipment: r.equipment,
+                total: r.damage,
             }),
             Body::Base(b) => Damage::Taken(b.damage),
             Body::Relay(r) => Damage::Taken(u16::from(r.damage)),
@@ -527,6 +530,7 @@ impl StateHash for Damage {
                 h.u8(0);
                 h.bytes(&[c.helm, c.power, c.weapons, c.targeting, c.systems]);
                 h.u8(c.equipment);
+                h.u8(c.total);
             }
             Damage::Taken(n) => {
                 h.u8(1);
