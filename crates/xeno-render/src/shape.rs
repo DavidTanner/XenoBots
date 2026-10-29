@@ -1,18 +1,21 @@
 //! Terrain shapes in the 3D view (`gfx_draw_terrain_shape`, `1000:1b03`;
 //! `docs/formats/usg.md`, "Drawing"): a `MAPP` record's program of op bytes makes
-//! points from the record's sizes, projected one by one (`1000:20f4`), takes midpoints
+//! points from the record's sizes, projected one by one (`1000:2147`), takes midpoints
 //! of projected points, and fills triangles and quads (`1fe6:4d7d`).
 
 use crate::Framebuffer;
-use crate::view3d::{Camera, GameFloat};
+use crate::view3d::{Camera, GameFloat, Trig};
 
-/// A terrain node's shape: the record's sizes (8.8) and its program from +0x16.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A terrain node's shape: the record's sizes (8.8) and its program from +0x16, and
+/// the sine and cosine of the node's heading less the bearing to it (`DS:0x2976`,
+/// `0x297a`), which ops 0x04, 0x06 and 0x08 turn their points by.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Shape {
     pub radius: u16,
     pub diagonal: u16,
     pub height: u16,
     pub program: Vec<u8>,
+    pub turn: [Trig; 2],
 }
 
 /// The built-in programs ops 0x12 and 0x14 (or 0x16) run.
@@ -26,17 +29,36 @@ pub struct Builtins<'a> {
 type Point = (i16, i16);
 
 /// The program's state: its point slots by their byte offset / 4 (the stack frame's
-/// slots below `BP - 0x38`; one never set reads as (0, 0)) and the height the next
-/// point is made at.
+/// slots below `BP - 0x38`; one never set reads as (0, 0)), the height the next
+/// point is made at, the last point `1000:20f4` turned to the camera (lateral and
+/// depth, 16.16; `DS:0x1c80`, `0x1c84`: the centre, as the cone test leaves it, until
+/// then) and what the last projection left in `BX`.
 struct Run<'a> {
     camera: &'a Camera,
     centre: [i32; 3],
     shape: &'a Shape,
     height: i16,
     points: [Point; 64],
+    base: (i32, i32),
+    bx: u16,
 }
 
 impl Run<'_> {
+    fn new<'a>(camera: &'a Camera, centre: [i32; 3], shape: &'a Shape) -> Run<'a> {
+        Run {
+            camera,
+            centre,
+            shape,
+            height: shape.height as i16,
+            points: [(0, 0); 64],
+            base: camera.rotate(
+                centre[0].wrapping_sub(camera.x),
+                centre[1].wrapping_sub(camera.y),
+            ),
+            bx: 0,
+        }
+    }
+
     fn slot(offset: u8) -> usize {
         usize::from(offset >> 2)
     }
@@ -45,24 +67,51 @@ impl Run<'_> {
         self.points[Self::slot(offset)]
     }
 
-    /// `1000:20f4`: the offset (`dx`, `dy`, 16.16) from the centre, at the current
-    /// height (8.8) above the centre's z, to the buffer. In front, divided by the larger
-    /// of the lateral and depth distances; behind, put the focal factor's width to the
-    /// side.
-    fn project(&self, dx: i32, dy: i32, (width, height): (u16, u16)) -> Point {
+    fn set(&mut self, offset: u8, p: Point) {
+        self.points[Self::slot(offset)] = p;
+    }
+
+    /// `1000:20f4`: the offset (`dx`, `dy`, 16.16) from the centre turned to the camera
+    /// (kept as the base), then projected.
+    fn project(&mut self, dx: i32, dy: i32, size: (u16, u16)) -> Point {
         let c = self.camera;
         let x = self.centre[0].wrapping_add(dx).wrapping_sub(c.x);
         let y = self.centre[1].wrapping_add(dy).wrapping_sub(c.y);
+        self.base = c.rotate(x, y);
+        self.screen(self.base, size)
+    }
+
+    /// `1000:20d2`: the base plus (`lateral`, `depth`), 16.16, projected.
+    fn beside(&mut self, (lateral, depth): (i32, i32), size: (u16, u16)) -> Point {
+        let (x, z) = self.base;
+        self.screen((x.wrapping_add(lateral), z.wrapping_add(depth)), size)
+    }
+
+    /// `1000:2147`: a point turned to the camera (lateral `X`, depth `Z`), at the
+    /// current height (8.8) above the centre's z, to the buffer. In front, divided by
+    /// the larger of |X| and |Z|; behind, put the focal factor's width to the side. The
+    /// last division leaves the divisor's mantissa halved (if over 1) in `BX`.
+    fn screen(&mut self, (lateral, depth): (i32, i32), (width, height): (u16, u16)) -> Point {
+        let c = self.camera;
         let z = (i32::from(self.height) << 8).wrapping_add(self.centre[2].wrapping_sub(c.z));
         let (half_w, half_h) = ((width / 2) as i16, (height / 2) as i16);
-        let (lateral, depth) = c.rotate(x, y);
         let f = c.focal;
         let fx = GameFloat::from_raw(lateral);
+        let far = if depth < 0 {
+            lateral.unsigned_abs()
+        } else {
+            lateral.unsigned_abs().max(depth.unsigned_abs())
+        };
+        let d = GameFloat {
+            negative: false,
+            ..GameFloat::from_raw(far as i32)
+        };
+        self.bx = if d.mantissa > 1 {
+            d.mantissa >> 1
+        } else {
+            d.mantissa
+        };
         if depth < 0 {
-            let d = GameFloat {
-                negative: false,
-                ..fx
-            };
             let side = GameFloat {
                 negative: f.negative ^ fx.negative,
                 ..f
@@ -70,17 +119,52 @@ impl Run<'_> {
             let up = GameFloat::from_raw(z).times(f).over(d).to_int();
             return (side.to_int().wrapping_add(half_w), half_h.wrapping_sub(up));
         }
-        let far = lateral.unsigned_abs().max(depth.unsigned_abs());
-        let d = GameFloat {
-            negative: false,
-            ..GameFloat::from_raw(far as i32)
-        };
         let across = fx.times(f).over(d).to_int();
         let up = GameFloat::from_raw(z).times(f).over(d).to_int();
         (
             across.checked_add(half_w).unwrap_or(0x7fff),
             up.wrapping_neg().checked_add(half_h).unwrap_or(0x7fff),
         )
+    }
+
+    /// `1000:205a`: the base plus and minus `(a, b)` turned by the node's heading less
+    /// the bearing, into `first` at the current height and `second` at its negation.
+    /// The flags' low byte negates `b`, the high byte `a`.
+    fn pair(
+        &mut self,
+        (a, b): (u16, u16),
+        flags: u16,
+        (first, second): (u8, u8),
+        size: (u16, u16),
+    ) {
+        let [sin, cos] = self.shape.turn;
+        // A magnitude times a sine or cosine (8.24), negated by its sign and the flag.
+        let term = |v: u16, t: Trig, negate: bool| {
+            let p = if t.one {
+                u32::from(v) << 16
+            } else {
+                u32::from(v) * u32::from(t.magnitude)
+            };
+            (if negate ^ t.negative {
+                p.wrapping_neg()
+            } else {
+                p
+            }) as i32
+        };
+        // `1000:2233`: `u * sin + v * cos`, to a 16.16.
+        let turn = |u, v, negate_sin, negate_cos| {
+            term(u, sin, negate_sin).wrapping_add(term(v, cos, negate_cos)) >> 8
+        };
+        let (low, high) = (flags & 0x80 != 0, flags & 0x8000 != 0);
+        let lateral = turn(a, b, !high, low);
+        let depth = turn(b, a, low, high);
+        let p = self.beside((lateral, depth), size);
+        self.set(first, p);
+        self.height = self.height.wrapping_neg();
+        let (x, z) = self.base;
+        let p = self.screen((x.wrapping_sub(lateral), z.wrapping_sub(depth)), size);
+        self.set(second, p);
+        self.height = self.height.wrapping_neg();
     }
 }
 
@@ -124,17 +208,99 @@ fn run(fb: &mut Framebuffer, r: &mut Run, program: &[u8], builtins: Builtins) ->
                     (diagonal, diagonal),
                 ];
                 for (k, (dx, dy)) in ring.into_iter().enumerate() {
-                    r.points[Run::slot(0xe4u8.wrapping_sub(4 * k as u8))] = r.project(dx, dy, size);
+                    let p = r.project(dx, dy, size);
+                    r.set(0xe4u8.wrapping_sub(4 * k as u8), p);
                 }
                 r.height = 0;
-                r.points[Run::slot(0xe8)] = r.project(0, 0, size);
+                let p = r.project(0, 0, size);
+                r.set(0xe8, p);
+            }
+            // `1000:1b86`: four points at twice the diagonal size on the axes, from +y
+            // anticlockwise, in slots -0x04 to -0x10, and the centre in -0x14, all
+            // `height` below the centre; then the centre at `height` in -0x18.
+            0x02 => {
+                let u = i32::from(r.shape.diagonal) << 9;
+                r.height = r.height.wrapping_neg();
+                let points = [(0, u), (-u, 0), (0, -u), (u, 0), (0, 0)];
+                for (k, (dx, dy)) in points.into_iter().enumerate() {
+                    let p = r.project(dx, dy, size);
+                    r.set(0xfcu8.wrapping_sub(4 * k as u8), p);
+                }
+                r.height = r.height.wrapping_neg();
+                let p = r.project(0, 0, size);
+                r.set(0xe8, p);
+            }
+            // `1000:1d8d`, `1dd7`, `1e1d`: corners of a box, a diamond or an octagon
+            // turned by the node's heading less the bearing, each at `height` and its
+            // opposite `height` below (`Run::pair`).
+            op @ (0x04 | 0x06 | 0x08) => {
+                let (rad, d) = (r.shape.radius, r.shape.diagonal);
+                // The sizes (a, b), the flags and the two slots of each pair.
+                type Pair = ((u16, u16), u16, (u8, u8));
+                let pairs: &[Pair] = match op {
+                    0x04 => &[
+                        ((rad, d), 0, (0xfc, 0xe0)),
+                        ((rad, d), 0xff, (0xf8, 0xe4)),
+                        ((rad, d), 0xffff, (0xf4, 0xe8)),
+                        ((rad, d), 0xff00, (0xf0, 0xec)),
+                    ],
+                    0x06 => &[
+                        ((rad, 0), 0, (0xfc, 0xe0)),
+                        ((0, d), 0xff, (0xf8, 0xe4)),
+                        ((rad, 0), 0xffff, (0xf4, 0xe8)),
+                        ((0, d), 0xff00, (0xf0, 0xec)),
+                    ],
+                    _ => &[
+                        ((0, rad), 0, (0xfc, 0xd0)),
+                        ((d, d), 0, (0xf8, 0xd4)),
+                        ((rad, 0), 0xff, (0xf4, 0xd8)),
+                        ((d, d), 0xff, (0xf0, 0xdc)),
+                        ((0, rad), 0xffff, (0xec, 0xc0)),
+                        ((d, d), 0xffff, (0xe8, 0xc4)),
+                        ((rad, 0), 0xff00, (0xe4, 0xc8)),
+                        ((d, d), 0xff00, (0xe0, 0xcc)),
+                    ],
+                };
+                for &(sizes, flags, slots) in pairs {
+                    r.pair(sizes, flags, slots, size);
+                }
+            }
+            // `1000:1c20`: around the base, `height` (taken unsigned) to the sides and
+            // in depth, `height` below it, in slots -0x20 to -0x38 by 8; the base itself
+            // `height` below in -0x14 and at `height` in -0x18.
+            0x22 => {
+                let h = i32::from(r.height as u16) << 8;
+                r.height = r.height.wrapping_neg();
+                let p = r.beside((-h, h), size);
+                r.set(0xe0, p);
+                // The second point's depth is `BX` and `CX` as that projection left
+                // them (the divisor's halved mantissa and the point's x), less `h`: the
+                // original never sets them.
+                let left = (u32::from(p.0 as u16) << 16 | u32::from(r.bx)) as i32;
+                let p = r.beside((-h, left.wrapping_sub(h)), size);
+                r.set(0xd8, p);
+                for (to, offset) in [(0xd0, (h, -h)), (0xc8, (h, h)), (0xec, (0, 0))] {
+                    let p = r.beside(offset, size);
+                    r.set(to, p);
+                }
+                r.height = r.height.wrapping_neg();
+                let p = r.beside((0, 0), size);
+                r.set(0xe8, p);
+            }
+            // `1000:2008`: the first point extended by half the way from the second,
+            // `(3a - b) >> 1`.
+            0x24 => {
+                let (to, a, b) = (next(), next(), next());
+                let (a, b) = (r.point(a), r.point(b));
+                let ahead = |a: i16, b: i16| ((3 * i32::from(a) - i32::from(b)) >> 1) as i16;
+                r.set(to, (ahead(a.0, b.0), ahead(a.1, b.1)));
             }
             // `1000:1fc1`: the midpoint of two points.
             0x1c => {
                 let (to, a, b) = (next(), next(), next());
                 let (a, b) = (r.point(a), r.point(b));
                 let mid = |a: i16, b: i16| ((i32::from(a) + i32::from(b)) >> 1) as i16;
-                r.points[Run::slot(to)] = (mid(a.0, b.0), mid(a.1, b.1));
+                r.set(to, (mid(a.0, b.0), mid(a.1, b.1)));
             }
             // `1000:1f75`: a quarter of the way from the first point to the second.
             0x1e => {
@@ -142,7 +308,7 @@ fn run(fb: &mut Framebuffer, r: &mut Run, program: &[u8], builtins: Builtins) ->
                 let (a, b) = (r.point(a), r.point(b));
                 let quarter =
                     |a: i16, b: i16| a.wrapping_add(((i32::from(b) - i32::from(a)) >> 2) as i16);
-                r.points[Run::slot(to)] = (quarter(a.0, b.0), quarter(a.1, b.1));
+                r.set(to, (quarter(a.0, b.0), quarter(a.1, b.1)));
             }
             // `1000:1ee6`, `1000:1f2e`: a triangle or quad of points in a colour.
             op @ (0x0e | 0x10) => {
@@ -154,9 +320,9 @@ fn run(fb: &mut Framebuffer, r: &mut Run, program: &[u8], builtins: Builtins) ->
             0x0a => (0..8).for_each(|_| {
                 next();
             }),
-            // 0, 0x0c, 0x18 and 0x1a end the whole shape (`1000:1ee2`).
-            // shortcut: the point ops 0x02 to 0x08, 0x22 and 0x24 are not traced (no
-            // stock record uses them, only the block, which nothing sees); they end it too.
+            // 0x0c, 0x18 and 0x1a end the whole shape (`1000:1ee2`), as do 0x20 (the
+            // developer's debugger break, `1000:1b7f`) and the odd ops (which jump
+            // through half of two table entries).
             _ => return false,
         }
     }
@@ -170,14 +336,12 @@ pub fn draw(
     shape: &Shape,
     builtins: Builtins,
 ) {
-    let mut r = Run {
-        camera,
-        centre,
-        shape,
-        height: shape.height as i16,
-        points: [(0, 0); 64],
-    };
-    run(fb, &mut r, &shape.program, builtins);
+    run(
+        fb,
+        &mut Run::new(camera, centre, shape),
+        &shape.program,
+        builtins,
+    );
 }
 
 /// The fill's clip rectangle (`[DS:0x634]` +6, +8, +0xa, +0xc; bottom and right one
@@ -462,7 +626,7 @@ fn faces(t: Point, n: Point, p: Point) -> bool {
 mod tests {
     use super::*;
     use crate::Size;
-    use crate::view3d::{Trig, focal};
+    use crate::view3d::focal;
     use xeno_formats::view3d::Float;
 
     /// Looking along +y from the origin at height 0.
@@ -491,8 +655,16 @@ mod tests {
             diagonal: 0x80,
             height: 0x40,
             program: program.to_vec(),
+            turn: [Trig::default(), ONE],
         }
     }
+
+    /// Exactly 1.
+    const ONE: Trig = Trig {
+        magnitude: 0xffff,
+        one: true,
+        negative: false,
+    };
 
     /// The buffer as text: `.` for 0, a hex digit for 1 to 15.
     fn ascii(fb: &Framebuffer) -> Vec<String> {
@@ -511,12 +683,9 @@ mod tests {
     fn points_project_by_the_larger_of_lateral_and_depth() {
         let c = camera();
         let s = shape(&[]);
-        let r = Run {
-            camera: &c,
-            centre: [0, 10 << 16, 0],
-            shape: &s,
+        let mut r = Run {
             height: 0x100,
-            points: [(0, 0); 64],
+            ..Run::new(&c, [0, 10 << 16, 0], &s)
         };
         // 10 ahead, 1 up: 23 pixels a unit at 10 units.
         assert_eq!(r.project(0, 0, (100, 60)), (50, 30 - 23));
@@ -718,13 +887,7 @@ mod tests {
             0x14, 0x1c, 0xfc, 0xd4, 0xe8, 0x1e, 0xf8, 0xd4, 0xe8, 0x1c, 0xf4, 0xe4, 0xe8, 0x10,
             0xd4, 0xe4, 0xf8, 0xfc, 5, 0,
         ]);
-        let mut r = Run {
-            camera: &c,
-            centre: [0, 10 << 16, 0],
-            shape: &s,
-            height: 0x40,
-            points: [(0, 0); 64],
-        };
+        let mut r = Run::new(&c, [0, 10 << 16, 0], &s);
         assert!(run(&mut fb, &mut r, &s.program, builtins));
         // The centre at height 0 is on the horizon; the ring a quarter unit below it,
         // 11 and 9 units away.
@@ -743,5 +906,184 @@ mod tests {
         };
         assert!(!run(&mut fb, &mut r, &[0x12, 0x26, 0], builtins));
         assert_eq!(r.point(0xe8), (0, 0));
+    }
+
+    /// Ten units ahead, and the test buffer's size.
+    const CENTRE: [i32; 3] = [0, 10 << 16, 0];
+    const SIZE: (u16, u16) = (100, 60);
+    const NONE: Builtins = Builtins {
+        block: &[],
+        hill: &[],
+    };
+
+    /// `program` run from [`CENTRE`] with [`shape`]'s sizes and `turn`.
+    fn ran(program: &[u8], turn: [Trig; 2]) -> (Run<'static>, Vec<u8>) {
+        let c: &'static Camera = Box::leak(Box::new(camera()));
+        let s: &'static Shape = Box::leak(Box::new(Shape {
+            turn,
+            ..shape(program)
+        }));
+        let mut fb = Framebuffer::new(Size::new(SIZE.0.into(), SIZE.1.into()));
+        let mut r = Run::new(c, CENTRE, s);
+        assert!(run(&mut fb, &mut r, &s.program, NONE));
+        (r, fb.pixels().to_vec())
+    }
+
+    /// A run to project the expected points with, at `height`.
+    fn expect(height: i16) -> Run<'static> {
+        let (r, _) = ran(&[], [Trig::default(), ONE]);
+        Run { height, ..r }
+    }
+
+    #[test]
+    fn op_0x02_makes_points_on_the_axes_at_twice_the_diagonal() {
+        // The diagonal is half a unit: the points are a unit out, a quarter unit below.
+        let (r, _) = ran(&[0x02, 0], [Trig::default(), ONE]);
+        // 11 ahead: 230 / 4 / 11 = 5 down; a unit left of 10 ahead: 23 left.
+        assert_eq!((r.point(0xfc), r.point(0xf8)), ((50, 35), (27, 35)));
+        let mut e = expect(-0x40);
+        assert_eq!(r.point(0xf4), e.project(0, -1 << 16, SIZE));
+        assert_eq!(r.point(0xf0), e.project(1 << 16, 0, SIZE));
+        assert_eq!(r.point(0xec), (50, 35));
+        // The centre a quarter unit up, and the height back as it was.
+        assert_eq!((r.point(0xe8), r.height), ((50, 25), 0x40));
+    }
+
+    #[test]
+    fn ops_0x04_to_0x08_turn_corners_by_the_heading_less_the_bearing() {
+        // The radius is a unit, the diagonal half: corners (x, y) across and in depth
+        // before the turn, each into the first slot at the height and negated into the
+        // second at the height below.
+        type Corners<'a> = &'a [((i32, i32), (u8, u8))];
+        let (r, d) = (1 << 16, 1 << 15);
+        let ops: [(u8, Corners); 3] = [
+            (
+                0x04,
+                &[
+                    ((d, r), (0xfc, 0xe0)),
+                    ((-d, r), (0xf8, 0xe4)),
+                    ((-d, -r), (0xf4, 0xe8)),
+                    ((d, -r), (0xf0, 0xec)),
+                ],
+            ),
+            (
+                0x06,
+                &[
+                    ((0, r), (0xfc, 0xe0)),
+                    ((-d, 0), (0xf8, 0xe4)),
+                    ((0, -r), (0xf4, 0xe8)),
+                    ((d, 0), (0xf0, 0xec)),
+                ],
+            ),
+            (
+                0x08,
+                &[
+                    ((r, 0), (0xfc, 0xd0)),
+                    ((d, d), (0xf8, 0xd4)),
+                    ((0, r), (0xf4, 0xd8)),
+                    ((-d, d), (0xf0, 0xdc)),
+                    ((-r, 0), (0xec, 0xc0)),
+                    ((-d, -d), (0xe8, 0xc4)),
+                    ((0, -r), (0xe4, 0xc8)),
+                    ((d, -d), (0xe0, 0xcc)),
+                ],
+            ),
+        ];
+        let half = Trig {
+            magnitude: 0x8000,
+            ..Trig::default()
+        };
+        let minus_one = Trig {
+            negative: true,
+            ..ONE
+        };
+        // Sine and cosine, and where they turn (x, y) to, anticlockwise.
+        type Turn = fn((i32, i32)) -> (i32, i32);
+        let turns: [([Trig; 2], Turn); 4] = [
+            ([Trig::default(), ONE], |(x, y)| (x, y)),
+            ([ONE, Trig::default()], |(x, y)| (-y, x)),
+            ([minus_one, Trig::default()], |(x, y)| (y, -x)),
+            ([half, half], |(x, y)| ((x - y) / 2, (x + y) / 2)),
+        ];
+        // The camera looks along +y with no turn: across and depth are x and y.
+        let (mut up, mut down) = (expect(0x40), expect(-0x40));
+        for (op, corners) in ops {
+            for (i, (turn, turned)) in turns.into_iter().enumerate() {
+                let (got, _) = ran(&[op, 0], turn);
+                for &(corner, (first, second)) in corners {
+                    let (x, y) = turned(corner);
+                    let at = format!("op {op:#x}, turn {i}, {corner:?}");
+                    assert_eq!(got.point(first), up.project(x, y, SIZE), "{at}");
+                    assert_eq!(got.point(second), down.project(-x, -y, SIZE), "{at}");
+                }
+                assert_eq!(got.height, 0x40);
+            }
+        }
+    }
+
+    #[test]
+    fn op_0x22_makes_points_beside_the_base_one_from_leftover_registers() {
+        let (mut r, _) = ran(&[0x22, 0], [Trig::default(), ONE]);
+        // The height, a quarter unit, to the sides and in depth, a quarter unit below.
+        let h = 0x4000;
+        let mut e = expect(-0x40);
+        assert_eq!(r.point(0xe0), e.project(-h, h, SIZE));
+        assert_eq!(r.point(0xd0), e.project(h, -h, SIZE));
+        assert_eq!(r.point(0xc8), e.project(h, h, SIZE));
+        assert_eq!(r.point(0xec), e.project(0, 0, SIZE));
+        // The second's depth is the first's x (45) and the mantissa of its divisor
+        // (10.25 units: 0xa40) halved, as a 16.16, less the height.
+        assert_eq!(r.point(0xe0).0, 45);
+        let depth = (45 << 16 | 0x520) - h;
+        assert_eq!(r.point(0xd8), e.project(-h, depth, SIZE));
+        let mut f = expect(-0x40);
+        f.beside((-h, h), SIZE);
+        assert_eq!(f.bx, 0x520);
+        // Behind, the divisor is |X|: 3 units (0x300 with 8 bits shifted out).
+        f.beside((3 << 16, -11 << 16), SIZE);
+        assert_eq!(f.bx, 0x180);
+        assert_eq!((r.point(0xe8), r.height), ((50, 25), 0x40));
+        // The base is the last point turned to the camera by `1000:20f4`.
+        let p = r.project(1 << 16, 0, SIZE);
+        assert_eq!(r.beside((0, 0), SIZE), p);
+    }
+
+    #[test]
+    fn op_0x24_extends_a_point_by_half_the_way_from_another() {
+        let c = camera();
+        let s = shape(&[]);
+        let mut r = Run::new(&c, CENTRE, &s);
+        r.set(0xfc, (3, -3));
+        r.set(0xf8, (0, 0));
+        r.set(0xf4, (20000, 0));
+        r.set(0xf0, (-20000, 0));
+        let mut fb = Framebuffer::new(Size::new(4, 4));
+        let program = [0x24, 0xec, 0xfc, 0xf8, 0x24, 0xe8, 0xf4, 0xf0, 0];
+        assert!(run(&mut fb, &mut r, &program, NONE));
+        // 9 >> 1 and -9 >> 1 (rounded down); 80,000 >> 1 kept to 16 bits.
+        assert_eq!(r.point(0xec), (4, -5));
+        assert_eq!(r.point(0xe8), (40000u16 as i16, 0));
+    }
+
+    #[test]
+    fn the_block_op_runs_the_built_in_box_program() {
+        // A made-up box program: op 0x04's corners, then the top face.
+        let builtins = Builtins {
+            block: &[0x04, 0x10, 0xfc, 0xf8, 0xf4, 0xf0, 7, 0],
+            hill: &[],
+        };
+        let s = Shape {
+            turn: [Trig::default(), ONE],
+            ..shape(&[0x12, 0])
+        };
+        let colours = |z: i32| {
+            let c = Camera { z, ..camera() };
+            let mut fb = Framebuffer::new(Size::new(100, 60));
+            draw(&mut fb, &c, CENTRE, &s, builtins);
+            fb.pixels().contains(&7)
+        };
+        // From a unit up the top shows; from below it faces away.
+        assert!(colours(1 << 16));
+        assert!(!colours(-1 << 16));
     }
 }

@@ -2339,7 +2339,7 @@ pub(crate) mod tests {
                 world.get_mut(id).unwrap().heading =
                     xeno_sim::script::bearing(&assets.motion.atan, at, position);
                 let camera = crate::scene::camera(&world, id, tables, &assets.motion).unwrap();
-                let nodes = crate::scene::nodes(&world, tables, &camera, &assets.motion.atan, &[]);
+                let nodes = crate::scene::nodes(&world, tables, &camera, &assets.motion, &[]);
                 let node = nodes.iter().find(|n| n.object == other.0).unwrap();
                 let size = (width as u16, height as u16);
                 let ((x, y), scale) = place(tables, &camera, node, true, size)

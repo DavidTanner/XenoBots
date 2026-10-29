@@ -96,9 +96,10 @@ pub fn nodes(
     world: &World,
     view: &View3d,
     camera: &Camera,
-    atan: &[u16],
+    tables: &Tables,
     terrain: &[TerrainFeature],
 ) -> Vec<RenderNode> {
+    let atan = &tables.atan;
     let from = xeno_sim::Position {
         x: xeno_sim::Fixed(camera.x),
         y: xeno_sim::Fixed(camera.y),
@@ -126,13 +127,16 @@ pub fn nodes(
         })
     });
     // The terrain records come first, in file order (`gfx_emit_terrain_render_node`).
-    // shortcut: their heading (+0x08, `[DS:0x1486] << 4`) only turns the untraced
-    // point ops' shapes, so it is left at 0.
+    // Their heading (+0x08) is `[DS:0x1486] << 4`, the retraces the developer's fill
+    // benchmark took (unlock word 2's Ctrl+Alt+F11 and F12, `docs/formats/key.md`): 0
+    // from load, and the port has no benchmark.
     let terrain = terrain.iter().map(|f| {
         let centre = xeno_sim::Position {
             x: xeno_sim::Fixed(f.x),
             y: xeno_sim::Fixed(f.y),
         };
+        let bearing = bearing(atan, from, centre);
+        let turn = 0u16.wrapping_sub(bearing);
         RenderNode {
             object: TERRAIN,
             model: 0,
@@ -140,7 +144,7 @@ pub fn nodes(
             position: [f.x, f.y, f.z],
             radius: f.radius,
             distance: approx_distance(from, centre).0 as u32,
-            bearing: bearing(atan, from, centre),
+            bearing,
             frames: Vec::new(),
             size: None,
             shape: Some(Shape {
@@ -148,6 +152,10 @@ pub fn nodes(
                 diagonal: f.diagonal,
                 height: f.height,
                 program: f.shape.clone(),
+                turn: [
+                    trig(tables, turn),
+                    trig(tables, 0x4000u16.wrapping_sub(turn)),
+                ],
             }),
         }
     });
@@ -188,7 +196,7 @@ pub fn draw_from(
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
 ) {
-    let nodes = nodes(world, view, camera, &tables.atan, terrain);
+    let nodes = nodes(world, view, camera, tables, terrain);
     buffer.draw_view(view, camera, &nodes, models, sky);
 }
 
@@ -383,7 +391,7 @@ mod tests {
         let eye = camera(&world, EntityId(2), &view, &tables).unwrap();
         // The humanoid's eye height on its z.
         assert_eq!((eye.z, eye.viewer, eye.heading), (0x1_0f80, 2, 0x1234));
-        let nodes = nodes(&world, &view, &eye, &tables.atan, &[]);
+        let nodes = nodes(&world, &view, &eye, &tables, &[]);
         let summary: Vec<_> = nodes
             .iter()
             .map(|n| (n.object, n.model, n.frames.clone(), n.size))
@@ -409,5 +417,48 @@ mod tests {
         // The eye height is the robot's own.
         let scout = camera(&world, EntityId(5), &view, &tables).unwrap();
         assert_eq!(scout.z, 0x0c80);
+    }
+
+    #[test]
+    fn terrain_shapes_turn_by_the_heading_less_the_bearing() {
+        let tables = crate::mission::tests::test_assets().motion;
+        let mut world = World::default();
+        world.insert(EntityId(2), entity(ObjectKind::Humanoid, 0, 0, State::None));
+        let eye = Camera {
+            heading: 0,
+            ..camera(&world, EntityId(2), &view(), &tables).unwrap()
+        };
+        let feature = |x: i16, y: i16| TerrainFeature {
+            size: 0x18,
+            kind: TerrainFeature::BLOCK,
+            point_slots: 8,
+            x: Fixed::from_int(x).0,
+            y: Fixed::from_int(y).0,
+            z: 0,
+            radius: 0x100,
+            diagonal: 0x100,
+            height: 0x100,
+            shape: vec![TerrainFeature::BLOCK, 0],
+        };
+        let terrain = [feature(0, 10), feature(10, 0)];
+        let nodes = nodes(&world, &view(), &eye, &tables, &terrain);
+        let at = |x: i16| nodes.iter().find(|n| n.position[0] == Fixed::from_int(x).0);
+        let turn = |x: i16| at(x).map(|n| (n.bearing, n.shape.as_ref().unwrap().turn));
+        let one = Trig {
+            magnitude: 0xffff,
+            one: true,
+            negative: false,
+        };
+        // Ahead, no turn: sine 0. To the right, a quarter turn: the heading (0) less
+        // it is a quarter turn back, sine -1.
+        assert_eq!(turn(0), Some((0, [Trig::default(), one])));
+        let right = Trig {
+            negative: true,
+            ..one
+        };
+        assert_eq!(
+            turn(10).map(|(b, [sin, _])| (b, sin)),
+            Some((0x4000, right))
+        );
     }
 }
