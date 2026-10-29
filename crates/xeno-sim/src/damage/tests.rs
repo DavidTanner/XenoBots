@@ -178,6 +178,88 @@ fn a_robot_hit_over_the_threshold_is_destroyed_and_counted() {
     );
 }
 
+/// Sets slot `id`'s parts and adds its total up as its tick's end does.
+fn total_of(world: &mut World, id: u16, set: impl FnOnce(&mut Components)) -> Vec<Event> {
+    if let Some(Damage::Robot(c)) = world.get_mut(EntityId(id)).map(|e| &mut e.damage) {
+        set(c);
+    }
+    let mut events = Vec::new();
+    total(world, EntityId(id), &synthetic_tables(), &mut events);
+    events
+}
+
+fn script_events(world: &World, id: u16) -> u16 {
+    match world.get(EntityId(id)).unwrap().state {
+        State::Robot(m) => m.script.events,
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn the_total_adds_up_the_parts_cripples_and_destroys_at_the_limits() {
+    let mut world = world();
+    // The synthetic humanoid's: a quarter of the helm and power lost, 10 for the
+    // weapon and 10 for the targeting computer.
+    let events = total_of(&mut world, 4, |c| {
+        (c.helm, c.power, c.weapons, c.targeting) = (92, 60, 1, 1)
+    });
+    assert!(events.is_empty());
+    let c = parts(&world, 4);
+    assert_eq!(
+        (c.total, c.equipment & usg::Robot::CRIPPLED),
+        (2 + 10 + 20, 0)
+    );
+    // 52 is past 50: crippled, and event 12 posted once.
+    total_of(&mut world, 4, |c| (c.helm, c.power) = (72, 0));
+    let c = parts(&world, 4);
+    assert_eq!((c.total, c.equipment & usg::Robot::CRIPPLED), (52, 0x40));
+    assert_eq!(script_events(&world, 4), 1 << 12);
+    if let Some(State::Robot(m)) = world.get_mut(EntityId(4)).map(|e| &mut e.state) {
+        m.script.events = 0;
+    }
+    total_of(&mut world, 4, |_| ());
+    assert_eq!(script_events(&world, 4), 0);
+    // Below 50 again: cleared.
+    total_of(&mut world, 4, |c| c.helm = 100);
+    assert_eq!(parts(&world, 4).equipment & usg::Robot::CRIPPLED, 0);
+    // A helm over 100 wraps in the byte: 63 more, 108 capped at 100 (seen with limits
+    // out of reach), and destroyed at 70 for a human humanoid.
+    let mut tables = synthetic_tables();
+    tables.damage.totals[0].destroyed = [0xff; 2];
+    let mut kept = world.clone();
+    if let Some(Damage::Robot(c)) = kept.get_mut(EntityId(4)).map(|e| &mut e.damage) {
+        c.helm = 104;
+    }
+    total(&mut kept, EntityId(4), &tables, &mut vec![]);
+    assert_eq!(parts(&kept, 4).total, 100);
+    let events = total_of(&mut world, 4, |c| c.helm = 104);
+    assert_eq!(events.last(), Some(&Event::Destroyed(EntityId(4))));
+    assert!(world.get(EntityId(4)).is_none());
+    // The alien scout: 25 for the power and 5 for a camera is its limit, 30; as a
+    // human one it lives to 55.
+    total_of(&mut world, 9, |c| (c.power, c.systems) = (0, 0));
+    assert!(world.get(EntityId(9)).is_some());
+    world.get_mut(EntityId(9)).unwrap().side = Side::Human;
+    total_of(&mut world, 9, |c| c.systems = 1);
+    assert_eq!(parts(&world, 9).total, 30);
+    world.get_mut(EntityId(9)).unwrap().side = Side::Alien;
+    let events = total_of(&mut world, 9, |_| ());
+    assert_eq!(events.last(), Some(&Event::Destroyed(EntityId(9))));
+    // The scorpion's `inc`: +0xdc bit 3 weighs 1.
+    total_of(&mut world, 6, |c| c.weapons = 8);
+    assert_eq!(parts(&world, 6).total, 1);
+}
+
+#[test]
+fn every_robot_adds_its_total_up_at_the_end_of_its_tick() {
+    let mut world = world();
+    if let Some(Damage::Robot(c)) = world.get_mut(EntityId(6)).map(|e| &mut e.damage) {
+        c.equipment = 0x80;
+    }
+    crate::motion::tick(&mut world, &synthetic_tables(), &mut Random::seeded(1));
+    assert_eq!(parts(&world, 6).total, 7);
+}
+
 #[test]
 fn a_base_is_destroyed_at_300_and_a_relay_removed_at_20() {
     let mut world = world();

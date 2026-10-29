@@ -11,7 +11,7 @@ use crate::motion::{Event, Tables};
 use crate::orders::RobotKind;
 use crate::random::Random;
 use crate::terrain::approx_distance;
-use crate::world::{Components, Damage, Depot, EntityId, Fixed, Movement, State, World};
+use crate::world::{Damage, Depot, EntityId, Fixed, Movement, State, World};
 
 /// The paths' phase (`sim_run_alien_base_path_phase`) and the end's
 /// (`sim_end_mission_with_result`).
@@ -82,20 +82,6 @@ fn make_relays(d: &mut Depot, b: &Bases) {
     }
 }
 
-/// Whether the robot's damage total (+0xf9) is not 0, which the repairs and the launch
-/// go by.
-// shortcut: the port keeps no damage total (T-140); any part the repair step mends
-// not whole counts, so a robot worn by under 4 points of helm or power counts as
-// damaged where the original's quartered total is already 0. Upgrade with T-140.
-fn damaged(c: &Components, whole: u8) -> bool {
-    c.helm < whole
-        || c.power < whole
-        || c.weapons & 0x07 != 0
-        || c.targeting & 1 != 0
-        || c.systems & 0xdf != 0
-        || c.equipment & 0x80 != 0
-}
-
 /// `1000:64af`: the second slider runs a clock; at the period one repair step is made
 /// on the robot in repair, or, with none, the first damaged robot in the base in the
 /// side's unit list is picked for the next.
@@ -116,7 +102,8 @@ fn repair(world: &mut World, id: EntityId, b: &Bases) {
         Some(r) => {
             repair_step(world, id, r, b);
             match world.get(r).map(|e| e.damage) {
-                Some(Damage::Robot(c)) if damaged(&c, b.whole) => Some(r),
+                // The total as the robot's last tick left it.
+                Some(Damage::Robot(c)) if c.total != 0 => Some(r),
                 _ => None,
             }
         }
@@ -125,8 +112,7 @@ fn repair(world: &mut World, id: EntityId, b: &Bases) {
             let units = side.map_or(&[][..], |s| world.units(s));
             units.iter().copied().find(|&u| {
                 world.get(u).is_some_and(|e| {
-                    in_base(&e.damage)
-                        && matches!(e.damage, Damage::Robot(c) if damaged(&c, b.whole))
+                    in_base(&e.damage) && matches!(e.damage, Damage::Robot(c) if c.total != 0)
                 })
             })
         }
@@ -201,8 +187,7 @@ fn launch_whole(world: &mut World, id: EntityId, tables: &Tables, events: &mut V
     let units = world.units(side).to_vec();
     for r in units {
         if world.get(r).is_some_and(|e| {
-            in_base(&e.damage)
-                && matches!(e.damage, Damage::Robot(c) if !damaged(&c, tables.bases.whole))
+            in_base(&e.damage) && matches!(e.damage, Damage::Robot(c) if c.total == 0)
         }) {
             launch(world, id, r, tables, events);
         }

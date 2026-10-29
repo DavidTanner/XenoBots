@@ -459,7 +459,7 @@ pub struct Robot {
     /// +0xf8: ticks left of the screen's flash after a hit.
     pub flash: u8,
     /// +0xf9: the damage added up, 0 to 100 (power and helm lost, damaged parts); at
-    /// 40 [`Robot::CRIPPLED`], at 75 (40 for aliens) the robot is destroyed. The
+    /// its kind's levels [`Robot::CRIPPLED`] and destroyed (`damage::Total`). The
     /// roster's icon and the detail panel's repair state come from it.
     pub damage: u8,
     /// +0xfa: a counter stepping by one; a humanoid's or scout's console light steps every 32

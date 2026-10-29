@@ -157,6 +157,7 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
                 (0xec, c.targeting),
                 (0xf6, c.systems),
                 (0xfd, c.equipment),
+                (0xf9, c.total),
             ] {
                 r.u8(at, v);
             }

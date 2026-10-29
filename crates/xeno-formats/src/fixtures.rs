@@ -2122,7 +2122,7 @@ pub fn synthetic_bases(image: &mut [u8], ds: usize) {
     hex(0x64af, "8a 45 3a 32 e4 01 45 1c 81 7d 1c 00 01 73");
     hex(
         REPAIR_AT,
-        "e8 0b 00 80 bc f9 00 00 74 02 f8 cb f9 cb 80 7c 24 5a 74 09 80 44 24 05 80 64 24 fc",
+        "e8 0b 00 80 bc f9 00 00 74 02 f8 cb f9 cb 80 7c 24 64 74 09 80 44 24 05 80 64 24 fc",
     );
     hex(RESTOCK_AT, "8b 1c d1 e3 ff 97 3f 72");
     hex(ds + 0x723f, "75 b3 97 9b 4d cb");

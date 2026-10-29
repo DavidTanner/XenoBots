@@ -10,7 +10,7 @@ Bases {
     relays_most: 9,
     repair_period: 256,
     repair_step: 5,
-    whole: 90,
+    whole: 100,
     restock: (
         10,
         4,

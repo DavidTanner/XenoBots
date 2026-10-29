@@ -775,6 +775,8 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                     crate::weapons::arms(&tables.walk, ticks, m, c);
                 }
             }
+            // The last call of the kind's tick.
+            crate::damage::total(world, id, tables, &mut events);
         }
         if base {
             crate::base::tick(world, id, tables, random, &mut events);

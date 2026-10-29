@@ -245,10 +245,16 @@ fn repairs_mend_one_thing_a_step_in_order() {
         }
     }
     set_bits(&mut world, 2, Bits::IN_BASE);
+    // The robot's tick adds its total up after the base's (the base is in slot 0), so
+    // a step goes by the total the robot's last tick left.
+    let tables = synthetic_tables();
+    let total = |world: &mut World| crate::damage::total(world, EntityId(2), &tables, &mut vec![]);
+    total(&mut world);
     let repairing = |world: &mut World| depot(world, EntityId(0)).unwrap().repairing;
     let mut steps = Vec::new();
     for _ in 0..12 {
         repair(&mut world, EntityId(0), &b);
+        total(&mut world);
         let c = parts(&world, 2);
         steps.push((
             repairing(&mut world).map(|r| r.0),
@@ -267,9 +273,9 @@ fn repairs_mend_one_thing_a_step_in_order() {
             (Some(2), 96, 1, 0x42),
             (Some(2), 100, 1, 0x42),
             (Some(2), 100, 1, 0x42),
-            (Some(2), 100, 0, 0x02), // the weapon and its destroyed bit
+            (Some(2), 100, 0, 0x02), // the weapon; the total was 10, so kept
             (Some(2), 100, 0, 0x02),
-            (None, 100, 0, 0), // the thermal camera; whole, so released
+            (None, 100, 0, 0), // the thermal camera; the total was 0, so released
             (None, 100, 0, 0),
             (None, 100, 0, 0),
         ]
@@ -313,6 +319,8 @@ fn the_alien_base_launches_whole_robots_in_it() {
             (m.path, m.mode, m.speed, m.contacts) = (0x83, 0x08, 30, 2);
             c.equipment = Bits::ENTERING_BASE | Bits::IN_BASE;
             c.helm = if slot == 2 { 50 } else { 100 };
+            // The total the robots' last ticks left; the base in slot 0 goes first.
+            c.total = if slot == 2 { 12 } else { 0 };
         }
         world.insert(EntityId(slot), r);
         world.orders.insert(

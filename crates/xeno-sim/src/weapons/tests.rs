@@ -224,7 +224,9 @@ fn a_scout_s_cannon_tells_when_out_of_shells() {
 
 /// scen00a's first human humanoid and first alien robot, the others taken out, 7 units
 /// apart halfway between the bases (as `sense`'s closing test): they lock, close and
-/// fire, and shots fly, hit and wear each other down.
+/// fire, shots fly and hit, and the alien is worn to its limit (35 for an alien
+/// humanoid) and destroyed by its damage total (T-140). With the limits out of reach
+/// the same fight leaves it standing with its total past 35.
 #[test]
 #[ignore = "needs XENOBOTS_GAME_DIR"]
 fn real_assets_two_stock_robots_fight() {
@@ -238,71 +240,85 @@ fn real_assets_two_stock_robots_fight() {
     let tables = xeno_formats::motion::read(&exe).unwrap();
     let scenario =
         xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
-    let mut sim = crate::Sim::load(&scenario, Random::seeded(7), tables);
-    let world = &sim.world;
-    let human = *world
-        .units(Side::Human)
-        .iter()
-        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
-        .unwrap();
-    let alien = world.units(Side::Alien)[0];
-    let base = |side| world.get(world.base(side).unwrap()).unwrap().position;
-    let (h, a) = (base(Side::Human), base(Side::Alien));
-    let mid = Position {
-        x: Fixed(h.x.0 / 2 + a.x.0 / 2),
-        y: Fixed(h.y.0 / 2 + a.y.0 / 2),
-    };
-    let others: Vec<EntityId> = world
-        .iter()
-        .filter(|&(id, e)| id != human && id != alien && RobotKind::of(e.kind).is_some())
-        .map(|(id, _)| id)
-        .collect();
-    for id in others {
-        sim.world.remove(id);
+    let mut endless = tables.clone();
+    for t in &mut endless.damage.totals {
+        t.destroyed = [0xff; 2];
     }
-    sim.world.get_mut(human).unwrap().position = mid;
-    sim.world.get_mut(alien).unwrap().position = Position {
-        x: Fixed(mid.x.0 + 7 * 0x10000),
-        y: mid.y,
-    };
-    let (mut shots, mut hits, mut destroyed) = (0, [0; 2], Vec::new());
-    let mut flying = std::collections::BTreeSet::new();
-    for t in 0..70 * 60 * 5 {
-        for e in sim.tick(&[]) {
-            match e {
-                Event::Sound {
-                    event: 21,
-                    only_for: Some(r),
-                } => {
-                    hits[usize::from(r == alien)] += 1;
-                }
-                Event::Destroyed(r) => destroyed.push((t, r)),
-                _ => {}
-            }
-        }
-        let now: std::collections::BTreeSet<EntityId> = sim
-            .world
+    // The fight, `ticks` long or until a robot is destroyed: the shots made, the hits
+    // on the human and the alien, what was destroyed when, and the sim.
+    let fight = |tables: xeno_formats::motion::Motion, ticks: u32| {
+        let mut sim = crate::Sim::load(&scenario, Random::seeded(5), tables);
+        let world = &sim.world;
+        let human = *world
+            .units(Side::Human)
             .iter()
-            .filter(|(_, e)| matches!(e.state, State::Shot(_)))
+            .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
+            .unwrap();
+        let alien = world.units(Side::Alien)[0];
+        let base = |side| world.get(world.base(side).unwrap()).unwrap().position;
+        let (h, a) = (base(Side::Human), base(Side::Alien));
+        let mid = Position {
+            x: Fixed(h.x.0 / 2 + a.x.0 / 2),
+            y: Fixed(h.y.0 / 2 + a.y.0 / 2),
+        };
+        let others: Vec<EntityId> = world
+            .iter()
+            .filter(|&(id, e)| id != human && id != alien && RobotKind::of(e.kind).is_some())
             .map(|(id, _)| id)
             .collect();
-        shots += now.difference(&flying).count();
-        flying = now;
-        if !destroyed.is_empty() {
-            break;
+        for id in others {
+            sim.world.remove(id);
         }
-    }
-    // In five minutes both fire many shots and hit each other (the shells' blasts and
-    // homing shots both wear); neither is destroyed outright, as only the damage
-    // total (T-140) ends a robot worn by small hits.
-    assert!(shots > 10, "{shots}");
-    assert!(hits.iter().all(|&n| n > 0), "{hits:?}");
-    assert!(destroyed.is_empty());
-    let worn = |id| match sim.world.get(id).unwrap().damage {
-        Damage::Robot(c) => c.helm < 100 || c.power < 100 || c.weapons & 7 != 0 || c.systems != 0,
-        _ => false,
+        sim.world.get_mut(human).unwrap().position = mid;
+        sim.world.get_mut(alien).unwrap().position = Position {
+            x: Fixed(mid.x.0 + 7 * 0x10000),
+            y: mid.y,
+        };
+        let (mut shots, mut hits, mut destroyed) = (0, [0; 2], Vec::new());
+        let mut flying = std::collections::BTreeSet::new();
+        for t in 0..ticks {
+            for e in sim.tick(&[]) {
+                match e {
+                    Event::Sound {
+                        event: 21,
+                        only_for: Some(r),
+                    } => {
+                        hits[usize::from(r == alien)] += 1;
+                    }
+                    Event::Destroyed(r) => destroyed.push((t, r)),
+                    _ => {}
+                }
+            }
+            let now: std::collections::BTreeSet<EntityId> = sim
+                .world
+                .iter()
+                .filter(|(_, e)| matches!(e.state, State::Shot(_)))
+                .map(|(id, _)| id)
+                .collect();
+            shots += now.difference(&flying).count();
+            flying = now;
+            if !destroyed.is_empty() {
+                break;
+            }
+        }
+        (shots, hits, destroyed, sim, alien)
     };
-    assert!(worn(human) && worn(alien));
+    // Within five minutes both are hit and the alien is destroyed by wear.
+    let (shots, hits, destroyed, _, alien) = fight(tables, 70 * 60 * 5);
+    assert!(shots > 4, "{shots}");
+    assert!(hits.iter().all(|&n| n > 0), "{hits:?}");
+    let [(t, gone)] = destroyed[..] else {
+        panic!("{destroyed:?}");
+    };
+    assert_eq!(gone, alien);
+    // The same fight to that tick with no limits: the alien stands, its total past 35.
+    let (_, _, destroyed, sim, alien) = fight(endless, t + 1);
+    assert!(destroyed.is_empty());
+    let total = match sim.world.get(alien).unwrap().damage {
+        Damage::Robot(c) => c.total,
+        _ => 0,
+    };
+    assert!(total >= 35, "{total}");
 }
 
 #[test]

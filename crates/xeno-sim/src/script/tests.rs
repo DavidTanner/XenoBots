@@ -71,6 +71,7 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
                 targeting: 0,
                 equipment: 0,
                 systems: 0,
+                total: 0,
             }),
             state: State::Robot(m),
         },
