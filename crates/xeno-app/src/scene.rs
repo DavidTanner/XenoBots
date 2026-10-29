@@ -350,6 +350,7 @@ mod tests {
             destroyed: false,
             end_step: 0,
             look: 2,
+            counts: [0; 7],
         };
         world.insert(EntityId(7), entity(ObjectKind::Base, 0, 9, base));
         let boom = State::Explosion {

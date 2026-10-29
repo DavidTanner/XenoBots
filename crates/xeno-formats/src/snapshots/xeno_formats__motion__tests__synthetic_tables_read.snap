@@ -1707,6 +1707,11 @@ Motion {
             6,
         ],
     },
+    bases: Bases {
+        count_mask: 240,
+        take_in_mask: 112,
+        reach: 58,
+    },
     walk: Walk {
         humanoid_legs: [
             [

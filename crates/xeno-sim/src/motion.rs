@@ -33,6 +33,9 @@ pub enum Event {
     /// A destroyed base's end script reached its last step: the mission is over, won
     /// if the base was the alien one (`sim_end_mission_with_result`).
     MissionOver { won: bool },
+    /// The robot came home and its base took it in (`docs/sim.md`, "The bases'
+    /// phases").
+    TakenIn(EntityId),
     /// Sound event `event` plays (`docs/formats/dsounds.md`, "Sound events"): for every
     /// view, or with `only_for` only while that object's console is open
     /// (`snd_play_sound_effect_if_viewed`).
@@ -629,7 +632,7 @@ pub fn join_nearest_path_point(world: &mut World, id: EntityId) {
 /// The alien base's path phase (`sim_run_alien_base_path_phase`): robots in its unit
 /// list with no path (and not +0x23 bit 0) get a random one, then those that asked for
 /// their next point move on.
-fn alien_path_phase(
+pub(crate) fn alien_path_phase(
     world: &mut World,
     tables: &Tables,
     random: &mut Random,
@@ -672,8 +675,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
         let Some(e) = world.get_mut(id) else {
             continue;
         };
-        let (mut path_phase, mut is_robot, mut gone, mut end, mut shot) =
-            (false, false, false, false, false);
+        let (mut base, mut is_robot, mut gone, mut shot) = (false, false, false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -683,13 +685,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 steer_and_speed(tables, e.kind, helm, &mut e.heading, m);
                 is_robot = true;
             }
-            State::Base {
-                tick, destroyed, ..
-            } => {
-                *tick = tick.wrapping_add(1);
-                path_phase = *tick & 0xf == 2 && e.side == Side::Alien;
-                end = *tick & 0xf == 0xf && *destroyed;
-            }
+            State::Base { .. } => base = true,
             state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
             State::Shot(_) => shot = true,
             State::None => {}
@@ -733,11 +729,8 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 }
             }
         }
-        if path_phase {
-            alien_path_phase(world, tables, random, &mut events);
-        }
-        if end {
-            crate::damage::step_base_end(world, id, tables, random, &mut events);
+        if base {
+            crate::base::tick(world, id, tables, random, &mut events);
         }
     }
     events
@@ -815,6 +808,7 @@ pub(crate) fn synthetic_tables() -> Tables {
         net: xeno_formats::fixtures::synthetic_net_tables(),
         weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
         walk: synthetic_walk(),
+        bases: xeno_formats::fixtures::synthetic_base_tables(),
         strings: xeno_formats::motion::Strings(b"\0AB\r\xc3\0".to_vec()),
     }
 }

@@ -3,6 +3,7 @@
 //! window, audio or clock: the host passes in the input of each retrace and calls
 //! [`Sim::tick`] once per retrace (`docs/game-loop.md`).
 
+pub mod base;
 pub mod clock;
 pub mod damage;
 pub mod editor;

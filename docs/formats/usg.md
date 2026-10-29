@@ -349,7 +349,7 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 | 0xfa | 1 | `clock` | Steps by one (`1000:b35f`, scout `cb37`); a humanoid's or scout's console light (+0x10a, +0x108) steps each time its low five bits are 0. S sets it to 0 (T-139). A scorpion keeps only bit 7, flipped by a console key (`1000:9a45`) |
 | 0xfb | 1 | `bump_wait` | The contact check (`1000:d464`, from the tick tables): while it counts down nothing is checked; otherwise every other object in the field (not its own base) whose distance less both radii is under 0x6400 in the distance routine's units (`1000:08ec`) is a contact: one ahead (`1000:45f2`) posts event 9, and one closer than both radii makes it bump: `BUMPED`, the speed reversed, the target speed 0, the kind's bump routine (`DS:0x7209`), 1 point of damage, and 4 here. A robot in its base clears `BUMPED` and is not checked |
 | 0xfc | 1 | | Nothing reads or writes it |
-| 0xfd | 1 | `equipment` | Bit 0 `ON_BATTERY` (the signal is 0x40 or under; firing and the devices then take `energy`); bits 1 and 2 entering and in the base (`1000:6439`..`6457`, T-115); bit 4 `DUMPING` (a scorpion's cargo dump, D: a relay every 10 steps of +0x11c); bit 5 the no-energy message was shown, and a scorpion's missile is out; bit 6 `CRIPPLED`; bit 7 a scorpion's relay deployer is damaged (a hit can set it; with it the relay count reads 0) |
+| 0xfd | 1 | `equipment` | Bit 0 `ON_BATTERY` (the signal is 0x40 or under; firing and the devices then take `energy`); bits 1 and 2 entering and in the base (set together when the base takes the robot in, `1000:6445`; bit 2 cleared by the launch, `6716`; bit 1 once the robot is out of the base's reach, `6439`; T-115, `docs/sim.md`, "The bases' phases"); bit 4 `DUMPING` (a scorpion's cargo dump, D: a relay every 10 steps of +0x11c); bit 5 the no-energy message was shown, and a scorpion's missile is out; bit 6 `CRIPPLED`; bit 7 a scorpion's relay deployer is damaged (a hit can set it; with it the relay count reads 0) |
 
 From +0xfe each kind has its own layout (`usg::Parts`). The frame bytes from +0xfe are
 the model's animations (`docs/render.md`, "Frame numbers"); the widget state is the
@@ -400,13 +400,23 @@ details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
 
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
+| 0x18 | 1 | `look` | Its look in the 3D view, the frame of its model; the end script raises it (T-055) |
+| 0x19 | 1 | | Phase 11's clock: +0x3b is added every 16 ticks; a carry counts +0xb5 (T-115, `docs/sim.md`, "The bases' phases") |
+| 0x1a | 2 | | Phase 12: the slot of the robot being repaired, 0xffff none (as in every stock file) |
+| 0x1c | 2 | | Phase 12's clock: +0x3a is added every 16 ticks; at 0x1800 a repair step is made |
+| 0x20 | 1 | `relays` | Relays in store (25 or 26 in stock files): phase 11 adds one every 600 carries of +0x19, up to 70; a scorpion's repair restocks from it |
+| 0x21 | 7 | `counts` | The count phase 5 makes every 256 ticks: relays in the field (deployed relays count for the human side), then humanoids, scorpions and scouts, each in the base and in the field; the situation room's status panel |
 | 0x2b | 1 | `losses` | The side's robots lost this mission (T-045) |
 | 0x2c | 1 | `kills` | Enemy robots destroyed this mission |
+| 0x2d | 1 | | The slider held in the situation room's power rows (1 to 6, 0 none): every tick the routine at `DS:0x5b0a` moves +0x39..+0x3b by it |
 | 0x2e | 2 | `damage` | Damage taken (`sim_damage_base`, `1000:62b7`). At 300 the base is destroyed (`GONE`) and the other side is told; below that its own side is told, at most once every 480 counts of `DS:0x374`. Playing a campaign scenario adds 0, 50, 100 or 150 to the player's base by the record's alert level (`sim_apply_scenario_alert`, table `DS:0x5a3f`) |
 | 0x30 | 2 | `end_step` | Once the base is destroyed, the mission's end steps it every 16 ticks with explosions; at 0x24 the mission ends, won if the alien base was destroyed (`sim_end_mission_with_result`, T-046, T-055: `docs/sim.md`, "The mission's end"). 0 in every stock file |
 | 0x34, 0x37 | 2, 1 | `typed`, `view_mode` | The orders' typing position and the main view's mode (0, 2, 4, 6, 8: O, S, M, R, C; T-044) |
-| 0x41 | 1 | `tick` | Steps by one every tick; its low four bits pick the tick's routine (`DS:0x5aea`): at 2 the alien base hands out paths (T-052, `docs/sim.md`, "Movement") |
+| 0x38 | 4 | | The power pool, then the three sliders: +0x39 the net's power (a base powers relays to +0x39 / 4), +0x3a repairs, +0x3b relays made. They add up to 0x100; stock 0, 0x80, 0x40, 0x40 |
+| 0x3c | 2 | | The situation room's selected unit (a pointer; the launch button's) |
+| 0x41 | 1 | `tick` | Steps by one every tick; its low four bits pick the tick's routine (`DS:0x5aea`): at 2 the alien base hands out paths (T-052, `docs/sim.md`, "Movement"); 5 the count, 9 the take-in, 11 relays made, 12 repairs, 13 the alien base's launch, 15 the end (T-115, `docs/sim.md`, "The bases' phases") |
 | 0x4d | 2 | | The side's unit list, set at load |
+| 0xb5 | 2 | | Phase 11: carries of +0x19 towards the next relay made (600) |
 | 0xbd | 0x43 | `view_state` | The situation room's widget state (T-043) |
 
 **Relays** (0x34 bytes, `usg::Relay`, T-107). Set up by `1000:cc2a`; a scorpion's

@@ -72,14 +72,14 @@ fn kind_number(kind: ObjectKind) -> usize {
     usize::from(u16::from(kind))
 }
 
-/// An object shots and blasts see (+0x16 bit 6, `IN_FIELD`).
+/// An object shots and blasts see (+0x16 bit 6, `IN_FIELD`): a robot unless it is in
+/// its base (the take-in and launch move both bits together, T-115).
 // shortcut: by kind, as the port keeps no flags (T-147): robots, bases, obstacles and
-// relays; the original takes it from a robot in its base (T-135) and from a folded
-// relay (T-148).
-fn in_field(kind: ObjectKind) -> bool {
-    RobotKind::of(kind).is_some()
+// relays; the original takes it from a folded relay (T-148).
+fn in_field(e: &Entity) -> bool {
+    (RobotKind::of(e.kind).is_some() && !crate::base::in_base(&e.damage))
         || matches!(
-            kind,
+            e.kind,
             ObjectKind::Base | ObjectKind::Relay | ObjectKind::Obstacle
         )
 }
@@ -337,7 +337,7 @@ fn find_hit(
     };
     world.iter().find_map(|(o, e)| {
         let over = o != id
-            && in_field(e.kind)
+            && in_field(e)
             && within(at.x, e.position.x, e.radius)
             && within(at.y, e.position.y, e.radius);
         let dz = z.wrapping_sub(height(e));
@@ -382,7 +382,7 @@ fn blast(
 ) {
     let hit: Vec<(EntityId, u8)> = world
         .iter()
-        .filter(|(_, e)| in_field(e.kind))
+        .filter(|(_, e)| in_field(e))
         .filter_map(|(o, e)| {
             let d = approx_distance3(e.position, height(e), at, z);
             let mid = (d >> 8) as u16;

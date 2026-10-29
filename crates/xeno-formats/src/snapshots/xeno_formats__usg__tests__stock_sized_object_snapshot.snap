@@ -19,7 +19,19 @@ expression: "&objects[..3]"
         status: 161,
         body: Base(
             Base {
-                unknown_18: 6a9e786e4f450980185dc406ec814c72a8b88b,
+                look: 106,
+                unknown_19: 9e786e4f450980,
+                relays: 24,
+                counts: [
+                    93,
+                    196,
+                    6,
+                    236,
+                    129,
+                    76,
+                    114,
+                ],
+                unknown_28: a8b88b,
                 losses: 248,
                 kills: 155,
                 unknown_2d: 116,

@@ -1,0 +1,9 @@
+---
+source: crates/xeno-formats/src/base.rs
+expression: bases
+---
+Bases {
+    count_mask: 240,
+    take_in_mask: 112,
+    reach: 58,
+}

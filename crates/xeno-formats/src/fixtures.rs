@@ -1564,6 +1564,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_sensing(image, ds);
     synthetic_net(image);
     synthetic_weapons(image, ds);
+    synthetic_bases(image, ds);
 }
 
 /// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
@@ -1997,6 +1998,42 @@ pub fn synthetic_file_dialogs(image: &mut [u8], ds: usize) -> Vec<usize> {
     ];
     put(set + 0x7c, &open.concat());
     vec![RUN + 1, ERROR + 0xc]
+}
+
+/// Writes a made-up base tick (`crate::base`): the phase table at `DS:0x5aea`, the
+/// count (phase 5) every 256 ticks and the take-in (phase 9) every 128 within 0x3a,
+/// at their stock addresses.
+pub fn synthetic_bases(image: &mut [u8], ds: usize) {
+    use crate::base::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    put(
+        TICK_AT,
+        &[
+            0xfe, 0x45, 0x41, 0x8a, 0x5d, 0x41, 0x83, 0xe3, 0x0f, 0xd0, 0xe3, 0xff, 0x97, 0xea,
+            0x5a,
+        ],
+    );
+    put(
+        ds + 0x5aea + 2 * usize::from(COUNT_PHASE),
+        &0x6344u16.to_le_bytes(),
+    );
+    put(
+        ds + 0x5aea + 2 * usize::from(TAKE_IN_PHASE),
+        &0x63ddu16.to_le_bytes(),
+    );
+    put(
+        0x6344,
+        &[0xf6, 0x45, 0x41, 0xf0, 0x75, 0x4b, 0xc6, 0x45, 0x21],
+    );
+    put(0x63dd, &[0xf6, 0x45, 0x41, 0x70, 0x74, 0x01]);
+    put(0x63dd + 0x4b, &[0x8a, 0xc4, 0x8a, 0xe2, 0x3d, 0x3a, 0x00]);
+}
+
+/// The made-up numbers of [`synthetic_bases`].
+pub fn synthetic_base_tables() -> crate::base::Bases {
+    let mut image = vec![0; 0x2_0000];
+    synthetic_bases(&mut image, 0x1_0000);
+    crate::base::read_image(&image, 0x1_0000).expect("synthetic base tables")
 }
 
 #[cfg(test)]
