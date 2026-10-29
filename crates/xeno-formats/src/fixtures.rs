@@ -1467,6 +1467,47 @@ pub fn synthetic_damage(image: &mut [u8], ds: usize) {
     put(END_RADII_AT[0], &op(&[0xc7, 0x44, 0x14], 0x2800));
     put(END_RADII_AT[1], &op(&[0xc7, 0x44, 0x14], 0x4000));
     put(END_STEP_AT.0, &[END_STEP_AT.1, &[0x24]].concat());
+    // The damage totals: the power and the helm quartered from 100, then by kind the
+    // weapons and targeting at 10; a scorpion's deployer at 7 and +0xdc bit 3 at 1 (an
+    // `inc`); a scout's camera at 5; capped at 100, crippled at 50 / 40 / 40, destroyed
+    // at 70 / 35, 75 / 40, 55 / 30.
+    let weights: [&[(u16, u8, u8)]; 3] = [
+        &[(0xdc, 1, 10), (0xec, 1, 10)],
+        &[(0xfd, 0x80, 7), (0xdc, 8, 1)],
+        &[(0xf6, 1, 5)],
+    ];
+    let levels = [(50, [70, 35]), (40, [75, 40]), (40, [55, 30])];
+    for (kind, (weights, (crippled, destroyed))) in weights.into_iter().zip(levels).enumerate() {
+        // Away from the other fixtures' code (the stock routines' places are taken).
+        let routine = 0x2000 + 0x100 * kind;
+        put(TOTAL_AT[kind], &near_call(TOTAL_AT[kind], routine));
+        let mut code = vec![0x32, 0xd2];
+        for offset in [0x4e, 0x24] {
+            code.extend([0x8a, 0x45, offset, 0xf6, 0xd8, 0x04, 100]);
+            code.extend([0xd0, 0xe8, 0xd0, 0xe8, 0x02, 0xd0]);
+        }
+        for &(offset, bit, weight) in weights {
+            let [lo, hi] = offset.to_le_bytes();
+            code.extend([0xf6, 0x85, lo, hi, bit]);
+            match weight {
+                1 => code.extend([0x74, 0x02, 0xfe, 0xc2]),
+                w => code.extend([0x74, 0x03, 0x80, 0xc2, w]),
+            }
+        }
+        let mut tail = TAIL;
+        (tail[2], tail[6], tail[13]) = (100, 100, crippled);
+        (tail[41], tail[49]) = (destroyed[0], destroyed[1]);
+        code.extend(&tail[..54]);
+        let call = routine + code.len();
+        code.extend(near_call(call, DESTROY_ROBOT));
+        put(routine, &code);
+    }
+}
+
+/// A near `call` at `at` to `target`.
+fn near_call(at: usize, target: usize) -> [u8; 3] {
+    let [lo, hi] = (target as u16).wrapping_sub(at as u16 + 3).to_le_bytes();
+    [0xe8, lo, hi]
 }
 
 /// The tables [`synthetic_damage`] writes, read back.
