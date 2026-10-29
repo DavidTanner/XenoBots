@@ -267,6 +267,40 @@ pub fn shift(tables: &Tables, kind: ObjectKind, m: &mut Movement, up: bool) -> b
     true
 }
 
+/// Robot `id` selects `weapon` (F5, F6, F9 and the scripts' 0x7b and 0x7c: the kinds'
+/// routines through `cs:0xd13c`): with a change, the kind's message to its panel and
+/// the sound for it (`Tables::weapon_keys`). `weapons` is its damaged bits (+0xdc).
+pub fn select_weapon(
+    tables: &Tables,
+    kind: ObjectKind,
+    weapons: u8,
+    id: EntityId,
+    m: &mut Movement,
+    weapon: u8,
+    events: &mut Vec<Event>,
+) {
+    if weapon == m.weapon {
+        return;
+    }
+    m.weapon = weapon;
+    let w = &tables.weapon_keys;
+    let k = usize::from(kind == ObjectKind::Scorpion) + 2 * usize::from(kind == ObjectKind::Scout);
+    let damaged = w.scorpion_bits.get(usize::from(weapon));
+    // shortcut: the scorpion's weapon counts (+0x120, +0x122) are not kept until
+    // T-114, so its "empty" message is never posted.
+    let messages = match damaged {
+        Some(&bit) if k == 1 && weapons & bit != 0 => &w.scorpion_damaged,
+        _ => &w.selected[k],
+    };
+    if let Some(&text) = messages.get(usize::from(weapon)) {
+        m.panel.post(text);
+    }
+    events.push(Event::Sound {
+        event: w.sound,
+        only_for: Some(id),
+    });
+}
+
 /// The kind's bounce routine (`DS:0x7209`; the hill bounce, the stop opcode 0x53 and
 /// the `.` key): a humanoid's or scout's gear becomes the first whose speed is at
 /// least the speed asked for (the top gear past them all). A scorpion's does nothing.

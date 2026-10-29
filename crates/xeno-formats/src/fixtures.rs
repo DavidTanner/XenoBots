@@ -1560,7 +1560,9 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
 /// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320) and the
 /// lock warning's decay after it; scanning ranges 0x500, 0x600, 0x700 and locking
 /// ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`); the lock's messages 0x40 to
-/// 0x49 in `MESSAGES_AT`'s order and its sound event 26.
+/// 0x49 in `MESSAGES_AT`'s order and its sound event 26; weapons by kind needing
+/// drives 10 and 22 (the scorpion's first with all of bits 3 damaged); the
+/// worked-out point (1.0000 + 2/65536, -1/65536) at `DS:0x9770`.
 pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
     use crate::sensing::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -1590,6 +1592,31 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
         put(at, &op(&[0xbe], 0x40 + i as u16));
     }
     put(LOCK_SOUND_AT, &op(&[0xb8], 52));
+    // Weapons: humanoid 0, 1 needing 10 and 22 (bits 1, 2); scorpion 0 taking all of
+    // bits 3, then bit 4; scout like the humanoid. Tables at 0xa2e0, routines 0xa300 up.
+    put(DRIVE_CHECK.0, DRIVE_CHECK.1);
+    for (w, at) in WEAPON_STATE_AT.into_iter().enumerate() {
+        let table = 0xa2e0 + 8 * w as u16;
+        put(at, &op(&[0x2e, 0xff, 0x97], table));
+        for kind in 0..3 {
+            let r = 0xa300 + 0x20 * (2 * kind + w) as u16;
+            put(usize::from(table) + 2 * kind, &r.to_le_bytes());
+            let call = (DRIVE_CHECK.0 as u16).wrapping_sub(r + 10);
+            let drive = if w == 0 { 10 } else { 22 };
+            let head = [0xb0, w as u8, 0x32, 0xe4, 0x50, 0xb0, drive, 0xe8];
+            put(usize::from(r), &head);
+            put(usize::from(r) + 8, &call.to_le_bytes());
+            put(usize::from(r) + 10, &[0x58, 0x73, 0x03, 0x80, 0xcc, 0x20]);
+            let test = match (kind, w) {
+                (1, 0) => vec![0x8a, 0x85, 0xdc, 0x00, 0x24, 3, 0x3c, 3, 0x74, 3],
+                (1, _) => vec![0xf6, 0x85, 0xdc, 0x00, 4, 0x75, 3, 0x80, 0xcc, 1],
+                _ => vec![0xf6, 0x85, 0xdc, 0x00, 1 << w, 0x75, 3, 0x80, 0xcc, 1],
+            };
+            put(usize::from(r) + 16, &test);
+        }
+    }
+    put(POINT_AT.0, &op(POINT_AT.1, 0x9770));
+    put(ds + 0x9770, &[2, 0, 1, 0, 0xff, 0xff, 0xff, 0xff]);
 }
 
 /// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0xb180

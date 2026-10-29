@@ -378,5 +378,42 @@ fn warn(world: &mut World, id: EntityId) {
     }
 }
 
+/// The weapon state word of robot `id`'s weapon `w` (opcodes 0x78 to 0x7a, the kinds'
+/// routines through `1000:d0e9` and `d10d`): the weapon's number in the high byte;
+/// in the low, bit 0 present, 1 cooling down, 2 and 3 the target in the arc and in
+/// range (+0xec bits 2 and 1), 4 selected, 5 short of drive, 6 out of rounds.
+// shortcut: the cool-downs and the scorpion's rounds are T-114's, so a weapon is
+// never cooling down or out of rounds.
+pub fn weapon_state(world: &World, id: EntityId, w: usize, tables: &Tables) -> u16 {
+    let Some((kind, _, m)) = robot(world, id) else {
+        return 0;
+    };
+    let (Some(k), Some(Damage::Robot(c))) = (RobotKind::of(kind), world.get(id).map(|e| e.damage))
+    else {
+        return 0;
+    };
+    let weapon = tables.sensing.weapons[k.index()][w];
+    let hit = c.weapons & weapon.damaged;
+    let present = if weapon.all {
+        hit != weapon.damaged
+    } else {
+        hit == 0
+    };
+    let mut bits = u8::from(present);
+    if c.targeting & IN_ARC != 0 {
+        bits |= 0x04;
+    }
+    if c.targeting & IN_RANGE != 0 {
+        bits |= 0x08;
+    }
+    if usize::from(m.weapon) == w {
+        bits |= 0x10;
+    }
+    if weapon.drive > m.drive {
+        bits |= 0x20;
+    }
+    u16::from(weapon.number) << 8 | u16::from(bits)
+}
+
 #[cfg(test)]
 mod tests;

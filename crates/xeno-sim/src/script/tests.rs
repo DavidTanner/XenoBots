@@ -421,3 +421,92 @@ fn steering_for_the_nearest_enemy_sets_the_carry_with_none() {
     assert_eq!(m(&world).script.flags & CARRY, 0);
     assert_eq!(m(&world).target_heading, 0xc000);
 }
+
+#[test]
+fn the_worked_out_point_follows_the_goal_object_with_its_offset() {
+    // Work the point out, push its distance, compare it with 2 units, steer to it,
+    // steer to it as goal bit 4. Halt.
+    let (mut world, tables) = setup(&[0x66, 0x6d, 0x67, 0x00, 0x02, 0x68, 0x6e, 0x0a]);
+    // The goal object: the base at (0, 0), the offset (13, 10): the point is (13, 10).
+    if let Some(m) = movement(&mut world, EntityId(1)) {
+        (m.goal, m.goal_object, m.destination) = (0x01, 0, at(13, 10));
+    }
+    steps(&mut world, &tables, 2);
+    assert_eq!(world.point, at(13, 10));
+    assert_eq!(top(&m(&world), true), 0x300);
+    steps(&mut world, &tables, 1);
+    assert_eq!(
+        m(&world).script.flags & (CARRY | ZERO),
+        0,
+        "3 units is past 2"
+    );
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).target_heading, 0x4000);
+    movement(&mut world, EntityId(1)).unwrap().target_heading = 0;
+    steps(&mut world, &tables, 1);
+    assert_eq!((m(&world).target_heading, m(&world).goal), (0x4000, 0x01));
+    // With no goal object every word is 0xffff: a point just off (0, 0).
+    let (mut world, tables) = setup(&[0x66, 0x0a]);
+    movement(&mut world, EntityId(1)).unwrap().goal_object = 0xffff;
+    steps(&mut world, &tables, 1);
+    assert_eq!(
+        world.point,
+        Position {
+            x: Fixed(-1),
+            y: Fixed(-1)
+        }
+    );
+}
+
+#[test]
+fn distance_and_steering_read_the_goal_bits_their_own_ways() {
+    // With no bit the distance is to the base and the steering is nothing; with bit 2
+    // the distance is to the destination and the steering to the base.
+    let (mut world, tables) = setup(&[0x5e, 0x5f, 0x0a]);
+    if let Some(m) = movement(&mut world, EntityId(1)) {
+        (m.goal, m.target_heading) = (0, 0x1234);
+    }
+    steps(&mut world, &tables, 2);
+    assert_eq!(top(&m(&world), true), 0xf00, "max + min / 2 to (0, 0)");
+    assert_eq!(m(&world).target_heading, 0x1234);
+    let (mut world, tables) = setup(&[0x5e, 0x5f, 0x0a]);
+    movement(&mut world, EntityId(1)).unwrap().goal = 0x04;
+    steps(&mut world, &tables, 2);
+    assert_eq!(top(&m(&world), true), 0xa00, "to (10, 20)");
+    assert_eq!(
+        m(&world).target_heading,
+        bearing(&tables.atan, at(10, 10), at(0, 0))
+    );
+    // An object goal with no object is dropped after the next opcode.
+    let (mut world, tables) = setup(&[0x50, 0x0a]);
+    if let Some(m) = movement(&mut world, EntityId(1)) {
+        (m.goal, m.goal_object) = (0x01, 0xffff);
+    }
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).goal, 0);
+}
+
+#[test]
+fn the_weapon_state_opcodes_read_damage_drive_and_selection() {
+    // Usable? Push the first weapon's word, the second's, select the second. Halt.
+    let (mut world, tables) = setup(&[0x78, 0x79, 0x7a, 0x7c, 0x0a]);
+    movement(&mut world, EntityId(1)).unwrap().drive = 20;
+    steps(&mut world, &tables, 16);
+    assert_eq!(m(&world).script.flags & CARRY, 0, "the first needs 10");
+    steps(&mut world, &tables, 2);
+    // Number 0, present and selected; number 1, present and short of drive (22).
+    assert_eq!(top(&m(&world), true), 0x0121);
+    let s = m(&world).script;
+    let below = usize::from(s.sp) + 2;
+    assert_eq!(s.stack[below..below + 2], [0x11, 0x00]);
+    let events = steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).weapon, 1);
+    assert_eq!(events.len(), 1, "the selection's sound");
+    // Both damaged: not usable.
+    let (mut world, tables) = setup(&[0x78, 0x0a]);
+    if let Damage::Robot(c) = &mut world.get_mut(EntityId(1)).unwrap().damage {
+        c.weapons = 3;
+    }
+    steps(&mut world, &tables, 1);
+    assert_eq!(m(&world).script.flags & CARRY, CARRY);
+}

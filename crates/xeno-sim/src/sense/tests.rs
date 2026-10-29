@@ -260,3 +260,64 @@ fn steering_for_the_nearest_enemy_takes_the_scanning_range() {
     world.remove(EntityId(2));
     assert!(!steer_to_nearest(&mut world, EntityId(1), &t));
 }
+
+/// Two stock robots in range find and close on each other: scen00a's first human
+/// humanoid (on ENGAGE) and the first alien robot (on PATROL), the alien put 7 units
+/// off, within both locking ranges, halfway between the bases, with the mission's
+/// other robots taken out.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_two_stock_robots_find_and_close_on_each_other() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(7), tables);
+    let world = &sim.world;
+    let human = *world
+        .units(Side::Human)
+        .iter()
+        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
+        .unwrap();
+    let alien = world.units(Side::Alien)[0];
+    // Only the two robots stay, halfway between the bases and 7 units apart.
+    let base = |side| world.get(world.base(side).unwrap()).unwrap().position;
+    let (h, a) = (base(Side::Human), base(Side::Alien));
+    let mid = Position {
+        x: Fixed(h.x.0 / 2 + a.x.0 / 2),
+        y: Fixed(h.y.0 / 2 + a.y.0 / 2),
+    };
+    let others: Vec<EntityId> = world
+        .iter()
+        .filter(|&(id, e)| id != human && id != alien && RobotKind::of(e.kind).is_some())
+        .map(|(id, _)| id)
+        .collect();
+    for id in others {
+        sim.world.remove(id);
+    }
+    sim.world.get_mut(human).unwrap().position = mid;
+    sim.world.get_mut(alien).unwrap().position = Position {
+        x: Fixed(mid.x.0 + 7 * 0x10000),
+        y: mid.y,
+    };
+    let apart = |sim: &crate::Sim| {
+        let (a, b) = (sim.world.get(human), sim.world.get(alien));
+        true_distance(a.unwrap().position, b.unwrap().position) >> 8
+    };
+    // ENGAGE locks at once and drives at high speed; the alien's scan finds the human
+    // within 256 ticks and event 1 runs ENGAGING. Within two minutes both hold each
+    // other as targets and stand under 2 units apart, where ENGAGING stops.
+    for _ in 0..70 * 120 {
+        _ = sim.tick(&[]);
+    }
+    assert_eq!(m(&sim.world, human.0).target, Some(alien));
+    assert_eq!(m(&sim.world, alien.0).target, Some(human));
+    assert!(m(&sim.world, alien.0).contacts > 0);
+    assert!(apart(&sim) < 0x1f4, "{:#x}", apart(&sim));
+}

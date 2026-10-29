@@ -109,8 +109,10 @@ pub struct Movement {
     pub path_point: u8,
     /// +0x32: what it heads for (0x22 the destination).
     pub goal: u8,
-    /// +0x3c: where it heads.
+    /// +0x3c: where it heads, or its offset from its goal object.
     pub destination: Position,
+    /// +0x3a: the slot of the object it heads for (+0x32 bit 0), 0xffff none.
+    pub goal_object: u16,
     /// +0x51: the drive.
     pub drive: u8,
     /// A humanoid's (+0x10b) or scout's (+0x109) speed gear, twice an index into its
@@ -196,6 +198,7 @@ impl Movement {
             path: r.path,
             path_point: r.path_point,
             goal: r.goal,
+            goal_object: r.goal_object,
             destination: Position {
                 x: Fixed(r.destination.x),
                 y: Fixed(r.destination.y),
@@ -259,6 +262,7 @@ impl StateHash for State {
                 h.u16(m.target_speed as u16);
                 h.u16(m.target_heading);
                 h.bytes(&[m.path, m.path_point, m.goal]);
+                h.u16(m.goal_object);
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
@@ -416,6 +420,9 @@ pub struct World {
     /// `DS:0x7201`, `0x7203`: the arc and range the last lock's upkeep used, which a
     /// new lock also works its bits out with (`docs/sim.md`, "Sensing").
     pub lock_window: (u16, u16),
+    /// `DS:0x4da4`: the point the scripts work out from a goal object (opcode 0x66),
+    /// one for every robot.
+    pub point: Position,
     /// The call signs taken (`DS:0x72c5`, bit n for sign n): cleared when a
     /// scenario's objects are read (`scen_read_dcbs`), so only robots made since hold
     /// one. shortcut: a destroyed robot does not give its sign back (`1000:dfc9`) until
@@ -516,6 +523,7 @@ impl World {
             // shortcut: the original carries this from mission to mission (from the
             // image's value); a lock before any upkeep is rare and only its bits differ.
             lock_window: (0, 0),
+            point: Position::default(),
         }
     }
 
@@ -636,6 +644,8 @@ impl StateHash for World {
         h.u64(self.call_signs);
         h.u16(self.lock_window.0);
         h.u16(self.lock_window.1);
+        h.i32(self.point.x.0);
+        h.i32(self.point.y.0);
         let c = self.clock;
         for n in [c.hour, c.minute, c.second, c.tick] {
             h.u8(n);

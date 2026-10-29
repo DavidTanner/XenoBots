@@ -29,7 +29,7 @@ use hash::{StateHash, StateHasher};
 use input::{InputEvent, InputLog, Keys, Mouse};
 use motion::{Event, Tables};
 use orders::{Change, OrderBook};
-use xeno_formats::usg::{ObjectKind, Scenario};
+use xeno_formats::usg::Scenario;
 
 /// The simulation's whole state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +71,13 @@ impl Sim {
     pub fn load(scenario: &Scenario, random: Random, tables: Tables) -> Sim {
         let mut world = World::from_scenario(scenario);
         script::start_all(&mut world, scenario, &tables);
+        // shortcut: the original carries the worked-out point from mission to mission
+        // (from the image's value); every stock script works it out before using it.
+        let (x, y) = tables.sensing.point;
+        world.point = Position {
+            x: Fixed(x),
+            y: Fixed(y),
+        };
         Sim {
             world,
             tables: Some(tables),
@@ -231,26 +238,7 @@ impl Sim {
                     Pilot::Weapon(w) => w,
                     _ => m.weapon ^ 1,
                 };
-                if weapon != m.weapon {
-                    m.weapon = weapon;
-                    let w = &tables.weapon_keys;
-                    let k = usize::from(kind == ObjectKind::Scorpion)
-                        + 2 * usize::from(kind == ObjectKind::Scout);
-                    let damaged = w.scorpion_bits.get(usize::from(weapon));
-                    // shortcut: the scorpion's weapon counts (+0x120, +0x122) are not
-                    // kept until T-114, so its "empty" message is never posted.
-                    let messages = match damaged {
-                        Some(&bit) if k == 1 && weapons & bit != 0 => &w.scorpion_damaged,
-                        _ => &w.selected[k],
-                    };
-                    if let Some(&text) = messages.get(usize::from(weapon)) {
-                        m.panel.post(text);
-                    }
-                    events.push(Event::Sound {
-                        event: w.sound,
-                        only_for: Some(id),
-                    });
-                }
+                motion::select_weapon(tables, kind, weapons, id, m, weapon, &mut events);
             }
         }
         events
