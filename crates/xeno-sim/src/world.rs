@@ -96,7 +96,9 @@ pub enum State {
     },
     /// A shot in flight (`crate::shot`).
     Shot(crate::shot::Shot),
-    /// Relays, obstacles and objects without a known layout do nothing yet.
+    /// A relay (`crate::relay`).
+    Relay(crate::relay::Relay),
+    /// Obstacles and objects without a known layout do nothing.
     #[default]
     None,
 }
@@ -361,7 +363,8 @@ impl State {
                 counts: b.counts,
                 depot: Depot::of(b),
             },
-            _ => State::None,
+            Body::Relay(r) => State::Relay(crate::relay::Relay::of(r, object.flags)),
+            Body::Other(_) => State::None,
         }
     }
 }
@@ -452,6 +455,10 @@ impl StateHash for State {
                 }
                 h.bytes(&[s.damage, s.phase, s.frame]);
                 h.u16(s.target.map_or(0xffff, |t| t.0));
+            }
+            State::Relay(r) => {
+                h.u8(5);
+                r.hash(h);
             }
             State::None => h.u8(2),
         }

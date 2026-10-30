@@ -100,7 +100,7 @@ pub struct Bases {
 }
 
 /// The bytes at `at` match `shape` (hex bytes, `??` any), else an error naming `what`.
-fn shape(image: &[u8], at: usize, shape: &str, what: &str) -> Result<(), FormatError> {
+pub(crate) fn shape(image: &[u8], at: usize, shape: &str, what: &str) -> Result<(), FormatError> {
     let ok = shape.split(' ').enumerate().all(|(i, b)| {
         image
             .get(at + i)

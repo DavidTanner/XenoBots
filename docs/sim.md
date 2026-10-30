@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140, T-148)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -817,12 +817,117 @@ SPARSE, DENSE and PROBE NET and DEPLOYING run;
 `script`'s `real_assets_a_stock_scorpion_on_dense_net_lays_relays` shows scen00a's
 alien scorpion, the other robots taken out, lay at least five relays in 20 minutes,
 each in a DENSE NET cell of its own within 0.04 units of the cell's point. Shortcuts,
-each named in the code: a laid relay has no tick (T-148): its clock's random word is
-drawn and dropped, and it never rises, links or powers anything; the net state
+each named in the code: a laid relay had no tick until T-148 (below, "The relay's
+tick"); the net state
 +0x10a..+0x114 is kept for every kind (a humanoid or scout running a net opcode would
 overwrite its gear and light in the original; none is given one). The L, C and D keys
 and the cargo dump are T-149. Saves still write the scenario as loaded, so laid
 relays are not saved.
+
+## The relay's tick (T-148)
+
+A T-090 pass on `xeno.exe` read the relay's tick, its states, its look, its links and
+power, and the signal and drive a robot takes from the net. The numbers are read from
+the user's `xeno.exe` by `xeno_formats::relay` (`Motion::relays`).
+
+**The tick** (`sim_tick_relay`, `1000:ccd9`, from the object pass in slot order): the
+clock +0x1e steps by one; when its low four bits are then 0 the state's routine runs
+by +0x1f (`DS:0x6fc7`, a word each for states 0, 2, 4, 6 and 8), then the look. A new
+relay's clock is a random byte, so relays laid together do not run together.
+
+| State | Routine | What it does |
+|---|---|---|
+| 0 folded | `1000:cd25` | clears `IN_FIELD` and `RELAY_LINKED` (+0x16 `and 0xaf`), stage 0; rises (state 2) unless a scorpion is within 0x32 (`1000:f703`, below) |
+| 2 rising | `cd3d` | clears `RELAY_LINKED`, stage up one; at 3 up (state 4) |
+| 4 up | `cd50` | the links (`1000:cd88`, below), sets `IN_FIELD`, `RELAY_LINKED` only while +0x21 (the power) is not 0; folds (state 6) when a scorpion is within 0x32 |
+| 6 folding | `cd75` | clears `RELAY_LINKED`, stage down one; at 0 folded |
+| 8 | `cd24` | a bare `ret` |
+
+Nothing sets another state. The table's next word, `DS:0x6fd1`, starts the links'
+direction table, so a state 10 would run its first routine; odd states would jump into
+the middle of an address. A folded relay keeps its power, side and links as its last
+up run left them (only the flags are cleared).
+
+**The nearest test** (`1000:f703`, kind in `AX`, limit in `CX`): every slot of the 240,
+any side and state, of that kind, its distance from the relay (`1000:08ec`) under 256
+units, as 8.8; the carry is set when the nearest is under the limit. A robot in its base
+has its position's top bits flipped, so it is never near. The limit is 8.8, so 0x32 is
+about a fifth of a unit: a scorpion laying a relay stands on it, and the relay rises the
+16-tick run after the scorpion moves away.
+
+**The look** (`1000:ccf0`, after every state run, and when the relay is made): the
+colour +0x1d is 1 without `RELAY_LINKED`, else 0 on the human side and 2 on the alien
+(+0x16 bit 3); +0x19..=+0x1c all take `DS:0x6fbb[stage]` (3, 2, 1, 0 in the stock
+build: the model's look per stage); the model height +0x12 takes the word
+`DS:0x6fbf[stage]` (rising with the stage). A new relay's model height is stage 0's,
+set by the set-up's look.
+
+**The links** (`1000:cd88`, from the up state): only when the clock is 0, so once every
+256 ticks. First the side's base power (`2000:6978`): the human base's +0x39 (the net's
+power slider) shifted right twice, or the alien base's when the relay's side bit is set,
+into `DS:0x6fba`. The four links' state bytes are cleared. Then every slot of kind 4 or
+3 (relay or base) but the relay itself, its bearing and distance from the relay
+(`1000:0530`: the bearing from the other to the relay plus a half turn, so from the
+relay to it), under 256 units and within 0x640 (8.8: 6.25 units), is kept as the
+nearest of its quarter turn (the bearing's top two bits: 0 is +y to +x), strictly
+nearer replacing it (`1000:cf7e`..`cfab`, a routine each through `DS:0x6fd1`). Further
+than 256 units the original jumps back into its loop with two words still pushed (its
+counter and pointer trashed); no stock relay or base is that far from another.
+
+Then, with `AL` the relay's power side (+0x22) and `CL` 0, each quarter turn's nearest,
+in order 0 to 3:
+- a **base**: its side (1 human, 2 alien, by +0x16 bit 3) must match `AL` (or `AL` is 0,
+  and becomes it); then that link is 1 (fed) and the power offered is `DS:0x6fba`, the
+  base power of the relay's own side, not the base's;
+- a **relay**: its link the opposite way (`(n + 2) & 3`) must be 2 (open) and its +0x22
+  must match `AL` (or `AL` 0 becomes it); then the link is 1 and the power offered is
+  its +0x21;
+- the largest power offered goes to `CL`.
+
++0x22 takes `AL`; the side bit is cleared and set again if `AL` is 2 (so the relay
+changes sides with its power); +0x21 takes `CL - 1` (not below 0). Powered, every
+link not fed is opened (2); unpowered, +0x22 is cleared and the links stay 0. So power
+spreads one hop per 256 ticks from a base, falling by one a hop; a relay keeps the side
+of the first net it took until it loses power for a run. A link's other byte and word
+are never read.
+
+**The signal and drive** (`2000:8087`, from each robot kind's tick table at entry 3:
+humanoid `1000:b2fc`, scorpion `99f8`, scout `cad9`, so once every 16 ticks): the
+signal (`2000:7d16`) goes to +0x4f. It looks at every relay and base of the robot's
+side (+0x16 bit 3) with `RELAY_LINKED`, their distance (`1000:cfd8`, `1000:08ec`)
+under 256 units as 8.8: one within 0x578 gives 0xff at once; otherwise the **last**
+in slot order under 0x5b8 (not the nearest) is kept, and the signal is `-4 * (d -
+0x578)` as a byte (0xfc down to 4), or 0 with none. No base ever has `RELAY_LINKED`:
+nothing in play sets it on one and no stock base has it, so only relays carry the
+signal. Then over 0x40 the robot is off its battery (+0xfd bit 0 cleared) and +0x50
+gains one (to 0xff); at or under, `ON_BATTERY` is set. The drive +0x51 is the signal,
+or +0x50 on the battery, ANDed with `DS:0x70a5[power >> 4]` (+0x4e, 0 to 100: 0, 0x17,
+0x3f, 0x60, 0x7f, 0xf0, 0xff). After it, on passes (`DS:0x62c6`) with no bit of 0x1f0
+set (16 of every 512), +0x50 gains one more (to 0xff), whatever the signal; the tick
+also marks the console's power panel.
+
+What the drive does is already ported: no drive, no speed; at or under the weak level,
+half (`sim_limit_speed_by_drive_and_helm`, "Movement"); a weapon that needs more drive
+than the robot has does not fire (`sense`, opcodes 0x78 to 0x7c); on the battery,
+firing and the devices take energy (`1000:d1b0`, "Weapons and shots"). So a robot away
+from its net runs on its battery: it moves at full speed while +0x50 masked by its
+power is over the weak level, fires while it has energy, and recharges slowly (one a
+512 ticks, 16 at a time); on a powered net it recharges one every 16 ticks more.
+
+### The port (T-148)
+
+Part 1 (`t-148`): `xeno_formats::relay` reads the state mask, colours, looks, heights,
+top stage, the fold's kind and reach, the links' reach, the signal's reaches, the
+battery level, the drive masks, the recharge mask and each kind's signal entry, after
+checking every routine above. `xeno_sim::relay` keeps a relay's state
+(`State::Relay`: frames, clock, state, stage, power, side, links and its
+`IN_FIELD`/`RELAY_LINKED` flags), loaded from the file, hashed and packed into saves (a
+relay made in play gets the set-up's `TARGETABLE` and link words), and runs the tick:
+the states, the nearest scorpion, the look and the model height. A relay a scorpion lays
+is made with its clock, look and height (`net::make`); shots see a relay only while it
+is in the field. `xeno-app`'s 3D view draws a relay with its frames. The state hash
+changes. Shortcut: the up state does not run the links yet (part 2, `t-148-signal`),
+so a relay keeps the power it was loaded with.
 
 ## Damage (T-054)
 
@@ -1564,8 +1669,8 @@ one with the loader's resets applied, and saving and loading again changes no by
 no hash. `real_assets_stock_missions_save_and_load_back` does the same for every stock
 scenario after 4,500 ticks (fights, shots and relays in play), then runs both copies
 2,000 ticks more to the same hash. Shortcuts: the reference counts are the loaded ones
-(T-154); a relay, shot or explosion made in play has no set-up bytes beyond what the
-sim keeps (T-148).
+(T-154); a shot or explosion made in play has no bytes beyond what the sim keeps (a
+relay's are all kept since T-148).
 
 ## The mission clock (T-102)
 

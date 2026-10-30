@@ -722,6 +722,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             continue;
         };
         let (mut base, mut is_robot, mut gone, mut shot) = (false, false, false, false);
+        let mut relay = false;
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -734,7 +735,11 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             State::Base { .. } => base = true,
             state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
             State::Shot(_) => shot = true,
+            State::Relay(_) => relay = true,
             State::None => {}
+        }
+        if relay {
+            crate::relay::tick(world, id, tables);
         }
         if shot {
             crate::shot::tick(world, id, tables, random, &mut events);
@@ -867,6 +872,7 @@ pub(crate) fn synthetic_tables() -> Tables {
         damage: xeno_formats::fixtures::synthetic_damage_tables(),
         sensing: xeno_formats::fixtures::synthetic_sensing_tables(),
         net: xeno_formats::fixtures::synthetic_net_tables(),
+        relays: xeno_formats::fixtures::synthetic_relay_tables(),
         weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
         walk: synthetic_walk(),
         bases: xeno_formats::fixtures::synthetic_base_tables(),

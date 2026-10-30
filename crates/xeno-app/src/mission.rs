@@ -3236,6 +3236,7 @@ pub mod tests {
                 damage: xeno_formats::fixtures::synthetic_damage_tables(),
                 sensing: xeno_formats::fixtures::synthetic_sensing_tables(),
                 net: xeno_formats::fixtures::synthetic_net_tables(),
+                relays: xeno_formats::fixtures::synthetic_relay_tables(),
                 weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
                 bases: xeno_formats::fixtures::synthetic_base_tables(),
                 // Legs that never leave frame 0: no footsteps; heights with no bob.

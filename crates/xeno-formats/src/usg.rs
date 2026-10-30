@@ -382,8 +382,9 @@ pub struct Robot {
     pub stack: [u8; 10],
     /// +0x4e: power systems, 0 to 100; hits lower it.
     pub power: u8,
-    /// +0x4f: the net's signal, 0 to 0xff from the nearest linked relay of its side
-    /// (`2000:7d16`); at 0x40 or under the robot runs on `energy`.
+    /// +0x4f: the net's signal, 0 to 0xff from the linked relays of its side
+    /// (`2000:7d16`: full within reach of any, else from the last in slot order); at
+    /// 0x40 or under the robot runs on `energy`.
     pub signal: u8,
     /// +0x50: the battery, 0 to 0xff: recharged while the signal is good, drained by
     /// firing and the devices while it is not ([`Robot::ON_BATTERY`]).
