@@ -228,6 +228,76 @@ fn segments(value: u8) -> u16 {
     (v >> 1) >> 3
 }
 
+/// +0xec bits 1 and 2: in range, in the arc.
+pub const IN_RANGE: u8 = 0x02;
+pub const IN_ARC: u8 = 0x04;
+/// The target panels' immediates: after the distance `M`, after the bearing glyph
+/// 0x17, then a new line.
+const METRES: u8 = b'M';
+const DEGREE: u8 = 0x17;
+pub const NEW_LINE: u8 = 0x0c;
+
+/// A piece of text with its colour: where it starts (none: where the last left the
+/// cursor), the colour, what it says.
+pub type Coloured = (Option<(i32, i32)>, u8, Vec<u8>);
+
+/// Draws `lines` opaque on `background`.
+pub fn draw_lines(fb: &mut Framebuffer, font: &Font, background: u8, lines: Vec<Coloured>) {
+    let mut cursor = TextCursor::at(0, 0, 0);
+    cursor.background = background;
+    for (at, colour, text) in lines {
+        if let Some((x, y)) = at {
+            cursor.move_to(x, y);
+        }
+        cursor.colour = colour;
+        fb.draw_text(font, &mut cursor, &text, TextMode::Opaque);
+    }
+}
+
+/// A target panel's first part (`1000:a466`, `88b3`) from `at`: the target's name,
+/// its distance and its bearing, each in the warning colour while out of range or of
+/// the arc; without a target, the `no_target` lines.
+pub fn target_part(
+    robot: &Robot,
+    no_target: &[u8],
+    at: (i32, i32),
+    (colour, warning): (u8, u8),
+) -> Vec<Coloured> {
+    let warn = |bit: u8| {
+        if robot.targeting & bit == 0 {
+            warning
+        } else {
+            colour
+        }
+    };
+    match &robot.target {
+        Some(name) => {
+            let mut bearing = digits(crate::editor::degrees(robot.target_bearing), 3);
+            bearing.extend([DEGREE, NEW_LINE]);
+            vec![
+                (Some(at), colour, name.clone()),
+                (None, warn(IN_RANGE), distance(robot.target_distance)),
+                (None, warn(IN_ARC), bearing),
+            ]
+        }
+        None => vec![(Some(at), colour, no_target.to_vec())],
+    }
+}
+
+/// `02b7`'s five digits with leading zeros as spaces (`1000:0301`, the last kept),
+/// `M` and a new line.
+fn distance(value: u16) -> Vec<u8> {
+    let mut text = digits(value, 5);
+    for d in text.iter_mut().take(4) {
+        if *d != b'0' {
+            break;
+        }
+        *d = b' ';
+    }
+    text.extend([METRES, NEW_LINE]);
+    text
+}
+
 /// How often the tick table's entry 4 (humanoid `1000:b318`, scorpion `9a14`) ran in
 /// the `passes` object passes since the load: on each pass whose stepped +0x1a has
 /// `& 0x1e` = 8.
@@ -323,5 +393,11 @@ mod tests {
         // Loaded at 8: the 16th pass; an odd +0x1a counts the same.
         assert_eq!((blink(8, 1, 15), blink(9, 1, 16)), (1, 3));
         assert_eq!(blink(0, 0xff, 4), 1);
+    }
+
+    #[test]
+    fn distances_keep_their_last_digit() {
+        assert_eq!(distance(0), b"    0M\x0c");
+        assert_eq!(distance(1203), b" 1203M\x0c");
     }
 }

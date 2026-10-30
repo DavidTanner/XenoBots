@@ -2740,16 +2740,30 @@ impl Mission {
                 s::draw_gauge(fb, a, sprites, gauge);
             }
         }
+        s::draw_target(fb, font, con, &robot);
+        if let Some(a) = area(s::RELAYS_TYPE) {
+            s::draw_relays(fb, a, font, con, robot.relays);
+        }
+        for w in tables.widgets.iter().chain(&tables.nested) {
+            let Some(a) = w.area else { continue };
+            let n = self.widget_byte(slot, w).unwrap_or(0);
+            let held = self
+                .capture
+                .is_some_and(|(t, _)| t == Target::Instrument(*w));
+            s::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
+        }
     }
 
-    /// The second byte of `widget`'s state in robot `slot`'s widget state (+0x10c), as
-    /// loaded: a weapon button's weapon. The sim never changes it.
+    /// The second byte of `widget`'s state in robot `slot`'s widget state (humanoid
+    /// +0x10c, scorpion +0x127), as loaded: a weapon or drop button's number. The sim
+    /// never changes it.
     fn widget_byte(&self, slot: u16, widget: &views::Widget) -> Option<u8> {
-        let robot = self.loaded_robot(slot)?;
-        let usg::Parts::Humanoid(p) = &robot.parts else {
-            return None;
+        let widgets = match &self.loaded_robot(slot)?.parts {
+            usg::Parts::Humanoid(p) => &p.widgets.0[..],
+            usg::Parts::Scorpion(p) => &p.widgets.0[..],
+            usg::Parts::Scout(_) => return None,
         };
-        p.widgets.0.get(usize::from(widget.state) + 1).copied()
+        widgets.get(usize::from(widget.state) + 1).copied()
     }
 
     /// Robot `slot` as the scenario loaded it.
@@ -5012,6 +5026,22 @@ pub mod tests {
             };
             assert_eq!(blinks(&mut m, 0), 1, "{name}");
             assert!(blinks(&mut m, 0xff) > 2, "{name}: the light never blinks");
+            // The target panel in 0x7a on 0; the relay panel's text in 0x77, which
+            // changes with the count.
+            let shown = draw(&m);
+            let count = |fb, a, c| pixels(fb, a).iter().filter(|&&p| p == c).count();
+            assert!(count(&shown, area(0xd0), 0x7a) > 100, "{name}");
+            let relays = area(s::RELAYS_TYPE);
+            assert!(count(&before, relays, 0x77) > 20, "{name}");
+            assert_ne!(pixels(&before, relays), pixels(&after, relays), "{name}");
+            // The drop buttons are numbered 0 to 3, the weapon buttons 0 and 1.
+            let numbers = |kind| {
+                let w = tables.all(kind);
+                w.map(|w| m.widget_byte(robot, w).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(numbers(s::DROP_TYPE), [0, 1, 2, 3], "{name}");
+            assert_eq!(numbers(s::WEAPON_TYPE), [0, 1], "{name}");
         }
     }
 
