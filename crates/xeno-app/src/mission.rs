@@ -565,6 +565,10 @@ pub struct Mission {
     unit_pressed: bool,
     /// The situation room's buttons' shared pressed look (base +0x40).
     button_look: bool,
+    /// The humanoid console's buttons' look (+0x22 bits 3 and 7).
+    // shortcut: one for every console, put back when a view opens; the original keeps
+    // +0x22 in each robot.
+    look: crate::humancon::Look,
     /// The briefing (`ORDR`), the main view's mode (base +0x37) and how many of the
     /// briefing's bytes are typed (+0x34).
     orders: Vec<u8>,
@@ -666,6 +670,7 @@ impl Mission {
             panel_swap: false,
             unit_pressed: false,
             button_look: false,
+            look: crate::humancon::Look::default(),
             orders: Vec::new(),
             mode: ORDERS_MODE,
             typed: 0,
@@ -860,6 +865,7 @@ impl Mission {
     fn reset_looks(&mut self) {
         self.panel_pressed = false;
         self.unit_pressed = false;
+        self.look = crate::humancon::Look::default();
         self.capture = None;
         // A new view has drawn no frame yet: nothing is under the pointer.
         (self.goal_press, self.region) = (false, None);
@@ -2067,12 +2073,12 @@ impl Mission {
                 continue;
             }
             // The status view (S) is T-126; the consoles' other displays and
-            // instruments T-130 to T-132 and T-134.
+            // instruments T-166, T-131, T-132 and T-134.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-126",
                 (_, 255) => "T-101",
                 (_, SECOND_DISPLAY) => "T-134",
-                (View::Humanoid, _) => "T-130",
+                (View::Humanoid, _) => "T-166",
                 (View::Scorpion, _) => "T-131",
                 _ => "T-132",
             };
@@ -2566,7 +2572,7 @@ impl Mission {
         ) else {
             return;
         };
-        let Some(robot) = self.instruments(slot) else {
+        let Some(robot) = self.instruments(slot, room, con) else {
             return;
         };
         let tables = &assets.views.humanoid;
@@ -2595,30 +2601,87 @@ impl Mission {
         if let Some(a) = area(h::GEAR_TYPE) {
             h::draw_gear(fb, a, sprites, robot.gear);
         }
+        h::draw_target(fb, font, con, &robot);
+        if let Some(a) = area(h::STATUS_TYPE) {
+            let colours = assets.views.message_panel.colours[RobotKind::Humanoid.index()];
+            h::draw_status(fb, a, font, con, colours, &robot);
+        }
+        let widgets = tables.widgets.iter().chain(&tables.nested);
+        for w in widgets {
+            let Some(a) = w.area else { continue };
+            let weapon = self.widget_byte(slot, w).unwrap_or(0);
+            h::draw_button(fb, sprites, con, (w.kind, a, weapon), &robot, self.look);
+        }
+    }
+
+    /// The second byte of `widget`'s state in robot `slot`'s widget state (+0x10c), as
+    /// loaded: a weapon button's weapon. The sim never changes it.
+    fn widget_byte(&self, slot: u16, widget: &views::Widget) -> Option<u8> {
+        let robot = self.loaded_robot(slot)?;
+        let usg::Parts::Humanoid(p) = &robot.parts else {
+            return None;
+        };
+        p.widgets.0.get(usize::from(widget.state) + 1).copied()
+    }
+
+    /// Robot `slot` as the scenario loaded it.
+    fn loaded_robot(&self, slot: u16) -> Option<&usg::Robot> {
+        self.scenario
+            .iter()
+            .flat_map(|s| s.objects.iter().flatten())
+            .filter(|o| o.slot == slot)
+            .find_map(|o| o.robot())
     }
 
     /// Robot `slot` as its console's instruments read it.
-    fn instruments(&self, slot: u16) -> Option<crate::humancon::Robot> {
+    fn instruments(
+        &self,
+        slot: u16,
+        room: &SitRoom,
+        con: &HumanCon,
+    ) -> Option<crate::humancon::Robot> {
+        use crate::humancon as h;
         let world = self.world();
         let e = world.get(EntityId(slot))?;
         let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
             return None;
         };
-        // shortcut: the signal (+0x4f) is the scenario's as loaded (T-148), and +0xee
-        // is worked out from the passes since the load (`humancon::blink`, T-167).
-        let loaded = self
-            .scenario
-            .iter()
-            .flat_map(|s| s.objects.iter().flatten())
-            .filter(|o| o.slot == slot)
-            .find_map(|o| o.robot());
-        let (signal, blink) = loaded.map_or((0, 0), |r| {
+        // shortcut: the signal (+0x4f), the cloaks (+0xe0) and the ECM's charges (+0xde)
+        // are the scenario's as loaded (T-148, T-136); +0xee and the status page are
+        // worked out from the passes since the load (`humancon::blink`, `page`, T-167).
+        let loaded = self.loaded_robot(slot);
+        let passes = world.ticks;
+        let (signal, cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0, 0), |r| {
+            let light = match &r.parts {
+                usg::Parts::Humanoid(p) => p.light,
+                _ => 0,
+            };
             (
                 r.signal,
-                crate::humancon::blink(r.tick, r.blink, world.ticks),
+                r.cloaks,
+                r.ecm,
+                h::blink(r.tick, r.blink, passes),
+                h::page(r.tick, r.clock, light, passes),
             )
         });
-        Some(crate::humancon::Robot {
+        // `1fe6:7f38`: a robot's letters, `-` and its serial's last three digits; a
+        // base's name. shortcut: a robot's serial (+0x18) is the scenario's as loaded,
+        // and other kinds (never locked in the stock scenarios) get no name.
+        let target = m.target.and_then(|t| {
+            let name = match world.get(t)?.kind {
+                usg::ObjectKind::Base => con.base_name.to_vec(),
+                kind => {
+                    let index = RobotKind::of(kind)?.index();
+                    let mut name = room.detail.kind_letters[index].to_vec();
+                    name.push(b'-');
+                    let serial = self.loaded_robot(t.0).map_or(0, |r| r.serial);
+                    name.extend(panels::digits(serial & 0x7fff, 3));
+                    name
+                }
+            };
+            Some([name, vec![0x0c]].concat())
+        });
+        Some(h::Robot {
             heading: e.heading,
             speed: m.speed,
             gear: m.gear,
@@ -2627,6 +2690,23 @@ impl Mission {
             energy: m.guns.energy,
             locked_on: m.locked_on,
             blink,
+            target,
+            target_distance: m.target_distance,
+            target_bearing: m.target_bearing.wrapping_sub(e.heading),
+            targeting: c.targeting,
+            weapons: c.weapons,
+            cooldowns: m.guns.cooldown,
+            weapon: m.weapon,
+            power: c.power,
+            helm: c.helm,
+            systems: c.systems,
+            cloaks,
+            ecm,
+            program_drives: self
+                .book()
+                .get(slot)
+                .is_some_and(|r| r.orders.program_drives),
+            page,
         })
     }
 }
@@ -4646,6 +4726,21 @@ pub mod tests {
             assert!(
                 looks(&mut m, 0xff) > 2,
                 "{name}: the warning light never blinks"
+            );
+            // The target panel: the no-target lines and both weapons ready, in 0x57 on
+            // 0x68; the status panel filled in the message panel's colours.
+            let shown = draw(&m);
+            let target = area(0xa2);
+            let count = |a, c| pixels(&shown, a).iter().filter(|&&p| p == c).count();
+            assert!(
+                count(target, 0x57) > 100 && count(target, 0x68) > 100,
+                "{name}"
+            );
+            let [fill, text] = assets.views.message_panel.colours[0];
+            let status = area(crate::humancon::STATUS_TYPE);
+            assert!(
+                count(status, fill) > 500 && count(status, text) > 50,
+                "{name}"
             );
         }
     }
