@@ -191,7 +191,8 @@ pub fn draw_target(fb: &mut Framebuffer, font: &Font, con: &ScorpCon, robot: &Ro
 
 /// The target panel's texts in order, all opaque.
 fn target_lines(con: &ScorpCon, robot: &Robot) -> Vec<Coloured> {
-    let mut lines = crate::console::target_part(robot, &con.no_target, TARGET_AT, TARGET_COLOURS);
+    let texts = (&con.no_target[..], crate::console::METRES);
+    let mut lines = crate::console::target_part(robot, texts, TARGET_AT, TARGET_COLOURS);
     // `02b7` from its second digit: four digits, leading zeros kept.
     let rounds = if robot.weapons & BARRELS == BARRELS {
         con.no_rounds.clone()

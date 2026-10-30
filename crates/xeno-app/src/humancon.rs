@@ -7,10 +7,10 @@
 use xeno_formats::font::Font;
 use xeno_formats::humancon::HumanCon;
 use xeno_formats::maproom::Rect;
-use xeno_render::{BlitMode, Framebuffer, TextCursor, TextMode};
+use xeno_render::{BlitMode, Framebuffer, TextMode};
 
 use crate::console::{
-    Coloured, Look, NEW_LINE, NEXT, Robot, Sprites, draw_lines, sprite, target_part,
+    Coloured, Line, Look, NEXT, Robot, Sprites, count, draw_lines, sprite, target_part,
 };
 use crate::panels::digits;
 
@@ -133,7 +133,8 @@ pub fn draw_target(fb: &mut Framebuffer, font: &Font, con: &HumanCon, robot: &Ro
 /// The target panel's texts in order, all opaque.
 fn target_lines(con: &HumanCon, robot: &Robot) -> Vec<Coloured> {
     let colours = (TARGET_COLOUR, TARGET_WARNING);
-    let mut lines = target_part(robot, &con.no_target, TARGET_AT, colours);
+    let texts = (&con.no_target[..], crate::console::METRES);
+    let mut lines = target_part(robot, texts, TARGET_AT, colours);
     for (w, bit) in [0x01, 0x02].into_iter().enumerate() {
         let (colour, state) = if robot.weapons & bit != 0 {
             (TARGET_STATE, &con.damaged)
@@ -152,12 +153,6 @@ const STATUS_HEADING_AT: (i32, i32) = (0x113, 7);
 const STATUS_LEFT_AT: (i32, i32) = (0x12a, 0x13);
 const STATUS_RIGHT_AT: (i32, i32) = (0x12e, 0x13);
 const STATUS_COUNTS_AT: (i32, i32) = (0x12a, 0x25);
-/// What `0x71d1`'s bit-7 codes are drawn in: whatever the situation room left in the
-/// text state's second pair.
-// shortcut: the briefing's and status mode's 0x17 on 0 (`1fe6:700d`); after the log
-// mode (C) the original has 0xff on 0x10.
-const OUT_COLOURS: (u8, u8) = (0x17, 0);
-
 /// The status panel (`0xa8`): filled in the kind's message-panel colours, the page's
 /// heading and its lines.
 pub fn draw_status(
@@ -165,27 +160,11 @@ pub fn draw_status(
     area: Rect,
     font: &Font,
     con: &HumanCon,
-    [fill, colour]: [u8; 2],
+    colours: [u8; 2],
     robot: &Robot,
 ) {
-    crate::mission::fill(fb, area, fill);
-    let mut cursor = TextCursor::at(0, 0, colour);
-    (
-        cursor.background,
-        cursor.high_colour,
-        cursor.high_background,
-    ) = (fill, OUT_COLOURS.0, OUT_COLOURS.1);
-    for (at, text, mode) in status_lines(con, robot) {
-        if let Some((x, y)) = at {
-            cursor.move_to(x, y);
-        }
-        fb.draw_text(font, &mut cursor, &text, mode);
-    }
+    crate::console::draw_status(fb, area, font, colours, status_lines(con, robot));
 }
-
-/// A piece of text: where it starts (none: where the last left the cursor), what it
-/// says, how it is drawn.
-type Line = (Option<(i32, i32)>, Vec<u8>, TextMode);
 
 /// The status panel's page: its heading, then page 0 the percentages of life support
 /// (always 100), power and helm and the targeting computer's and communications'
@@ -194,13 +173,7 @@ type Line = (Option<(i32, i32)>, Vec<u8>, TextMode);
 fn status_lines(con: &HumanCon, robot: &Robot) -> Vec<Line> {
     use TextMode::{Opaque, Transparent};
     let page = usize::from(robot.page).min(con.pages.len() - 1);
-    let state = |broken: bool| {
-        if broken {
-            con.out.clone()
-        } else {
-            con.ok.clone()
-        }
-    };
+    let state = |broken| crate::console::state((&con.ok, &con.out), broken);
     let percent = crate::panels::percent;
     let mut lines = vec![(
         Some(STATUS_HEADING_AT),
@@ -235,26 +208,12 @@ fn status_lines(con: &HumanCon, robot: &Robot) -> Vec<Line> {
     if page == 1 {
         lines.push((
             Some(STATUS_COUNTS_AT),
-            count(con, robot.cloaks),
+            count(&con.out, robot.cloaks),
             Transparent,
         ));
-        lines.push((None, count(con, robot.ecm), Transparent));
+        lines.push((None, count(&con.out, robot.ecm), Transparent));
     }
     lines
-}
-
-/// `1000:de24`: none left is OUT; else the last two digits, a leading zero a space,
-/// and a new line.
-fn count(con: &HumanCon, n: u8) -> Vec<u8> {
-    if n == 0 {
-        return con.out.clone();
-    }
-    let mut text = digits(n.into(), 2);
-    if text[0] == b'0' {
-        text[0] = b' ';
-    }
-    text.push(NEW_LINE);
-    text
 }
 
 /// `1000:a30c` to `aa81`: the buttons' sprites and where each goes from its
