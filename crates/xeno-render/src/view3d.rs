@@ -17,6 +17,8 @@ use crate::{Framebuffer, LoadedModel, ModelScale, ModelTarget, Rect, model_facin
 /// The ground step's colour, and the sky's when there is no strip.
 pub const GROUND: u8 = 0x3f;
 pub const FLAT_SKY: u8 = 0x3e;
+/// The colour the pointer probe marks its pixel with (`1000:4092`).
+pub const PROBE: u8 = 0xff;
 
 /// A number in the game's floating-point format (`1000:0cd8` to `0e9d`): `mantissa *
 /// 2^exponent`, negated when `negative`.
@@ -417,6 +419,15 @@ impl Framebuffer {
     /// The main view's steps after the camera and the build: the ground, the sky,
     /// then each node far to near (`nodes` already sorted) with its model, by model
     /// number / 2 in `models`, at its facing (heading less bearing) and frames.
+    ///
+    /// With `probe`, a pixel of the buffer (the pointer less the view's top left), the
+    /// pointer probe (`docs/render.md`, "The pointer probe"): that pixel is set to
+    /// [`PROBE`] after the sky (`1000:4042`), and each node that changes it is noted
+    /// and the pixel set back (`1000:40bc`), so the object returned is the nearest
+    /// drawn over it. A terrain node sets the pixel back without noting itself
+    /// (`1000:4113` at the end of `1000:3595`), so an object behind a hill is still
+    /// named. The pixel stays [`PROBE`], as in the original's main view and camera
+    /// display.
     pub fn draw_view(
         &mut self,
         view: &View3d,
@@ -424,43 +435,70 @@ impl Framebuffer {
         nodes: &[RenderNode],
         models: &[Option<LoadedModel>],
         sky: Option<&Sky>,
-    ) {
+        probe: Option<(usize, usize)>,
+    ) -> Option<u16> {
         let size = self.surface();
         self.fill_ground();
         self.draw_sky(sky, camera.heading);
-        let clip = Rect::new(0, 0, size.width as u32, size.height as u32);
-        let buffer = (size.width as u16, size.height as u16);
-        let builtins = Builtins {
-            block: &view.box_program,
-            hill: &view.hill_program,
-        };
-        for node in nodes {
-            // Type 8 (`1000:3595`): the cone, then the centre in front.
-            if let Some(shape) = &node.shape {
-                let [x, y, _] = node.position;
-                let (_, depth) = camera.rotate(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
-                if in_cone(camera, node) && depth >= 0 {
-                    shape::draw(self, camera, node.position, shape, builtins);
-                }
-                continue;
-            }
-            let model = models
-                .get(usize::from(node.model / 2))
-                .and_then(Option::as_ref);
-            let animated = model.is_some_and(|m| m.facing(0).is_some_and(|(_, a)| !a.is_empty()));
-            let (Some(model), Some((anchor, scale))) =
-                (model, place(view, camera, node, animated, buffer))
-            else {
-                continue;
-            };
-            let target = ModelTarget {
-                clip,
-                anchor,
-                scale: ModelScale::new(scale),
-            };
-            let facing = model_facing(node.heading.wrapping_sub(node.bearing));
-            self.draw_model(model, facing, &node.frames, &target);
+        let probe = probe
+            .filter(|&(x, y)| x < size.width && y < size.height)
+            .map(|(x, y)| y * size.width + x);
+        if let Some(i) = probe {
+            self.pixels_mut()[i] = PROBE;
         }
+        let mut under = None;
+        for node in nodes {
+            self.draw_node(view, camera, node, models);
+            if let Some(i) = probe
+                && self.pixels()[i] != PROBE
+            {
+                self.pixels_mut()[i] = PROBE;
+                if node.shape.is_none() {
+                    under = Some(node.object);
+                }
+            }
+        }
+        under
+    }
+
+    fn draw_node(
+        &mut self,
+        view: &View3d,
+        camera: &Camera,
+        node: &RenderNode,
+        models: &[Option<LoadedModel>],
+    ) {
+        // Type 8 (`1000:3595`): the cone, then the centre in front.
+        if let Some(shape) = &node.shape {
+            let builtins = Builtins {
+                block: &view.box_program,
+                hill: &view.hill_program,
+            };
+            let [x, y, _] = node.position;
+            let (_, depth) = camera.rotate(x.wrapping_sub(camera.x), y.wrapping_sub(camera.y));
+            if in_cone(camera, node) && depth >= 0 {
+                shape::draw(self, camera, node.position, shape, builtins);
+            }
+            return;
+        }
+        let size = self.surface();
+        let buffer = (size.width as u16, size.height as u16);
+        let model = models
+            .get(usize::from(node.model / 2))
+            .and_then(Option::as_ref);
+        let animated = model.is_some_and(|m| m.facing(0).is_some_and(|(_, a)| !a.is_empty()));
+        let (Some(model), Some((anchor, scale))) =
+            (model, place(view, camera, node, animated, buffer))
+        else {
+            return;
+        };
+        let target = ModelTarget {
+            clip: Rect::new(0, 0, size.width as u32, size.height as u32),
+            anchor,
+            scale: ModelScale::new(scale),
+        };
+        let facing = model_facing(node.heading.wrapping_sub(node.bearing));
+        self.draw_model(model, facing, &node.frames, &target);
     }
 }
 
@@ -833,7 +871,7 @@ mod tests {
         near.distance = 0xe_6000;
         near.position[1] = 0xe_6000;
         let models = [Some(square())];
-        fb.draw_view(&v, &c, &[near.clone()], &models, None);
+        fb.draw_view(&v, &c, &[near.clone()], &models, None, None);
         let row = |fb: &Framebuffer, y: usize| fb.pixels()[y * 12..][..12].to_vec();
         assert_eq!(row(&fb, 0), [FLAT_SKY; 12]);
         // Anchored at the centre (6, 4), each unit 2 by 2.
@@ -844,8 +882,67 @@ mod tests {
         // Behind the camera, nothing.
         let mut behind = near;
         behind.position[1] = -behind.position[1];
-        fb.draw_view(&v, &c, &[behind], &models, None);
+        fb.draw_view(&v, &c, &[behind], &models, None, None);
         assert_eq!(row(&fb, 4), [GROUND; 12]);
+    }
+
+    /// The probe names the last (nearest) node drawn over its pixel, which keeps the
+    /// probe's colour; nothing over it, or off the buffer, names none.
+    #[test]
+    fn the_pointer_probe_names_the_nearest_object_drawn_over_it() {
+        let mut v = view();
+        v.model_sizes[0] = 0x2000;
+        let c = camera(0);
+        let mut far = node(0, 14, 14);
+        (far.object, far.distance, far.position[1]) = (5, 0xe_6000, 0xe_6000);
+        let near = RenderNode {
+            object: 7,
+            ..far.clone()
+        };
+        let models = [Some(square())];
+        let mut fb = Framebuffer::new(Size::new(12, 8));
+        let mut probe = |nodes: &[RenderNode], at| {
+            let under = fb.draw_view(&v, &c, nodes, &models, None, at);
+            (under, fb.pixels()[5 * 12 + 7])
+        };
+        assert_eq!(probe(&[far.clone(), near], Some((7, 5))), (Some(7), PROBE));
+        assert_eq!(probe(&[far.clone()], Some((7, 5))), (Some(5), PROBE));
+        assert_eq!(probe(&[far.clone()], Some((0, 0))).0, None);
+        // A hill over the pixel sets it back without naming itself.
+        let hill = RenderNode {
+            object: TERRAIN,
+            shape: Some(Shape {
+                radius: 0x1000,
+                diagonal: 0xaab,
+                height: 0x100,
+                program: vec![0x14, 0],
+                ..Shape::default()
+            }),
+            ..far.clone()
+        };
+        let mut fb = Framebuffer::new(Size::new(12, 8));
+        let under = fb.draw_view(
+            &v,
+            &c,
+            &[far.clone(), hill.clone()],
+            &models,
+            None,
+            Some((6, 5)),
+        );
+        assert_eq!((under, fb.pixels()[5 * 12 + 6]), (Some(5), PROBE));
+        assert_eq!(
+            Framebuffer::new(Size::new(12, 8)).draw_view(
+                &v,
+                &c,
+                &[hill],
+                &models,
+                None,
+                Some((6, 5))
+            ),
+            None
+        );
+        // Off the buffer: no mark.
+        assert_eq!(probe(&[far], Some((12, 5))), (None, 9));
     }
 
     #[test]
@@ -870,7 +967,7 @@ mod tests {
         };
         let colours = |c: &Camera, nodes: &[RenderNode]| {
             let mut fb = Framebuffer::new(Size::new(100, 100));
-            fb.draw_view(&v, c, nodes, &[], None);
+            fb.draw_view(&v, c, nodes, &[], None, None);
             let mut seen: Vec<u8> = fb.pixels().to_vec();
             seen.sort_unstable();
             seen.dedup();
@@ -953,7 +1050,7 @@ mod tests {
                         ..node
                     };
                     let mut fb = Framebuffer::new(Size::MODE_13H);
-                    fb.draw_view(&v, &c, &[node], &[], None);
+                    fb.draw_view(&v, &c, &[node], &[], None, None);
                     assert!(
                         fb.pixels().iter().any(|p| colours.contains(p)),
                         "{}: {f:?} from {tenths} tenths",

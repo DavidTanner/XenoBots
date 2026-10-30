@@ -225,11 +225,12 @@ impl Sim {
             Pilot::Fire => weapons::trigger(world, id, tables),
             Pilot::NextTarget => sense::next_target(world, id, tables, &mut events),
             Pilot::DropTarget => sense::drop_target(world, id, tables),
+            Pilot::Lock(target) => sense::lock(world, id, target, tables, &mut events),
             _ => {}
         }
         if matches!(
             key,
-            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget
+            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget | Pilot::Lock(_)
         ) {
             return events;
         }
@@ -255,7 +256,11 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
-            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget => {}
+            Pilot::Deploy
+            | Pilot::Fire
+            | Pilot::NextTarget
+            | Pilot::DropTarget
+            | Pilot::Lock(_) => {}
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -358,6 +363,9 @@ pub enum Pilot {
     /// dropped (`sense::drop_target`). Neither takes the pilot's seat.
     NextTarget,
     DropTarget,
+    /// A left release on an object in the console's views (`1000:d8a7`): that object
+    /// locked (`sense::lock`).
+    Lock(EntityId),
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input

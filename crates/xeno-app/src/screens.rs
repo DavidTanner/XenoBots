@@ -514,8 +514,8 @@ impl Screens {
             .and_then(|(_, p)| p.pixels.get(usize::from(at.1) * 320 + usize::from(at.0)))
             .copied()
             .unwrap_or(0);
-        // shortcut: the handlers test bit 0x2000 of the last key word, taken as Alt held
-        // (`DS:0x1bf1`'s writer is not traced); upgrade when T-133 traces it.
+        // The handlers test bit 0x2000 of the last key word: Alt held (the keyboard
+        // handler sets `DS:0x1bf1` bits 0x08, 0x10, 0x20 for Shift, Ctrl, Alt; T-133).
         let alt = key_word(ScanCode(0), &self.keys).0 & ALT != 0;
         let shape = self
             .mission
@@ -2367,6 +2367,7 @@ pub(crate) mod tests {
                     std::slice::from_ref(node),
                     &assets.models,
                     None,
+                    None,
                 );
                 let drawn = alone
                     .pixels()
@@ -2404,6 +2405,7 @@ pub(crate) mod tests {
                     &assets.motion,
                     std::slice::from_ref(hill),
                     &[],
+                    None,
                     None,
                 );
                 let facets = buffer
@@ -2512,5 +2514,116 @@ pub(crate) mod tests {
         assert_eq!(target(&screens), Some(alien));
         press(&mut screens, fb, 0x13);
         assert_eq!(target(&screens), None);
+    }
+
+    /// In the humanoid training (H), on the first unit's console (Tab, Space): an alien
+    /// robot moved 3 units ahead and pointed at in the 3D view is locked by a left
+    /// click; a friendly robot put there instead opens its console on a right click.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_click_on_the_view_locks_or_opens_the_robot_under_the_pointer() {
+        use xeno_formats::usg::{ObjectKind, Side};
+        use xeno_sim::input::MouseButton::{Left, Right};
+        use xeno_sim::{EntityId, State};
+        let Some(mut screens) = real_screens(Training) else {
+            return;
+        };
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        let press = |screens: &mut Screens, fb: &mut Framebuffer, code| {
+            screens.retrace(&[down(code)], fb);
+            screens.retrace(&[up(code)], fb);
+        };
+        (0..100).for_each(|_| screens.retrace([], fb));
+        press(&mut screens, fb, 0x23);
+        (0..100).for_each(|_| screens.retrace([], fb));
+        for code in [0x0f, 0x39] {
+            press(&mut screens, fb, code);
+        }
+        (0..10).for_each(|_| screens.retrace([], fb));
+        let mission::Viewed::Robot(slot) = screens.mission().viewed() else {
+            panic!("not on a console");
+        };
+        let id = EntityId(slot);
+        let picture = screens
+            .pictures
+            .iter()
+            .find(|(n, _)| Some(*n) == Mission(View::Humanoid).file())
+            .map(|(_, p)| p)
+            .unwrap();
+        let region: Vec<usize> = (0..64_000).filter(|&i| picture.pixels[i] == 255).collect();
+        // Puts every other robot far away and `other` 3 units ahead, and moves the
+        // pointer over the screen pixel nearest the middle of those it changes.
+        let point_at = |screens: &mut Screens, fb: &mut Framebuffer, other: EntityId| {
+            let sine = screens.mission_assets.motion.sine.clone();
+            let mut place = |screens: &mut Screens, ahead: i32| {
+                let world = screens.mission_mut().world_mut();
+                let e = world.get(id).unwrap();
+                let (at, heading) = (e.position, e.heading);
+                let ids: Vec<EntityId> = world.iter().map(|(i, _)| i).collect();
+                for (n, i) in ids.into_iter().enumerate() {
+                    if i != id && world.get(i).unwrap().kind != ObjectKind::Base {
+                        world.get_mut(i).unwrap().position.x.0 = (100 + n as i32) << 16;
+                    }
+                }
+                let step = |angle: u16| {
+                    let (s, one, negative) = xeno_sim::motion::sine(&sine, angle);
+                    let v = if one {
+                        ahead << 16
+                    } else {
+                        ahead * i32::from(s)
+                    };
+                    if negative { -v } else { v }
+                };
+                let to = world.get_mut(other).unwrap();
+                to.position.x.0 = at.x.0 + step(heading);
+                to.position.y.0 = at.y.0 + step(0x4000u16.wrapping_sub(heading));
+                screens.retrace([], fb);
+                fb.pixels().to_vec()
+            };
+            let away = place(screens, -50);
+            let there = place(screens, 3);
+            let drawn: Vec<usize> = region
+                .iter()
+                .copied()
+                .filter(|&i| away[i] != there[i])
+                .collect();
+            assert!(!drawn.is_empty(), "{other:?} not drawn");
+            let n = drawn.len();
+            let (cx, cy) = (
+                drawn.iter().map(|i| i % 320).sum::<usize>() / n,
+                drawn.iter().map(|i| i / 320).sum::<usize>() / n,
+            );
+            let i = *drawn
+                .iter()
+                .min_by_key(|&&i| (i % 320).abs_diff(cx) + (i / 320).abs_diff(cy))
+                .unwrap();
+            let (x, y) = ((i % 320) as u16, (i / 320) as u16);
+            screens.retrace(&[InputEvent::MouseMove { x, y }], fb);
+            screens.retrace([], fb);
+        };
+        let click = |screens: &mut Screens, fb: &mut Framebuffer, button| {
+            screens.retrace(&[InputEvent::MouseDown { button }], fb);
+            screens.retrace(&[InputEvent::MouseUp { button }], fb);
+        };
+        let target = |screens: &Screens| match screens.mission().world().get(id).map(|e| e.state) {
+            Some(State::Robot(m)) => m.target,
+            _ => None,
+        };
+        let alien = screens.mission().world().units(Side::Alien)[0];
+        point_at(&mut screens, fb, alien);
+        assert_eq!(target(&screens), None);
+        click(&mut screens, fb, Left);
+        assert_eq!(target(&screens), Some(alien));
+        let friend = *screens
+            .mission()
+            .world()
+            .units(Side::Human)
+            .iter()
+            .find(|&&u| u != id)
+            .expect("a second human robot");
+        point_at(&mut screens, fb, friend);
+        click(&mut screens, fb, Right);
+        (0..5).for_each(|_| screens.retrace([], fb));
+        assert_eq!(screens.mission().viewed(), mission::Viewed::Robot(friend.0));
     }
 }

@@ -418,14 +418,17 @@ Every caller in `xeno.exe`, read from Ghidra's listing of both code segments:
     `b68c` `0x6bc8`): 4, or 6 when the display mode (+0xef, bit 2 set while damaged)
     is exactly 2, the map, and the event's word at +2 has 0x2000. The posting
     routine (`1fe6:357c`) stores there the keyboard's last key word (`DS:0x1bf0`)
-    with the mouse buttons ORed into its high byte, so 0x2000 is presumably Alt, as
-    in the key words; the writer of the high byte, `DS:0x1bf1`, is not traced.
+    with the mouse buttons ORed into its high byte. The keyboard handler
+    (`1fe6:3d86` on, T-133) writes the high byte, `DS:0x1bf1`, on each scan code:
+    its bits 0x08, 0x10 and 0x20 are set while either Shift (scan codes 0x2a, 0x36),
+    either Ctrl (0x1d, plain or after 0xe0) or either Alt (0x38, plain or after 0xe0)
+    is down, so 0x2000 is Alt, as in the key words.
   - Its third display (colour 253; 0xaa `9fcc` `0x684a`, 0xd8 `8370` `0x6558`, 0x126
     `b76e` `0x6bd4`): 4.
 
   The consoles' handlers keep which region the pointer is over in `DS:0x6a7e`
   (humanoid; 1 the 3D view, 2 the second display, 3 the third), scorpion `0x65e9`,
-  scout `0x6e16`; their clicks are T-133. All three kinds use the same shapes. On the
+  scout `0x6e16`; their clicks are below, "Under the pointer (T-133)". All three kinds use the same shapes. On the
   stock pictures the last widget over a region is its own handler's for all but a few
   dozen pixels at the regions' edges (row 107 of the humanoid's second display, rows
   47 to 49 of the scorpion's 3D view), where another widget takes the move.
@@ -646,13 +649,50 @@ included) differs from the last (`DS:0x70ad`), it is kept, and event 28 plays if
 is set; otherwise `1000:eeb1` gives the event's voice silence, queued, so the noise
 finishes. Leaving the console (`1000:dac0`) does the same and sets `DS:0x70ad` to 0.
 
-**Under the pointer** (the mouse handlers `1000:9d83` for the main view and `9eea` for
-the second display, the others alike): a move over the region shows pointer shape 3 (4
-over the second display; 6 there in the map mode with the key flag 0x2000) and marks
-the view; a left release with the probe's object (`1000:41b7`, read after the frame)
-locks it as the target (`1000:d8a7`); a right release opens that object's console
-(`1000:7eac`). In the map mode with 0x2000 a left press sets +0x23 bit 2, which the next
-frame acts on (`1000:466b`, presumably moving the robot's destination; T-133).
+**Under the pointer (T-133).** The mouse handlers of the 3D view (humanoid
+`1000:9d83`, scorpion `8081`, scout `b540`) and of the second display (`9eea`, `828e`,
+`b68c`) are alike; with the humanoid's words:
+
+- A move (0x1) tests the point against the region (slot `0x5bc`): inside, pointer
+  shape 3 (the second display: 4, or 6 in the map mode with Alt held) and the region
+  flag `DS:0x6a7e` = 1 (2 for the second display); outside, or on leaving (0x400),
+  shape 0 and the flag 0. Under capture the moves keep coming here, so the flag says
+  whether the pointer was last over this handler's region.
+- Each frame, after the copy through the region, the probe's object is read
+  (`1000:41b7`, `docs/render.md`, "The pointer probe") into `DS:0x6a78` (3D view) or
+  `0x6a7a` (second display): 0 for none.
+- A left release (0x4) with the flag this handler's and an object: `1000:d8a7`, the
+  lock (`sim_lock_target`, `1000:d8af`) by the viewed robot (`DS:0x62f1`) with its
+  checks, messages and sound (`docs/sim.md`, "Sensing (T-112)").
+- A right release (0x10) with the flag and an object: `1000:7eac`. The object must be
+  in the human side's unit list (`DS:0x62f5`, 76 bytes); otherwise nothing. Then, with
+  unlock word 8 (`DS:0x1598` = 0xba17) and Ctrl in the event's word (0x1000), its view
+  opens; otherwise only when it is of the viewed robot's side (+0x16 bit 3,
+  `1000:d6d8`), and else a message (string `0x1a1f`) goes to the viewed robot's
+  panel. The view opens through `ui_open_view_of_object` (`1000:7ef2`), as Tab's; no
+  check that the robot is in its base.
+- **The map mode's press.** On the second display a left press (0x2) with Alt
+  (0x2000) while the display mode is exactly 2 sets +0x23 bit 2 (no region test);
+  a left release with Alt clears it again, and without Alt locks as above. The draw
+  handler, when the frame is done, runs `1000:466b` if the bit is set and clears it,
+  so one press acts once, with the probe of the frame then finished:
+  - Nothing under the pointer: the pointer becomes a world point
+    (`ui_map_pointer_to_world`, `1000:3fd3`, with the display's rectangle and map
+    camera) written into +0x3c (x, 16.16) and +0x40 (y); then `1000:46c7`: the old
+    object goal dropped (`sim_drop_object_goal`, `1000:473d`: only while +0x32 bit 0
+    is set, +0x32 = 0, +0x3a = 0xffff and its reference released), +0x32 = 2 (goal
+    bit 1, the destination), the message at string `0x267` to the robot's panel and
+    event 5 posted to it (`1000:4818`).
+  - An object: its slot (`1000:f656`, 0xffff when it has none) goes through
+    `1000:4685`: the old object goal dropped, +0x3a = the slot, a reference taken
+    (`f6a6`), +0x3c and +0x40 = the robot's position **less** the object's (the
+    offset the worked-out point adds back, `docs/sim.md`, "Object goals"), +0x32 = 1
+    (goal bit 0), the message at string `0x293` and event 5.
+  Both write +0x32 whole, so the target and worked-out point bits (3, 4) and bit 2
+  go. Nothing checks who drives.
+
+The scorpion's words are `DS:0x65e9` (flag) and `0x65e5` (second display's object),
+the scout's flag `0x6e16`.
 
 **In the port** (`xeno-app`'s `mission`): each robot's display (mode, zoom steps and pan)
 starts as its file has it and changes with V, T, M, =, -, keypad + and -; the camera
@@ -660,9 +700,18 @@ mode draws the 3D view from `scene::second_camera`, the map mode the situation r
 map (`mainview::draw_map` without its zoom label) in the kind's colours from
 `mainview::console_map`; the thermal and missile camera modes and a damaged device keep
 a "T-134" placeholder. Event 10 plays on a mode key; event 28 and its silence follow the
-noise check after each retrace and on leaving the console. Not ported (T-133, T-134): the
+noise check after each retrace and on leaving the console. Not ported (T-134): the
 overlays, the colour records, the remap, the static, the frame-skipping of the map, the
-target lock and the right click, the buttons and the zoom's name.
+buttons and the zoom's name.
+
+**In the port (T-133)**: `xeno_render`'s `draw_view` runs the probe at the pointer
+(kept by `Mission::hover`, which also has a console drawn again so the probe follows
+the pointer) and returns the nearest object drawn over it; the console keeps it per
+view (`Mission::probed`, the words above), and `pointer_shape` keeps the region flag.
+A left release on the 3D view locks the object through the sim (`Pilot::Lock`, which
+runs `sense::lock`); a right release opens its console if it is one of the player's
+robots (`Mission::view_robot`). Part 1 is the 3D view; the second display's handler
+and the map mode's press are part 2.
 
 ### The situation room's main view (T-103)
 

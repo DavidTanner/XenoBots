@@ -164,8 +164,9 @@ pub fn nodes(
     nodes
 }
 
-/// The view of robot `id` into `buffer` (the view's own, the region's size), or
-/// `false` with nothing drawn when the robot is not in the world.
+/// The view of robot `id` into `buffer` (the view's own, the region's size) with the
+/// pointer probe at `probe` (in the buffer), and the object under it; `None` with
+/// nothing drawn when the robot is not in the world.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     buffer: &mut Framebuffer,
@@ -176,15 +177,15 @@ pub fn draw(
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
-) -> bool {
-    let Some(camera) = camera(world, id, view, tables) else {
-        return false;
-    };
-    draw_from(buffer, world, &camera, view, tables, terrain, models, sky);
-    true
+    probe: Option<(usize, usize)>,
+) -> Option<Option<u16>> {
+    let camera = camera(world, id, view, tables)?;
+    Some(draw_from(
+        buffer, world, &camera, view, tables, terrain, models, sky, probe,
+    ))
 }
 
-/// The view from `camera` into `buffer`.
+/// The view from `camera` into `buffer`, and the object under `probe`.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_from(
     buffer: &mut Framebuffer,
@@ -195,9 +196,10 @@ pub fn draw_from(
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
     sky: Option<&Sky>,
-) {
+    probe: Option<(usize, usize)>,
+) -> Option<u16> {
     let nodes = nodes(world, view, camera, tables, terrain);
-    buffer.draw_view(view, camera, &nodes, models, sky);
+    buffer.draw_view(view, camera, &nodes, models, sky, probe)
 }
 
 /// Every model as `gfx_load_all_models` loads it (`docs/formats/mxx.md`, "Loading"),

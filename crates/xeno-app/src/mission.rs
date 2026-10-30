@@ -19,6 +19,7 @@
 //! from the user's `xeno.exe`, `msprite1.b@n` and `mgavideo.dvr`; what a key does is
 //! chosen by the original handler it calls.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -499,6 +500,8 @@ enum Target {
     Button(usize),
     /// A map control or mode button: its index among the view's nested widgets.
     Control(usize),
+    /// A console's 3D view (0) or second display (1).
+    Region(usize),
 }
 
 /// The mission's sim: running, with the run's random word, or parked without it.
@@ -544,6 +547,15 @@ pub struct Mission {
     mode: u8,
     typed: usize,
     capture: Option<(Target, MouseButton)>,
+    /// The pointer's last position (`DS:0x14bc`, `0x14ba`), where the views' frames
+    /// put the pointer probe.
+    pointer: Option<(u16, u16)>,
+    /// The console region the pointer last moved over (`DS:0x6a7e`, the humanoid's:
+    /// 0 the 3D view, 1 the second display, 2 the third), set with its shape.
+    region: Option<usize>,
+    /// The object under the pointer in the last frame of the 3D view and of the second
+    /// display (the humanoid's `DS:0x6a78`, `0x6a7a`, read by `1000:41b7`).
+    probed: Cell<[Option<u16>; 2]>,
     dirty: bool,
     /// The tint's last weight (`DS:0x7d4c`); none (0xff) restarts it.
     tint: Option<u8>,
@@ -624,6 +636,9 @@ impl Mission {
             mode: ORDERS_MODE,
             typed: 0,
             capture: None,
+            pointer: None,
+            region: None,
+            probed: Cell::default(),
             dirty: true,
             tint: None,
             map: MapState::default(),
@@ -1433,8 +1448,12 @@ impl Mission {
         true
     }
 
-    /// The pointer moved to `at`: in the terrain editor, the ground point under it.
+    /// The pointer moved to `at`: in the terrain editor, the ground point under it. A
+    /// console draws again, so its views probe the new position (the original draws
+    /// them continuously).
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
+        self.pointer = Some(at);
+        self.dirty |= matches!(self.viewed, Viewed::Robot(_));
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
             dialog.mouse_move(at, tables);
             return;
@@ -1643,8 +1662,15 @@ impl Mission {
     /// colour-255 pixels (slot `0x5bc`); a console's 3D view, second and third displays
     /// theirs over colours 255, 254 and 253, the second display's map mode with `alt`
     /// held its own. Anywhere else the arrow, as those handlers set it when the pointer
-    /// leaves them or their region.
-    pub fn pointer_shape(&self, assets: &Assets, (x, y): (u16, u16), colour: u8, alt: bool) -> u8 {
+    /// leaves them or their region. A console's handlers also note the region.
+    pub fn pointer_shape(
+        &mut self,
+        assets: &Assets,
+        (x, y): (u16, u16),
+        colour: u8,
+        alt: bool,
+    ) -> u8 {
+        self.region = None;
         if self.dialog.is_some() {
             return DIALOG_SHAPE;
         }
@@ -1673,7 +1699,10 @@ impl Mission {
                     return ARROW;
                 };
                 let regions = REGION_WIDGETS[robot.kind.index()];
-                match regions.iter().position(|&k| k == kind) {
+                let region = regions.iter().position(|&k| k == kind);
+                let colours = [255, SECOND_DISPLAY, THIRD_DISPLAY];
+                self.region = region.filter(|&r| colours[r] == colour);
+                match region {
                     Some(0) if colour == 255 => shapes.console[0],
                     Some(1) if colour == SECOND_DISPLAY => {
                         let map = self.display_mode(slot, assets) == MAP_DISPLAY;
@@ -1726,12 +1755,24 @@ impl Mission {
                 .position(|r| r.contains(x, y))
                 .map(Target::Roster);
         }
+        let regions = match self.viewed {
+            Viewed::Robot(slot) => self
+                .book()
+                .get(slot)
+                .map(|r| REGION_WIDGETS[r.kind.index()]),
+            Viewed::Base => None,
+        };
         [
             (CONSOLE_CORNER_TYPE, Target::Corner),
             (PROGRAM_PANEL_TYPE, Target::Panel),
             (UNIT_BUTTON_TYPE, Target::UnitButton),
         ]
         .into_iter()
+        .chain(
+            regions
+                .into_iter()
+                .flat_map(|r| [(r[0], Target::Region(0))]),
+        )
         .find_map(|(kind, target)| hit(kind).then_some(target))
     }
 
@@ -1763,7 +1804,7 @@ impl Mission {
                 let slot = self.robots().get(self.roster_top + row).copied();
                 self.select_unit(slot);
             }
-            Target::Roster(_) | Target::Corner => {}
+            Target::Roster(_) | Target::Corner | Target::Region(_) => {}
         }
         self.dirty = true;
     }
@@ -1817,6 +1858,23 @@ impl Mission {
                 Viewed::Robot(_) => Some(self.base()),
                 Viewed::Base => Some(Request::End),
             },
+            // A release over the view's region (`1000:9d83`, `9eea`) with an object
+            // under the pointer in the last frame: the left locks it (`1000:d8a7`), the
+            // right opens its console (`1000:7eac`), if it is one of the player's.
+            Target::Region(i) => {
+                let (Viewed::Robot(slot), true) = (self.viewed, self.region == Some(i)) else {
+                    return None;
+                };
+                let object = self.probed.get()[i]?;
+                if right {
+                    // shortcut: only the player's robots can be viewed, so `7eac`'s
+                    // message for another side's and its Ctrl developer case are not
+                    // ported; upgrade if the port lets the enemy's robots be viewed.
+                    return self.view_robot(object).map(Request::Show);
+                }
+                self.pilot(slot, Pilot::Lock(EntityId(object)));
+                None
+            }
             Target::Roster(_) if right => self.view_selected(),
             Target::Roster(_) => None,
             Target::Button(i) => {
@@ -1962,8 +2020,13 @@ impl Mission {
             .as_ref()
             .and_then(|s| s.terrain.as_ref())
             .map_or(&[][..], |t| &t.features);
+        // The pointer probe at the pointer less the region's top left (`1000:4042`).
+        let probe = self.pointer.and_then(|(x, y)| {
+            let x = usize::from(x).checked_sub(left)?;
+            Some((x, usize::from(y).checked_sub(top)?))
+        });
         let robot_view = |buffer: &mut Framebuffer, slot: u16| {
-            scene::draw(
+            let drawn = scene::draw(
                 buffer,
                 self.world(),
                 EntityId(slot),
@@ -1972,7 +2035,11 @@ impl Mission {
                 terrain,
                 &assets.models,
                 assets.skies.get(&self.file),
-            )
+                probe,
+            );
+            let [_, second] = self.probed.get();
+            self.probed.set([drawn.flatten(), second]);
+            drawn.is_some()
         };
         let mut buffer = Framebuffer::new(Size::new(width, height));
         let drawn = match (self.viewed, self.mode, &assets.sitroom) {
@@ -2082,6 +2149,7 @@ impl Mission {
                     terrain,
                     models,
                     sky,
+                    None,
                 );
             }
             Some(&MAP_VIEW) => {
@@ -3032,14 +3100,19 @@ pub mod tests {
         let mut m = mission(&assets);
         // The widgets of `test_assets`, and the main view: the main view or 3D view on
         // row 50, the second display on row 110, the third on row 140.
-        let shape = |m: &Mission, y, colour, alt| m.pointer_shape(&assets, (100, y), colour, alt);
+        let shape =
+            |m: &mut Mission, y, colour, alt| m.pointer_shape(&assets, (100, y), colour, alt);
         m.mode = ORDERS_MODE;
-        assert_eq!(shape(&m, 50, 255, false), 0);
+        assert_eq!(shape(&mut m, 50, 255, false), 0);
         m.mode = MAP_MODE;
-        assert_eq!(shape(&m, 50, 255, false), 3);
-        assert_eq!(shape(&m, 50, 254, false), 0, "only the main view's region");
+        assert_eq!(shape(&mut m, 50, 255, false), 3);
         assert_eq!(
-            shape(&m, 170, 255, false),
+            shape(&mut m, 50, 254, false),
+            0,
+            "only the main view's region"
+        );
+        assert_eq!(
+            shape(&mut m, 170, 255, false),
             0,
             "only in the main view's widget"
         );
@@ -3054,20 +3127,65 @@ pub mod tests {
             (140, 255),
             (170, 255),
         ]
-        .map(|(y, c)| shape(&m, y, c, true));
+        .map(|(y, c)| shape(&mut m, y, c, true));
         assert_eq!(
             shapes,
             [3, 4, 4, 0, 0, 0],
             "each widget tests its own colour"
         );
         assert_eq!(
-            shape(&m, 155, 253, false),
+            shape(&mut m, 155, 253, false),
             0,
             "the last widget takes the move"
         );
         m.set_display_mode(robot, MAP_DISPLAY);
-        assert_eq!(shape(&m, 110, 254, true), 6, "the map with Alt");
-        assert_eq!(shape(&m, 110, 254, false), 4);
+        assert_eq!(shape(&mut m, 110, 254, true), 6, "the map with Alt");
+        assert_eq!(shape(&mut m, 110, 254, false), 4);
+    }
+
+    /// A release over the 3D view's region with an object under the pointer in the
+    /// last frame: the left locks it, the right opens its console if it is the
+    /// player's. Off the region's colour, or with nothing probed, nothing.
+    #[test]
+    fn a_release_on_the_view_locks_or_opens_the_object_under_the_pointer() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        // The fixture's human humanoid (2) and scorpion (5), and an alien robot (7)
+        // moved a unit ahead of the humanoid, whose targeting computer is repaired.
+        let (robot, friend, enemy) = (2, 5, 7);
+        m.view_robot(robot).unwrap();
+        let world = m.world_mut();
+        if let Some(xeno_sim::Damage::Robot(c)) =
+            world.get_mut(EntityId(robot)).map(|e| &mut e.damage)
+        {
+            c.targeting = 0;
+        }
+        let mut at = world.get(EntityId(robot)).unwrap().position;
+        at.x.0 += 1 << 16;
+        world.get_mut(EntityId(enemy)).unwrap().position = at;
+        let target = |m: &Mission| match m.world().get(EntityId(robot)).map(|e| e.state) {
+            Some(State::Robot(r)) => r.target,
+            _ => None,
+        };
+        let left = MouseButton::Left;
+        m.probed.set([Some(enemy), None]);
+        m.pointer_shape(&assets, (100, 50), 254, false);
+        assert_eq!(click(&mut m, &assets, (100, 50), left), None);
+        assert_eq!(target(&m), None, "off the region's colour");
+        m.pointer_shape(&assets, (100, 50), 255, false);
+        m.probed.set([None, None]);
+        click(&mut m, &assets, (100, 50), left);
+        assert_eq!(target(&m), None, "nothing under the pointer");
+        m.probed.set([Some(enemy), None]);
+        click(&mut m, &assets, (100, 50), left);
+        assert_eq!(target(&m), Some(EntityId(enemy)));
+        // The right button on the enemy does nothing; on a friend, its console.
+        let right = MouseButton::Right;
+        assert_eq!(click(&mut m, &assets, (100, 50), right), None);
+        m.probed.set([Some(friend), None]);
+        let opened = click(&mut m, &assets, (100, 50), right);
+        assert_eq!(opened, Some(Request::Show(View::Scorpion)));
+        assert_eq!(m.viewed(), Viewed::Robot(friend));
     }
 
     #[test]

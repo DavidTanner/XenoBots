@@ -276,11 +276,52 @@ routine is the map table's types 0x1c and 0x20 (T-103).
    frames, drawn as `mxx.md` describes.
 
 `gfx_draw_model_sized` (type 6) swaps the node's size word into `DS:0x2316[model]`
-for the call and puts the old value back. After each node, the **pointer probe**
-(`1000:40bc`): if `DS:0x4c86` holds a buffer offset (not 0xffff) and the byte there is
-no longer 0xff, the node's object goes into `DS:0x4c84` and the byte is set back to
-0xff. So the probe ends up naming the nearest object drawn over that pixel; the
-console reads it after the frame (`1000:41b7`) for the scanner's lock (T-104).
+for the call and puts the old value back. After each node, the pointer probe
+(`1000:40bc`, below).
+
+## The pointer probe (T-133)
+
+Which object is under the pointer is read from the frame itself, one pixel of it:
+
+1. **Reset** (`gfx_start_view_frame`, `1000:296d`): `DS:0x4c84` (the object found) = 0,
+   `DS:0x4c86` (the probe's buffer offset) = 0xffff.
+2. **Arm** (`1000:4042`; the 3D views call it at the end of the sky step, `1000:2e19`
+   and `2e52`, the maps as the step `1000:403d` after the clear): the pointer's row
+   (`DS:0x14ba`) less the view rectangle's top (`DS:0x145a` +4) and its column
+   (`DS:0x14bc`) less the left (+6), as unsigned words, must be under the buffer's
+   height and width (the buffer descriptor `DS:0x146e` +0xa, +0xc); otherwise nothing
+   is armed. Their offsets from the buffer's middle (row less half the height, column
+   less half the width, halves rounded down) go to `DS:0x4c80` and `0x4c82` for the
+   maps' dots. The pixel at that row and column is kept in `DS:0x4c88` and set to
+   0xff, and its offset goes to `DS:0x4c86`. (When the buffer is the screen,
+   `DS:0x632`, the mouse pointer is hidden around the write.)
+3. **After each node** of the 3D list (`gfx_draw_render_list` calls `1000:40bc` after
+   every node, drawn or culled): if the probe is armed and its pixel is no longer
+   0xff, the new pixel goes to `DS:0x4c88`, the pixel is set back to 0xff and the
+   node's object word (+0x02) to `DS:0x4c84`. A terrain node (type 8, `1000:3595`)
+   calls `1000:4113` itself after drawing its shape, which sets the pixel back to 0xff
+   without noting anything, so a hill drawn over the pixel leaves the object behind it
+   named. Far to near, the probe ends up naming the **nearest object drawn over that
+   pixel**, hills not counting; a model's own colour 0xff would go unseen.
+4. **End**: lists 8 and 0xa (the missile and thermal cameras) run `1000:4164`, which
+   puts the kept pixel back if the probe's pixel is still 0xff and disarms it. The
+   main view's (4) and the camera display's (6) lists do not, so their frame keeps a
+   colour-0xff pixel under the pointer's hot spot.
+5. **Read** (`1000:41b7`): `DS:0x4c84`, carry set when it is 0 (none). Each console
+   reads it after copying its frame through its region: the humanoid's main view into
+   `DS:0x6a78`, its second display into `DS:0x6a7a` (scorpion `0x65e5` for the
+   second display; scout alike), for its mouse handlers (`docs/screens.md`, "Under the
+   pointer (T-133)"). The situation room's map reads it too (`1000:5619`, T-128).
+
+**On the maps** (list 0xc and on, `1000:3877`) the node routines probe their own way:
+type 0xc (`1000:38bc`, a robot's dot) writes its one pixel and, unless the node is the
+viewer's (`DS:0x145c`), names its object when the dot's offsets from the middle are
+exactly `DS:0x4c80`, `0x4c82`; the sprite node after it (`1000:3912`) draws its sprite
+centred, then its dot, then calls `1000:40bc` as the 3D list does. `1000:4113`, called
+by the 3D terrain node (`1000:3616`), the map routine of types 0xe and 0x10
+(`1000:39e9`, `39f7`) and `3ad4`, only sets the carry when the probe's pixel was drawn
+over (and sets it back), naming nothing. The maps' hill outlines (`1000:39fb`) do not
+probe at all.
 
 ## Projection
 
