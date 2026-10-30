@@ -722,6 +722,69 @@ object, `1000:f914`) as well as a destination. Shortcuts: the press acts on the 
 frame drawn, not the next one; `7eac`'s refusal message and its Ctrl case are not
 ported (only the player's robots can be viewed).
 
+### The humanoid console's instruments (T-130)
+
+From a Ghidra pass over the draw and mouse handlers of the humanoid's widgets (set
+`0x388b`; the host's draw table `DS:0x3328` and mouse table `DS:0x3608` by type) and
+the routines they call. Every handler reads the viewed robot (`DS:0x62f1`). Sprites
+are `msprite2`'s, loaded at handle 0x4b0 by the opener (`mov dx` at `1000:a0f2`);
+"opaque" is slot `0x5c4`, "keyed" `0x5d8` (`b@n.md`). Texts are drawn through the
+host's string services: opaque `1fe6:4b9d`, transparent `1fe6:4b87`. A colour word
+`0xBBCC` is colour `CC` on background `BB` (slot `0x39e`). Rectangles are (top, left,
+bottom, right); "at +1" means the sprite's corner one pixel right and down of the
+widget's (`inc` of the rectangle's top and left around the blit), "at -1" one up and
+left, "+1 down" only the top.
+
+**The shared look.** The console's buttons draw `base + (signed) +0x22`: a press or
+release on any of them flips +0x22 bit 3, so all show their pressed sprite (the next
+one) together, as the situation room's +0x40. +0x22 is also the program panel's byte
+(bit 7 while a program is picked, bit 0 its half; T-043) and the lock button's and the
+status panel's press (below), so while those are held the other buttons' sum is off;
+they are not drawn again until marked.
+
+| Type | Rectangle | Draw | What it shows | Mouse |
+|---|---|---|---|---|
+| `0x94` | (107, 208, 117, 230) | `1000:a30c` | Sprite 0x530 + look, opaque at +1: FIRE | `a329`: flips the look; a press sets +0x1b = 7, a release or leave 0. While +0x1b is 7 the robot's tick (`1000:abff`, table `DS:0x6aef` by +0x1b) runs `b3cf`: +0xdc bit 7, the fire request, every tick |
+| `0x96` x2 | (119, 210, 128, 237), (130, 212, 139, 239) | `a35e` | Weapon `n` (the widget state's second byte): sprite `DS:0x6994[n]` (0x518, 0x528) when it is the one selected (+0xdd), else `DS:0x6998[n]` (0x510, 0x520), opaque at -1 | `a396`: a press or release XORs the frame with 9 (`1000:dfd5`); a release selects weapon `n` (`b214`, F9's routine) |
+| `0x98`, `0x9a` | (96, 100, 105, 109), (96, 110, 105, 119) | `a599`, `a5d8` | The pilot and program switches: 0x540 / 0x548 and 0x550 / 0x558, opaque at -1; the first of each pair while the program drives (+0x23 bit 7) for `0x98`, while the pilot drives for `0x9a` | `a5bb`, `a5fa`: the frame XOR; a release switches to the pilot (`d446`) or the program (`d42c`), as F2 and F3 |
+| `0x9c` | (158, 75, 165, 103) | `a6f4` | The speed: font 2, cursor (0x4d, 0x9f), `DS:0x70db` in colour 0x58 (three `8`s and three backspaces: the unlit segments), then in 0x0f the speed table `DS:0x7003` (the detail panel's) by +0x26 (negated if negative) as `02b7`'s five digits with the third replaced by a space (`-` when negative), from the third: a sign and two digits. All transparent | none |
+| `0x9e` | (141, 215, 149, 236) | `a3bb` | Sprite 0x560, 0x568 while the robot has a target (+0xe6); while +0x22 bit 7 is set (the button held) the other one when bit 3 is set. Opaque at the corner | `a3f1` (takes 0x100 events too): a press flips the look and sets +0x22 bit 7; a left release (with bit 7) takes the next target (`d812`, the A key), a right release drops it (`d7f8`, R); a release clears +0x22 |
+| `0xa0` | (95, 200, 106, 221) | `a446` | The lock warning light: sprite 0x570, 0x578 while +0xed (`locked_on`) is not 0 and +0xee bit 2 is set; opaque at the corner | none |
+| `0xa2` | (113, 250, 146, 304) | `a466` | The target panel, font 2, opaque, colour 0x6857 by default and 0x68ff for a warning. At (0x116, 0x71): with a target, its name (`1fe6:7f38`), its distance (+0xe8 as a number, `0301` turning leading zeros into spaces, then `M` and a new line; 0xff while +0xec bit 1 is clear: out of range) and its bearing less the heading in degrees (the last three digits, glyph 0x17, a new line; 0xff while +0xec bit 2 is clear: out of the arc); without one, `DS:0x699c` (three lines). Then at (0x116, 0x88) in 0x685c, each weapon's state: `DS:0x71d6` (damaged: +0xdc bit 0 or 1), else `0x69b5` while its cool-down (+0x108, +0x109) is not 0, else `0x69be` in 0x6857 | none |
+| `0xa4` | (170, 37, 200, 94) | `a874` | The gear lever: sprite 0x640 + 4 * the gear (+0x10b, twice an index), opaque at the corner | `a88c`: drag the lever (the gear rectangles `DS:0x6874`) or press a gear's notch (`DS:0x68b0`): the gear and its speed (`DS:0x68ec`), the pilot, the velocity (`d41c`), and on the release the gear's message (`DS:0x68f8`). Not ported (T-165) |
+| `0xa6` | (110, 81, 135, 110) | `a617` | The compass: the dial 0x5c0 keyed in `DS:0x6904`; a needle by `((heading + 0x400) >> 11) & 31` from the word table `DS:0x692c`: low byte one of four quadrants, high byte the needle 0 to 8, sprite 0x5f8 + 8 * needle, keyed and turned (quadrant 0: as it is in `DS:0x690c`; 1: flipped, `0x6914`; 2: turned 180 degrees, `0x691c`; 3: mirrored, `0x6924`). Then font 2 at (0x5a, 0x78): `DS:0x70db` in 0x58 and the heading in degrees, three digits, in 0x0f, transparent | `a6c0`: a release sets the target heading (+0x2a) to the bearing from (0x5f, 0x7a) to the pointer (`1000:04ea`) and clears +0x23 bits 4 and 5; its call to `d445` is a bare `ret`, so no pilot switch. T-165 |
+| `0xa8` | (7, 275, 48, 314) | `a93e` | The status panel: filled in the kind's message panel colours (`DS:0x71b0`, fill the low byte), font 2, text in the high byte on the fill. +0x10a is cut by 3 when 3 or more, and its low two bits pick a page (`CS:0xa98a`; page 3 is page 2). Its heading (`DS:0x69c7`, `0x69f5`, `0x6a1f`) transparent at (0x113, 7), then opaque: page 0 at (0x12a, 0x13) `1000:ddb6`'s percentages of 100, +0x4e and +0x24, then `de12` of +0xec bit 0 and of 0; page 1 at (0x12e, 0x13) `de12` of +0xdc bits 0 and 1, at (0x12a, 0x25) `de24` of +0xe0 and +0xde; page 2 at (0x12e, 0x13) `de12` of +0xf6 bits 0 to 4. `de12`: `DS:0x71cc` for 0, else `0x71d1` (bit-7 codes: the high colour). `de24`: 0 gives `0x71d1` transparent; else the last two of five digits, a leading zero a space, a new line, transparent | `dd7f`: a press with +0x22 clear sets it to 0xff and +0xfa to 0; a release or leave clears +0x22 |
+| `0xaa` | (111, 19, 146, 73) | `9f96` | The third display (colour 253, region `DS:0x684a`): every 8 passes (`DS:0x62ed`) a frame of view mode 0x12, heading up (the robot's heading, zoom 8, zoom shift 1, clear colour 0x7f, `DS:0x1458` = 0x670); with +0xf6 bit 3 (the radar) damaged, mode 0x18 cleared to 0x10. The probe goes to `DS:0x6a7c`. T-166 | `9fcc`: as the second display's, flag 3 |
+| `0xac`, `0xae` | (168, 227, 180, 262), (181, 227, 193, 262) | `aa4b`, `aa81` | Sprites 0x580 and 0x590 + look, opaque at the corner | `aa5e`, `aa94`: flip the look; a release runs F8 (`d95e`) or F7 (through `d92d`, an `int 3` before `d92e`). T-136 |
+| `0xb0` | (0, 186, 12, 238) | `aab7` | The power: sprite 0x5a0 in `DS:0x696c` and 0x5a8 in `0x6974` while on battery (+0xfd bit 0), the other way round otherwise; after each a bar (`1000:ab02`) in `DS:0x697c` of the signal (+0x4f) and in `0x6984` of the energy (+0x50): 255 counts as 256, `n = (value >> 1) >> 3` lit sprites 0x5b8 then `16 - n` dark 0x5b0, 2 pixels apart, all opaque | `ab62`: nothing |
+| `0xb2`, `0xb4`, `0xb6` | (141, 86, 148, 93), (141, 93, 148, 98), (141, 98, 148, 105) | `a760`, `a7ca`, `a80e` | Turn left, straight, right: 0x5c8, 0x5d8, 0x5e8 + look, opaque at +1, +1 down, +1 | `a77d`, `a7e1`, `a82b`: flip the look. Left and right: a press sets +0x1b = 10 or 11 (each tick the target heading is the heading less or plus 0x40, `b3d5`, `b3df`) and the pilot; a left release or leave clears it and +0x23 bits 4, 5; a right release clears it and sets bit 4 (left) or 5 (right): a turn that keeps on. Straight: a release, the pilot, the target heading the heading, bits 4 and 5 cleared. T-165 |
+
+`0xa0`, `0x94`, the two `0x96` and `0x9e` are the second group's members (the group
+(95, 206, 149, 239)); the weapon buttons' `n` is the second byte of their states, 0x2e
+and 0x31 in the robot's widget state (+0x10c): 0 and 1 in the stock files.
+
+**Counters the panels go by** (each robot's tick table `DS:0x6acf`, entry 4,
+`1000:b318`, so once every 16 ticks when +0x1a & 0x1e is 8): +0xee goes up by 2 (bit 2,
+the warning light's blink, flips every 32 ticks); while +0xed is not 0 and bit 2 is set
+sound event 0x12 plays; when +0xfa's low five bits are 0, +0x10a steps (AND 3); then
++0xfa goes up by one. So the status panel turns a page every 512 ticks.
+
+**Names** (`1fe6:7f38`, the target's): a robot's two letters and serial (as the
+detail panel's); a base six bytes from the immediates at `1fe6:7f71` (three `mov word
+[0x1bfe..0x1c02]`); a relay and kind 0xa others (not ported).
+
+**The bit-7 colour.** The status panel's `0x71d1` is drawn in the text state's
+second colour pair (slot `0x3a6`), which nothing in the console sets: the situation
+room's briefing and status modes leave 0x17 on 0 (`1fe6:700d`, `7070`), the log mode
+0xff on 0x10 (`1000:56d2`), start-up 0xff on 0.
+
+**In the port (T-130 part 1)**: `xeno_formats::humancon` reads the texts, tables,
+rectangles and the bank's handle; `xeno-app`'s `humancon` draws the power (`0xb0`),
+the warning light (`0xa0`), the speed (`0x9c`), the compass (`0xa6`) and the gear lever
+(`0xa4`) from the sim. Shortcuts: the signal is the scenario's as loaded (T-148);
++0xee is worked out from the passes since the load (`World::ticks`) and the robot's
++0x1a, not kept (T-167).
+
 ### The situation room's main view (T-103)
 
 From a Ghidra pass over the main view's routines (`ui_draw_sitroom_main_view`,

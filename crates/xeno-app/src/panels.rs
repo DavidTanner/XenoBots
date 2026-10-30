@@ -211,7 +211,7 @@ fn pieces(d: &Detail, unit: Option<&DetailUnit>) -> Vec<Piece> {
 }
 
 /// `1000:02b7`'s five digits with zeros, the last `n` of them.
-fn digits(value: u16, n: usize) -> Vec<u8> {
+pub(crate) fn digits(value: u16, n: usize) -> Vec<u8> {
     format!("{value:05}").into_bytes().split_off(5 - n)
 }
 
