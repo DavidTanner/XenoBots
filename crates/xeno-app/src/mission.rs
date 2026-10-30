@@ -2272,7 +2272,7 @@ impl Mission {
         };
         let world = self.world();
         let selected = self.selected.and_then(|s| world.get(EntityId(s)));
-        let flags = mainview::flags(self.scenario.as_ref());
+        let flags = mainview::flags(self.scenario.as_ref(), self.world());
         let map = self.shown_map();
         editor.draw(fb, &camera, world, &map, &flags, selected, &inputs);
         true
@@ -2328,7 +2328,7 @@ impl Mission {
                         let Some(camera) = self.map_camera(assets) else {
                             return false;
                         };
-                        let flags = mainview::flags(self.scenario.as_ref());
+                        let flags = mainview::flags(self.scenario.as_ref(), self.world());
                         let map = self.shown_map();
                         mainview::draw_map(
                             &mut buffer,
@@ -2446,7 +2446,7 @@ impl Mission {
                     sprites: &assets.map_sprites,
                     font: None,
                 };
-                let flags = mainview::flags(self.scenario.as_ref());
+                let flags = mainview::flags(self.scenario.as_ref(), self.world());
                 let colours = tables.map_colours[robot.kind.index()];
                 let (map_ref, selected) = (&map, Some(e));
                 let under = mainview::draw_map(
@@ -2615,8 +2615,8 @@ impl Mission {
         let base = world.base(Side::Human).and_then(|b| world.get(b));
         let repairing = matches!(base.map(|b| &b.state),
             Some(State::Base { depot, .. }) if depot.repairing == Some(EntityId(slot)));
-        // shortcut: +0x18 and +0x4f are the scenario's as loaded (robots made since
-        // show 0): the sim keeps neither; the signal is T-148's.
+        // shortcut: the serial (+0x18) is the scenario's as loaded (robots made since
+        // show 0): the sim does not keep it.
         let scenario = self.scenario.as_ref();
         let objects = scenario
             .into_iter()
@@ -2634,7 +2634,7 @@ impl Mission {
                 .then(|| assets.programs.name(orders.program)),
             heading: e.heading,
             speed: m.speed,
-            signal: loaded.map_or(0, |r| r.signal),
+            signal: m.signal,
         })
     }
 
@@ -2911,13 +2911,13 @@ impl Mission {
         let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
             return None;
         };
-        // shortcut: the signal (+0x4f), the cloaks (+0xe0) and the ECM's charges (+0xde)
-        // are the scenario's as loaded (T-148, T-136); +0xee, the status page and a
+        // shortcut: the cloaks (+0xe0) and the ECM's charges (+0xde) are the scenario's
+        // as loaded (T-136); +0xee, the status page and a
         // scorpion's +0xfa bit 7 are worked out from the passes since the load
         // (`console::blink`, `console::page`, T-167).
         let loaded = self.loaded_robot(slot);
         let passes = world.ticks;
-        let (signal, cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0, 0), |r| {
+        let (cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0), |r| {
             // The humanoid's three pages of +0x10a, the scout's four of +0x108.
             let (light, pages) = match &r.parts {
                 usg::Parts::Humanoid(p) => (p.light, 3),
@@ -2925,7 +2925,6 @@ impl Mission {
                 usg::Parts::Scorpion(_) => (0, 1),
             };
             (
-                r.signal,
                 r.cloaks,
                 r.ecm,
                 crate::console::blink(r.tick, r.blink, passes),
@@ -2964,7 +2963,7 @@ impl Mission {
             speed: m.speed,
             gear: m.gear,
             on_battery: c.equipment & usg::Robot::ON_BATTERY != 0,
-            signal,
+            signal: m.signal,
             energy: m.guns.energy,
             locked_on: m.locked_on,
             blink,
@@ -4980,14 +4979,14 @@ pub mod tests {
             set(&mut m, &|e| {
                 e.heading = 0;
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.gear, r.guns.energy, r.locked_on) = (0, 0, 0, 0);
+                    (r.speed, r.gear, r.guns.energy, r.locked_on, r.signal) = (0, 0, 0, 0, 0);
                 }
             });
             let before = draw(&m);
             set(&mut m, &|e| {
                 e.heading = 0x8000;
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.gear, r.guns.energy) = (40, 4, 0xff);
+                    (r.speed, r.gear, r.guns.energy, r.signal) = (40, 4, 0xff, 0xff);
                 }
             });
             let after = draw(&m);
@@ -5007,9 +5006,9 @@ pub mod tests {
                 "{name}"
             );
             assert_ne!(pixels(&before, speed), pixels(&after, speed), "{name}");
-            // The energy bar fills; the signal's (as loaded) stays.
+            // The energy bar and the signal's (the sim's) fill.
             assert_ne!(pixels(&before, con.bars[1]), pixels(&after, con.bars[1]));
-            assert_eq!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
+            assert_ne!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
             assert_ne!(pixels(&before, area(0xa4)), pixels(&after, area(0xa4)));
             // The warning light blinks only while a lock holds.
             let warning = area(0xa0);
@@ -5104,14 +5103,14 @@ pub mod tests {
             set(&mut m, &|e| {
                 e.heading = 0;
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.guns.energy, r.locked_on, r.relays) = (0, 0, 0, 0);
+                    (r.speed, r.guns.energy, r.locked_on, r.relays, r.signal) = (0, 0, 0, 0, 0);
                 }
             });
             let before = draw(&m);
             set(&mut m, &|e| {
                 e.heading = 0x8000;
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.guns.energy, r.relays) = (40, 0xff, 12);
+                    (r.speed, r.guns.energy, r.relays, r.signal) = (40, 0xff, 12, 0xff);
                 }
             });
             let after = draw(&m);
@@ -5125,9 +5124,9 @@ pub mod tests {
             assert_ne!(pixels(&before, speed), pixels(&after, speed), "{name}");
             let lever = area(s::LEVER_TYPE);
             assert_ne!(pixels(&before, lever), pixels(&after, lever), "{name}");
-            // The energy bar fills; the signal's (as loaded) stays.
+            // The energy bar and the signal's (the sim's) fill.
             assert_ne!(pixels(&before, con.bars[1]), pixels(&after, con.bars[1]));
-            assert_eq!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
+            assert_ne!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
             // The cargo gauges follow the relays.
             for kind in s::GAUGE_TYPES {
                 assert_ne!(pixels(&before, area(kind)), pixels(&after, area(kind)));
@@ -5228,7 +5227,7 @@ pub mod tests {
                 e.heading = 0;
                 battery(false)(e);
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.guns.energy, r.locked_on) = (0, 0, 0);
+                    (r.speed, r.guns.energy, r.locked_on, r.signal) = (0, 0, 0, 0);
                     (r.gear, r.stance) = (0, 0);
                 }
             });
@@ -5237,7 +5236,7 @@ pub mod tests {
                 e.heading = 0x8000;
                 battery(true)(e);
                 if let State::Robot(r) = &mut e.state {
-                    (r.speed, r.guns.energy) = (20, 0xff);
+                    (r.speed, r.guns.energy, r.signal) = (20, 0xff, 0xff);
                     (r.gear, r.stance) = (10, 0x60);
                 }
             });
@@ -5250,12 +5249,12 @@ pub mod tests {
             let speed = area(0x12c);
             assert!(count(&before, speed, 0x60) > 5 && count(&after, speed, 0x60) > 5);
             assert_ne!(pixels(&before, speed), pixels(&after, speed), "{name}");
-            // The lights swap on the battery; the energy bar fills, the signal's (as
-            // loaded) stays.
+            // The lights swap on the battery; the energy bar and the signal's (the
+            // sim's) fill.
             for light in con.lights {
                 assert_ne!(pixels(&before, light), pixels(&after, light), "{name}");
             }
-            assert_eq!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
+            assert_ne!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
             // The bar fills from the bottom: its lowest rows light first.
             let low = Rect {
                 top: con.bars[1].bottom - 4,
