@@ -8,6 +8,7 @@ use xeno_formats::usg::{ObjectKind, Side};
 
 use crate::motion::{Event, Tables};
 use crate::random::Random;
+use crate::relay::Relay;
 use crate::world::{Damage, Entity, EntityId, Position, State, World};
 
 /// +0xfd bit 7: the relay deployer is damaged.
@@ -165,7 +166,7 @@ pub fn deploy(
     events: &mut Vec<Event>,
 ) -> bool {
     let net = &tables.net;
-    let made = relays(world, id) > 0 && make(world, id, net.radius, random);
+    let made = relays(world, id) > 0 && make(world, id, tables, random);
     let Some(e) = world.get_mut(id) else {
         return false;
     };
@@ -189,28 +190,26 @@ pub fn deploy(
 }
 
 /// `1000:cc69`: a relay in the lowest free slot at robot `id`'s position, set up
-/// (`1000:cc2a`) folded, unpowered and on no side (+0x16 cleared). False with no room.
-fn make(world: &mut World, id: EntityId, radius: u16, random: &mut Random) -> bool {
+/// (`1000:cc2a`) folded, unpowered, on no side (+0x16 cleared), its clock a random
+/// byte, with its look. False with no room.
+fn make(world: &mut World, id: EntityId, tables: &Tables, random: &mut Random) -> bool {
     let (Some(slot), Some((at, z))) = (
         crate::damage::alloc_small(world),
         world.get(id).map(|e| (e.position, e.z)),
     ) else {
         return false;
     };
-    // shortcut: the relay's clock (+0x1e), a random byte, is drawn but not kept, nor
-    // its state, stage, look, model height, power and links: relays have no tick until
-    // T-148.
-    _ = random.word();
+    let (state, model_height) = Relay::made(random.word() as u8, tables);
     let relay = Entity {
         kind: ObjectKind::Relay,
         side: Side::Human,
         position: at,
         z,
-        model_height: 0,
+        model_height,
         heading: 0,
-        radius,
+        radius: tables.net.radius,
         damage: Damage::Taken(0),
-        state: State::None,
+        state: State::Relay(state),
     };
     world.insert(slot, relay);
     true

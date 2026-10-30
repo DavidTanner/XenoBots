@@ -54,8 +54,9 @@ pub fn camera(world: &World, id: EntityId, view: &View3d, tables: &Tables) -> Op
 
 /// The frames the sim keeps, from the kind's frame bytes (`docs/render.md`, "Frame
 /// numbers"): the humanoid's arms and legs, the scorpion's and scout's legs, a base's
-/// look, an explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0);
-/// the others are 0 (the scorpion's tail and claws, T-151).
+/// look, an explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0),
+/// a relay's stage and colour (+0x18..=+0x1d); the others are 0 (the scorpion's tail
+/// and claws, T-151).
 fn frames(e: &Entity) -> Vec<u8> {
     match (e.kind, e.state) {
         (ObjectKind::Humanoid, State::Robot(m)) => {
@@ -66,6 +67,7 @@ fn frames(e: &Entity) -> Vec<u8> {
         (ObjectKind::Scorpion | ObjectKind::Scout, State::Robot(m)) => [&[0][..], &m.legs].concat(),
         (_, State::Base { look, .. }) => vec![look],
         (_, State::Explosion { frame, .. }) => vec![frame],
+        (_, State::Relay(r)) => r.frames.to_vec(),
         _ => Vec::new(),
     }
 }
@@ -323,6 +325,13 @@ mod tests {
         ] {
             assert_eq!(frames(&entity(kind, 0, 0, State::Robot(m))), want);
         }
+        // A relay's stage look and colour.
+        let relay = xeno_sim::relay::Relay {
+            frames: [0, 2, 2, 2, 2, 1],
+            ..Default::default()
+        };
+        let e = entity(ObjectKind::Relay, 0, 0, State::Relay(relay));
+        assert_eq!(frames(&e), [0, 2, 2, 2, 2, 1]);
     }
 
     #[test]

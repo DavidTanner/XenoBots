@@ -16,6 +16,7 @@ mod pack;
 pub mod panel;
 pub mod random;
 pub mod rate;
+pub mod relay;
 pub mod script;
 pub mod sense;
 pub mod shot;
@@ -120,6 +121,11 @@ impl Sim {
 
     pub fn retrace(&self) -> u64 {
         self.retrace
+    }
+
+    /// The tables from the user's `xeno.exe`, if loaded.
+    pub fn tables(&self) -> Option<&Tables> {
+        self.tables.as_ref()
     }
 
     pub fn random(&mut self) -> &mut Random {

@@ -5,7 +5,7 @@
 //! the user's `xeno.exe` (`xeno_formats::weapons`, in [`Tables::weapons`]).
 
 use xeno_formats::damage::Explosion;
-use xeno_formats::usg::ObjectKind;
+use xeno_formats::usg::{ObjectKind, flag};
 use xeno_formats::weapons::{Gun, Hit};
 
 use crate::damage::{alloc_small, spawn_explosion};
@@ -65,15 +65,17 @@ fn kind_number(kind: ObjectKind) -> usize {
 }
 
 /// An object shots and blasts see (+0x16 bit 6, `IN_FIELD`): a robot unless it is in
-/// its base (the take-in and launch move both bits together, T-115).
-// shortcut: by kind, as the port keeps no flags (T-147): robots, bases, obstacles and
-// relays; the original takes it from a folded relay (T-148).
+/// its base (the take-in and launch move both bits together, T-115), a relay once up
+/// (`crate::relay`).
+// shortcut: bases and obstacles by kind, as the port keeps no flags for them (T-147).
 fn in_field(e: &Entity) -> bool {
-    (RobotKind::of(e.kind).is_some() && !crate::base::in_base(&e.damage))
-        || matches!(
-            e.kind,
-            ObjectKind::Base | ObjectKind::Relay | ObjectKind::Obstacle
-        )
+    match e.state {
+        State::Relay(r) => r.flags & flag::IN_FIELD != 0,
+        _ => {
+            (RobotKind::of(e.kind).is_some() && !crate::base::in_base(&e.damage))
+                || matches!(e.kind, ObjectKind::Base | ObjectKind::Obstacle)
+        }
+    }
 }
 
 /// The velocity for `heading`, `climb` and `speed` (`1000:045d`): x, y, z.

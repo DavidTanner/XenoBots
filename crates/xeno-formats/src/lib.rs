@@ -34,6 +34,7 @@ pub mod orders;
 pub mod packed;
 mod palette;
 pub mod pcx;
+pub mod relay;
 pub mod review;
 pub mod rst;
 pub mod scendef;

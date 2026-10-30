@@ -13,6 +13,7 @@ use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
 use crate::net::{self, Net};
+use crate::relay::{self, Relays};
 use crate::script::{self, Scripts};
 use crate::sensing::{self, Sensing};
 use crate::weapons::{self, Weapons};
@@ -137,6 +138,8 @@ pub struct Motion {
     pub sensing: Sensing,
     /// What the relay-net orders read (`xeno_formats::net`).
     pub net: Net,
+    /// The relays' tick and the net's signal (`xeno_formats::relay`).
+    pub relays: Relays,
     /// The weapons and their shots (`xeno_formats::weapons`).
     pub weapons: Weapons,
     /// The bases' tick (`xeno_formats::base`).
@@ -316,6 +319,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         damage: damage::read_image(image, ds)?,
         sensing: sensing::read_image(image, ds)?,
         net: net::read_image(image)?,
+        relays: relay::read_image(image, ds)?,
         weapons: weapons::read_image(image, ds)?,
         bases: base::read_image(image, ds)?,
         walk: Walk {
@@ -607,6 +611,7 @@ mod tests {
         crate::fixtures::synthetic_weapon_keys(&mut image, DS);
         crate::fixtures::synthetic_sensing(&mut image, DS);
         crate::fixtures::synthetic_net(&mut image);
+        crate::fixtures::synthetic_relays(&mut image, DS);
         crate::fixtures::synthetic_weapons(&mut image, DS);
         crate::fixtures::synthetic_bases(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);

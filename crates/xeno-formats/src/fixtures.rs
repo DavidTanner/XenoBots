@@ -1652,6 +1652,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_weapon_keys(image, ds);
     synthetic_sensing(image, ds);
     synthetic_net(image);
+    synthetic_relays(image, ds);
     synthetic_weapons(image, ds);
     synthetic_bases(image, ds);
 }
@@ -1882,6 +1883,111 @@ pub fn synthetic_net_tables() -> crate::net::Net {
     let mut image = vec![0; 0x1_0000];
     synthetic_net(&mut image);
     crate::net::read_image(&image).expect("synthetic net tables")
+}
+
+/// Writes a made-up relay tick and signal (`crate::relay`) at the stock addresses:
+/// looks 3, 2, 1, 0 and heights 0x100 to 0x400 by stage, colours 1, 0, 2, the fold
+/// within 0x32 of a scorpion, links within 0x640, the signal full within 0x578 and
+/// none from 0x5b8, the battery at 0x40 or under, drive masks `0x11 * i`, a recharge
+/// every 512 passes, and the signal at tick-table entries 3, 4 and 2 (tables at
+/// `DS:0x9700`, `0x9720`, `0x9740`, as `synthetic_sensing`'s).
+pub fn synthetic_relays(image: &mut [u8], ds: usize) {
+    use crate::relay::{DRIVE_AT, SIGNAL_STEPS, TICK_AT};
+    use crate::sensing::TICKS_AT;
+    let mut hex = |at: usize, text: &str| {
+        for (i, b) in text.split_whitespace().enumerate() {
+            image[at + i] = u8::from_str_radix(b, 16).expect("hex");
+        }
+    };
+    hex(
+        TICK_AT,
+        "fe 45 1e f6 45 1e 0f 74 01 c3 8a 5d 1f 32 ff ff 97 c7 6f e8 01 00 c3",
+    );
+    hex(
+        0xccf0,
+        "b0 01 f6 45 16 10 74 0a b0 00 f6 45 16 08 74 02 b0 02 88 45 1d 8a 5d 20 32 ff
+         8a 87 bb 6f 88 45 19 88 45 1a 88 45 1b 88 45 1c d1 e3 8b 87 bf 6f 89 45 12 c3",
+    );
+    hex(
+        ds + 0x6fbb,
+        "03 02 01 00 00 01 00 02 00 03 00 04 25 cd 3d cd 50 cd 75 cd 24 cd",
+    );
+    hex(
+        0xcd24,
+        "c3 80 65 16 af c6 45 20 00 b8 01 00 b9 32 00 e8 cd 29 72 04 c6 45 1f 02 c3",
+    );
+    hex(
+        0xcd3d,
+        "80 65 16 ef fe 45 20 80 7d 20 03 74 01 c3 c6 45 1f 04 c3",
+    );
+    hex(
+        0xcd50,
+        "e8 35 00 80 4d 16 40 80 65 16 ef 80 7d 21 00 74 04 80 4d 16 10
+         b8 01 00 b9 32 00 e8 95 29 73 04 c6 45 1f 06 c3",
+    );
+    hex(
+        0xcd75,
+        "80 65 16 ef fe 4d 20 80 7d 20 00 74 01 c3 c6 45 1f 00 c3",
+    );
+    hex(0xcd88, "f6 45 1e ff 74 01 c3 9a 18 6b e6 0f");
+    hex(
+        0xcd88 + 0x8b,
+        "81 f9 40 06 77 0f d1 c0 d1 c0 d1 c0 25 06 00",
+    );
+    hex(
+        0x1_6978,
+        "8b 36 8e 56 f6 45 16 08 74 04 8b 36 90 56 8a 44 39 d0 e8 d0 e8 cb",
+    );
+    hex(
+        DRIVE_AT,
+        "0e e8 8b fc 90 88 45 4f 3c 40 76 10 80 a5 fd 00 fe 80 7d 50 ff 74 0a fe 45 50
+         eb 05 80 8d fd 00 01 8a 45 4f f6 85 fd 00 01 74 03 8a 45 50 88 45 51 8a 5d 4e
+         d0 eb d0 eb d0 eb d0 eb 32 ff 8a 87 a5 70 20 45 51 cb",
+    );
+    for (at, bytes) in [
+        (0, "8a 45 16 24 08 a2"),
+        (0x26, "83 3c 04 74 05 83 3c 03"),
+        (0x3b, "f6 44 16 10"),
+        (0x47, "9a d8 cf 00 00"),
+        (0x53, "8a c4 8a e2 3d 78 05 76 21 3d b8 05 73"),
+        (0x69, "2d 78 05 3d 40 00 73 08 d0 e0 d0 e0 f6 d8"),
+    ] {
+        hex(0x1_7d16 + at, bytes);
+    }
+    hex(0xcfd8, "e8 11 39 cb");
+    for i in 0..16 {
+        image[ds + 0x70a5 + i] = 0x11 * i as u8;
+    }
+    for (kind, entry) in [3usize, 4, 2].into_iter().enumerate() {
+        let (at, table) = (SIGNAL_STEPS[kind], 0x9700 + 0x20 * kind as u16);
+        let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+        put(
+            at,
+            &[0x9a, 0x27, 0x82, 0xe6, 0x0f, 0xc6, 0x85, 0x2e, 0x01, 0x03],
+        );
+        put(
+            at + 10,
+            &[
+                0xf7, 0x06, 0xc6, 0x62, 0xf0, 0x01, 0x75, 0x09, 0x80, 0x7d, 0x50, 0xff,
+            ],
+        );
+        put(at + 22, &[0x74, 0x03, 0xfe, 0x45, 0x50]);
+        put(
+            TICKS_AT[kind],
+            &[0xff, 0x97, table as u8, (table >> 8) as u8],
+        );
+        put(
+            ds + usize::from(table) + 2 * entry,
+            &(at as u16).to_le_bytes(),
+        );
+    }
+}
+
+/// The made-up numbers of [`synthetic_relays`].
+pub fn synthetic_relay_tables() -> crate::relay::Relays {
+    let mut image = vec![0; 0x2_0000];
+    synthetic_relays(&mut image, 0x1_0000);
+    crate::relay::read_image(&image, 0x1_0000).expect("synthetic relay tables")
 }
 
 /// Writes made-up weapon key routines (`crate::motion::WeaponKeys`), code at 0x8480

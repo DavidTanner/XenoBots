@@ -63,8 +63,8 @@ impl World {
     /// from zeros, its reference count 1 and the lowest pool index free in its pool.
     // shortcut: the reference counts are the loaded ones (stock files hold 0, 1 and
     // junk; the port reads none), not the live counts with the pack's one a target (T-154).
-    // shortcut: relays, shots and explosions made in play keep only what the sim keeps
-    // (no relay set-up bytes or flags beyond the side; T-148).
+    // shortcut: shots and explosions made in play keep only what the sim keeps (their
+    // other bytes zeros), until cross-loading in DOSBox (T-155) shows more is needed.
     pub fn save(&self, loaded: &Scenario, program_table: u16) -> Scenario {
         let w = self;
         let mut s = loaded.clone();
@@ -101,6 +101,10 @@ impl World {
                         b.resize(6 + usize::from(size), 0);
                         let mut r = Record(b);
                         r.u16(2, index);
+                        if e.kind == ObjectKind::Relay {
+                            // `1000:cc2a`: the links' words, which nothing reads.
+                            (0..4).for_each(|n| r.u16(0x25 + 4 * n, NONE));
+                        }
                         r
                     }
                 };
@@ -215,6 +219,16 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
                     Field::Damage | Field::Phase | Field::Frame => r.u8(at, f.get(s) as u8),
                     _ => r.u16(at, f.get(s)),
                 }
+            }
+        }
+        State::Relay(s) => {
+            // `TARGETABLE` from the set-up (`1000:cc2a`); nothing clears it.
+            let kept = r.get(0x16) & !crate::relay::FLAGS;
+            r.u8(0x16, kept | s.flags | flag::TARGETABLE);
+            r.put(0x18, &s.frames);
+            r.put(0x1e, &[s.clock, s.state, s.stage, s.power, s.power_side]);
+            for (n, &l) in s.links.iter().enumerate() {
+                r.u8(0x23 + 4 * n, l);
             }
         }
         State::None => {}
