@@ -4,13 +4,17 @@
 
 use xeno_formats::usg;
 
-/// Hours, minutes, seconds and sixtieths, from the scenario's `SHDR`.
+/// Hours, minutes, seconds and sixtieths, from the scenario's `SHDR`, then the
+/// campaign's date: the day from 0 (`DS:0x7d4a`) and the month from 0 (`0x7d4b`),
+/// which the host sets to the campaign's (the loader puts it back after the file's).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Clock {
     pub hour: u8,
     pub minute: u8,
     pub second: u8,
     pub tick: u8,
+    pub day: u8,
+    pub month: u8,
 }
 
 impl Clock {
@@ -26,14 +30,19 @@ impl Clock {
             minute: start.minute,
             second: start.second,
             tick: start.tick,
+            day: start.day,
+            month: start.month,
         }
     }
 
     /// One retrace (`sim_advance_clock`). Each carry subtracts rather than zeroes, as
-    /// the original does.
-    // shortcut: past 23:59 the original also steps the campaign's day and month
-    // (`DS:0x7d4a`, by its days-per-month table); here only the hour wraps (T-124).
-    pub fn advance(&mut self) {
+    /// the original does. Past 23:59 the day steps on, and once it reaches the month's
+    /// days in `month_days` it starts again from 0 in the next month, with no wrap past
+    /// December and no year.
+    // shortcut: past the table's 12 months the original compares with the bytes after
+    // it; here such a month never ends. A campaign starts in April and moves 0 to 3
+    // days a result, so no campaign gets there.
+    pub fn advance(&mut self, month_days: &[u8]) {
         self.tick = self.tick.wrapping_add(Self::STEP);
         if self.tick >= 60 {
             self.tick -= 60;
@@ -49,6 +58,14 @@ impl Clock {
         }
         if self.hour >= 24 {
             self.hour -= 24;
+            self.day = self.day.wrapping_add(1);
+            if month_days
+                .get(usize::from(self.month))
+                .is_some_and(|&days| self.day >= days)
+            {
+                self.day = 0;
+                self.month = self.month.wrapping_add(1);
+            }
         }
     }
 
@@ -107,13 +124,14 @@ mod tests {
             minute: 59,
             second: 59,
             tick: 56,
+            ..Clock::default()
         };
-        clock.advance();
-        assert_eq!(clock, Clock::default(), "midnight wraps the hour");
+        clock.advance(&[]);
+        assert_eq!(clock.hour, 0, "midnight wraps the hour");
         // 15 retraces a second, so an hour is 54,000.
         let mut clock = at(6, 0);
         for _ in 0..54_000 {
-            clock.advance();
+            clock.advance(&[]);
         }
         assert_eq!(clock, at(7, 0));
         // A carry subtracts: a tick of 58 leaves 2.
@@ -121,7 +139,38 @@ mod tests {
             tick: 58,
             ..Clock::default()
         };
-        clock.advance();
+        clock.advance(&[]);
         assert_eq!((clock.second, clock.tick), (1, 2));
+    }
+
+    #[test]
+    fn midnight_steps_the_date() {
+        let midnight = |day, month| Clock {
+            hour: 23,
+            minute: 59,
+            second: 59,
+            tick: 56,
+            day,
+            month,
+        };
+        let days = [2, 3];
+        let next = |mut c: Clock| {
+            c.advance(&days);
+            (c.hour, c.day, c.month)
+        };
+        assert_eq!(next(midnight(0, 0)), (0, 1, 0), "the day steps on");
+        assert_eq!(
+            next(midnight(1, 0)),
+            (0, 0, 1),
+            "the month's last day ends it"
+        );
+        // The campaign's own days can pass the month's end: the next midnight ends it.
+        assert_eq!(next(midnight(5, 1)), (0, 0, 2));
+        // Past the table the month never ends.
+        assert_eq!(next(midnight(9, 2)), (0, 10, 2));
+        let mut c = midnight(0, 0);
+        c.tick = 0;
+        c.advance(&days);
+        assert_eq!((c.hour, c.day), (23, 0));
     }
 }

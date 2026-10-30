@@ -819,7 +819,7 @@ impl StateHash for World {
         h.i32(self.point.x.0);
         h.i32(self.point.y.0);
         let c = self.clock;
-        for n in [c.hour, c.minute, c.second, c.tick] {
+        for n in [c.hour, c.minute, c.second, c.tick, c.day, c.month] {
             h.u8(n);
         }
     }

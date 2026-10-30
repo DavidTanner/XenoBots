@@ -6,6 +6,7 @@
 
 pub mod ban;
 pub mod base;
+pub mod calendar;
 pub mod campaign;
 pub mod damage;
 pub mod dsounds;

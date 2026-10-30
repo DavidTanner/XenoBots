@@ -146,7 +146,8 @@ impl Sim {
     /// (`docs/sim.md`, "Movement"). Returns what the tick did.
     pub fn tick<'a>(&mut self, events: impl IntoIterator<Item = &'a InputEvent>) -> Vec<Event> {
         self.retrace += 1;
-        self.world.clock.advance();
+        let month_days = self.tables.as_ref().map(|t| &t.calendar.month_days[..]);
+        self.world.clock.advance(month_days.unwrap_or_default());
         for event in events {
             self.keys.apply(event);
             self.mouse.apply(event);

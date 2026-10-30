@@ -8,6 +8,7 @@
 //! instruction's bytes.
 
 use crate::base::{self, Bases};
+use crate::calendar::{self, Calendar};
 use crate::damage::{self, Damage};
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
@@ -144,6 +145,8 @@ pub struct Motion {
     pub weapons: Weapons,
     /// The bases' tick (`xeno_formats::base`).
     pub bases: Bases,
+    /// The clock's days per month (`xeno_formats::calendar`).
+    pub calendar: Calendar,
     pub walk: Walk,
     /// The string segment, where the scripts' messages are.
     pub strings: Strings,
@@ -322,6 +325,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         relays: relay::read_image(image, ds)?,
         weapons: weapons::read_image(image, ds)?,
         bases: base::read_image(image, ds)?,
+        calendar: calendar::read_image(image, ds)?,
         walk: Walk {
             humanoid_height: operand(image, HUMANOID_BOB_AT, &[0xb8])?,
             humanoid_bob: bob(image, HUMANOID_BOB_AT + 3)?,
@@ -614,6 +618,7 @@ mod tests {
         crate::fixtures::synthetic_relays(&mut image, DS);
         crate::fixtures::synthetic_weapons(&mut image, DS);
         crate::fixtures::synthetic_bases(&mut image, DS);
+        crate::fixtures::synthetic_calendar(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(

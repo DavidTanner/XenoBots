@@ -1655,6 +1655,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_relays(image, ds);
     synthetic_weapons(image, ds);
     synthetic_bases(image, ds);
+    synthetic_calendar(image, ds);
 }
 
 /// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
@@ -2262,6 +2263,22 @@ pub fn synthetic_bases(image: &mut [u8], ds: usize) {
         POOL_AT,
         "80 7d 38 06 72 05 80 6d 38 03 c3 3c 06 72 08 80 fc 06 73 0c 2c 03 c3 80 fc 06 72 03 80 ec 03 c3 fe c8 fe cc c3",
     );
+}
+
+/// A made-up calendar: month `m` (from 0) has `m + 1` days, its table at `DS:0x7e00`.
+pub fn synthetic_calendar(image: &mut [u8], ds: usize) {
+    use crate::calendar::*;
+    image[MONTH_DAYS_AT..MONTH_DAYS_AT + 4].copy_from_slice(&[0x3a, 0x87, 0x00, 0x7e]);
+    for m in 0..MONTHS {
+        image[ds + 0x7e00 + m] = m as u8 + 1;
+    }
+}
+
+/// The made-up calendar of [`synthetic_calendar`].
+pub fn synthetic_calendar_tables() -> crate::calendar::Calendar {
+    let mut image = vec![0; 0x2_0000];
+    synthetic_calendar(&mut image, 0x1_0000);
+    crate::calendar::read_image(&image, 0x1_0000).expect("synthetic calendar")
 }
 
 /// The made-up numbers of [`synthetic_bases`].
