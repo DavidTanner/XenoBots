@@ -1288,7 +1288,7 @@ to +0x22 if it is in the base (+0xfd bit 2) else +0x23, a scorpion to +0x24 / +0
 scout to +0x26 / +0x27. A deployed relay has the side bit clear (T-113), so the human
 base counts every deployed relay and the alien base none. +0x20 is not touched: it is
 the relays in store (25 or 26 in stock files; phase 11). The situation room's status
-panel shows +0x20..+0x27 (T-127).
+panel shows +0x20..+0x27 (`docs/screens.md`, "The situation room's panels (T-127)").
 
 **The take-in** (phase 9) remembers the base's side, then walks the object table in
 slot order. For each robot (+0x16 bit 5) of that side it works out the distance from
@@ -1348,7 +1348,8 @@ from 4 up) and adds it to the pool +0x38; raising adds 2 (only up to 0xfd), take
 the pool if it holds 4 or more, else 2 from one of the other two sliders (the first if
 it is 4 or more and the second is not, the second likewise) or 1 from each. The four
 add up to 0x100 (stock: 0, 0x80, 0x40, 0x40). Then the power rows are marked for a
-redraw. What sets +0x2d is the situation room's arrows (T-127).
+redraw. What sets +0x2d is the situation room's arrows; its keys 1 to 6 call the
+routines once (`docs/screens.md`, "The situation room's panels (T-127)").
 
 ### The port (T-115)
 
@@ -1369,7 +1370,8 @@ scorpion's restock, the launch's program and the sliders' least, most and step (
 the pool routine's numbers checked against them). `State::Base::depot` (`Depot`)
 holds +0x20, +0x19, +0xb5, +0x1a, +0x1c, +0x38..+0x3b and +0x2d, loaded and hashed.
 `base::tick` runs phases 11, 12 and 13 and, every tick, the slider held, which
-`Sim::hold_slider(side, n)` sets (the situation room's arrows are T-127's). A robot
+`Sim::hold_slider(side, n)` sets (the situation room's arrows, T-127; its keys 1 to 6
+run one step with `Sim::step_slider`). A robot
 launched gets `motion::Event::Launched` ("N launched" in `xeno-tool simulate`), and
 `base::launch` is the routine the situation room's F2 and launch button will call
 (T-135: `Sim::launch`, below). In scen00a with seed 1 alien slot 34 comes home on its path at tick 11971 and

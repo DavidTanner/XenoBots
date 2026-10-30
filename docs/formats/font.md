@@ -18,8 +18,8 @@ read the same block through `DS:0x62a`. Nothing else in the install holds a font
 | Id | Kind | Cell | Codes | Used for |
 |---|---|---|---|---|
 | 0 | 7, bitmap | 6 wide, 6 high | 128 | The log-in name (`docs/screens.md`); the host's default font |
-| 2 | 7, bitmap | 4 wide, 6 high | 128 | Not traced |
-| 4 | 0, shaded | 6 high, proportional | 128 | Not traced |
+| 2 | 7, bitmap | 4 wide, 6 high | 128 | The situation room's status counts and clock, the message panels and the log (`docs/screens.md`) |
+| 4 | 0, shaded | 6 high, proportional | 128 | The briefing and the situation room's detail panel (`docs/screens.md`) |
 | 6 | 0, shaded | 9 high, proportional | 97 | Cutscene captions (`vcl.md`) and the intro drop's credits (`fgd.md`), in colour 252 |
 
 The two bitmap fonts map lower case to the upper-case glyphs. Font 6 has no lower case

@@ -1118,6 +1118,11 @@ impl Screens {
                 Err(e) => log::warn!("map room: cannot save {}: {e}", path.display()),
             }
         }
+        // The clock shows the campaign's date (`DS:0x7d4a`), not the file's.
+        if matches!(action, Play(_) | PlayLoaded) {
+            let c = self::campaign(&self.player, &self.guest);
+            self.mission.set_date(c.day, c.month);
+        }
         let next = match action {
             Go(screen) => screen,
             Play(training) => {

@@ -16,6 +16,7 @@ mod mainview;
 mod maproom;
 mod mission;
 mod music;
+mod panels;
 mod pointer;
 mod review;
 mod save;

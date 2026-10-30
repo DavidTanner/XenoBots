@@ -44,6 +44,23 @@ pub(crate) const CALL_SIGNS_AT: usize = 0x17e3d;
 /// `mov ax, [bx + table]` in the mode buttons' draw (`1000:5efd`): labels by mode.
 pub(crate) const MODE_LABELS_AT: usize = 0x5f05;
 
+/// The power rows and the reserve bar (`1000:6047` to `61a4`): `mov al, [bx + table]`
+/// at `1000:60c2`, a bar's width by its value over 8.
+pub(crate) const BAR_WIDTHS_AT: usize = 0x60c2;
+/// The clock (`1000:61a5`): `mov si, text` at `1000:61c6`; `1000:edb6` writes into it
+/// the month's name (`mov ax, [bx + names]` at `edc0`, `mov [text], ax` at `edc4`),
+/// then the day, hours and minutes (`mov [field], ax` at `eddf`, `ede8`, `edf1`).
+pub(crate) const CLOCK_AT: usize = 0x61c6;
+pub(crate) const MONTHS_AT: usize = 0xedc0;
+pub(crate) const MONTH_AT: usize = 0xedc4;
+pub(crate) const CLOCK_FIELDS_AT: [usize; 3] = [0xeddf, 0xede8, 0xedf1];
+
+/// The bars' widths, by value / 8.
+pub const BAR_STEPS: usize = 32;
+/// The months' names, four bytes each.
+pub const MONTHS: usize = 12;
+const MONTH_LEN: usize = 4;
+
 /// The call signs' count and length.
 pub const CALL_SIGNS: usize = 64;
 pub const CALL_SIGN_LEN: usize = 6;
@@ -84,6 +101,13 @@ pub struct SitRoom {
     pub call_signs: Vec<u16>,
     /// The mode buttons' labels, by mode / 2 (the next sprite is the current mode's).
     pub mode_labels: [u16; MODES],
+    /// A power row's or the reserve's bar width by its value / 8 (`cbw`: signed).
+    pub bar_widths: [i8; BAR_STEPS],
+    /// The clock's template, the months' names (four bytes each) and where the month,
+    /// day, hours and minutes go in it.
+    pub clock: Vec<u8>,
+    pub months: Vec<u8>,
+    pub clock_fields: [usize; 4],
     /// The string segment, from its start.
     pub strings: Vec<u8>,
 }
@@ -117,6 +141,37 @@ impl SitRoom {
         }
         time
     }
+
+    /// The clock as `1000:edb6` writes it: the month's name (none past the table), the
+    /// day from 1 with no leading zero (its units first, then a space), and the hours
+    /// and minutes as two digits.
+    pub fn clock_of(&self, month: u8, day: u8, hour: u8, minute: u8) -> Vec<u8> {
+        let mut clock = self.clock.clone();
+        let [at_month, at_day, at_hour, at_minute] = self.clock_fields;
+        let m = usize::from(month) * MONTH_LEN;
+        if let (Some(name), Some(to)) = (
+            self.months.get(m..m + MONTH_LEN),
+            clock.get_mut(at_month..at_month + MONTH_LEN),
+        ) {
+            to.copy_from_slice(name);
+        }
+        // `1000:edf5`: tens counted up from '0', then the units.
+        let digits = |n: u8| [b'0'.wrapping_add(n / 10), b'0' + n % 10];
+        let day = match digits(day.wrapping_add(1)) {
+            [b'0', units] => [units, b' '],
+            d => d,
+        };
+        for (at, d) in [
+            (at_day, day),
+            (at_hour, digits(hour)),
+            (at_minute, digits(minute)),
+        ] {
+            if let Some(to) = clock.get_mut(at..at + 2) {
+                to.copy_from_slice(&d);
+            }
+        }
+        clock
+    }
 }
 
 /// Reads the tables from a load image whose data and string segments start at `ds`
@@ -147,6 +202,20 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
         (d < 8)
             .then_some(usize::from(d))
             .ok_or_else(|| invalid(at, "not in the time template"))
+    };
+    let bars = at_ds(BAR_WIDTHS_AT, &[0x8a, 0x87])?;
+    let clock = at_ds(CLOCK_AT, &[0xbe])?;
+    let months = at_ds(MONTHS_AT, &[0x8b, 0x87])?;
+    let field = |at| -> Result<usize, FormatError> {
+        let d = at_ds(at, &[0xa3])?.wrapping_sub(clock);
+        (d < 16)
+            .then_some(d)
+            .ok_or_else(|| invalid(at, "not in the clock's template"))
+    };
+    let bytes = |at: usize, n: usize| {
+        image
+            .get(at..at + n)
+            .ok_or_else(|| invalid(at, "past the end"))
     };
     Ok(SitRoom {
         robot_dots: [
@@ -195,6 +264,18 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
         mode_labels: words(table(MODE_LABELS_AT)?, MODES)?
             .try_into()
             .unwrap_or_default(),
+        bar_widths: {
+            let widths = bytes(bars, BAR_STEPS)?;
+            std::array::from_fn(|i| widths[i] as i8)
+        },
+        clock: string(image, clock)?,
+        months: bytes(months, MONTHS * MONTH_LEN)?.to_vec(),
+        clock_fields: [
+            field(MONTH_AT)?,
+            field(CLOCK_FIELDS_AT[0])?,
+            field(CLOCK_FIELDS_AT[1])?,
+            field(CLOCK_FIELDS_AT[2])?,
+        ],
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
             .ok_or_else(|| invalid(strings, "no string segment"))?
@@ -272,6 +353,27 @@ pub(crate) mod tests {
         put(STRINGS + 0x50, b"AB-123XYZ\0");
         put(AT_BASE_AT, &op(&[0xbe], 0x40));
         put(STRINGS + 0x40, b"HOME\0HELLO\0");
+        // Bars 0, 1, .. 31 wide (the last -1); the clock "mmmm/dd/hh/nn" with
+        // months "M00 ".."M11 ".
+        put(BAR_WIDTHS_AT, &op(&[0x8a, 0x87], 0x600));
+        for i in 0..BAR_STEPS {
+            put(DS + 0x600 + i, &[if i == 31 { 0xff } else { i as u8 }]);
+        }
+        put(CLOCK_AT, &op(&[0xbe], 0x640));
+        put(DS + 0x640, b"mmmm/dd/hh/nn\0");
+        put(MONTHS_AT, &op(&[0x8b, 0x87], 0x660));
+        for m in 0..MONTHS {
+            put(DS + 0x660 + 4 * m, format!("M{m:02} ").as_bytes());
+        }
+        let [day, hour, minute] = CLOCK_FIELDS_AT;
+        for (at, field) in [
+            (MONTH_AT, 0x640),
+            (day, 0x645),
+            (hour, 0x648),
+            (minute, 0x64b),
+        ] {
+            put(at, &op(&[0xa3], field));
+        }
         image
     }
 
@@ -294,6 +396,11 @@ pub(crate) mod tests {
         );
         assert_eq!(room.mode_labels, [0x180, 0x188, 0x190, 0x198, 0x1a0]);
         assert_eq!(room.icon_lefts, [5, 14]);
+        assert_eq!((room.bar_widths[7], room.bar_widths[31]), (7, -1));
+        assert_eq!(room.clock_fields, [0, 5, 8, 11]);
+        // Day 4 is the 5th: no leading zero; past the months the template's name stays.
+        assert_eq!(room.clock_of(11, 4, 7, 9), b"M11 /5 /07/09");
+        assert_eq!(room.clock_of(12, 10, 23, 59), b"mmmm/11/23/59");
         insta::assert_debug_snapshot!(SitRoom {
             strings: Vec::new(),
             ..room
@@ -322,6 +429,11 @@ pub(crate) mod tests {
             EMPTY_ROW_AT,
             CALL_SIGNS_AT + 1,
             MODE_LABELS_AT,
+            BAR_WIDTHS_AT + 1,
+            CLOCK_AT,
+            MONTHS_AT,
+            MONTH_AT,
+            CLOCK_FIELDS_AT[2],
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -361,6 +473,11 @@ pub(crate) mod tests {
         assert_eq!(room.icon_lefts, [5, 14]);
         assert_eq!(room.mode_labels, [0x3a0, 0x3b0, 0x3c0, 0x3d0, 0x3e0]);
         assert_eq!(room.empty_row, b"        ");
+        // The bars fill 23 pixels at the most, and grow with the value.
+        assert!(room.bar_widths.windows(2).all(|w| w[0] <= w[1]));
+        assert_eq!(room.bar_widths[BAR_STEPS - 1], 23);
+        assert_eq!(room.clock_fields, [0, 4, 7, 10]);
+        assert_eq!(room.clock_of(0, 8, 6, 5)[4..], *b"9  06:05");
         // Every call sign is six printable bytes (names like `EAGLE `).
         for i in 0..CALL_SIGNS as u8 {
             let sign = room.call_sign(i);
