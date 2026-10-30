@@ -623,10 +623,10 @@ the lock's own checks (true distance, damaged computer) can still refuse it. R
 too. `1000:d805` puts the search back at slot 0; each kind's console set-up calls it
 (humanoid at `1000:a0e5`, scorpion `8489`, scout `bbb3`), so the stop position is one
 for all robots, starts again whenever a console opens, and is not saved. A console
-widget reaches A and R too (not traced further): the humanoid's handler at
+widget reaches A and R too: the lock buttons (`docs/screens.md`, T-130 to T-132); the humanoid's handler at
 `1000:a3f1` flips +0x22 bit 3, then with AX bits 2 and 7 calls A (and sets +0x120 to
 3) and with bits 4 and 7 calls R; the scorpion's and scout's call them at `1000:8a5c`,
-`8a52` and `be37`, `be2d` the same way (T-162).
+`8a52` and `be37`, `be2d` the same way (T-162, done).
 
 `sense::next_target` and `sense::drop_target`, by `Sim::pilot` (`Pilot::NextTarget`,
 `Pilot::DropTarget`; `xeno-app` maps `1000:d812` and `d7f8`). `World::target_search`

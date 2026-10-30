@@ -916,9 +916,15 @@ button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added)
 weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
 each named in the code: the signal is the scenario's as loaded (T-148), and so are the
 cloaks, ECM charges, drops and a target's serial (T-136, T-137); +0xee and the status
-page are worked out from the passes since the load (T-167). Not ported: the
-compass's, gear lever's and turn buttons' mouse (T-172), the third display (T-173).
-Still to check in DOSBox (T-174): every widget's look and the blink and page timing.
+page are worked out from the passes since the load (T-167). In part 3 the fire button
+held sends `Pilot::Fire` every retrace (as the other kinds'), the weapon buttons
+`Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock button's left
+and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scout half), the stance
+buttons `Pilot::Stance` (as E, W and Q; the look flipped while held). Not ported: the
+compass's, gear lever's and turn buttons' mouse (T-172), the third display (T-173), the
+cloak and ECM buttons (T-136), the drop buttons (T-137), the status panel's press
+(T-167). Still to check in DOSBox (T-174): every widget's look and the blink and page
+timing.
 
 ### The situation room's main view (T-103)
 
