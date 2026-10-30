@@ -1816,11 +1816,13 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Map room | `maproom.m@l`, the boxes, panels, buttons, hover label and campaign-won box (T-042, T-046) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. Ctrl+Space: run the mission again. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys. With the user's `XENO.KEY`: `=`, `-` progress, Ctrl+W won, Ctrl+L lost |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l`, the page's text panels, the walking and turning robot (T-044, T-047) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
-| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); the port's Ctrl+W and Ctrl+L destroy the alien or the player's base (the mission then ends won or lost after its end script, T-055), Ctrl+C campaign won (a placeholder) |
+| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); a base destroyed by play ends the mission won or lost after its end script (T-055, T-150); the port's Ctrl+C: campaign won (a placeholder) |
 | Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
-Keys that only the port uses: Ctrl+W and Ctrl+L stand in for the shots that would
-destroy a base (T-114), Ctrl+C for the campaign's last win. A mission ends with a
+Keys that only the port uses: Ctrl+C in a mission, for the campaign's last win. Ctrl+W
+and Ctrl+L are the map room's developer keys only; in a mission no view's table binds
+them, and the port's stand-ins that destroyed a base there are gone (T-150): bases fall
+to shots, and no developer key of the original ends a mission. A mission ends with a
 result when a destroyed base's end script is over (`docs/sim.md`, "The mission's
 end"). A training mission goes back to the map room without a cutscene, as in the
 original.
