@@ -26,7 +26,8 @@ const EMPTY: u8 = 10;
 /// Programs a broken script starts: `BUS FAULT` and `CORE DUMP`.
 const BUS_FAULT: u8 = 29;
 const CORE_DUMP: u8 = 30;
-/// Events the program and the pilot post when they take over, and the hold order's.
+/// Events the program and the pilot post when they take over, and the hold order's
+/// (which a new goal from a console's map posts too).
 pub const EVENT_PROGRAM: u8 = 0xa;
 pub const EVENT_PILOT: u8 = 0xb;
 const EVENT_HOLD: u8 = 5;
@@ -424,6 +425,46 @@ fn check_object_goal(world: &mut World, id: EntityId) {
         && m.goal_object == 0xffff
     {
         m.goal = 0;
+    }
+}
+
+/// `sim_drop_object_goal` (`1000:473d`): an object goal (+0x32 bit 0) is dropped
+/// (+0x32 = 0, no object). The original also releases the object's reference, which
+/// the port does not count.
+fn drop_object_goal(m: &mut Movement) {
+    if m.goal & 0x01 != 0 {
+        (m.goal, m.goal_object) = (0, 0xffff);
+    }
+}
+
+/// The consoles' map-mode press on nothing (`1000:46c7`, T-133): robot `id`'s old
+/// object goal dropped, its destination `point` (+0x32 = 2), a message and event 5.
+pub fn set_destination(world: &mut World, id: EntityId, point: Position, tables: &Tables) {
+    if let Some(m) = movement(world, id) {
+        drop_object_goal(m);
+        (m.destination, m.goal) = (point, 0x02);
+        m.panel.post(tables.sensing.messages.destination);
+        post(m, EVENT_HOLD);
+    }
+}
+
+/// The consoles' map-mode press on an object (`1000:4685`, T-133): robot `id`'s old
+/// object goal dropped, `object` its goal object (+0x3a, the slot) at the offset of
+/// the robot's position less the object's (+0x3c, which the worked-out point adds
+/// back), +0x32 = 1, a message and event 5.
+pub fn set_goal_object(world: &mut World, id: EntityId, object: EntityId, tables: &Tables) {
+    let (Some(at), Some(o)) = (world.get(id), world.get(object)) else {
+        return;
+    };
+    let offset = Position {
+        x: Fixed(at.position.x.0.wrapping_sub(o.position.x.0)),
+        y: Fixed(at.position.y.0.wrapping_sub(o.position.y.0)),
+    };
+    if let Some(m) = movement(world, id) {
+        drop_object_goal(m);
+        (m.goal_object, m.destination, m.goal) = (object.0, offset, 0x01);
+        m.panel.post(tables.sensing.messages.goal_object);
+        post(m, EVENT_HOLD);
     }
 }
 

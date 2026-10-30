@@ -31,9 +31,12 @@ pub const TICKS: usize = 16;
 /// (`d8af`) took a first target, replaced one, was refused with the targeting
 /// computer damaged, out of range, on the target it has, on the robot itself, and
 /// locked one of its own side; the upkeep (`d66f`) lost the target, and found it
-/// destroyed; the R key (`d7f8`) dropped the target; the A key (`d812`) found none.
-pub(crate) const MESSAGES_AT: [usize; 12] = [
+/// destroyed; the R key (`d7f8`) dropped the target; the A key (`d812`) found none;
+/// the consoles' map-mode press (T-133) set an object goal (`4685`) or a destination
+/// (`46c7`).
+pub(crate) const MESSAGES_AT: [usize; 14] = [
     0xd7f0, 0xd8f4, 0xd8fc, 0xd917, 0xd910, 0xd91e, 0xd909, 0xd8dd, 0xd6bd, 0xd6d0, 0xd7fe, 0xd89f,
+    0x46bb, 0x46e7,
 ];
 /// `mov ax, [bx + table]` in the A key's search (`1000:d812`): the locking range again.
 pub(crate) const NEXT_RANGE_AT: usize = 0xd822;
@@ -107,6 +110,8 @@ pub struct Messages {
     pub destroyed: u16,
     pub dropped: u16,
     pub none_next: u16,
+    pub goal_object: u16,
+    pub destination: u16,
 }
 
 fn ranges(image: &[u8], ds: usize, at: usize) -> Result<[u16; 3], FormatError> {
@@ -226,6 +231,8 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
             destroyed: m(9)?,
             dropped: m(10)?,
             none_next: m(11)?,
+            goal_object: m(12)?,
+            destination: m(13)?,
         },
         lock_sound: (sound / 2) as u8,
         weapons: weapons(image)?,
@@ -345,6 +352,8 @@ mod tests {
             m.destroyed,
             m.dropped,
             m.none_next,
+            m.goal_object,
+            m.destination,
         ] {
             let text: Vec<u8> = (at..)
                 .map(|o| motion.strings.byte(o))

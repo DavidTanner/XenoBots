@@ -49,6 +49,8 @@ Sensing {
         destroyed: 73,
         dropped: 74,
         none_next: 75,
+        goal_object: 76,
+        destination: 77,
     },
     weapons: [
         [

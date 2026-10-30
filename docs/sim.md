@@ -593,8 +593,16 @@ human humanoid and first alien robot, 7 units apart, lock each other and stand u
 2 units apart within two minutes. Shortcuts, each named in the code: firing (0x7d)
 did nothing and a weapon was never cooling down or out of rounds (both done by T-114); an
 object goal on an empty slot gives the point 0xffff; the point carries over no
-mission. Nothing sets an object goal yet: only the consoles' map-mode press does
-(T-133).
+mission. The consoles' map-mode press sets one (T-133, below).
+
+**Goals from a console's map (T-133).** `script::set_destination` (`1000:46c7`) and
+`script::set_goal_object` (`1000:4685`), by `Sim::pilot` (`Pilot::Destination`,
+`Pilot::GoalObject`), as `docs/screens.md`, "Under the pointer (T-133)", traces them:
+the old object goal dropped (`sim_drop_object_goal`, only with bit 0), +0x32 written
+whole (2 or 1), the destination the point or the robot's offset from the object, the
+slot kept, a message read from `xeno.exe` with the lock's (`sensing::Messages::
+destination`, `goal_object`) and event 5. The object's reference count is not kept (as
+nowhere in the port). No new state: the state hash is unchanged.
 
 **The target keys (T-138).** A (`1000:d812`, the same in every console's key table)
 keeps the robot (`DS:0x71f7`), its side bit (+0x16 bit 3, `DS:0x709c`) and its kind's
