@@ -61,7 +61,8 @@ clear, actionable message if they are missing. Never download, embed or ship the
   remainder back to the backlog.
 - A change should be readable in one sitting: roughly under 400 lines of diff excluding
   generated code and lockfiles.
-- Update `NEXT_STEPS.md` in the same PR: mark the task done, add follow-ups you found.
+- Update `NEXT_STEPS.md` in the same PR: mark the task done and move its row to
+  `docs/done-tasks.md`, and add follow-ups you found.
 - Don't refactor unrelated code in a feature PR.
 - When a task is finished (checks pass, `NEXT_STEPS.md` updated), give the user a
   pull request description they can copy and paste, even if you don't open the PR.

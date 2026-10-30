@@ -265,6 +265,7 @@ time.
 AGENTS.md        rules and context for coding agents (and humans)
 CLAUDE.md        Claude Code specifics; imports AGENTS.md
 NEXT_STEPS.md    task backlog, one small reviewable task per entry
+docs/done-tasks.md  finished tasks, moved out of the backlog
 docs/formats/    notes on each original file format as it is decoded
 crates/          Cargo workspace members (created as tasks land)
 gameFiles/       your copy of the game; gitignored, never committed

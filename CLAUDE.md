@@ -7,9 +7,11 @@ Claude-specific additions to the shared agent guidance above.
 ## Start here
 
 1. Read `NEXT_STEPS.md` and pick the lowest-numbered task that is `todo` and whose
-   dependencies are `done`, unless the user names one.
+   dependencies are `done` (a task listed in `docs/done-tasks.md` is done), unless
+   the user names one.
 2. Say which task you are taking, do only that task, and update its status in
-   `NEXT_STEPS.md` in the same change.
+   `NEXT_STEPS.md` in the same change; when it is done, move its row to
+   `docs/done-tasks.md`.
 3. Before any commit: `git status` and confirm nothing from `gameFiles/` or any
    dump/extract directory is staged. This is the one rule that must never be broken.
 
