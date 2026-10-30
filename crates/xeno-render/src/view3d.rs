@@ -424,8 +424,10 @@ impl Framebuffer {
     /// pointer probe (`docs/render.md`, "The pointer probe"): that pixel is set to
     /// [`PROBE`] after the sky (`1000:4042`), and each node that changes it is noted
     /// and the pixel set back (`1000:40bc`), so the object returned is the nearest
-    /// drawn over it; a terrain node over it leaves none. The pixel stays [`PROBE`],
-    /// as in the original's main view and camera display.
+    /// drawn over it. A terrain node sets the pixel back without noting itself
+    /// (`1000:4113` at the end of `1000:3595`), so an object behind a hill is still
+    /// named. The pixel stays [`PROBE`], as in the original's main view and camera
+    /// display.
     pub fn draw_view(
         &mut self,
         view: &View3d,
@@ -451,7 +453,9 @@ impl Framebuffer {
                 && self.pixels()[i] != PROBE
             {
                 self.pixels_mut()[i] = PROBE;
-                under = (node.object != TERRAIN).then_some(node.object);
+                if node.shape.is_none() {
+                    under = Some(node.object);
+                }
             }
         }
         under
@@ -904,12 +908,39 @@ mod tests {
         assert_eq!(probe(&[far.clone(), near], Some((7, 5))), (Some(7), PROBE));
         assert_eq!(probe(&[far.clone()], Some((7, 5))), (Some(5), PROBE));
         assert_eq!(probe(&[far.clone()], Some((0, 0))).0, None);
-        // A terrain node's object word is 0: drawn over the object, none.
-        let terrain = RenderNode {
+        // A hill over the pixel sets it back without naming itself.
+        let hill = RenderNode {
             object: TERRAIN,
+            shape: Some(Shape {
+                radius: 0x1000,
+                diagonal: 0xaab,
+                height: 0x100,
+                program: vec![0x14, 0],
+                ..Shape::default()
+            }),
             ..far.clone()
         };
-        assert_eq!(probe(&[far.clone(), terrain], Some((7, 5))).0, None);
+        let mut fb = Framebuffer::new(Size::new(12, 8));
+        let under = fb.draw_view(
+            &v,
+            &c,
+            &[far.clone(), hill.clone()],
+            &models,
+            None,
+            Some((6, 5)),
+        );
+        assert_eq!((under, fb.pixels()[5 * 12 + 6]), (Some(5), PROBE));
+        assert_eq!(
+            Framebuffer::new(Size::new(12, 8)).draw_view(
+                &v,
+                &c,
+                &[hill],
+                &models,
+                None,
+                Some((6, 5))
+            ),
+            None
+        );
         // Off the buffer: no mark.
         assert_eq!(probe(&[far], Some((12, 5))), (None, 9));
     }

@@ -298,9 +298,11 @@ Which object is under the pointer is read from the frame itself, one pixel of it
 3. **After each node** of the 3D list (`gfx_draw_render_list` calls `1000:40bc` after
    every node, drawn or culled): if the probe is armed and its pixel is no longer
    0xff, the new pixel goes to `DS:0x4c88`, the pixel is set back to 0xff and the
-   node's object word (+0x02) to `DS:0x4c84`. A terrain node's object word is 0, so a
-   hill drawn over the pixel leaves none. Far to near, the probe ends up naming the
-   **nearest object drawn over that pixel**; a model's own colour 0xff would go unseen.
+   node's object word (+0x02) to `DS:0x4c84`. A terrain node (type 8, `1000:3595`)
+   calls `1000:4113` itself after drawing its shape, which sets the pixel back to 0xff
+   without noting anything, so a hill drawn over the pixel leaves the object behind it
+   named. Far to near, the probe ends up naming the **nearest object drawn over that
+   pixel**, hills not counting; a model's own colour 0xff would go unseen.
 4. **End**: lists 8 and 0xa (the missile and thermal cameras) run `1000:4164`, which
    puts the kept pixel back if the probe's pixel is still 0xff and disarms it. The
    main view's (4) and the camera display's (6) lists do not, so their frame keeps a
@@ -316,8 +318,10 @@ type 0xc (`1000:38bc`, a robot's dot) writes its one pixel and, unless the node 
 viewer's (`DS:0x145c`), names its object when the dot's offsets from the middle are
 exactly `DS:0x4c80`, `0x4c82`; the sprite node after it (`1000:3912`) draws its sprite
 centred, then its dot, then calls `1000:40bc` as the 3D list does. `1000:4113`, called
-by the hill outlines (`1000:39e9`, `39f7`), `3616` and `3ad4`, only sets the carry
-when the probe's pixel was drawn over (and sets it back), naming nothing.
+by the 3D terrain node (`1000:3616`), the map routine of types 0xe and 0x10
+(`1000:39e9`, `39f7`) and `3ad4`, only sets the carry when the probe's pixel was drawn
+over (and sets it back), naming nothing. The maps' hill outlines (`1000:39fb`) do not
+probe at all.
 
 ## Projection
 
