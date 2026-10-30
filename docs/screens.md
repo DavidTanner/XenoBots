@@ -861,6 +861,60 @@ the relays, not every 16 ticks; the damage panel draws its cover under the light
 original leaves the picture there when the console opens with bit 7 set). Still to
 check in DOSBox: every widget's look and the blink timing.
 
+### The scout console's instruments (T-132)
+
+From a Ghidra pass over the draw and mouse handlers of the scout's widgets (set
+`0x38aa`, widget states from +0x10d; the same draw and mouse tables by type) and the
+routines they call, in the words of the humanoid's section. Sprites are `msprite4`'s,
+loaded at handle 0x9b0 (`mov dx` at `1000:bbc0`). Every number and panel is in font 2;
+a colour word `0xBBCC` is colour `CC` on `BB`. Cursor places are (x, y).
+
+**The shared look** is +0x22 bit 3, as the other two kinds': the buttons drawn "+ look"
+add +0x22 (signed). The weapon buttons keep a look of their own (below), and the gear
+lever's drag uses +0x22 too (1 while dragging).
+
+| Type | Rectangle | Draw | What it shows | Mouse |
+|---|---|---|---|---|
+| `0x10a` | (121, 1, 163, 59) | `1000:b8b8` | The compass: dial 0xa80 keyed in `DS:0x6e17`; a needle from a **64**-entry word table `DS:0x6e3f` by `((heading + 0x200) >> 10) & 63` (low byte the quadrant times 2, high byte the needle 0 to 16), sprite 0xba8 + 8 * needle, keyed and turned in the quadrant's rectangle (`DS:0x6e1f`, `0x6e27`, `0x6e2f`, `0x6e37`; blitters as the humanoid's, `CS:0xb92b`). Then at (0x19, 0x8b) `DS:0x70db` in 0x68 and the heading in degrees, three digits, in 0x0e, transparent | `b95f`: a release sets +0x2a to the bearing from (0x1e, 0x8d) to the pointer (`1000:04eb`), the pilot (`d446`), +0x23 bits 4 and 5 cleared. T-172 |
+| `0x118` x2 | (104, 222, 113, 251), (118, 223, 127, 252) | `b7db` | Weapon `n` (state's second byte): `DS:0x6c24[n]` (0xa18, 0xa28) when selected (+0xdd), else `DS:0x6c28[n]` (0xa10, 0xa20); while this widget is the one held (`DS:0x6ef7`) plus `DS:0x6ef9` & 0x7f. Opaque at -1 | `b81e`: nothing for the weapon already selected; else marks itself, `DS:0x6ef9` XOR 8, `DS:0x6ef7` the widget; a release selects weapon `n` (`ca1d`, F5 and F6's) and clears both |
+| `0x11a` | (134, 244, 142, 255) | `bd7f` | Sprite 0xa40 + look, opaque at the corner: FIRE | `bd92`: flips the look; a press sets +0x1b = 7 (the held-button table `DS:0x6edf`: `cba7`, +0xdc bit 7 every tick), a release or leave clears it |
+| `0x11c` | (5, 268, 48, 315) | `bf08` | The status panel: filled in the kind's message panel colours (`DS:0x71b0`), font 2, text in the high byte on the fill. The page is +0x108 AND 3 (`CS:0xbf48`, four pages, no cut). Its heading (`DS:0x6c6c`, `0x6ca0`, `0x6ccc`, `0x6cf9`, each with the labels) transparent at (0x10e, 5), then opaque from (0x12a, 0x11): page 0 `ddb6`'s percentages of 100, +0x24, +0x4e, then `de12` of +0xec bit 0, then the percentage of 100; page 1 `de12` of +0xf6 bits 0 to 3; page 2 `de12` of +0xdc bits 0 and 1, then at (0x12a, 0x23) `de24` of +0xe0 and +0xde; page 3 from (0x126, 0x11) `de24` of +0xe2, +0xe4, +0xe3, +0xe5 (the mines, ECM buoys, alarm buoys and decoys) | `dd7f`: as the humanoid's (T-167) |
+| `0x11e` | (112, 263, 144, 317) | `c02e` | The target panel, opaque in 0x0160 (0x01ff for a warning) at (0x122, 0x71): with a target its name (`1fe6:7f38`), its distance (+0xe8 through `02b7` and `0301`, then `M`, a **space** and a new line; 0xff while +0xec bit 1 is clear) and its bearing less the heading in degrees (glyph 0x17, a new line; 0xff while +0xec bit 2 is clear); without one `DS:0x6d31` (three lines). Then at (0x122, 0x86) in 0x0160 each weapon's state: `DS:0x71d6` (+0xdc bit 0 or 1), else `0x6d46` while its cool-down (+0x105, +0x106) is not 0, else `0x6d4f` | none |
+| `0x120`, `0x122` | (112, 1, 119, 9), (112, 9, 119, 17) | `ba74`, `baa9` | The pilot and program switches: 0xa68 and 0xa58 (lit) for the one that drives (+0x23 bit 7), else 0xa60 and 0xa50; opaque at the corner | `ba8c`, `bac1`: the frame XOR (`dfd5`); a release the pilot (`d446`) or the program (`d42c`), as F2 and F3 |
+| `0x124` | (171, 0, 200, 53) | `c13e` | The gear lever: 0xb70 + 4 * the gear (+0x109, twice an index), opaque at the corner | `c156`: as the humanoid's: drag through the gear rectangles `DS:0x6d80` (+0x22 = 1 while dragging), or press a notch `DS:0x6dbc`: the gear, its speed (`DS:0x6df8`), the velocity (`d41c`), the pilot; on the release the gear's message (`DS:0x6e04`). T-172 |
+| `0x126` | (155, 152, 197, 208) | `b738` | The third display (colour 253, region `DS:0x6bd4`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7c8b`; once it is done (mode 3) the copy through the region and the probe into `DS:0x6e14`. T-173 | `b76e`: as the second display's, flag 3 in `DS:0x6e16` |
+| `0x128` | (133, 226, 143, 238) | `bdc1` | The lock button: 0xa70, 0xa78 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque at +1 | `be01`: as the humanoid's `a3f1` (a left release `d812`, which also marks the target panel; a right one `d7f8`; +0x22 cleared) |
+| `0x12a` | (105, 71, 114, 100) | `bee8` | The lock warning light: 0xa88, 0xa90 while +0xed is not 0 and +0xee bit 2 is set; opaque at the corner | none |
+| `0x12c` | (190, 59, 195, 66) | `c208` | The speed: cursor (0x3b, 0xbe), `DS:0x70e2` in 0x68, then in 0x60 the speed table `DS:0x7003` by +0x26 (negated if negative) through `02b7`, the third digit a space or `-` but drawn from the fourth: two digits, no sign. Transparent | none |
+| `0x12e` x4 | (151, 261, 159, 318) and on, 8 rows apart | `b860` | Sprite 0xa98 + look, opaque 5 right and 3 down of the corner; all four the same (the handler works out `2n` and drops it) | `b88d`: marks itself, flips the look; a release runs `d5d5` with `n` (keys 1, 4, 3, 2: a mine, a decoy, an alarm buoy, an ECM buoy). T-137 |
+| `0x130`, `0x132` | (133, 66, 143, 95), (119, 69, 129, 97) | `be4c`, `be9a` | Sprites 0xaa8 and 0xab8 + look, opaque 3 and 4 pixels left of the corner | `be77`, `bec5`: flip the look; a release runs F8 (`d95e`, the cloak) or F7 (`d92d`, the ECM). T-136 |
+| `0x134`, `0x136`, `0x138` | (159, 88, 170, 96), (171, 88, 182, 96), (183, 88, 194, 96) | `c274`, `c2b9`, `c2fe` | Sprites 0xae8, 0xaf8, 0xb08 + look, opaque at the corner | `c28c`, `c2d1`, `c316`: flip the look; a release sets the stance asked for (+0x10c) to 0, 0x30 or 0x60, as E, W and Q (`c2b3` is the tail of `c28c`) |
+| `0x13a` | (160, 99, 196, 142) | `c343` | The stance gauge: 0xb18 + ((+0x10b >> 1) & 0x38), opaque at the corner | none |
+| `0x13c` | (154, 213, 194, 235) | `c360` | The power panel: 0xad8 in `DS:0x6d58` on the battery (+0xfd bit 0), else 0xae0; the signal's bar (+0x4f) in `0x6d68`; 0xae0 in `0x6d60` on the battery, else 0xad8; the energy's bar (+0x50) in `0x6d70`. A bar (`c3ac`) counts as the others' (255 as 256, `(v >> 1) >> 3` lit 0xad0, then the rest of 16 dark 0xac8) but **upwards**: the first at the rectangle's top plus 30, each 2 rows above the last | none |
+| `0x13e`, `0x140`, `0x142` | (136, 14, 147, 24), (136, 24, 147, 37), (136, 37, 147, 47) | `b993`, `b9f3`, `ba18` | Turn left 0xb50 + look and right 0xb60 + look, opaque at the corner; straight draws nothing (`b9f3` is a bare `ret`) | `b9a6`, `b9f4`, `ba2b`: as the humanoid's turn buttons (left and right flip the look; held codes 0xa and 0xb, `cbad`, `cbb7`; straight a release, no look). T-172 |
+
+`0x10c` to `0x116` and `0x150` are the first group's members (144, 100, 151, 223): the
+second display's buttons, T-134. The weapon buttons' `n` is the second byte of their
+states (+0x11e, +0x121); the drop buttons' (+0x12a to +0x130).
+
+**The stance step's mark.** `sim_step_scout_stance` (`1000:c5a3`) sets +0x13e to 3: the
+state of widget `0x13a`, the stance gauge, so the open console redraws it each time the
+stance moves.
+
+**Counters.** The scout's tick table `DS:0x6ebf` (by +0x1a): entry 4 (`1000:caf5`) adds
+2 to +0xee (marking the warning light; sound event 0x12 while +0xed holds and bit 2 is
+set), and when +0xfa's low five bits are 0 steps +0x108 (AND 3, marking the status
+panel); then +0xfa goes up by one. So the status panel turns a page every 512 ticks,
+round all four. The recall's routine (`cb3d`) marks the program panel and the switches.
+
+**In the port**: `xeno_formats::scoutcon` reads the texts, tables, rectangles and the
+bank's handle; `xeno-app`'s `scoutcon` draws, from the sim, the power panel, the warning
+light, the speed, the compass, the gear lever and the stance gauge (part 1). Shortcuts,
+each named in the code: the signal is the scenario's as loaded (T-148); +0xee and the
+status page are worked out from the passes since the load (T-167). Not ported: the
+compass's, gear lever's and turn buttons' mouse (T-172), the third display (T-173).
+Still to check in DOSBox (T-174): every widget's look and the blink and page timing.
+
 ### The situation room's main view (T-103)
 
 From a Ghidra pass over the main view's routines (`ui_draw_sitroom_main_view`,

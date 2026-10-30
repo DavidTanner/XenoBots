@@ -1448,7 +1448,8 @@ The scorpion's walk leaves both alone, so a scorpion keeps 0x0a80 and 0x0b80.
 (0x0f80, every tick); the scout's stance step (`sim_step_scout_stance`, `1000:c5a3`)
 sets it to `0x0d00 - 8 * stance` (the stance sign-extended) each time the stance moves
 one towards its target, and nothing else does: a scout made at 0x0a00 keeps it until it
-first crouches or rises. (The same step sets +0x13e to 3, which the console reads.)
+first crouches or rises. (The same step sets +0x13e to 3, the state of the console's stance gauge, so it is
+redrawn: `docs/screens.md`, "The scout console's instruments (T-132)".)
 Every stock scout is saved at 0x0b80, its standing height.
 
 ### The port (T-119)

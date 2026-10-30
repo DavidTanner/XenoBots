@@ -10,7 +10,7 @@ use xeno_formats::maproom::Rect;
 use xeno_render::{BlitMode, Framebuffer, TextCursor, TextMode};
 
 use crate::console::{
-    Coloured, Look, NEW_LINE, NEXT, Robot, Sprites, calls, draw_lines, sprite, target_part,
+    Coloured, Look, NEW_LINE, NEXT, Robot, Sprites, draw_lines, sprite, target_part,
 };
 use crate::panels::digits;
 
@@ -85,7 +85,7 @@ pub fn draw_compass(
         con.dial.top,
         BlitMode::Keyed,
     );
-    let needles = (&con.needles, con.quadrants);
+    let needles = (&con.needles[..], con.quadrants);
     crate::console::draw_needle(fb, sprites, needles, NEEDLE, heading);
     let degrees = crate::editor::degrees(heading);
     lit_number(fb, font, con, HEADING_AT, &digits(degrees, 3));
@@ -111,24 +111,8 @@ pub fn draw_power(fb: &mut Framebuffer, con: &HumanCon, sprites: Sprites, robot:
         [LIGHT_OFF, LIGHT_ON]
     };
     let areas = (con.lights, con.bars);
-    crate::console::draw_power(fb, sprites, areas, handles, [LIT, DARK], robot);
-}
-
-/// The status panel's page `passes` object passes after the load: each call of entry
-/// 4 steps +0x10a when +0xfa's low five bits are 0, then +0xfa; the panel cuts +0x10a
-/// by 3 when 3 or more.
-// shortcut: with the console open the draw cuts 3 to 0 before the next step, so the
-// pages go round in threes; closed, the original's +0x10a runs 0 to 3 (T-167).
-pub fn page(loaded_tick: u8, loaded_clock: u8, loaded_light: u8, passes: u16) -> u8 {
-    let calls = calls(loaded_tick, passes);
-    let first = u16::from(loaded_clock.wrapping_neg() & 0x1f);
-    let steps = if calls > first {
-        (calls - 1 - first) / 32 + 1
-    } else {
-        0
-    };
-    let light = if loaded_light >= 3 { 0 } else { loaded_light };
-    ((u16::from(light) + steps) % 3) as u8
+    let bar = crate::console::BAR_RIGHT;
+    crate::console::draw_power(fb, sprites, areas, (handles, [LIT, DARK]), bar, robot);
 }
 
 /// `1000:a466`: the target panel's colours, 0x57 (0xff for a warning, 0x5c for a
@@ -492,16 +476,5 @@ mod tests {
         robot.target = Some(Vec::new());
         assert_eq!(handle(&robot, look, LOCK_TYPE, 0), LOCK);
         assert!(button(&con, 0xa2, 0, &robot, look).is_none());
-    }
-
-    #[test]
-    fn the_pages_turn_every_512_passes() {
-        // +0x1a loaded at 6: entry 4 on pass 1, then every 16; +0xfa at 31 steps the
-        // light on the second call (pass 17), then every 32 calls.
-        assert_eq!((page(6, 31, 0, 16), page(6, 31, 0, 17)), (0, 1));
-        assert_eq!((page(6, 31, 0, 528), page(6, 31, 0, 529)), (1, 2));
-        assert_eq!(page(6, 31, 2, 17), 0);
-        // A light of 3 is cut to 0 by the first draw.
-        assert_eq!(page(6, 0, 3, 0), 0);
     }
 }

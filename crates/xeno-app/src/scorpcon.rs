@@ -79,7 +79,7 @@ pub fn draw_compass(
 ) {
     let dial = con.dial;
     sprite(fb, sprites, DIAL, dial.left, dial.top, BlitMode::Keyed);
-    let needles = (&con.needles, [dial; 4]);
+    let needles = (&con.needles[..], [dial; 4]);
     crate::console::draw_needle(fb, sprites, needles, NEEDLE, heading);
     let degrees = digits(crate::editor::degrees(heading), 3);
     let unlit = &con.heading_unlit;
@@ -99,7 +99,8 @@ pub fn draw_power(fb: &mut Framebuffer, con: &ScorpCon, sprites: Sprites, robot:
         LIGHTS_ON_NET
     };
     let areas = (con.lights, con.bars);
-    crate::console::draw_power(fb, sprites, areas, handles, SEGMENTS, robot);
+    let bar = crate::console::BAR_RIGHT;
+    crate::console::draw_power(fb, sprites, areas, (handles, SEGMENTS), bar, robot);
 }
 
 /// The speed lever (`0xde`): opaque at its corner.
