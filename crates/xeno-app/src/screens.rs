@@ -303,6 +303,8 @@ pub struct Screens {
     dac: Dac,
     /// A fade in waiting for its black to be uploaded.
     fade_in: Option<Fade>,
+    /// The mission view whose colour records start once no fade is pending or running.
+    view_records: Option<View>,
     keys: Keys,
     quit: bool,
     /// The screen changed since [`Screens::take_changed`].
@@ -382,6 +384,7 @@ impl Screens {
             training: false,
             dac,
             fade_in: None,
+            view_records: None,
             keys: Keys::default(),
             quit: false,
             changed: true,
@@ -450,9 +453,17 @@ impl Screens {
         self.next = Some(MapRoom);
     }
 
-    /// Notes the robot console a mission view opens, for the lose picture.
+    /// Notes the robot console a mission view opens, for the lose picture. The view
+    /// left turns its colour records off where they stand (its picture's close
+    /// handler) and the new one's start once no fade runs.
     fn viewed(&mut self, view: View) {
         self.mission.restart_tint();
+        if let Mission(old) = self.screen {
+            for &record in mission::view_records(old) {
+                self.dac.anims_mut().set_active(record, false);
+            }
+        }
+        self.view_records = Some(view);
         if let Some(console) = match view {
             View::SitRoom => None,
             View::Humanoid => Some(0),
@@ -753,17 +764,24 @@ impl Screens {
         if matches!(self.screen, Mission(_)) && self.next.is_none() {
             self.mission.check_noise(&self.mission_assets);
         }
-        // The time-of-day tint, once no fade is pending or running (the records blend
-        // from the shadow, and a fade's uploads would wipe them).
+        // The view's own records, then the time-of-day tint, once no fade is pending or
+        // running (the records blend from the shadow, and a fade's uploads would wipe
+        // them).
         if matches!(self.screen, Mission(_))
             && self.next.is_none()
             && self.fade_in.is_none()
             && !self.dac.fading()
-            && let Some(weight) = self.mission.tint()
         {
-            log::debug!("mission: time-of-day tint {weight}");
-            for record in mission::TINT_RECORDS {
-                self.dac.start_anim(record, weight);
+            if let Some(view) = self.view_records.take() {
+                for &record in mission::view_records(view) {
+                    self.dac.start_anim(record, 0);
+                }
+            }
+            if let Some(weight) = self.mission.tint() {
+                log::debug!("mission: time-of-day tint {weight}");
+                for record in mission::TINT_RECORDS {
+                    self.dac.start_anim(record, weight);
+                }
             }
         }
         if matches!(self.screen, Mission(_))
@@ -970,6 +988,11 @@ impl Screens {
         // campaign before the campaign draws from it.
         if !matches!(action, Play(_) | PlayLoaded) {
             self.mission.park(campaign);
+            // `ui_map_room_run_mission` turns every record off before its fade out.
+            if matches!(self.screen, Mission(_)) {
+                self.dac.anims_mut().stop_all();
+                self.view_records = None;
+            }
         }
         match (self.screen, action) {
             (MapRoom, Next | Previous) => {
@@ -2111,6 +2134,40 @@ pub(crate) mod tests {
         }
         assert!(faded > 0);
         assert!(tinted(&screens));
+    }
+
+    #[test]
+    fn a_mission_view_runs_its_own_colour_records_until_left() {
+        use xeno_render::anim::flag::ACTIVE;
+        let active = |s: &Screens, r: u8| s.dac.anims().flags(r).unwrap() & ACTIVE != 0;
+        let mut screens = new(Mission(View::Scorpion));
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        for _ in 0..80 {
+            screens.retrace([], &mut fb);
+            if screens.dac.fading() {
+                assert!(!active(&screens, 0xd), "not during the fade in");
+            }
+        }
+        assert!(
+            mission::view_records(View::Scorpion)
+                .iter()
+                .all(|&r| active(&screens, r))
+        );
+        // Another view: the old view's own records stop, the shared ones restart.
+        screens.mission_request(MissionRequest::Show(View::SitRoom));
+        for _ in 0..3 {
+            screens.retrace([], &mut fb);
+        }
+        assert_eq!(screens.screen(), Mission(View::SitRoom));
+        assert!(!active(&screens, 0xd) && !active(&screens, 3));
+        assert!(
+            mission::view_records(View::SitRoom)
+                .iter()
+                .all(|&r| active(&screens, r))
+        );
+        // Leaving the mission stops them all.
+        screens.mission_request(MissionRequest::End);
+        assert!((0..24).all(|r| !active(&screens, r)));
     }
 
     /// The user's files: the screens' pictures and the assets of the log-in, the map
