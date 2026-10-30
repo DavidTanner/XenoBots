@@ -27,6 +27,7 @@ use xeno_formats::ban::Sky;
 use xeno_formats::ban::{self, Sprite};
 use xeno_formats::filedialog::FileDialogs;
 use xeno_formats::font::Font;
+use xeno_formats::humancon::HumanCon;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::orders;
 use xeno_formats::sitroom::SitRoom;
@@ -36,7 +37,7 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MESSAGE_PANEL_TYPE, MissionViews, PROGRAM_PANEL_TYPE,
     SITUATION_CORNER_TYPE, TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, filedialog, lzexe, map, mapdvr, mgavideo, motion, sitroom};
+use xeno_formats::{editor, filedialog, humancon, lzexe, map, mapdvr, mgavideo, motion, sitroom};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
@@ -289,6 +290,10 @@ pub struct Assets {
     /// The file dialogs (T-110), if the user's `xeno.exe` has them where the port
     /// reads them; without them Ctrl+Alt+P saves under a fixed name.
     pub file_dialogs: Option<FileDialogs>,
+    /// The humanoid console's instruments (T-130), if the user's `xeno.exe` has them
+    /// where the port reads them, and its sprites (`msprite2`).
+    pub humancon: Option<HumanCon>,
+    pub humancon_sprites: Vec<Sprite>,
 }
 
 /// What a file dialog was opened for.
@@ -404,6 +409,12 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .ok(),
         map_sprites: bank("msprite0.b@n")
             .inspect_err(|e| log::warn!("situation room: no map sprites: {e}"))
+            .unwrap_or_default(),
+        humancon: humancon::read(&exe)
+            .inspect_err(|e| log::warn!("xeno.exe: no humanoid console this port can read: {e}"))
+            .ok(),
+        humancon_sprites: bank("msprite2.b@n")
+            .inspect_err(|e| log::warn!("humanoid console: no sprites: {e}"))
             .unwrap_or_default(),
     })
 }
@@ -2541,6 +2552,82 @@ impl Mission {
         {
             xor_frame(fb, area, UNIT_PRESSED_XOR);
         }
+        if robot.kind == RobotKind::Humanoid {
+            self.draw_humanoid(fb, assets, slot);
+        }
+    }
+
+    /// The humanoid console's instruments ([`humancon`]) from the sim.
+    fn draw_humanoid(&self, fb: &mut Framebuffer, assets: &Assets, slot: u16) {
+        let (Some(con), Some(room), Some(font)) = (
+            &assets.humancon,
+            &assets.sitroom,
+            assets.fonts.get(&crate::humancon::FONT),
+        ) else {
+            return;
+        };
+        let Some(robot) = self.instruments(slot) else {
+            return;
+        };
+        let tables = &assets.views.humanoid;
+        let area = |kind| {
+            tables
+                .find(kind)
+                .or_else(|| tables.nested.iter().find(|w| w.kind == kind))
+                .and_then(|w| w.area)
+        };
+        let bank = &assets.humancon_sprites;
+        let lookup = |h: u16| {
+            let offset = h.checked_sub(con.bank)?;
+            offset
+                .is_multiple_of(HANDLE_STEP)
+                .then(|| bank.get(usize::from(offset / HANDLE_STEP)))
+                .flatten()
+        };
+        let sprites: crate::humancon::Sprites = &lookup;
+        use crate::humancon as h;
+        h::draw_power(fb, con, sprites, &robot);
+        if let Some(a) = area(h::WARNING_TYPE) {
+            h::draw_warning(fb, a, sprites, &robot);
+        }
+        h::draw_speed(fb, font, con, &room.detail.speeds, robot.speed);
+        h::draw_compass(fb, font, con, sprites, robot.heading);
+        if let Some(a) = area(h::GEAR_TYPE) {
+            h::draw_gear(fb, a, sprites, robot.gear);
+        }
+    }
+
+    /// Robot `slot` as its console's instruments read it.
+    fn instruments(&self, slot: u16) -> Option<crate::humancon::Robot> {
+        let world = self.world();
+        let e = world.get(EntityId(slot))?;
+        let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
+            return None;
+        };
+        // shortcut: the signal (+0x4f) is the scenario's as loaded (T-148), and +0xee
+        // is worked out from the passes since the load (`humancon::blink`, T-167).
+        let loaded = self
+            .scenario
+            .iter()
+            .flat_map(|s| s.objects.iter().flatten())
+            .filter(|o| o.slot == slot)
+            .find_map(|o| o.robot());
+        let (signal, blink) = loaded.map_or((0, 0), |r| {
+            (
+                r.signal,
+                crate::humancon::blink(r.tick, r.blink, world.ticks),
+            )
+        });
+        Some(crate::humancon::Robot {
+            heading: e.heading,
+            speed: m.speed,
+            gear: m.gear,
+            on_battery: c.equipment & usg::Robot::ON_BATTERY != 0,
+            signal,
+            energy: m.guns.energy,
+            locked_on: m.locked_on,
+            blink,
+        })
     }
 }
 
@@ -2745,6 +2832,8 @@ pub mod tests {
             sitroom: None,
             map_sprites: Vec::new(),
             file_dialogs: None,
+            humancon: None,
+            humancon_sprites: Vec::new(),
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -4444,6 +4533,120 @@ pub mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The humanoid console's gauges follow the robot: the compass with its heading,
+    /// the speed's digits, the energy bar, the gear lever and the warning light.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_humanoid_instruments_follow_the_robot() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let con = assets.humancon.as_ref().unwrap();
+        assert_eq!(assets.humancon_sprites.len(), 57);
+        let pictures = crate::screens::load(&files).unwrap();
+        let picture = &pictures
+            .iter()
+            .find(|(n, _)| *n == "humancon.m@l")
+            .unwrap()
+            .1;
+        for name in ["htrain.usg", "scen00a.usg"] {
+            let mut m = Mission::new(
+                name.into(),
+                &assets.scenarios[name],
+                Random::seeded(1),
+                &assets.motion,
+            );
+            let robot = m
+                .robots()
+                .into_iter()
+                .find(|&s| m.book().get(s).unwrap().kind == RobotKind::Humanoid)
+                .unwrap();
+            m.view_robot(robot).unwrap();
+            let draw = |m: &Mission| {
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                fb.pixels_mut().copy_from_slice(&picture.pixels);
+                m.draw(&mut fb, &assets);
+                fb
+            };
+            let tables = &assets.views.humanoid;
+            let area = |kind| {
+                tables
+                    .find(kind)
+                    .or_else(|| tables.nested.iter().find(|w| w.kind == kind))
+                    .and_then(|w| w.area)
+                    .unwrap()
+            };
+            let pixels = |fb: &Framebuffer, a: Rect| -> Vec<u8> {
+                pixels(a).map(|(x, y)| fb.get(x, y).unwrap()).collect()
+            };
+            let set = |m: &mut Mission, f: &dyn Fn(&mut xeno_sim::Entity)| {
+                f(m.world_mut().get_mut(EntityId(robot)).unwrap());
+            };
+            set(&mut m, &|e| {
+                e.heading = 0;
+                if let State::Robot(r) = &mut e.state {
+                    (r.speed, r.gear, r.guns.energy, r.locked_on) = (0, 0, 0, 0);
+                }
+            });
+            let before = draw(&m);
+            set(&mut m, &|e| {
+                e.heading = 0x8000;
+                if let State::Robot(r) = &mut e.state {
+                    (r.speed, r.gear, r.guns.energy) = (40, 4, 0xff);
+                }
+            });
+            let after = draw(&m);
+            // The needle turns, and the heading reads 180 in colour 0x0f.
+            assert_ne!(
+                pixels(&before, con.dial),
+                pixels(&after, con.dial),
+                "{name}"
+            );
+            let compass = area(0xa6);
+            let lit = |fb: &Framebuffer, a| pixels(fb, a).iter().filter(|&&p| p == 0x0f).count();
+            assert!(lit(&after, compass) > 10, "{name}");
+            // The speed: two digits and a sign over the unlit ones.
+            let speed = area(0x9c);
+            assert!(
+                lit(&before, speed) > 10 && lit(&after, speed) > 10,
+                "{name}"
+            );
+            assert_ne!(pixels(&before, speed), pixels(&after, speed), "{name}");
+            // The energy bar fills; the signal's (as loaded) stays.
+            assert_ne!(pixels(&before, con.bars[1]), pixels(&after, con.bars[1]));
+            assert_eq!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
+            assert_ne!(pixels(&before, area(0xa4)), pixels(&after, area(0xa4)));
+            // The warning light blinks only while a lock holds.
+            let warning = area(0xa0);
+            let looks = |m: &mut Mission, locked: u8| {
+                set(m, &|e| {
+                    if let State::Robot(r) = &mut e.state {
+                        r.locked_on = locked;
+                    }
+                });
+                let mut looks: Vec<_> = (0..64)
+                    .map(|t| {
+                        m.world_mut().ticks = t;
+                        pixels(&draw(m), warning)
+                    })
+                    .collect();
+                looks.dedup();
+                looks.len()
+            };
+            assert_eq!(looks(&mut m, 0), 1, "{name}");
+            assert!(
+                looks(&mut m, 0xff) > 2,
+                "{name}: the warning light never blinks"
+            );
         }
     }
 

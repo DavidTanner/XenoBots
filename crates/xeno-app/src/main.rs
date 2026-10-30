@@ -9,6 +9,7 @@ mod dialog;
 mod drop;
 mod editor;
 mod game_dir;
+mod humancon;
 mod intro;
 mod keymap;
 mod login;
