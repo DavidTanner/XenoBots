@@ -226,11 +226,21 @@ impl Sim {
             Pilot::NextTarget => sense::next_target(world, id, tables, &mut events),
             Pilot::DropTarget => sense::drop_target(world, id, tables),
             Pilot::Lock(target) => sense::lock(world, id, target, tables, &mut events),
+            Pilot::Destination(point) => script::set_destination(world, id, point, tables),
+            Pilot::GoalObject(object) => script::set_goal_object(world, id, object, tables),
             _ => {}
         }
-        if matches!(
+        // The rest act on the robot's own movement.
+        if !matches!(
             key,
-            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget | Pilot::Lock(_)
+            Pilot::Left
+                | Pilot::Right
+                | Pilot::Faster
+                | Pilot::Slower
+                | Pilot::Stop
+                | Pilot::Stance(_)
+                | Pilot::Weapon(_)
+                | Pilot::OtherWeapon
         ) {
             return events;
         }
@@ -256,11 +266,6 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
-            Pilot::Deploy
-            | Pilot::Fire
-            | Pilot::NextTarget
-            | Pilot::DropTarget
-            | Pilot::Lock(_) => {}
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -268,6 +273,7 @@ impl Sim {
                 };
                 motion::select_weapon(tables, kind, weapons, id, m, weapon, &mut events);
             }
+            _ => {}
         }
         events
     }
@@ -366,6 +372,11 @@ pub enum Pilot {
     /// A left release on an object in the console's views (`1000:d8a7`): that object
     /// locked (`sense::lock`).
     Lock(EntityId),
+    /// The map display's Alt press (`1000:466b`): on nothing, the destination there
+    /// (`script::set_destination`); on an object, that object the goal
+    /// (`script::set_goal_object`).
+    Destination(Position),
+    GoalObject(EntityId),
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input

@@ -465,6 +465,38 @@ fn the_worked_out_point_follows_the_goal_object_with_its_offset() {
     );
 }
 
+/// The map display's press: an object goal at the robot's offset from the object, or a
+/// destination, each dropping only an old object goal, writing +0x32 whole, with a
+/// message and event 5.
+#[test]
+fn a_console_s_map_press_sets_an_object_goal_or_a_destination() {
+    let (mut world, tables) = setup(&[0x0a]);
+    let text = tables.sensing.messages;
+    // An object goal on the base at (0, 0) from (10, 10).
+    movement(&mut world, EntityId(1)).unwrap().goal = 0x18;
+    set_goal_object(&mut world, EntityId(1), EntityId(0), &tables);
+    let r = m(&world);
+    assert_eq!(
+        (r.goal, r.goal_object, r.destination),
+        (0x01, 0, at(10, 10))
+    );
+    assert_eq!(r.script.events, 1 << 5);
+    // A destination drops it.
+    set_destination(&mut world, EntityId(1), at(3, 4), &tables);
+    let r = m(&world);
+    assert_eq!(
+        (r.goal, r.goal_object, r.destination),
+        (0x02, 0xffff, at(3, 4))
+    );
+    assert_eq!(r.panel.queue[..2], [text.goal_object, text.destination]);
+    // Without an object goal (bit 0) the slot is left as it is.
+    if let Some(m) = movement(&mut world, EntityId(1)) {
+        (m.goal, m.goal_object) = (0x08, 7);
+    }
+    set_destination(&mut world, EntityId(1), at(5, 6), &tables);
+    assert_eq!((m(&world).goal, m(&world).goal_object), (0x02, 7));
+}
+
 #[test]
 fn distance_and_steering_read_the_goal_bits_their_own_ways() {
     // With no bit the distance is to the base and the steering is nothing; with bit 2
