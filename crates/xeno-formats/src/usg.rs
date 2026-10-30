@@ -469,7 +469,7 @@ pub struct Robot {
     pub clock: u8,
     /// +0xfb: ticks before the next contact check after bumping into something.
     pub bump_wait: u8,
-    /// +0xfc: nothing reads or writes it.
+    /// +0xfc: the repair on the net's count (`2000:7f10`; not ported, T-179).
     pub unknown_fc: u8,
     /// +0xfd: [`Robot::ON_BATTERY`], [`Robot::IN_BASE`], [`Robot::CRIPPLED`],
     /// [`Robot::DEPLOYER_DAMAGED`] and the other `Robot` bits for it.
