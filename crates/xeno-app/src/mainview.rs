@@ -273,13 +273,19 @@ impl MapState {
 /// The objects' +0x16 and +0x17 by slot.
 pub type Flags = [(u8, u8); 240];
 
-/// shortcut: the sim keeps neither the detection bits (+0x17) nor a relay's link
-/// (+0x16 bit 4), so both are the scenario's as loaded until it does.
-pub fn flags(scenario: Option<&Scenario>) -> Flags {
+/// A relay's +0x16 bits 4 and 6 are the sim's.
+/// shortcut: the sim keeps no detection bits (+0x17) and no other object's +0x16, so
+/// those are the scenario's as loaded until it does.
+pub fn flags(scenario: Option<&Scenario>, world: &World) -> Flags {
     let mut flags = [(0, 0); 240];
     for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
         if let Some(f) = flags.get_mut(usize::from(o.slot)) {
             *f = (o.flags, o.status);
+        }
+    }
+    for (id, e) in world.iter() {
+        if let (State::Relay(r), Some(f)) = (e.state, flags.get_mut(usize::from(id.0))) {
+            f.0 = f.0 & !xeno_sim::relay::FLAGS | r.flags;
         }
     }
     flags

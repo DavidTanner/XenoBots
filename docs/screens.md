@@ -787,8 +787,8 @@ status panel (`0xa8`) and the buttons (part 2). In part 3 the fire button held s
 robot over as F2 and F3; the lock button's left and right releases `Pilot::NextTarget`
 and `DropTarget` (T-162's humanoid half). The console keeps one shared look and fire
 button for whichever robot is viewed (`Mission::look`, `firing`). Shortcuts, each
-named in the code: the signal, a target's serial and the cloak and ECM counts are the
-scenario's as loaded (T-148, T-136); +0xee and the status page are worked out from
+named in the code: a target's serial and the cloak and ECM counts are the
+scenario's as loaded (T-136; the signal is the sim's since T-148); +0xee and the status page are worked out from
 the passes since the load (`World::ticks`) and the robot's +0x1a, +0xfa and +0x10a
 as loaded (T-167), the pages going round in threes as while the console is open; the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
@@ -855,7 +855,7 @@ button's left and right releases `Pilot::NextTarget` and `DropTarget` (T-162's s
 half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy`; the weapon buttons and the
 relay panel show their frame XORed while held. Not ported: the speed buttons, lever,
 compass and turn buttons (T-169), the drop buttons (T-137), C, D and L (T-149), the
-fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
+fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code (the signal is the sim's since T-148): +0xee and +0xfa bit 7 are worked
 out from the passes since the load (T-167); the gauges are worked out each frame from
 the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
 original leaves the picture there when the console opens with bit 7 set). Still to
@@ -914,8 +914,8 @@ panel (`0x11e`, its first part `console::target_part` with the `M` and space), t
 status panel (`0x11c`, `console::draw_status`, shared with the humanoid's) and every
 button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added), the
 weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
-each named in the code: the signal is the scenario's as loaded (T-148), and so are the
-cloaks, ECM charges, drops and a target's serial (T-136, T-137); +0xee and the status
+each named in the code: the cloaks, ECM charges, drops and a target's serial are the
+scenario's as loaded (T-136, T-137; the signal is the sim's since T-148); +0xee and the status
 page are worked out from the passes since the load (T-167). In part 3 the fire button
 held sends `Pilot::Fire` every retrace (as the other kinds'), the weapon buttons
 `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock button's left
@@ -1986,8 +1986,8 @@ original.
   `xeno_formats::sitroom` reads and `msprite0`. The map starts with the overlays, zoom
   and centre saved in the player's base and is drawn each frame (not every 4 ticks);
   the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
-  `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection and relay
-  link bits are the scenario's as loaded, a target object's marker and the grid and
+  `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection bits are the
+  scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the grid and
   path overlays are not drawn, the log is the base's as loaded (the sim posts no
   messages), the rule's line routine (slot `0x558`) is not traced. Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
@@ -2008,7 +2008,7 @@ original.
   from the sim (place, repair, program, heading, speed, damage total) and its texts,
   letters and speed table from `xeno_formats::sitroom::Detail`. Shortcuts: the pointer
   leaving an arrow while it is held stops the slider only at the release; the serial
-  (+0x18) and signal (+0x4f) are the scenario's as loaded (the signal is T-148's); a
+  (+0x18) is the scenario's as loaded (the signal +0x4f is the sim's since T-148); a
   speed past the table shows its last entry; Ctrl+Alt+F's developer text is not shown.
   Not checked in DOSBox: the counts', clock's and detail's look, the mark's blink.
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,

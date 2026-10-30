@@ -161,7 +161,8 @@ pub struct Movement {
     pub destination: Position,
     /// +0x3a: the slot of the object it heads for (+0x32 bit 0), 0xffff none.
     pub goal_object: u16,
-    /// +0x51: the drive.
+    /// +0x4f: the net's signal; +0x51: the drive (`crate::relay::signal_step`).
+    pub signal: u8,
     pub drive: u8,
     /// A humanoid's (+0x10b) or scout's (+0x109) speed gear, twice an index into its
     /// gears (`Tables::gears`); 0 for a scorpion.
@@ -311,6 +312,7 @@ impl Movement {
                 x: Fixed(r.destination.x),
                 y: Fixed(r.destination.y),
             },
+            signal: r.signal,
             drive: r.drive,
             gear,
             weapon: r.weapon,
@@ -385,7 +387,8 @@ impl StateHash for State {
                 h.u16(m.goal_object);
                 h.i32(m.destination.x.0);
                 h.i32(m.destination.y.0);
-                h.bytes(&[m.drive, m.gear, m.weapon, m.stance, m.stance_target]);
+                h.bytes(&[m.signal, m.drive, m.gear, m.weapon, m.stance]);
+                h.u8(m.stance_target);
                 h.u8(m.relays);
                 h.u8(m.stride);
                 h.bytes(&m.legs);

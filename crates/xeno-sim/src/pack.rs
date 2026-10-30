@@ -272,8 +272,14 @@ fn robot(
     r.i32(0x40, m.destination.y.0);
     r.put(0x44, &s.stack);
     r.put(
-        0x50,
-        &[m.guns.energy, m.drive, m.panel.flags, m.panel.length],
+        0x4f,
+        &[
+            m.signal,
+            m.guns.energy,
+            m.drive,
+            m.panel.flags,
+            m.panel.length,
+        ],
     );
     for (i, q) in m.panel.queue.iter().enumerate() {
         r.u16(0x54 + 2 * i, *q);

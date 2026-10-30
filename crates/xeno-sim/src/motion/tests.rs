@@ -11,7 +11,8 @@ pub(crate) fn at(x: i16, y: i16) -> Position {
     }
 }
 
-/// A robot standing at `(x, y)`, heading 0, full helm and drive, standing (scouts).
+/// A robot standing at `(x, y)`, heading 0, full helm, drive and battery, standing
+/// (scouts).
 pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
     Entity {
         kind,
@@ -35,6 +36,10 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
             stance: STANDING,
             stance_target: STANDING,
             relays: 0,
+            guns: crate::world::Guns {
+                energy: 0xff,
+                ..Default::default()
+            },
             ..Movement::default()
         }),
     }
@@ -279,11 +284,18 @@ fn a_robot_in_a_hill_backs_off_at_its_old_velocity_until_its_speed_steps() {
         only_for: Some(EntityId(2)),
     };
     assert_eq!(events, [Event::HillHit(EntityId(2)), sound, footstep]);
-    // The bounce is a 0-point hit: event 7 waits for the script, nothing is worn.
+    // The bounce is a 0-point hit: event 7 waits for the script, nothing is worn (off
+    // the net, the signal step put it on its battery).
     assert_eq!(moving(&world, 2).script.events, 1 << 7);
+    let Damage::Robot(c) = robot(ObjectKind::Scorpion, Side::Human, 0, 0).damage else {
+        unreachable!()
+    };
     assert_eq!(
         world.get(EntityId(2)).unwrap().damage,
-        robot(ObjectKind::Scorpion, Side::Human, 0, 0).damage
+        Damage::Robot(Components {
+            equipment: xeno_formats::usg::Robot::ON_BATTERY,
+            ..c
+        })
     );
     assert_ne!(world.get(EntityId(2)).unwrap().position, before);
 }

@@ -926,8 +926,35 @@ relay made in play gets the set-up's `TARGETABLE` and link words), and runs the 
 the states, the nearest scorpion, the look and the model height. A relay a scorpion lays
 is made with its clock, look and height (`net::make`); shots see a relay only while it
 is in the field. `xeno-app`'s 3D view draws a relay with its frames. The state hash
-changes. Shortcut: the up state does not run the links yet (part 2, `t-148-signal`),
-so a relay keeps the power it was loaded with.
+changes.
+
+Part 2 (`t-148-signal`): the links and power in the up state (`relay::links`), and
+the signal step (`relay::signal_step`, at each kind's tick-table entry; `relay::signal`):
+`Movement::signal` (+0x4f) is kept (loaded, hashed, packed), and the drive, the
+battery bit and the energy follow the net. So a robot away from its side's net runs
+on its battery: firing costs energy, it recharges one every 512 ticks, and its drive
+falls with its energy (none at 0: it stops); a robot whose power (+0x4e) is damaged
+gets its drive masked (`DS:0x70a5`), which with signals of 0x80 and over can leave
+almost none. `xeno-app` shows the sim's signal in the consoles' power panels and the
+detail panel, and the sim's link bits for relays on the maps. Shortcuts: an object 256
+units or more from a relay is skipped by the links (the original's loop is left with
+its stack unbalanced); a base's flags are not kept (none is ever linked).
+
+`relay`'s tests: the states, look, reach and clock on synthetic relays; the links (a
+base feeds the nearest relay, power falls a hop, the side follows it, the other side's
+net is refused, a link run every 256 ticks); the signal (full reach, the last in slot
+order, the fall, side and link); the signal step (battery level, drive mask, the
+recharge). `real_assets_a_relay_a_stock_scorpion_lays_rises_once_it_moves_on`:
+scen00a's alien scorpion lays a relay that stays folded under it, rises a stage every
+16 ticks once it moves on, links within 256 ticks (alien, from the stock net beside
+it) and gives full signal to a robot at the full reach from it that no other relay
+reaches. `real_assets_stock_relay_nets_are_steady`: in every stock scenario a run of
+the links reproduces every relay's side and links exactly (over 350 relays), and its
+power but for `ntrain` and `strain`, whose relays are saved 68 higher than any base
+gives. The training missions' play test from T-150 no longer holds: with the battery,
+`htrain`'s alien attackers run dry far from their net and the player's base is never
+destroyed (no loss in 400,000 ticks with nothing pressed), and `ntrain`'s scorpion
+reaches the alien base with its weapons wrecked or its energy spent (T-177).
 
 ## Damage (T-054)
 
@@ -1248,8 +1275,9 @@ raise, loaded from the file and hashed (the state hash changes). The guns' sound
 and both are hit and worn (since T-140, with seed 5, until the alien is destroyed by
 its damage total 55 s in). Shortcuts, each named in the
 code: the ECM's and cloak's times are not counted down (T-136); the missile camera's
-switch is the console's (T-134); the arms' swing step is the legs'; nothing recharges
-the energy or sets `ON_BATTERY` (T-148's signal), so stock robots fire freely. A robot
+switch is the console's (T-134); the arms' swing step is the legs'. (Until T-148 nothing recharged
+the energy or set `ON_BATTERY`, so stock robots fired freely; now a robot off its net
+pays for its shots, "The relay's tick (T-148)".) A robot
 worn by many small hits is destroyed by its damage total (T-140).
 
 Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height (+0x1c, kept

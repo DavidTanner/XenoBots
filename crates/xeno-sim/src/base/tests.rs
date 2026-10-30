@@ -4,9 +4,13 @@ use crate::motion::tests::{base, robot};
 use crate::orders::{Orders, Robot};
 use crate::world::{Components, Depot, Movement, Position};
 
+/// A robot's components, the battery bit (the signal step's, off the net) aside.
 fn parts(world: &World, id: u16) -> Components {
     match world.get(EntityId(id)).unwrap().damage {
-        Damage::Robot(c) => c,
+        Damage::Robot(c) => Components {
+            equipment: c.equipment & !xeno_formats::usg::Robot::ON_BATTERY,
+            ..c
+        },
         _ => panic!("not a robot"),
     }
 }
