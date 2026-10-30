@@ -267,7 +267,7 @@ Freeman copyright and `vgaintro.dvr` credits him.
 
 - Settled (T-038): the end positions, the frame length and the parts' timing (above),
   colour 0 (black in both palettes), and rows 128..=130 (never on screen; see
-  "Screen"). Still to do: compare with the running game in DOSBox (`NEXT_STEPS.md`,
+  "Screen"). Still to do: compare with the running game in DOSBox (`docs/done-tasks.md`,
   T-038's note).
 - The credits text is drawn in font 6 (`font.md`): shaded, so colour 252 and the two
   after it, the three colours the credits record blends.

@@ -264,7 +264,7 @@ aborted: `PRESENTS` is held until counter 7,640.
 ## Open questions
 
 - A DOSBox capture to confirm the timing frame by frame (T-036's note in
-  `NEXT_STEPS.md` lists what to check, with the checklist in `video-modes.md`).
+  `docs/done-tasks.md` lists what to check, with the checklist in `video-modes.md`).
 - The descriptor flags the loader sets (`0x22`), and what slot `0x590` (offset 0xb8d)
   does beyond selecting the glyph routine.
 
