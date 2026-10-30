@@ -710,8 +710,18 @@ the pointer) and returns the nearest object drawn over it; the console keeps it 
 view (`Mission::probed`, the words above), and `pointer_shape` keeps the region flag.
 A left release on the 3D view locks the object through the sim (`Pilot::Lock`, which
 runs `sense::lock`); a right release opens its console if it is one of the player's
-robots (`Mission::view_robot`). Part 1 is the 3D view; the second display's handler
-and the map mode's press are part 2.
+robots (`Mission::view_robot`). The second display probes the same way in its camera
+mode, and in the map mode through `mainview::Probe` (dots by their pixel, sprites by
+the change, the goal's marker naming nothing; the situation room's map can take it,
+T-128), keeping the point under the pointer (`mainview::pointer_to_world` with the
+display's rectangle) for the press. An Alt press there in the map mode (the screens
+pass Alt with each mouse event, `Mission::set_alt`) is acted on in `Mission::tick`
+before the sim's tick: the object probed becomes the goal (`Pilot::GoalObject`), or
+else the point the destination (`Pilot::Destination`); an Alt release in the same
+retrace takes it back. The consoles' map now marks a goal object (sprite 0x1a0 on the
+object, `1000:f914`) as well as a destination. Shortcuts: the press acts on the last
+frame drawn, not the next one; `7eac`'s refusal message and its Ctrl case are not
+ported (only the player's robots can be viewed).
 
 ### The situation room's main view (T-103)
 

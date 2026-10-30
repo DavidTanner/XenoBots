@@ -272,7 +272,8 @@ impl TerrainEditor {
             font: None,
             ..*inputs
         };
-        mainview::draw_objects(buffer, world, camera, map, flags, selected, &inputs);
+        let probe = &mut mainview::Probe::default();
+        mainview::draw_objects(buffer, world, camera, map, flags, selected, &inputs, probe);
     }
 
     /// The status the original prints on its debug screen (`0x086b`).
