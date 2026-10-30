@@ -877,6 +877,7 @@ pub(crate) fn synthetic_tables() -> Tables {
         weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
         walk: synthetic_walk(),
         bases: xeno_formats::fixtures::synthetic_base_tables(),
+        calendar: xeno_formats::fixtures::synthetic_calendar_tables(),
         strings: xeno_formats::motion::Strings(b"\0AB\r\xc3\0".to_vec()),
     }
 }

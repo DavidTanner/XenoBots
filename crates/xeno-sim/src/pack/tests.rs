@@ -137,6 +137,8 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         tables.damage.explosion_kind,
         tables.damage.robot_explosion,
     );
+    // A midnight passed in play.
+    (sim.world.clock.day, sim.world.clock.month) = (9, 5);
     let table = tables.scripts.start;
     let (bytes, back, again) = round_trip(&sim, &scenario, table);
 
@@ -164,16 +166,13 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
     );
     assert_eq!((r.target, r.mode & usg::Robot::PROGRAM), (7, 0));
     let objects = back.objects.as_ref().unwrap();
-    // The clock is the world's; the day and month the scenario's.
+    // The clock is the world's, the date with it.
     let (c, start) = (sim.world.clock, back.header.start);
     assert_eq!(
         (start.hour, start.minute, start.second, start.tick),
         (c.hour, c.minute, c.second, c.tick)
     );
-    assert_eq!(
-        (start.day, start.month),
-        (scenario.header.start.day, scenario.header.start.month)
-    );
+    assert_eq!((start.day, start.month), (c.day, c.month));
     let flags = |slot: u16| objects.iter().find(|o| o.slot == slot).unwrap().flags;
     assert_eq!(
         (flags(7) & flag::IN_FIELD, flags(2) & flag::IN_FIELD),

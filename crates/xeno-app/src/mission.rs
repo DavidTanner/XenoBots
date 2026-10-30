@@ -682,8 +682,6 @@ pub struct Mission {
     dialog: Option<(FileDialog, Purpose)>,
     /// The dialogs' name field, which each leaves for the next (none: the first's).
     dialog_name: Option<Vec<u8>>,
-    /// The calendar's day and month (`DS:0x7d4a`, `0x7d4b`), which the clock shows.
-    date: (u8, u8),
 }
 
 impl Mission {
@@ -701,7 +699,6 @@ impl Mission {
         let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
         mission.scenario = Some(scenario.clone());
-        mission.date = (scenario.header.start.day, scenario.header.start.month);
         // The mission starts in the mode and map saved in the player's base.
         let base = mainview::base_of(Some(scenario), Side::Human);
         mission.mode = base.map_or(ORDERS_MODE, |b| b.view_mode);
@@ -765,24 +762,27 @@ impl Mission {
             terrain: None,
             dialog: None,
             dialog_name: None,
-            date: (0, 0),
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
         mission
     }
 
-    /// The campaign's day and month, which the loader puts back after the file's.
+    /// The campaign's day and month, which the loader puts back after the file's, in
+    /// the clock (`DS:0x7d4a`, `0x7d4b`), which moves them on past midnight.
     pub fn set_date(&mut self, day: u8, month: u8) {
-        self.date = (day, month);
+        let clock = &mut self.world_mut().clock;
+        (clock.day, clock.month) = (day, month);
     }
 
     /// The mission stops (it ended, won, lost or with no result): its sim gives the
-    /// run's random word back to `campaign`. The objects stay, as the original keeps
+    /// run's random word back to `campaign`, and the date, which midnights in play
+    /// moved on (the original's one calendar). The objects stay, as the original keeps
     /// them until another scenario loads, so the map room can run the mission again.
     pub fn park(&mut self, campaign: &mut Campaign) {
         self.run = match std::mem::take(&mut self.run) {
             Run::Running(sim) => {
+                (campaign.day, campaign.month) = (sim.world.clock.day, sim.world.clock.month);
                 let (parked, random) = sim.park();
                 campaign.give_random(random);
                 Run::Parked(parked)
@@ -862,7 +862,6 @@ impl Mission {
         }
     }
 
-    #[cfg(test)]
     pub fn world_mut(&mut self) -> &mut World {
         match &mut self.run {
             Run::Running(sim) => &mut sim.world,
@@ -2593,8 +2592,8 @@ impl Mission {
             }
         }
         if let Some(a) = area(panels::CLOCK_TYPE) {
-            let (c, (day, month)) = (world.clock, self.date);
-            let text = room.clock_of(month, day, c.hour, c.minute);
+            let c = world.clock;
+            let text = room.clock_of(c.month, c.day, c.hour, c.minute);
             panels::draw_clock(fb, a, font, &text, c.second);
         }
         if let Some(font) = assets.fonts.get(&panels::DETAIL_FONT) {
@@ -3238,6 +3237,7 @@ pub mod tests {
                 relays: xeno_formats::fixtures::synthetic_relay_tables(),
                 weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
                 bases: xeno_formats::fixtures::synthetic_base_tables(),
+                calendar: xeno_formats::fixtures::synthetic_calendar_tables(),
                 // Legs that never leave frame 0: no footsteps; heights with no bob.
                 walk: motion::Walk {
                     humanoid_legs: [[0; motion::STEPS]; 2],
@@ -4132,6 +4132,29 @@ pub mod tests {
         m.park(&mut campaign);
         m.apply_alert(30);
         assert_eq!(damage(&m), xeno_sim::Damage::Taken(50));
+    }
+
+    /// A midnight in play moves the campaign's calendar on (the synthetic month 1 has
+    /// two days).
+    #[test]
+    fn a_midnight_in_play_moves_the_campaign_s_date() {
+        let assets = test_assets();
+        let mut campaign = crate::maproom::tests::test_campaign();
+        let (file, scenario) = assets.sample(None).unwrap();
+        let mut m = Mission::new(file, scenario, campaign.take_random(), &assets.motion);
+        m.set_date(1, 1);
+        let Run::Running(sim) = &mut m.run else {
+            unreachable!()
+        };
+        let c = &mut sim.world.clock;
+        (c.hour, c.minute, c.second, c.tick) = (23, 59, 59, 56);
+        sim.tick(&[]);
+        m.park(&mut campaign);
+        assert_eq!((campaign.day, campaign.month), (0, 2));
+        // Parked again, it keeps the date it gave.
+        campaign.day = 7;
+        m.park(&mut campaign);
+        assert_eq!(campaign.day, 7);
     }
 
     #[test]

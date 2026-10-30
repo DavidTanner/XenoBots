@@ -1,5 +1,6 @@
 ---
 source: crates/xeno-formats/src/motion.rs
+assertion_line: 715
 expression: motion
 ---
 Motion {
@@ -1866,6 +1867,22 @@ Motion {
         slider_least: 6,
         slider_most: 240,
         slider_step: 3,
+    },
+    calendar: Calendar {
+        month_days: [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+        ],
     },
     walk: Walk {
         humanoid_legs: [

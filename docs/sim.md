@@ -1747,9 +1747,22 @@ scenario's `SHDR` start replaces all but the date (`docs/formats/usg.md`). The m
 loop calls `sim_advance_clock` (`1000:ed05`) once per retrace, just before the object
 tick, so it runs on every mission view. It adds **4** sixtieths, then carries into
 seconds, minutes and hours by subtracting 60 (24 for hours); past midnight it also
-moves the campaign's day on (`DS:0x7d4a`, by a days-per-month table at `DS:0x7d8f`,
-and the month `0x7d4b`). So game time runs 15 times faster than the retrace count's
-seconds: an hour is 54,000 retraces, about 12.8 minutes at 70 Hz.
+moves the campaign's date on (below). So game time runs 15 times faster than the
+retrace count's seconds: an hour is 54,000 retraces, about 12.8 minutes at 70 Hz.
+
+**The date (T-124).** The clock's last two bytes are the campaign's calendar: the day
+from 0 (`DS:0x7d4a`) and the month from 0, January (`0x7d4b`), the same bytes the map
+room's results move on (`scen_advance_campaign_day` adds 0 to 3 days with no month
+check) and a save keeps in `SHDR`. When the hour carries past 23, the day goes up by
+one and is compared, unsigned, with the month's length: a byte table of 12 days per
+month at `DS:0x7d8f`, indexed by the month (`cmp al, [bx + table]` at `1000:ed53`,
+which is how the port finds it; `xeno_formats::calendar`). At or past the length the
+day goes back to 0 and the month up by one. That is all: no leap years, no year, and
+no wrap past December (month 12 and on index the bytes after the table; a campaign
+starting in April at a few days a result never gets there). Nothing else happens at
+midnight: no message, no alert, no change to the scenarios' states. As the
+comparison is made only at midnight, a day the map room has pushed past the month's
+end stays there until the next midnight in play, which then starts the next month.
 
 It then calls `pal_tint_for_time_of_day` (`1000:ed70`), unless `DS:0x7d4d` is set,
 for the 3D view's colours (`docs/formats/palette.md`, "The lists in the stock
@@ -1757,9 +1770,14 @@ drivers"): a weight of 128 before 06:00 and from 19:00, `0x78 - 2 * minute` over
 06:xx, 0 from 07:00 to 17:59 and `2 * minute` over 18:xx.
 
 The port: `xeno_sim::Clock` in `World::clock`, from the `SHDR` start, in the state
-hash, advanced first in `Sim::tick`; `Clock::tint` is the weight. The date's
-roll-over is not ported (T-124). `xeno-app` starts the records from it
-(`Mission::tint`).
+hash, advanced first in `Sim::tick` with the table from `Tables::calendar` (without
+tables only the day counts); `Clock::tint` is the weight. `xeno-app` starts the
+records from it (`Mission::tint`). The original has one calendar; the port's campaign
+keeps its own day and month between missions: `Mission::set_date` puts them in the
+clock when a mission is played, `Mission::park` (every way a mission stops) gives the
+clock's back, and `World::save` writes the clock's date into `SHDR`, so Ctrl+Alt+P
+and the map room's saves carry a midnight passed in play. A month past the table
+never ends in the port.
 
 ## The run's random word
 

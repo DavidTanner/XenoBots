@@ -53,8 +53,8 @@ fn big(kind: ObjectKind) -> bool {
 
 impl World {
     /// `loaded` (the scenario as the host keeps it: its terrain, briefing and sky, and
-    /// each object's bytes as loaded) with the world written over it: the clock's hour
-    /// to tick in `SHDR` (the day and month stay `loaded`'s: the campaign's calendar),
+    /// each object's bytes as loaded) with the world written over it: the clock in
+    /// `SHDR`, its hour to tick and the campaign's date,
     /// every object in the world, each over its loaded bytes when its slot held the
     /// same kind, and both path tables. `program_table` is the address saved script
     /// pointers count from (`xeno_formats::editor::Editor::program_table`).
@@ -70,6 +70,7 @@ impl World {
         let mut s = loaded.clone();
         let (start, c) = (&mut s.header.start, w.clock);
         (start.hour, start.minute, start.second, start.tick) = (c.hour, c.minute, c.second, c.tick);
+        (start.day, start.month) = (c.day, c.month);
 
         let templates: BTreeMap<u16, &Object> = loaded
             .objects
