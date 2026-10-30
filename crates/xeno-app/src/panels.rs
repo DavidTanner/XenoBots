@@ -1,12 +1,13 @@
 //! The situation room's panels (T-127; `docs/screens.md`, "The situation room's panels
-//! (T-127)"): the status counts, the reserve bar, the clock and the power rows, drawn
-//! over the picture as their draw handlers draw them. The widths and the clock's texts
-//! are read from the user's `xeno.exe` (`xeno_formats::sitroom`); places and colours
-//! are the handlers' immediates, short code constants kept here.
+//! (T-127)"): the status counts, the reserve bar, the clock, the power rows and the
+//! selected unit's detail, drawn over the picture as their draw handlers draw them. The
+//! widths, texts and tables are read from the user's `xeno.exe`
+//! (`xeno_formats::sitroom`); places and colours are the handlers' immediates, short
+//! code constants kept here.
 
 use xeno_formats::font::Font;
 use xeno_formats::maproom::Rect;
-use xeno_formats::sitroom::SitRoom;
+use xeno_formats::sitroom::{Detail, SitRoom};
 use xeno_render::{Framebuffer, TextCursor, TextMode};
 
 /// The panels' widget types: the reserve bar, the clock, the power rows' bars (NET,
@@ -38,6 +39,17 @@ const BAR_KEEP: u8 = 0x7f;
 /// transparent, in 0x14, or 0 while the clock's seconds (`DS:0x7d48`) are odd.
 const CLOCK_COLOUR: u8 = 0x14;
 const CLOCK_MARK: u8 = 0x1e;
+/// `1000:5a0e`: font 4, colour 0x1a on 0; the heading at (0xa2, 0x84) and the unit's
+/// name after it, then at x 0xc5 from y 0x8e, a row every 6: the place, the status
+/// line, the heading in degrees, the speed, and the damage total and the signal as
+/// percentages, the signal on the line the total's new line moves to. The name's dash
+/// and the percent sign are `1fe6:7f38`'s and `1000:ddb6`'s immediates.
+pub const DETAIL_FONT: u16 = 4;
+const DETAIL_COLOUR: u8 = 0x1a;
+const DETAIL_HEADING: (i32, i32) = (0xa2, 0x84);
+const DETAIL_X: i32 = 0xc5;
+const DETAIL_ROWS: [i32; 5] = [0x8e, 0x94, 0x9a, 0xa0, 0xa6];
+const NEW_LINE: u8 = 0x0c;
 
 /// The counts: the relays in store (+0x20), then the count of +0x21 to +0x27.
 pub fn draw_counts(fb: &mut Framebuffer, font: &Font, counts: [u8; 8]) {
@@ -106,6 +118,118 @@ fn mark_colour(second: u8) -> u8 {
     if second & 1 != 0 { 0 } else { CLOCK_COLOUR }
 }
 
+/// The selected unit, as the detail panel reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DetailUnit<'a> {
+    /// The kind (0 to 2) and +0x18, its serial.
+    pub kind: usize,
+    pub serial: u16,
+    /// +0xfd bit 2; the base repairs it (+0x1a); its damage total (+0xf9).
+    pub in_base: bool,
+    pub repairing: bool,
+    pub total: u8,
+    /// The running program's name while it drives (+0x23 bit 7), none with the pilot.
+    pub program: Option<&'a [u8]>,
+    /// +0x10, +0x26, +0x4f.
+    pub heading: u16,
+    pub speed: i16,
+    pub signal: u8,
+}
+
+/// What the detail panel draws, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Piece {
+    /// Text, from a place or where the last left the cursor.
+    Text(Option<(i32, i32)>, Vec<u8>, TextMode),
+    /// Slot `0x51a`: the rectangle filled with 0.
+    Clear(Rect),
+}
+
+/// The detail panel: the heading, then the unit's name, place, status, heading, speed,
+/// damage and signal, or the no-unit texts.
+pub fn draw_detail(fb: &mut Framebuffer, font: &Font, d: &Detail, unit: Option<&DetailUnit>) {
+    let mut cursor = TextCursor::at(0, 0, DETAIL_COLOUR);
+    for piece in pieces(d, unit) {
+        match piece {
+            Piece::Text(at, text, mode) => {
+                if let Some((x, y)) = at {
+                    cursor.move_to(x, y);
+                }
+                fb.draw_text(font, &mut cursor, &text, mode);
+            }
+            Piece::Clear(area) => crate::mission::fill(fb, area, 0),
+        }
+    }
+}
+
+fn pieces(d: &Detail, unit: Option<&DetailUnit>) -> Vec<Piece> {
+    use TextMode::{Opaque, Transparent};
+    let at = |row: usize| Some((DETAIL_X, DETAIL_ROWS[row]));
+    let mut pieces = vec![Piece::Text(Some(DETAIL_HEADING), d.heading.clone(), Opaque)];
+    let Some(u) = unit else {
+        pieces.push(Piece::Text(None, d.no_unit[0].clone(), Opaque));
+        pieces.push(Piece::Text(at(0), d.no_unit[1].clone(), Opaque));
+        return pieces;
+    };
+    // `1fe6:7f38`: the kind's letters, `-`, the serial's last three digits.
+    // shortcut: with the developer's Ctrl+Alt+F (`DS:0x5ba0`) the original shows
+    // `DS:0x62cc` here instead; not ported, as nothing the port runs writes it.
+    let mut name = d
+        .kind_letters
+        .get(u.kind)
+        .copied()
+        .unwrap_or_default()
+        .to_vec();
+    name.push(b'-');
+    name.extend(digits(u.serial & 0x7fff, 3));
+    name.push(NEW_LINE);
+    pieces.push(Piece::Text(None, name, Opaque));
+    pieces.push(Piece::Text(
+        at(0),
+        d.places[usize::from(!u.in_base)].clone(),
+        Opaque,
+    ));
+    let status = match (u.in_base, u.program) {
+        (true, _) if u.repairing => &d.repair_states[0],
+        (true, _) if u.total != 0 => &d.repair_states[1],
+        (true, _) => &d.repair_states[2],
+        (false, Some(name)) => name,
+        (false, None) => &d.manual,
+    };
+    pieces.push(Piece::Clear(d.status_clear));
+    pieces.push(Piece::Text(at(1), status.to_vec(), Transparent));
+    let degrees = crate::editor::degrees(u.heading);
+    pieces.push(Piece::Text(at(2), digits(degrees, 3), Opaque));
+    // `mov al, [bx + table]` by the speed's size; past the table the original reads on.
+    // shortcut: the port shows the table's last speed there; no stock robot goes so fast.
+    let size = usize::from(u.speed.unsigned_abs());
+    let speed = d.speeds.get(size).or(d.speeds.last()).copied().unwrap_or(0);
+    pieces.push(Piece::Text(at(3), digits(speed.into(), 2), Opaque));
+    pieces.push(Piece::Text(at(4), percent(u.total), Opaque));
+    pieces.push(Piece::Text(None, percent(signal_percent(u.signal)), Opaque));
+    pieces
+}
+
+/// `1000:02b7`'s five digits with zeros, the last `n` of them.
+fn digits(value: u16, n: usize) -> Vec<u8> {
+    format!("{value:05}").into_bytes().split_off(5 - n)
+}
+
+/// `1000:ddb6`: the low seven bits as three digits, `%` and a new line.
+fn percent(value: u8) -> Vec<u8> {
+    let mut text = digits((value & 0x7f).into(), 3);
+    text.extend([b'%', NEW_LINE]);
+    text
+}
+
+/// `1000:df90`: 0 to 255 as 0 to 99, and 99 as 100.
+fn signal_percent(value: u8) -> u8 {
+    match ((u16::from(value) * 100) >> 8) as u8 {
+        99 => 100,
+        p => p,
+    }
+}
+
 /// The slider routine an arrow runs while held (`1000:5f8c`, `5ff3`, by the row's byte
 /// 0, 2 or 4): 1, 3, 5 lower the row, 2, 4, 6 raise it.
 pub fn slider(kind: u16, row: u8) -> Option<u8> {
@@ -117,7 +241,7 @@ pub fn slider(kind: u16, row: u8) -> Option<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::mainview::tests::room;
     use xeno_render::Size;
@@ -152,6 +276,91 @@ mod tests {
         // Nothing wide: all the rest.
         draw_bar(&mut fb, area, 0, &room, RESERVE_REST);
         assert_eq!(fb.pixels()[..4], [0, 0, 0, BAR_KEEP]);
+    }
+
+    pub(crate) fn detail() -> Detail {
+        Detail {
+            heading: b"D:".to_vec(),
+            no_unit: [b"-0-".to_vec(), b"~".to_vec()],
+            places: [b"IN".to_vec(), b"OUT".to_vec()],
+            status_clear: rect(1, 2, 3, 4),
+            repair_states: [b"R1".to_vec(), b"R2".to_vec(), b"R3".to_vec()],
+            manual: b"MAN".to_vec(),
+            kind_letters: [*b"AA", *b"BB", *b"CC"],
+            speeds: vec![0, 1, 1, 2],
+        }
+    }
+
+    /// A text piece: where it starts, what it says.
+    type Line<'a> = (Option<(i32, i32)>, &'a [u8]);
+
+    fn texts(pieces: &[Piece]) -> Vec<Line<'_>> {
+        pieces
+            .iter()
+            .filter_map(|p| match p {
+                Piece::Text(at, text, _) => Some((*at, text.as_slice())),
+                Piece::Clear(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_detail_panel_shows_the_unit_or_none() {
+        let d = detail();
+        let none = pieces(&d, None);
+        assert_eq!(
+            texts(&none),
+            [
+                (Some((0xa2, 0x84)), &b"D:"[..]),
+                (None, b"-0-"),
+                (Some((0xc5, 0x8e)), b"~")
+            ]
+        );
+        let mut unit = DetailUnit {
+            kind: 1,
+            serial: 0x8000 | 1234,
+            in_base: false,
+            repairing: false,
+            total: 0x85,
+            program: Some(b"PATROL"),
+            heading: 0x4000,
+            speed: -3,
+            signal: 0xff,
+        };
+        let shown = pieces(&d, Some(&unit));
+        assert_eq!(
+            texts(&shown)[1..],
+            [
+                (None, &b"BB-234\x0c"[..]),
+                (Some((0xc5, 0x8e)), b"OUT"),
+                (Some((0xc5, 0x94)), b"PATROL"),
+                (Some((0xc5, 0x9a)), b"090"),
+                (Some((0xc5, 0xa0)), b"02"),
+                (Some((0xc5, 0xa6)), b"005%\x0c"),
+                (None, b"100%\x0c"),
+            ]
+        );
+        // The status line is cleared, then drawn transparent.
+        assert_eq!(shown[3], Piece::Clear(rect(1, 2, 3, 4)));
+        assert!(matches!(shown[4], Piece::Text(_, _, TextMode::Transparent)));
+        let status = |u: &DetailUnit| texts(&pieces(&d, Some(u)))[3].1.to_vec();
+        unit.program = None;
+        assert_eq!(status(&unit), b"MAN");
+        unit.in_base = true;
+        assert_eq!(status(&unit), b"R2");
+        unit.total = 0;
+        assert_eq!(status(&unit), b"R3");
+        unit.repairing = true;
+        assert_eq!(status(&unit), b"R1");
+        assert_eq!(texts(&pieces(&d, Some(&unit)))[2].1, b"IN");
+        assert_eq!(
+            (
+                signal_percent(0x80),
+                signal_percent(0xfd),
+                signal_percent(0xfe)
+            ),
+            (50, 98, 100)
+        );
     }
 
     #[test]
