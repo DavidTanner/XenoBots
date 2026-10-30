@@ -909,9 +909,14 @@ round all four. The recall's routine (`cb3d`) marks the program panel and the sw
 
 **In the port**: `xeno_formats::scoutcon` reads the texts, tables, rectangles and the
 bank's handle; `xeno-app`'s `scoutcon` draws, from the sim, the power panel, the warning
-light, the speed, the compass, the gear lever and the stance gauge (part 1). Shortcuts,
-each named in the code: the signal is the scenario's as loaded (T-148); +0xee and the
-status page are worked out from the passes since the load (T-167). Not ported: the
+light, the speed, the compass, the gear lever and the stance gauge (part 1), the target
+panel (`0x11e`, its first part `console::target_part` with the `M` and space), the
+status panel (`0x11c`, `console::draw_status`, shared with the humanoid's) and every
+button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added), the
+weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
+each named in the code: the signal is the scenario's as loaded (T-148), and so are the
+cloaks, ECM charges, drops and a target's serial (T-136, T-137); +0xee and the status
+page are worked out from the passes since the load (T-167). Not ported: the
 compass's, gear lever's and turn buttons' mouse (T-172), the third display (T-173).
 Still to check in DOSBox (T-174): every widget's look and the blink and page timing.
 

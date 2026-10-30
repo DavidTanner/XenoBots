@@ -60,8 +60,10 @@ pub struct Robot {
     pub gauges: [u8; 2],
     pub deployer_damaged: bool,
     pub damage_shown: bool,
-    /// A scout's stance (+0x10b).
+    /// A scout's stance (+0x10b), and the mines, alarm buoys, ECM buoys and decoys it
+    /// can drop (+0xe2 to +0xe5).
     pub stance: u8,
+    pub drops: [u8; 4],
 }
 
 /// What the console keeps of a press: +0x22 bit 3, the buttons' shared look, and bit
@@ -241,9 +243,7 @@ fn segments(value: u8) -> u16 {
 /// +0xec bits 1 and 2: in range, in the arc.
 pub const IN_RANGE: u8 = 0x02;
 pub const IN_ARC: u8 = 0x04;
-/// The target panels' immediates: after the distance `M`, after the bearing glyph
-/// 0x17, then a new line.
-const METRES: u8 = b'M';
+/// The target panels' immediates: after the bearing glyph 0x17, then a new line.
 const DEGREE: u8 = 0x17;
 pub const NEW_LINE: u8 = 0x0c;
 
@@ -264,12 +264,17 @@ pub fn draw_lines(fb: &mut Framebuffer, font: &Font, background: u8, lines: Vec<
     }
 }
 
-/// A target panel's first part (`1000:a466`, `88b3`) from `at`: the target's name,
-/// its distance and its bearing, each in the warning colour while out of range or of
-/// the arc; without a target, the `no_target` lines.
+/// What follows the distance: `M` (humanoid, scorpion), or `M` and a space (scout,
+/// `1000:c08e`).
+pub const METRES: &[u8] = b"M";
+pub const METRES_SPACED: &[u8] = b"M ";
+
+/// A target panel's first part (`1000:a466`, `88b3`, `c02e`) from `at`: the target's
+/// name, its distance (then `metres`) and its bearing, each in the warning colour while
+/// out of range or of the arc; without a target, the `no_target` lines.
 pub fn target_part(
     robot: &Robot,
-    no_target: &[u8],
+    (no_target, metres): (&[u8], &[u8]),
     at: (i32, i32),
     (colour, warning): (u8, u8),
 ) -> Vec<Coloured> {
@@ -286,7 +291,11 @@ pub fn target_part(
             bearing.extend([DEGREE, NEW_LINE]);
             vec![
                 (Some(at), colour, name.clone()),
-                (None, warn(IN_RANGE), distance(robot.target_distance)),
+                (
+                    None,
+                    warn(IN_RANGE),
+                    distance(robot.target_distance, metres),
+                ),
                 (None, warn(IN_ARC), bearing),
             ]
         }
@@ -295,8 +304,8 @@ pub fn target_part(
 }
 
 /// `02b7`'s five digits with leading zeros as spaces (`1000:0301`, the last kept),
-/// `M` and a new line.
-fn distance(value: u16) -> Vec<u8> {
+/// `metres` and a new line.
+fn distance(value: u16, metres: &[u8]) -> Vec<u8> {
     let mut text = digits(value, 5);
     for d in text.iter_mut().take(4) {
         if *d != b'0' {
@@ -304,7 +313,61 @@ fn distance(value: u16) -> Vec<u8> {
         }
         *d = b' ';
     }
-    text.extend([METRES, NEW_LINE]);
+    text.extend(metres);
+    text.push(NEW_LINE);
+    text
+}
+
+/// A piece of the status panel: where it starts (none: where the last left the cursor),
+/// what it says, how it is drawn.
+pub type Line = (Option<(i32, i32)>, Vec<u8>, TextMode);
+
+/// What `0x71d1`'s bit-7 codes are drawn in: whatever the situation room left in the
+/// text state's second pair.
+// shortcut: the briefing's and status mode's 0x17 on 0 (`1fe6:700d`); after the log
+// mode (C) the original has 0xff on 0x10.
+const OUT_COLOURS: (u8, u8) = (0x17, 0);
+
+/// A status panel (`1000:a93e`, `bf08`): filled in the kind's message-panel colours,
+/// then its lines in the text colour on the fill.
+pub fn draw_status(
+    fb: &mut Framebuffer,
+    area: Rect,
+    font: &Font,
+    [fill, colour]: [u8; 2],
+    lines: Vec<Line>,
+) {
+    crate::mission::fill(fb, area, fill);
+    let mut cursor = TextCursor::at(0, 0, colour);
+    (
+        cursor.background,
+        cursor.high_colour,
+        cursor.high_background,
+    ) = (fill, OUT_COLOURS.0, OUT_COLOURS.1);
+    for (at, text, mode) in lines {
+        if let Some((x, y)) = at {
+            cursor.move_to(x, y);
+        }
+        fb.draw_text(font, &mut cursor, &text, mode);
+    }
+}
+
+/// `1000:de12`: a part working or out (`ok`, `out`).
+pub fn state((ok, out): (&[u8], &[u8]), broken: bool) -> Vec<u8> {
+    if broken { out } else { ok }.to_vec()
+}
+
+/// `1000:de24`: none left is `out`; else the last two digits, a leading zero a space,
+/// and a new line.
+pub fn count(out: &[u8], n: u8) -> Vec<u8> {
+    if n == 0 {
+        return out.to_vec();
+    }
+    let mut text = digits(n.into(), 2);
+    if text[0] == b'0' {
+        text[0] = b' ';
+    }
+    text.push(NEW_LINE);
     text
 }
 
@@ -441,7 +504,7 @@ mod tests {
 
     #[test]
     fn distances_keep_their_last_digit() {
-        assert_eq!(distance(0), b"    0M\x0c");
-        assert_eq!(distance(1203), b" 1203M\x0c");
+        assert_eq!(distance(0, METRES), b"    0M\x0c");
+        assert_eq!(distance(1203, METRES_SPACED), b" 1203M \x0c");
     }
 }

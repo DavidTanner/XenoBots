@@ -2837,16 +2837,34 @@ impl Mission {
         if let Some(a) = area(c::STANCE_TYPE) {
             c::draw_stance(fb, a, sprites, robot.stance);
         }
+        c::draw_target(fb, font, con, &robot);
+        if let (Some(a), Some(human)) = (area(c::STATUS_TYPE), &assets.humancon) {
+            let colours = assets.views.message_panel.colours[RobotKind::Scout.index()];
+            let texts = (&human.ok[..], &human.out[..]);
+            c::draw_status(fb, (a, font), con, texts, colours, &robot);
+        }
+        for w in tables.widgets.iter().chain(&tables.nested) {
+            let Some(a) = w.area else { continue };
+            let n = self.widget_byte(slot, w).unwrap_or(0);
+            let held = self
+                .capture
+                .is_some_and(|(t, _)| t == Target::Instrument(*w));
+            c::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
+            // `1000:dfd5`: a switch held shows its frame XORed.
+            if held && matches!(w.kind, c::PILOT_TYPE | c::PROGRAM_TYPE) {
+                xor_frame(fb, a, crate::console::PRESSED_XOR);
+            }
+        }
     }
 
     /// The second byte of `widget`'s state in robot `slot`'s widget state (humanoid
-    /// +0x10c, scorpion +0x127), as loaded: a weapon or drop button's number. The sim
+    /// +0x10c, scorpion +0x127, scout +0x10d), as loaded: a weapon or drop button's number. The sim
     /// never changes it.
     fn widget_byte(&self, slot: u16, widget: &views::Widget) -> Option<u8> {
         let widgets = match &self.loaded_robot(slot)?.parts {
             usg::Parts::Humanoid(p) => &p.widgets.0[..],
             usg::Parts::Scorpion(p) => &p.widgets.0[..],
-            usg::Parts::Scout(_) => return None,
+            usg::Parts::Scout(p) => &p.widgets.0[..],
         };
         widgets.get(usize::from(widget.state) + 1).copied()
     }
@@ -2952,6 +2970,8 @@ impl Mission {
             deployer_damaged: c.equipment & usg::Robot::DEPLOYER_DAMAGED != 0,
             damage_shown,
             stance: m.stance,
+            // shortcut: the drops left are the scenario's as loaded (T-137).
+            drops: loaded.map_or([0; 4], |r| [r.mines, r.alarm_buoys, r.ecm_buoys, r.decoys]),
         })
     }
 }
@@ -5228,6 +5248,26 @@ pub mod tests {
             };
             assert_eq!(blinks(&mut m, 0), 1, "{name}");
             assert!(blinks(&mut m, 0xff) > 2, "{name}: the light never blinks");
+            // The target panel in 0x60 on 0x01; the status panel turns its four pages
+            // every 512 passes.
+            let shown = draw(&m);
+            assert!(count(&shown, area(0x11e), 0x60) > 100, "{name}");
+            let status = area(c::STATUS_TYPE);
+            let mut pages: Vec<_> = (0..4)
+                .map(|p| {
+                    m.world_mut().ticks = 512 * p;
+                    pixels(&draw(&m), status)
+                })
+                .collect();
+            pages.sort();
+            pages.dedup();
+            assert_eq!(pages.len(), 4, "{name}");
+            // The weapon buttons are numbered 0 and 1.
+            let numbers: Vec<_> = tables
+                .all(c::WEAPON_TYPE)
+                .map(|w| m.widget_byte(robot, w).unwrap())
+                .collect();
+            assert_eq!(numbers, [0, 1], "{name}");
         }
     }
 
