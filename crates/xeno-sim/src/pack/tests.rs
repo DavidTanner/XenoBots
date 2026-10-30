@@ -37,6 +37,7 @@ fn as_loaded(running: &World, loaded: &World) -> World {
     expected.orders = loaded.orders.clone();
     (expected.stagger, expected.ticks, expected.call_signs) = (loaded.stagger, loaded.ticks, 0);
     (expected.lock_window, expected.point) = (loaded.lock_window, loaded.point);
+    expected.target_search = loaded.target_search;
     expected
 }
 

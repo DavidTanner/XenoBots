@@ -5,7 +5,7 @@
 //! tick-table entries and the lock's messages are read from the user's `xeno.exe`
 //! (`xeno_formats::sensing`, in [`Tables::sensing`]).
 
-use xeno_formats::usg::{ObjectKind, status};
+use xeno_formats::usg::{Object, ObjectKind, status};
 
 use crate::motion::{Event, Tables, movement, robot};
 use crate::orders::RobotKind;
@@ -267,6 +267,49 @@ pub fn lock(
         event: tables.sensing.lock_sound,
         only_for: Some(id),
     });
+}
+
+/// The A key (`1000:d812`): from the slot the last search stopped after
+/// (`World::target_search`), once round the object table, the first other robot or
+/// base of the other side, not cloaked, within the locking range is locked (a refused
+/// lock still moves the search on); with none, a message.
+pub fn next_target(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
+    let Some((kind, side, _)) = robot(world, id) else {
+        return;
+    };
+    let (Some(k), Some(at)) = (RobotKind::of(kind), world.get(id).map(|e| e.position)) else {
+        return;
+    };
+    let range = tables.sensing.lock_range[k.index()];
+    let slots = Object::SLOTS as u16;
+    let mut next = world.target_search;
+    for _ in 0..slots {
+        if next >= slots {
+            next = 0;
+        }
+        let o = EntityId(next);
+        next += 1;
+        // The original also skips the robot itself, which the side check does here.
+        let found = world.get(o).is_some_and(|e| {
+            scanned(e.kind)
+                && status_of(e) & status::CLOAKED == 0
+                && e.side != side
+                && within(at, e.position, range)
+        });
+        if found {
+            world.target_search = next;
+            return lock(world, id, o, tables, events);
+        }
+    }
+    say(world, id, tables.sensing.messages.none_next);
+}
+
+/// The R key (`1000:d7f8`): the target dropped (+0xe6 = 0), with a message.
+pub fn drop_target(world: &mut World, id: EntityId, tables: &Tables) {
+    if let Some(m) = movement(world, id) {
+        m.target = None;
+        m.panel.post(tables.sensing.messages.dropped);
+    }
 }
 
 /// The target's bearing and distance and the targeting bits (`1000:d6e6`): bit 2

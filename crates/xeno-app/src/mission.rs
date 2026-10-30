@@ -113,9 +113,10 @@ mod handler {
     /// Consoles: F5, F6 and the humanoid's F9 select a weapon (`docs/sim.md`, "The
     /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
-    /// W, E with the stance each sets, the scorpion's U and Space, the trigger
-    /// (`1000:d0da`; `docs/sim.md`, "The cockpit keys").
-    pub const PILOT: [(u16, Pilot); 21] = [
+    /// W, E with the stance each sets, the scorpion's U, Space, the trigger
+    /// (`1000:d0da`), and A and R, the next target and none (`1000:d812`, `d7f8`;
+    /// `docs/sim.md`, "The cockpit keys").
+    pub const PILOT: [(u16, Pilot); 23] = [
         (0xd131, Pilot::Weapon(0)),
         (0xd142, Pilot::Weapon(1)),
         (0xb20c, Pilot::OtherWeapon),
@@ -137,6 +138,8 @@ mod handler {
         (0xc2b3, Pilot::Stance(0)),
         (0x9afa, Pilot::Deploy),
         (0xd0da, Pilot::Fire),
+        (0xd812, Pilot::NextTarget),
+        (0xd7f8, Pilot::DropTarget),
     ];
 }
 
@@ -720,6 +723,14 @@ impl Mission {
         }
     }
 
+    #[cfg(test)]
+    pub fn world_mut(&mut self) -> &mut World {
+        match &mut self.run {
+            Run::Running(sim) => &mut sim.world,
+            Run::Parked(parked) => &mut parked.world,
+        }
+    }
+
     /// The robots' orders, in the sim's world.
     pub fn book(&self) -> &OrderBook {
         &self.world().orders
@@ -753,6 +764,9 @@ impl Mission {
         }
         self.leave_console();
         self.viewed = Viewed::Robot(slot);
+        if let Run::Running(sim) = &mut self.run {
+            sim.open_console();
+        }
         self.reset_looks();
         Some(view_of(robot.kind))
     }

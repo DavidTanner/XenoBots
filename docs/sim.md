@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-140)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -596,6 +596,37 @@ object goal on an empty slot gives the point 0xffff; the point carries over no
 mission. Nothing sets an object goal yet: only the consoles' map-mode press does
 (T-133).
 
+**The target keys (T-138).** A (`1000:d812`, the same in every console's key table)
+keeps the robot (`DS:0x71f7`), its side bit (+0x16 bit 3, `DS:0x709c`) and its kind's
+**locking** range (`DS:0x7079`, `DS:0x7085`), then walks the 240-slot object table
+(`DS:0xe2c4`, four bytes an entry: the object, its reference count) once round from
+where the last search stopped: `DS:0x7205` the entry after the last one found, and
+`DS:0x7207` the entries left before the search wraps to slot 0 (so one number, the
+next slot, says both; a search that finds nothing ends where it began). It takes the
+first object that is not the robot itself, has `SCANNED` (+0x16 bit 2: robots and
+bases), is not `CLOAKED` (+0x17 bit 0), has the other side bit, and is within the
+locking range by `1000:08ec` (under 256 units, the middle word at most the range),
+stores the entry after it and locks it through `1000:d8af`, carry clear; with none,
+the "none found" message opcode 0x71 posts, carry set. So A steps in slot order, not
+by distance, and comes back round to the target it has (the lock's "already" message);
+the lock's own checks (true distance, damaged computer) can still refuse it. R
+(`1000:d7f8`) sets +0xe6 to 0 and posts its message; nothing else (the upkeep sets
++0xec bit 2 with no target). Neither checks who drives: both work under the program
+too. `1000:d805` puts the search back at slot 0; each kind's console set-up calls it
+(humanoid at `1000:a0e5`, scorpion `8489`, scout `bbb3`), so the stop position is one
+for all robots, starts again whenever a console opens, and is not saved. A console
+widget reaches A and R too (not traced further): the humanoid's handler at
+`1000:a3f1` flips +0x22 bit 3, then with AX bits 2 and 7 calls A (and sets +0x120 to
+3) and with bits 4 and 7 calls R; the scorpion's and scout's call them at `1000:8a5c`,
+`8a52` and `be37`, `be2d` the same way (T-162).
+
+`sense::next_target` and `sense::drop_target`, by `Sim::pilot` (`Pilot::NextTarget`,
+`Pilot::DropTarget`; `xeno-app` maps `1000:d812` and `d7f8`). `World::target_search`
+keeps the next slot; it is hashed, not saved (a load opens the situation room, and
+opening a console, `Sim::open_console`, starts it at 0). The R and A messages are read
+from `xeno.exe` with the lock's (`xeno_formats::sensing::Messages::dropped`,
+`none_next`).
+
 ## The cockpit keys (T-105)
 
 A pass over the consoles' key tables (`docs/formats/key.md`; humanoid `DS:0x6b07`,
@@ -665,8 +696,9 @@ its weapon's bit (+0xdc) is set, else the loaded one: its weapon counts are T-11
 so the empty one is never posted. `Sim::recall` sets +0x23 bit 3 (the situation
 room's F3 and recall button, for the selected unit); `motion::tick` gives a robot with
 it the recall's program (`Tables::recall_program`) and its program takes over, before
-it moves. U is `Pilot::Deploy` (T-113). The keys still to port are T-149 (the other relay keys), T-114 (fire), T-134 (pan) and
-T-135 to T-139.
+it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
+(T-138, "Sensing"). The keys still to port are T-149 (the other relay keys), T-134
+(pan), T-136, T-137 and T-139.
 
 ## Relay nets (T-113)
 

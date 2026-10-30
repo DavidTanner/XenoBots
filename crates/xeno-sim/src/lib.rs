@@ -217,12 +217,20 @@ impl Sim {
             Damage::Robot(c) => (e.kind, e.heading, c.weapons),
             _ => (e.kind, e.heading, 0),
         };
-        if key == Pilot::Deploy {
-            net::deploy(&mut self.world, id, tables, &mut self.random, &mut events);
-            return events;
+        let world = &mut self.world;
+        match key {
+            Pilot::Deploy => {
+                net::deploy(world, id, tables, &mut self.random, &mut events);
+            }
+            Pilot::Fire => weapons::trigger(world, id, tables),
+            Pilot::NextTarget => sense::next_target(world, id, tables, &mut events),
+            Pilot::DropTarget => sense::drop_target(world, id, tables),
+            _ => {}
         }
-        if key == Pilot::Fire {
-            weapons::trigger(&mut self.world, id, tables);
+        if matches!(
+            key,
+            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget
+        ) {
             return events;
         }
         if matches!(
@@ -247,7 +255,7 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
-            Pilot::Deploy | Pilot::Fire => {}
+            Pilot::Deploy | Pilot::Fire | Pilot::NextTarget | Pilot::DropTarget => {}
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -257,6 +265,12 @@ impl Sim {
             }
         }
         events
+    }
+
+    /// A console opens (`1000:d805`, from each kind's console set-up): the A key's
+    /// search starts again from slot 0.
+    pub fn open_console(&mut self) {
+        self.world.target_search = 0;
     }
 
     /// The situation room recalls robot `id` (F3, its recall button: +0x23 bit 3); its
@@ -340,6 +354,10 @@ pub enum Pilot {
     Deploy,
     /// Space: the kind's trigger (`weapons::trigger`), as the scripts' opcode 0x7d.
     Fire,
+    /// A: the next enemy in locking range locked (`sense::next_target`); R: the target
+    /// dropped (`sense::drop_target`). Neither takes the pilot's seat.
+    NextTarget,
+    DropTarget,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input

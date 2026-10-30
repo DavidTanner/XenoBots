@@ -181,6 +181,44 @@ fn a_lock_is_refused_damaged_out_of_range_or_on_itself() {
 }
 
 #[test]
+fn a_takes_the_next_enemy_round_the_table_and_r_drops_it() {
+    let t = synthetic_tables();
+    let text = t.sensing.messages;
+    let mut world = world();
+    // A cloaked alien at slot 5 is passed over, as is the far one past slot 3.
+    world.insert(EntityId(5), robot(ObjectKind::Scout, Side::Alien, 101, 101));
+    movement(&mut world, EntityId(5)).unwrap().status |= status::CLOAKED;
+    world.insert(EntityId(7), robot(ObjectKind::Scout, Side::Alien, 109, 100));
+    let a = |world: &mut World| {
+        next_target(world, EntityId(1), &t, &mut Vec::new());
+        (m(world, 1).target, world.target_search)
+    };
+    // Slot order, not the nearest: 2, then 3, then round to 2 again (relocked).
+    assert_eq!(a(&mut world), (Some(EntityId(2)), 3));
+    assert_eq!(a(&mut world), (Some(EntityId(3)), 4));
+    assert_eq!(a(&mut world), (Some(EntityId(2)), 3));
+    assert_eq!(
+        m(&world, 1).panel.queue[..3],
+        [text.locked, text.relocked, text.relocked]
+    );
+    // From slot 239 the search wraps to 0.
+    world.target_search = 239;
+    assert_eq!(a(&mut world), (Some(EntityId(2)), 3));
+    // R drops the target with its message; with none in range A posts its own and
+    // leaves the search where it was.
+    movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
+    drop_target(&mut world, EntityId(1), &t);
+    for id in [2, 3] {
+        world.get_mut(EntityId(id)).unwrap().position.x = Fixed::from_int(120);
+    }
+    assert_eq!(a(&mut world), (None, 3));
+    assert_eq!(
+        m(&world, 1).panel.queue[..2],
+        [text.dropped, text.none_next]
+    );
+}
+
+#[test]
 fn the_upkeep_warns_the_target_and_works_out_its_bits() {
     let t = synthetic_tables();
     let mut world = world();
@@ -323,4 +361,51 @@ fn real_assets_two_stock_robots_find_and_close_on_each_other() {
             && apart(&sim) < 0x1f4;
     }
     assert!(met, "{:#x}", apart(&sim));
+}
+
+/// scen00a's first human humanoid with the first two alien robots moved 3 and 5 units
+/// east of it: A locks the first in slot order, a second A steps on to the other, R
+/// drops it, with the user's messages.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_steps_through_the_stock_enemies_and_r_drops() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let text = tables.sensing.messages;
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(7), tables);
+    let world = &mut sim.world;
+    let human = *world
+        .units(Side::Human)
+        .iter()
+        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
+        .unwrap();
+    let mut aliens = world.units(Side::Alien)[..2].to_vec();
+    aliens.sort();
+    let at = world.get(human).unwrap().position;
+    for (&id, units) in aliens.iter().zip([3, 5]) {
+        world.get_mut(id).unwrap().position = Position {
+            x: Fixed(at.x.0 + units * 0x10000),
+            y: at.y,
+        };
+    }
+    sim.open_console();
+    for &want in &aliens {
+        sim.pilot(human, crate::Pilot::NextTarget);
+        assert_eq!(m(&sim.world, human.0).target, Some(want));
+    }
+    sim.pilot(human, crate::Pilot::DropTarget);
+    let me = m(&sim.world, human.0);
+    assert_eq!(me.target, None);
+    assert_eq!(
+        me.panel.queue[..3],
+        [text.locked, text.relocked, text.dropped]
+    );
 }

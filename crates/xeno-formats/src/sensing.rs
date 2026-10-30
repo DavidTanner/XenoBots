@@ -31,10 +31,12 @@ pub const TICKS: usize = 16;
 /// (`d8af`) took a first target, replaced one, was refused with the targeting
 /// computer damaged, out of range, on the target it has, on the robot itself, and
 /// locked one of its own side; the upkeep (`d66f`) lost the target, and found it
-/// destroyed.
-pub(crate) const MESSAGES_AT: [usize; 10] = [
-    0xd7f0, 0xd8f4, 0xd8fc, 0xd917, 0xd910, 0xd91e, 0xd909, 0xd8dd, 0xd6bd, 0xd6d0,
+/// destroyed; the R key (`d7f8`) dropped the target; the A key (`d812`) found none.
+pub(crate) const MESSAGES_AT: [usize; 12] = [
+    0xd7f0, 0xd8f4, 0xd8fc, 0xd917, 0xd910, 0xd91e, 0xd909, 0xd8dd, 0xd6bd, 0xd6d0, 0xd7fe, 0xd89f,
 ];
+/// `mov ax, [bx + table]` in the A key's search (`1000:d812`): the locking range again.
+pub(crate) const NEXT_RANGE_AT: usize = 0xd822;
 /// `mov ax, 2 * event` before the lock's sound.
 pub(crate) const LOCK_SOUND_AT: usize = 0xd902;
 /// `call cs:[bx + table]` in the weapon state routines (`1000:d0e9`, `d10d`, opcodes
@@ -103,6 +105,8 @@ pub struct Messages {
     pub friendly: u16,
     pub lost: u16,
     pub destroyed: u16,
+    pub dropped: u16,
+    pub none_next: u16,
 }
 
 fn ranges(image: &[u8], ds: usize, at: usize) -> Result<[u16; 3], FormatError> {
@@ -200,6 +204,9 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
     if !starts(image, KEEP_LOCK, &[0xa3]) || !starts(image, KEEP_LOCK + 3, &[0x89, 0x1e]) {
         return Err(invalid(KEEP_LOCK, "not the lock's upkeep"));
     }
+    if operand(image, NEXT_RANGE_AT, RANGE_OP)? != operand(image, LOCK_RANGE_AT, RANGE_OP)? {
+        return Err(invalid(NEXT_RANGE_AT, "not the A key's locking range"));
+    }
     let m = |i: usize| operand(image, MESSAGES_AT[i], &[0xbe]);
     let sound = operand(image, LOCK_SOUND_AT, &[0xb8])?;
     if sound % 2 != 0 || sound > 0x1ff {
@@ -217,6 +224,8 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
             friendly: m(7)?,
             lost: m(8)?,
             destroyed: m(9)?,
+            dropped: m(10)?,
+            none_next: m(11)?,
         },
         lock_sound: (sound / 2) as u8,
         weapons: weapons(image)?,
@@ -274,6 +283,7 @@ mod tests {
             (KEEP_LOCK, 0xa1),
             (SCAN_RANGE_AT + 1, 0x86),
             (LOCK_RANGE_AT, 0x8a),
+            (NEXT_RANGE_AT + 2, 0x60),
             (TICKS_AT[2] + 1, 0x96),
             (MESSAGES_AT[4], 0xbf),
             (LOCK_SOUND_AT + 1, 0x35),
@@ -333,6 +343,8 @@ mod tests {
             m.friendly,
             m.lost,
             m.destroyed,
+            m.dropped,
+            m.none_next,
         ] {
             let text: Vec<u8> = (at..)
                 .map(|o| motion.strings.byte(o))

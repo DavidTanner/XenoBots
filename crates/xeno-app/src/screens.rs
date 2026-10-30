@@ -478,6 +478,11 @@ impl Screens {
         &self.mission
     }
 
+    #[cfg(test)]
+    pub fn mission_mut(&mut self) -> &mut MissionState {
+        &mut self.mission
+    }
+
     /// The logged-in player's campaign, or the guest's.
     #[cfg(test)]
     pub fn campaign(&self) -> &Campaign {
@@ -2461,5 +2466,51 @@ pub(crate) mod tests {
         // At the base, moved on by at most a tick.
         let d = xeno_sim::terrain::approx_distance(at.unwrap().position, position);
         assert!(d.0 < 0x1000, "{d:?}");
+    }
+
+    /// In the humanoid training (H), on the first unit's console (Tab, Space), A with
+    /// no enemy in range locks nothing; with an alien robot moved 3 units ahead it locks
+    /// it, and R drops it.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_and_r_lock_and_drop_a_target_on_a_console() {
+        use xeno_formats::usg::Side;
+        use xeno_sim::{EntityId, State};
+        let Some(mut screens) = real_screens(Training) else {
+            return;
+        };
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        let press = |screens: &mut Screens, fb: &mut Framebuffer, code| {
+            screens.retrace(&[down(code)], fb);
+            screens.retrace(&[up(code)], fb);
+        };
+        (0..100).for_each(|_| screens.retrace([], fb));
+        press(&mut screens, fb, 0x23);
+        (0..100).for_each(|_| screens.retrace([], fb));
+        for code in [0x0f, 0x39] {
+            press(&mut screens, fb, code);
+        }
+        assert_eq!(screens.screen(), Mission(View::Humanoid));
+        let mission::Viewed::Robot(slot) = screens.mission().viewed() else {
+            panic!("not on a console");
+        };
+        let target = |screens: &Screens| match screens.mission().world().get(EntityId(slot)) {
+            Some(e) => match e.state {
+                State::Robot(m) => m.target,
+                _ => None,
+            },
+            None => None,
+        };
+        press(&mut screens, fb, 0x1e);
+        assert_eq!(target(&screens), None, "nothing in range");
+        let world = screens.mission_mut().world_mut();
+        let alien = world.units(Side::Alien)[0];
+        let mut at = world.get(EntityId(slot)).unwrap().position;
+        at.x.0 += 3 << 16;
+        world.get_mut(alien).unwrap().position = at;
+        press(&mut screens, fb, 0x1e);
+        assert_eq!(target(&screens), Some(alien));
+        press(&mut screens, fb, 0x13);
+        assert_eq!(target(&screens), None);
     }
 }
