@@ -797,6 +797,62 @@ gear lever's, compass's and turn buttons' mouse (T-165), the cloak and ECM butto
 (T-136), the status panel's press (T-167), the third display (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
 
+### The scorpion console's instruments (T-131)
+
+From a Ghidra pass over the draw and mouse handlers of the scorpion's widgets (set
+`0x3863`, widget states from +0x127; the same draw and mouse tables by type) and the
+routines they call, in the words of the humanoid's section above. Sprites are
+`msprite3`'s, loaded at handle 0x678 (`mov dx` at `1000:8496`). Every number and panel
+is in font 2. Text colours are set with a word `0xBBCC` (colour `CC` on `BB`); the
+handlers here pass `0x00CC`.
+
+**The shared look** is +0x22 bit 3, as the humanoid's: the buttons drawn "+ look" add
++0x22 (signed) to their sprite. The pilot and program switches keep a look of their
+own (below).
+
+| Type | Rectangle | Draw | What it shows | Mouse |
+|---|---|---|---|---|
+| `0xcc` | (155, 221, 165, 244) | `1000:89a5` | Sprite 0x748 + look, opaque at the corner: FIRE | `89b8`: flips the look; a press sets +0x1b = 7 (the tick's held-button table `DS:0x6752`: `9c22`, +0xdc bit 7 every tick), a release or leave clears it and +0xfd bit 5 (the "no energy" message told) |
+| `0xce` | (123, 84, 130, 101) | `86f4` | The speed: cursor (0x55, 0x7c), `DS:0x70e2` (two `8`s and two backspaces) in 0x74, then in 0x0e the speed table `DS:0x7003` by +0x26 (negated if negative) through `02b7`; the third digit is set to a space or `-` but the text starts at the fourth: two digits, no sign. Transparent | none |
+| `0xd0` | (154, 264, 181, 318) | `88b3` | The target panel, opaque in 0x7a (0xff for a warning) at (0x124, 0x9b): with a target (+0xe6) its name (`1fe6:7f38`), its distance (+0xe8, `02b7` and `0301`, `M`, a new line; 0xff while +0xec bit 1 is clear) and its bearing less the heading in degrees (glyph 0x17, a new line; 0xff while +0xec bit 2 is clear); without one `DS:0x65ce` (two lines). Then at (0x124, 0xad) the cannon's rounds (+0x120, `02b7` from the second digit: four digits, leading zeros kept), or `DS:0x71df` when +0xdc bits 0 and 1 are both set | none |
+| `0xd2` x2 | (144, 220, 153, 236), (144, 237, 153, 252) | `8a91` | Weapon `n` (state's second byte): `DS:0x65be[n]` (0x730, 0x740) when selected (+0xdd), else `DS:0x65c2[n]` (0x728, 0x738), opaque, one pixel right | `8ac1`: the frame XOR (`dfd5`); a release selects weapon `n` (`98a9`, F5 and F6's) |
+| `0xd4` x4 | (101, 219, 110, 246) and on, to (124, 219, 133, 246) | `8ae6` | Drop `n` (state's second byte): `DS:0x65c6[n]` (0x6e8, 0x6f8, 0x708, 0x718) + look, opaque at the corner | `8b06`: marks itself, flips the look; a release runs `d5d5` with `n`: through `CS:0xd5df`, `n` 0 to 3 are keys 1, 4, 3 and 2 (a mine, a decoy, an alarm buoy, an ECM buoy). T-137 |
+| `0xd6` | (137, 62, 175, 100) | `87d6` | The compass: dial 0x910 keyed in `DS:0x669a`; the needle as the humanoid's (the same table, `DS:0x66a2`) from sprite 0x918, every quadrant's blit in the dial's rectangle; then at (0x4c, 0xa0) `DS:0x70db` in 0x74 and the heading in degrees, three digits, in 0x0e, transparent | `887f`: a release sets +0x2a to the bearing from (0x50, 0x9b) to the pointer (`1000:04eb`), the pilot (`d446`), +0x23 bits 4 and 5 cleared. T-169 |
+| `0xd8` | (3, 2, 52, 89) | `833a` | The third display (colour 253, region `DS:0x6558`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7bdb`; once it is done (bit 7, mode 3) the copy through the region and the probe into `DS:0x65e7`. T-170 | `8370`: as the second display's, flag 3 in `DS:0x65e9` |
+| `0xda` | (155, 245, 166, 255) | `89ec` | The lock button: 0x758, 0x760 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque, one pixel up | `8a26`: as the humanoid's `a3f1` (+0x22 bits 3 and 7; a left release `d812`, a right one `d7f8`; +0x22 cleared) |
+| `0xdc` | (137, 223, 142, 228) | `8a71` | The lock warning light: 0x9a0, 0x9a8 while +0xed is not 0 and +0xee bit 2 is set; opaque at the corner | none |
+| `0xde` | (103, 84, 124, 91) | `8760` | The speed lever, opaque at the corner: forward the word `DS:0x6630` at `(speed >> 2) & 0x1e` bytes, in reverse `DS:0x6644` at `(-speed >> 2) & 0x0e` (both from the speed's low byte): a look every 8 of speed | `8798`: a release, the pilot, then +0x28 by the pointer's row less 0x71: `DS:0x6656` below, `0x6662` above, 0 on it. T-169 |
+| `0xe0`, `0xe2` | (178, 189, 194, 196), (178, 198, 194, 205) | `8c06`, `8c1e` | The cargo gauges: 0x7e8 + ((+0x11a or +0x11b) >> 1) & 0x78, opaque at the corner | none |
+| `0xe4` | (178, 119, 185, 187) | `8c36` | The relays carried, opaque in 0x77 at the rectangle's corner plus (2, 1): with any, `02b7` of +0x118 and its last two digits written over the first two bytes of `DS:0x6609`, which is drawn; with none `DS:0x661a` | `8c88`: the frame XOR, nothing else |
+| `0xe6`, `0xe8`, `0xea` | (102, 94, 109, 101), (109, 94, 116, 101), (116, 94, 123, 101) | `8dd9`, `8e28`, `8e6e` | Faster, stop, slower: 0x7b8, 0x7c8, 0x7d8 + look, opaque at +1 | Flip the look. Faster and slower: a press sets +0x1b = 8 or 9 and the pilot; each tick +0x28 goes up by one to 63 (`9c28`) or down to -42 (`9c32`); a release or leave clears +0x1b. Stop (`8e45`): a release sets +0x28 to 0 and the pilot. T-169 but stop |
+| `0xec` | (1, 137, 12, 182) | `8fb9` | The power panel: 0x878 in `DS:0x6672` on the battery (+0xfd bit 0), else 0x880; the signal's bar (+0x4f) in `0x6682`; 0x890 in `0x667a` on the battery, else 0x888; the energy's bar (+0x50) in `0x668a`. A bar (`9004`) as the humanoid's: lit 0x870, dark 0x868 | `9064`: nothing |
+| `0xee` | (3, 235, 53, 314) | `9065` | The damage panel. While +0xfa bit 7 is clear, the cover 0x908 opaque at the corner; while it is set, keyed lights over it: 0x8d8 in `DS:0x66e2` while the helm (+0x24) is 75 or under, 0x8e0 in `0x66ea` for +0xdc bit 1, 0x8e8 in `0x66f2` for bit 0, 0x8f0 in `0x66fa` for bit 2, 0x8f8 in `0x6702` for +0xfd bit 7 (the deployer), 0x900 in `0x670a` for any of +0xf6 bits 0 to 3 | `90f9`: nothing |
+| `0xf0`, `0xf2` | (163, 1, 173, 59), (175, 1, 185, 59) | `8b31`, `8b9c` | The pilot and program switches in `DS:0x658a` and `0x6592`: 0x6e0 (lit) for the pilot's while the pilot drives (+0x23 bit 7 clear) and for the program's while it drives, else 0x6d8; while one is pressed (`DS:0x652e` its state's offset, +0x149 or +0x14a), 0x6d8 plus the look `DS:0x6530`. Opaque | `8b5f`, `8bc9`: `DS:0x6530` XOR 8 and `DS:0x652e` set; a release (without 0x100) the pilot (`d446`) or the program (`d42c`), then both cleared and `9b87` (redraws) |
+| `0xf4`, `0xf6`, `0xf8` | (154, 68, 160, 77), (153, 78, 159, 84), (154, 85, 160, 94) | `8ebd`, `8f1d`, `8f5d` | Turn left, straight, right: 0x898, 0x8a8, 0x8b8 + look, opaque at the corner | As the humanoid's turn buttons, held codes 0xa and 0xb (`9c3c`, `9c4b`: +0x2a the heading less or plus 0x40). T-169 |
+| `0xfa`, `0xfc`, `0xfe`, `0x100` | (192, 118, 199, 152), (192, 153, 199, 187), (186, 118, 193, 152), (186, 153, 193, 187) | `8d36`, `8d90`, `8ca2`, `8cee` | C, D, L, U: 0x960, 0x970, 0x980, 0x990 + look, opaque at +1 | Flip the look; a release runs the key's routine: C `8d7f` (a message on the cargo), D `9ab8` (the dump), L `9b34` (load), U `9b01` (deploy; `sim_deploy_relay`), the last two then `9bbe` (the cargo redrawn). C, D and L are T-149 |
+
+`0xe4` to `0x100` are the second group (177, 115, 200, 209). The weapon buttons' `n`
+is the second byte of their states (+0x150, +0x153); the drop buttons' (+0x156 to
++0x15c).
+
+**Counters.** The scorpion's tick table `DS:0x6732` (by +0x1a, kept to 0..=0x1e):
+entry 4 (`1000:9a14`) adds 2 to +0xee (marking the warning light; sound event 0x12
+while +0xed holds and bit 2 is set), halves +0xed, and flips +0xfa bit 7 (marking the
+damage panel): so the damage lights show every other 16 ticks. Entry 5 (`9a50`) steps
+the dump, marks the cargo for a redraw and sets the gauges: +0x11a to the relays times
+16 plus +0x119, +0x11b to the relays times 8 plus twice +0x119 (each marked when it
+changes).
+
+**In the port**: `xeno_formats::scorpcon` reads the texts, tables, rectangles and the
+bank's handle; `xeno-app`'s `scorpcon` draws the power panel, the warning light, the
+speed, the speed lever, the compass, the damage panel and the cargo gauges from the sim
+(part 1), with the consoles' shared pieces in `console`. Shortcuts, each named in the
+code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
+out from the passes since the load (T-167); the gauges are worked out each frame from
+the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
+original leaves the picture there when the console opens with bit 7 set). Still to
+check in DOSBox: every widget's look and the blink timing.
+
 ### The situation room's main view (T-103)
 
 From a Ghidra pass over the main view's routines (`ui_draw_sitroom_main_view`,

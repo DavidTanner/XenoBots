@@ -5,6 +5,7 @@
 
 mod campaign;
 mod clock;
+mod console;
 mod dialog;
 mod drop;
 mod editor;
@@ -22,6 +23,7 @@ mod pointer;
 mod review;
 mod save;
 mod scene;
+mod scorpcon;
 mod screens;
 mod terrain;
 mod test_pattern;

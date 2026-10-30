@@ -30,6 +30,7 @@ use xeno_formats::font::Font;
 use xeno_formats::humancon::HumanCon;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::orders;
+use xeno_formats::scorpcon::ScorpCon;
 use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{self, Scenario, Side};
 use xeno_formats::view3d::{self, View3d};
@@ -37,7 +38,9 @@ use xeno_formats::views::{
     self, CONSOLE_CORNER_TYPE, MESSAGE_PANEL_TYPE, MissionViews, PROGRAM_PANEL_TYPE,
     SITUATION_CORNER_TYPE, TrainingAction, TrainingMenu, UNIT_BUTTON_TYPE, View as ViewTables,
 };
-use xeno_formats::{editor, filedialog, humancon, lzexe, map, mapdvr, mgavideo, motion, sitroom};
+use xeno_formats::{
+    editor, filedialog, humancon, lzexe, map, mapdvr, mgavideo, motion, scorpcon, sitroom,
+};
 use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
@@ -294,6 +297,9 @@ pub struct Assets {
     /// where the port reads them, and its sprites (`msprite2`).
     pub humancon: Option<HumanCon>,
     pub humancon_sprites: Vec<Sprite>,
+    /// The scorpion console's (T-131) and its sprites (`msprite3`).
+    pub scorpcon: Option<ScorpCon>,
+    pub scorpcon_sprites: Vec<Sprite>,
 }
 
 /// What a file dialog was opened for.
@@ -415,6 +421,12 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .ok(),
         humancon_sprites: bank("msprite2.b@n")
             .inspect_err(|e| log::warn!("humanoid console: no sprites: {e}"))
+            .unwrap_or_default(),
+        scorpcon: scorpcon::read(&exe)
+            .inspect_err(|e| log::warn!("xeno.exe: no scorpion console this port can read: {e}"))
+            .ok(),
+        scorpcon_sprites: bank("msprite3.b@n")
+            .inspect_err(|e| log::warn!("scorpion console: no sprites: {e}"))
             .unwrap_or_default(),
     })
 }
@@ -571,7 +583,7 @@ pub struct Mission {
     /// held (+0x1b = 7).
     // shortcut: one for every console, put back when a view opens; the original keeps
     // +0x22 and +0x1b in each robot.
-    look: crate::humancon::Look,
+    look: crate::console::Look,
     firing: bool,
     /// The briefing (`ORDR`), the main view's mode (base +0x37) and how many of the
     /// briefing's bytes are typed (+0x34).
@@ -674,7 +686,7 @@ impl Mission {
             panel_swap: false,
             unit_pressed: false,
             button_look: false,
-            look: crate::humancon::Look::default(),
+            look: crate::console::Look::default(),
             firing: false,
             orders: Vec::new(),
             mode: ORDERS_MODE,
@@ -870,7 +882,7 @@ impl Mission {
     fn reset_looks(&mut self) {
         self.panel_pressed = false;
         self.unit_pressed = false;
-        (self.look, self.firing) = (crate::humancon::Look::default(), false);
+        (self.look, self.firing) = (crate::console::Look::default(), false);
         self.capture = None;
         // A new view has drawn no frame yet: nothing is under the pointer.
         (self.goal_press, self.region) = (false, None);
@@ -1036,7 +1048,7 @@ impl Mission {
                 self.change_orders(programs, |book| book.set_program_drives(slot, drives));
             }
             h::LOCK_TYPE => {
-                self.look = h::Look::default();
+                self.look = crate::console::Look::default();
                 let key = if right {
                     Pilot::DropTarget
                 } else {
@@ -2013,7 +2025,7 @@ impl Mission {
                 // The release clears the panel's state (+0x22 = 0) and redraws it.
                 self.panel_pressed = false;
                 self.panel_swap = false;
-                self.look = crate::humancon::Look::default();
+                self.look = crate::console::Look::default();
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
@@ -2154,13 +2166,13 @@ impl Mission {
                 continue;
             }
             // The status view (S) is T-126; the consoles' other displays and
-            // instruments T-166, T-131, T-132 and T-134.
+            // instruments T-166, T-170, T-132 and T-134.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-126",
                 (_, 255) => "T-101",
                 (_, SECOND_DISPLAY) => "T-134",
                 (View::Humanoid, _) => "T-166",
-                (View::Scorpion, _) => "T-131",
+                (View::Scorpion, _) => "T-170",
                 _ => "T-132",
             };
             hatch(fb, colour, font, task);
@@ -2639,8 +2651,10 @@ impl Mission {
         {
             xor_frame(fb, area, UNIT_PRESSED_XOR);
         }
-        if robot.kind == RobotKind::Humanoid {
-            self.draw_humanoid(fb, assets, slot);
+        match robot.kind {
+            RobotKind::Humanoid => self.draw_humanoid(fb, assets, slot),
+            RobotKind::Scorpion => self.draw_scorpion(fb, assets, slot),
+            RobotKind::Scout => {}
         }
     }
 
@@ -2649,29 +2663,17 @@ impl Mission {
         let (Some(con), Some(room), Some(font)) = (
             &assets.humancon,
             &assets.sitroom,
-            assets.fonts.get(&crate::humancon::FONT),
+            assets.fonts.get(&crate::console::FONT),
         ) else {
             return;
         };
-        let Some(robot) = self.instruments(slot, room, con) else {
+        let Some(robot) = self.instruments(slot, room, &con.base_name) else {
             return;
         };
         let tables = &assets.views.humanoid;
-        let area = |kind| {
-            tables
-                .find(kind)
-                .or_else(|| tables.nested.iter().find(|w| w.kind == kind))
-                .and_then(|w| w.area)
-        };
-        let bank = &assets.humancon_sprites;
-        let lookup = |h: u16| {
-            let offset = h.checked_sub(con.bank)?;
-            offset
-                .is_multiple_of(HANDLE_STEP)
-                .then(|| bank.get(usize::from(offset / HANDLE_STEP)))
-                .flatten()
-        };
-        let sprites: crate::humancon::Sprites = &lookup;
+        let area = |kind| tables.all(kind).next().and_then(|w| w.area);
+        let lookup = |h| crate::console::lookup(&assets.humancon_sprites, con.bank, h);
+        let sprites: crate::console::Sprites = &lookup;
         use crate::humancon as h;
         h::draw_power(fb, con, sprites, &robot);
         if let Some(a) = area(h::WARNING_TYPE) {
@@ -2698,7 +2700,44 @@ impl Mission {
                 .is_some_and(|(t, _)| t == Target::Instrument(*w))
                 && matches!(w.kind, h::WEAPON_TYPE | h::PILOT_TYPE | h::PROGRAM_TYPE)
             {
-                xor_frame(fb, a, h::PRESSED_XOR);
+                xor_frame(fb, a, crate::console::PRESSED_XOR);
+            }
+        }
+    }
+
+    /// The scorpion console's instruments ([`scorpcon`]) from the sim.
+    fn draw_scorpion(&self, fb: &mut Framebuffer, assets: &Assets, slot: u16) {
+        let (Some(con), Some(room), Some(font)) = (
+            &assets.scorpcon,
+            &assets.sitroom,
+            assets.fonts.get(&crate::console::FONT),
+        ) else {
+            return;
+        };
+        let name = assets.humancon.as_ref().map_or(&[0u8; 6], |h| &h.base_name);
+        let Some(robot) = self.instruments(slot, room, name) else {
+            return;
+        };
+        let tables = &assets.views.scorpion;
+        let area = |kind| tables.all(kind).next().and_then(|w| w.area);
+        let lookup = |h| crate::console::lookup(&assets.scorpcon_sprites, con.bank, h);
+        let sprites: crate::console::Sprites = &lookup;
+        use crate::scorpcon as s;
+        s::draw_power(fb, con, sprites, &robot);
+        if let Some(a) = area(s::WARNING_TYPE) {
+            s::draw_warning(fb, a, sprites, &robot);
+        }
+        s::draw_speed(fb, font, con, &room.detail.speeds, robot.speed);
+        if let Some(a) = area(s::LEVER_TYPE) {
+            s::draw_lever(fb, a, con, sprites, robot.speed);
+        }
+        s::draw_compass(fb, font, con, sprites, robot.heading);
+        if let Some(a) = area(s::DAMAGE_TYPE) {
+            s::draw_damage(fb, a, con, sprites, &robot);
+        }
+        for (kind, gauge) in s::GAUGE_TYPES.into_iter().zip(robot.gauges) {
+            if let Some(a) = area(kind) {
+                s::draw_gauge(fb, a, sprites, gauge);
             }
         }
     }
@@ -2727,8 +2766,8 @@ impl Mission {
         &self,
         slot: u16,
         room: &SitRoom,
-        con: &HumanCon,
-    ) -> Option<crate::humancon::Robot> {
+        base_name: &[u8; 6],
+    ) -> Option<crate::console::Robot> {
         use crate::humancon as h;
         let world = self.world();
         let e = world.get(EntityId(slot))?;
@@ -2736,8 +2775,9 @@ impl Mission {
             return None;
         };
         // shortcut: the signal (+0x4f), the cloaks (+0xe0) and the ECM's charges (+0xde)
-        // are the scenario's as loaded (T-148, T-136); +0xee and the status page are
-        // worked out from the passes since the load (`humancon::blink`, `page`, T-167).
+        // are the scenario's as loaded (T-148, T-136); +0xee, the status page and a
+        // scorpion's +0xfa bit 7 are worked out from the passes since the load
+        // (`console::blink`, `humancon::page`, T-167).
         let loaded = self.loaded_robot(slot);
         let passes = world.ticks;
         let (signal, cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0, 0), |r| {
@@ -2749,16 +2789,26 @@ impl Mission {
                 r.signal,
                 r.cloaks,
                 r.ecm,
-                h::blink(r.tick, r.blink, passes),
+                crate::console::blink(r.tick, r.blink, passes),
                 h::page(r.tick, r.clock, light, passes),
             )
+        });
+        // The tick table's entry 4 flips +0xfa bit 7 (`1000:9a14`); +0x119 is the
+        // scenario's (nothing changes it).
+        let (damage_shown, extra) = loaded.map_or((false, 0), |r| {
+            let flips = crate::console::calls(r.tick, passes) % 2 == 1;
+            let extra = match &r.parts {
+                usg::Parts::Scorpion(p) => p.unknown_119,
+                _ => 0,
+            };
+            ((r.clock & 0x80 != 0) != flips, extra)
         });
         // `1fe6:7f38`: a robot's letters, `-` and its serial's last three digits; a
         // base's name. shortcut: a robot's serial (+0x18) is the scenario's as loaded,
         // and other kinds (never locked in the stock scenarios) get no name.
         let target = m.target.and_then(|t| {
             let name = match world.get(t)?.kind {
-                usg::ObjectKind::Base => con.base_name.to_vec(),
+                usg::ObjectKind::Base => base_name.to_vec(),
                 kind => {
                     let index = RobotKind::of(kind)?.index();
                     let mut name = room.detail.kind_letters[index].to_vec();
@@ -2770,7 +2820,7 @@ impl Mission {
             };
             Some([name, vec![0x0c]].concat())
         });
-        Some(h::Robot {
+        Some(crate::console::Robot {
             heading: e.heading,
             speed: m.speed,
             gear: m.gear,
@@ -2796,6 +2846,11 @@ impl Mission {
                 .get(slot)
                 .is_some_and(|r| r.orders.program_drives),
             page,
+            relays: m.relays,
+            rounds: m.guns.rounds,
+            gauges: crate::scorpcon::gauges(m.relays, extra),
+            deployer_damaged: c.equipment & usg::Robot::DEPLOYER_DAMAGED != 0,
+            damage_shown,
         })
     }
 }
@@ -3003,6 +3058,8 @@ pub mod tests {
             file_dialogs: None,
             humancon: None,
             humancon_sprites: Vec::new(),
+            scorpcon: None,
+            scorpcon_sprites: Vec::new(),
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -4834,6 +4891,130 @@ pub mod tests {
         }
     }
 
+    /// The real assets and a mission of `name` with its first robot of `kind` viewed.
+    fn console_of(kind: RobotKind, name: &str) -> Option<(Assets, Mission, u16)> {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let path = std::env::var_os(ENV_VAR)?;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let mut m = Mission::new(
+            name.into(),
+            &assets.scenarios[name],
+            Random::seeded(1),
+            &assets.motion,
+        );
+        let robot = m
+            .robots()
+            .into_iter()
+            .find(|&s| m.book().get(s).unwrap().kind == kind)
+            .unwrap();
+        m.view_robot(robot).unwrap();
+        Some((assets, m, robot))
+    }
+
+    /// The scorpion console's gauges follow the robot: the compass, the speed's digits
+    /// and lever, the energy bar, the cargo gauges, the damage panel and the warning
+    /// light.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_scorpion_instruments_follow_the_robot() {
+        use crate::scorpcon as s;
+        for name in ["ctrain.usg", "scen00a.usg"] {
+            let Some((assets, mut m, robot)) = console_of(RobotKind::Scorpion, name) else {
+                return;
+            };
+            let con = assets.scorpcon.as_ref().unwrap();
+            assert_eq!(assets.scorpcon_sprites.len(), 103);
+            let draw = |m: &Mission| {
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                m.draw(&mut fb, &assets);
+                fb
+            };
+            let tables = &assets.views.scorpion;
+            let area = |kind| tables.all(kind).next().and_then(|w| w.area).unwrap();
+            let pixels = |fb: &Framebuffer, a: Rect| -> Vec<u8> {
+                pixels(a).map(|(x, y)| fb.get(x, y).unwrap()).collect()
+            };
+            let set = |m: &mut Mission, f: &dyn Fn(&mut xeno_sim::Entity)| {
+                f(m.world_mut().get_mut(EntityId(robot)).unwrap());
+            };
+            set(&mut m, &|e| {
+                e.heading = 0;
+                if let State::Robot(r) = &mut e.state {
+                    (r.speed, r.guns.energy, r.locked_on, r.relays) = (0, 0, 0, 0);
+                }
+            });
+            let before = draw(&m);
+            set(&mut m, &|e| {
+                e.heading = 0x8000;
+                if let State::Robot(r) = &mut e.state {
+                    (r.speed, r.guns.energy, r.relays) = (40, 0xff, 12);
+                }
+            });
+            let after = draw(&m);
+            // The needle turns, and the heading reads 180 in colour 0x0e.
+            assert_ne!(pixels(&before, con.dial), pixels(&after, con.dial));
+            let lit = |fb: &Framebuffer, a| pixels(fb, a).iter().filter(|&&p| p == 0x0e).count();
+            assert!(lit(&after, area(0xd6)) > 10, "{name}");
+            // The speed: two digits over the unlit ones; the lever moves.
+            let speed = area(0xce);
+            assert!(lit(&before, speed) > 5 && lit(&after, speed) > 5, "{name}");
+            assert_ne!(pixels(&before, speed), pixels(&after, speed), "{name}");
+            let lever = area(s::LEVER_TYPE);
+            assert_ne!(pixels(&before, lever), pixels(&after, lever), "{name}");
+            // The energy bar fills; the signal's (as loaded) stays.
+            assert_ne!(pixels(&before, con.bars[1]), pixels(&after, con.bars[1]));
+            assert_eq!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
+            // The cargo gauges follow the relays.
+            for kind in s::GAUGE_TYPES {
+                assert_ne!(pixels(&before, area(kind)), pixels(&after, area(kind)));
+            }
+            // The damage panel shows a light every other 16 ticks once the helm is low;
+            // undamaged, it only blinks the cover off and on.
+            let damage = area(s::DAMAGE_TYPE);
+            let looks = |m: &mut Mission| {
+                let mut looks: Vec<_> = (0..64)
+                    .map(|t| {
+                        m.world_mut().ticks = t;
+                        pixels(&draw(m), damage)
+                    })
+                    .collect();
+                looks.sort();
+                looks.dedup();
+                looks.len()
+            };
+            assert_eq!(looks(&mut m), 1, "{name}");
+            set(&mut m, &|e| {
+                if let xeno_sim::Damage::Robot(c) = &mut e.damage {
+                    c.helm = 50;
+                }
+            });
+            assert_eq!(looks(&mut m), 2, "{name}: the helm's light never shows");
+            // The warning light blinks only while a lock holds.
+            let warning = area(s::WARNING_TYPE);
+            let blinks = |m: &mut Mission, locked: u8| {
+                set(m, &|e| {
+                    if let State::Robot(r) = &mut e.state {
+                        r.locked_on = locked;
+                    }
+                });
+                let mut looks: Vec<_> = (0..64)
+                    .map(|t| {
+                        m.world_mut().ticks = t;
+                        pixels(&draw(m), warning)
+                    })
+                    .collect();
+                looks.dedup();
+                looks.len()
+            };
+            assert_eq!(blinks(&mut m, 0), 1, "{name}");
+            assert!(blinks(&mut m, 0xff) > 2, "{name}: the light never blinks");
+        }
+    }
+
     /// The humanoid's buttons act on the robot through the sim, as their mouse handlers
     /// do: the weapon buttons select, the switches hand over, the lock button's press
     /// lights its other look and its release clears it, the fire button fires while
@@ -4897,13 +5078,13 @@ pub mod tests {
         m.mouse_down(LEFT, centre(lock), &assets);
         assert_eq!(
             m.look,
-            h::Look {
+            crate::console::Look {
                 pressed: true,
                 lock_held: true
             }
         );
         m.mouse_up(LEFT, centre(lock), &assets);
-        assert_eq!(m.look, h::Look::default());
+        assert_eq!(m.look, crate::console::Look::default());
         // The fire button: held, every tick sets the fire request; let go, it stops.
         let fire = find(h::FIRE_TYPE);
         m.mouse_down(LEFT, centre(fire), &assets);

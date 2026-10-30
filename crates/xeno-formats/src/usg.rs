@@ -463,7 +463,8 @@ pub struct Robot {
     /// roster's icon and the detail panel's repair state come from it.
     pub damage: u8,
     /// +0xfa: a counter stepping by one; a humanoid's or scout's console light steps every 32
-    /// (S sets it to 0). A scorpion uses only bit 7, which a console key flips.
+    /// (S sets it to 0). A scorpion uses only bit 7, which its tick-table entry 4 flips
+    /// every 16 ticks: its console's damage panel shows its lights while it is set.
     pub clock: u8,
     /// +0xfb: ticks before the next contact check after bumping into something.
     pub bump_wait: u8,

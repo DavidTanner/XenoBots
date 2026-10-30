@@ -1,0 +1,327 @@
+//! What the robot consoles' instruments share (T-130, T-131; `docs/screens.md`, "The
+//! humanoid console's instruments (T-130)" and "The scorpion console's instruments
+//! (T-131)"): what they read from the viewed robot, the buttons' shared look, the
+//! sprite blits, the lit numbers, the compass's needle, the power bars and the
+//! counters of the tick table's entry 4.
+
+use xeno_formats::ban::Sprite;
+use xeno_formats::font::Font;
+use xeno_formats::humancon::NEEDLES;
+use xeno_formats::maproom::Rect;
+use xeno_render::{BlitMode, Framebuffer, Orientation, SpriteBlit, TextCursor, TextMode};
+
+use crate::panels::digits;
+
+/// The font of the consoles' numbers and panels (`mov ax, 2` before
+/// `gfx_select_font`).
+pub const FONT: u16 = 2;
+/// `1000:dfd5`: a pressed switch's frame is XORed with 9.
+pub const PRESSED_XOR: u8 = 9;
+/// The next sprite: a lit or pressed look.
+pub const NEXT: u16 = 8;
+
+/// What the instruments read from the viewed robot.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Robot {
+    /// +0x10, +0x26, +0x10b (twice the gear's index).
+    pub heading: u16,
+    pub speed: i16,
+    pub gear: u8,
+    /// +0xfd bit 0; +0x4f, +0x50.
+    pub on_battery: bool,
+    pub signal: u8,
+    pub energy: u8,
+    /// +0xed, +0xee.
+    pub locked_on: u8,
+    pub blink: u8,
+    /// The target's name (`1fe6:7f38`), none without one; +0xe8, +0xea less the
+    /// heading, +0xec.
+    pub target: Option<Vec<u8>>,
+    pub target_distance: u16,
+    pub target_bearing: u16,
+    pub targeting: u8,
+    /// +0xdc, +0x108 and +0x109, +0xdd.
+    pub weapons: u8,
+    pub cooldowns: [u16; 2],
+    pub weapon: u8,
+    /// +0x4e, +0x24, +0xf6, +0xe0, +0xde.
+    pub power: u8,
+    pub helm: u8,
+    pub systems: u8,
+    pub cloaks: u8,
+    pub ecm: u8,
+    /// +0x23 bit 7.
+    pub program_drives: bool,
+    /// The status panel's page (+0x10a, cut by 3).
+    pub page: u8,
+    /// A scorpion's relays (+0x118), cannon rounds (+0x120), cargo gauges (+0x11a,
+    /// +0x11b), its deployer damaged (+0xfd bit 7) and +0xfa bit 7 (the damage panel
+    /// shows its lights).
+    pub relays: u8,
+    pub rounds: u16,
+    pub gauges: [u8; 2],
+    pub deployer_damaged: bool,
+    pub damage_shown: bool,
+}
+
+/// What the console keeps of a press: +0x22 bit 3, the buttons' shared look, and bit
+/// 7, the lock button held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Look {
+    pub pressed: bool,
+    pub lock_held: bool,
+}
+
+/// A console's sprites by handle.
+pub type Sprites<'a> = &'a dyn Fn(u16) -> Option<&'a Sprite>;
+
+/// The sprite at `handle` in a bank loaded from handle `first`, 8 handles a sprite.
+pub fn lookup(bank: &[Sprite], first: u16, handle: u16) -> Option<&Sprite> {
+    let offset = handle.checked_sub(first)?;
+    offset
+        .is_multiple_of(NEXT)
+        .then(|| bank.get(usize::from(offset / NEXT)))
+        .flatten()
+}
+
+/// Draws sprite `handle` with its corner at (`x`, `y`).
+pub fn sprite(fb: &mut Framebuffer, sprites: Sprites, handle: u16, x: u16, y: u16, mode: BlitMode) {
+    if let Some(s) = sprites(handle) {
+        let blit = SpriteBlit {
+            mode,
+            ..SpriteBlit::default()
+        };
+        fb.blit_sprite(s, x.into(), y.into(), blit);
+    }
+}
+
+/// `1000:a6f4`-style numbers: the `unlit` digits in the first colour, then `text` over
+/// them in the second, both transparent.
+pub fn lit_number(
+    fb: &mut Framebuffer,
+    font: &Font,
+    at: (i32, i32),
+    unlit: &[u8],
+    (dark, lit): (u8, u8),
+    text: &[u8],
+) {
+    let mut cursor = TextCursor::at(at.0, at.1, dark);
+    fb.draw_text(font, &mut cursor, unlit, TextMode::Transparent);
+    cursor.colour = lit;
+    fb.draw_text(font, &mut cursor, text, TextMode::Transparent);
+}
+
+/// `02b7`'s five digits of the speed table's entry by the speed (negated if negative)
+/// from the third, the third a space or `-`.
+pub fn speed_text(speeds: &[u8], speed: i16) -> Vec<u8> {
+    // `mov al, [bx + table]` by the speed (negated if negative); past the table the
+    // original reads on. shortcut: the port shows the table's last speed there, as
+    // the detail panel does; no stock robot goes so fast.
+    let size = usize::from(speed.unsigned_abs());
+    let shown = speeds.get(size).or(speeds.last()).copied().unwrap_or(0);
+    let mut text = digits(shown.into(), 3);
+    text[0] = if speed < 0 { b'-' } else { b' ' };
+    text
+}
+
+/// The heading's needle (`1000:a617`, `87d6`): sprite `first` plus 8 a needle, keyed
+/// and turned by its quadrant in that quadrant's rectangle.
+pub fn draw_needle(
+    fb: &mut Framebuffer,
+    sprites: Sprites,
+    (needles, areas): (&[u16; NEEDLES], [Rect; 4]),
+    first: u16,
+    heading: u16,
+) {
+    let (quadrant, handle) = needle(needles, first, heading);
+    if let Some(s) = sprites(handle) {
+        let (orientation, x, y) = turn(areas[quadrant], quadrant, s);
+        let blit = SpriteBlit {
+            mode: BlitMode::Keyed,
+            orientation,
+            ..SpriteBlit::default()
+        };
+        fb.blit_sprite(s, x.into(), y.into(), blit);
+    }
+}
+
+/// How quadrant `quadrant`'s blitter turns the needle (slots `0x5d8`, `0x5dc`, `0x5e4`,
+/// `0x5e0`) and where its corner lands: the flipped blitters start from the
+/// rectangle's bottom or right edge.
+fn turn(area: Rect, quadrant: usize, s: &Sprite) -> (Orientation, u16, u16) {
+    let (w, h) = (s.width() as u16, s.height() as u16);
+    let orientation = [
+        Orientation::Normal,
+        Orientation::FlipVertical,
+        Orientation::Rotate180,
+        Orientation::Mirror,
+    ][quadrant];
+    let x = match orientation {
+        Orientation::Mirror | Orientation::Rotate180 => area.right.wrapping_sub(w),
+        _ => area.left,
+    };
+    let y = match orientation {
+        Orientation::FlipVertical | Orientation::Rotate180 => area.bottom.wrapping_sub(h),
+        _ => area.top,
+    };
+    (orientation, x, y)
+}
+
+/// The quadrant and needle sprite for `heading`: `((heading + 0x400) >> 11) & 31`
+/// into the needle table, the low byte the quadrant's word offset, the high byte the
+/// needle (`cbw`, times 8).
+fn needle(needles: &[u16; NEEDLES], first: u16, heading: u16) -> (usize, u16) {
+    let entry = needles[usize::from((heading.wrapping_add(0x400) >> 11) & 31)];
+    let quadrant = usize::from((entry & 0xff) as u8 / 2) % 4;
+    let n = (entry >> 8) as u8 as i8 as i16;
+    (quadrant, first.wrapping_add_signed(n * 8))
+}
+
+/// The lock warning light (`1000:a446`, `8a71`): sprite `base`, the next one while
+/// another robot's lock holds and the blink counter's bit 2 is set.
+pub fn draw_warning(fb: &mut Framebuffer, area: Rect, sprites: Sprites, base: u16, robot: &Robot) {
+    let lit = robot.locked_on != 0 && robot.blink & 0x04 != 0;
+    let handle = base + if lit { NEXT } else { 0 };
+    sprite(fb, sprites, handle, area.left, area.top, BlitMode::Opaque);
+}
+
+/// The power panel (`1000:aab7`, `8fb9`): each light's sprite, then its bar of the
+/// signal and of the energy: `lit` segments, then `dark` ones, 2 pixels apart.
+pub fn draw_power(
+    fb: &mut Framebuffer,
+    sprites: Sprites,
+    (lights, bars): ([Rect; 2], [Rect; 2]),
+    handles: [u16; 2],
+    [lit, dark]: [u16; 2],
+    robot: &Robot,
+) {
+    let values = [robot.signal, robot.energy];
+    for i in 0..2 {
+        let (area, bar) = (lights[i], bars[i]);
+        sprite(
+            fb,
+            sprites,
+            handles[i],
+            area.left,
+            area.top,
+            BlitMode::Opaque,
+        );
+        let n = segments(values[i]);
+        for k in 0..SEGMENTS {
+            let handle = if k < n { lit } else { dark };
+            let x = bar.left + 2 * k;
+            sprite(fb, sprites, handle, x, bar.top, BlitMode::Opaque);
+        }
+    }
+}
+
+/// A bar's segments.
+const SEGMENTS: u16 = 16;
+
+/// `1000:ab02`, `9004`: 255 counts as 256, then `(value >> 1) >> 3` lit segments.
+fn segments(value: u8) -> u16 {
+    let v = if value == 0xff {
+        0x100
+    } else {
+        u16::from(value)
+    };
+    (v >> 1) >> 3
+}
+
+/// How often the tick table's entry 4 (humanoid `1000:b318`, scorpion `9a14`) ran in
+/// the `passes` object passes since the load: on each pass whose stepped +0x1a has
+/// `& 0x1e` = 8.
+// shortcut: the sim does not keep +0xee, +0xfa or +0x10a; this assumes the robot ticked
+// on every pass since the load, and goes wrong once `World::ticks` wraps (T-167).
+pub fn calls(loaded_tick: u8, passes: u16) -> u16 {
+    // The `j`th pass steps +0x1a to `loaded_tick + 2j`: entry 4 when `j` is `r` mod 16.
+    let r = match 4u16.wrapping_sub(u16::from(loaded_tick >> 1)) & 15 {
+        0 => 16,
+        r => r,
+    };
+    if passes >= r {
+        (passes - r) / 16 + 1
+    } else {
+        0
+    }
+}
+
+/// +0xee as it stands `passes` object passes after the load: 2 a call of entry 4.
+pub fn blink(loaded_tick: u8, loaded_blink: u8, passes: u16) -> u8 {
+    loaded_blink.wrapping_add((calls(loaded_tick, passes) as u8).wrapping_mul(2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quadrants() -> [Rect; 4] {
+        let r = |top, left, bottom, right| Rect {
+            top,
+            left,
+            bottom,
+            right,
+        };
+        [r(0, 2, 2, 4), r(2, 2, 4, 4), r(2, 0, 4, 2), r(0, 0, 2, 2)]
+    }
+
+    #[test]
+    fn needles_speeds_and_segments() {
+        let needles = std::array::from_fn(|i| match i {
+            0 => 0,
+            1 => 0x0102,
+            2 => 0x0204,
+            _ => 0xff06,
+        });
+        const FIRST: u16 = 0x5f8;
+        // 0x400 either side of straight up is the first needle.
+        assert_eq!(needle(&needles, FIRST, 0xfc00), (0, FIRST));
+        assert_eq!(needle(&needles, FIRST, 0x0400), (1, FIRST + 8));
+        assert_eq!(needle(&needles, FIRST, 0x0c00), (2, FIRST + 16));
+        // A negative needle counts down.
+        assert_eq!(needle(&needles, FIRST, 0x1400), (3, FIRST - 8));
+        let speeds = [0, 1, 2, 12];
+        assert_eq!(speed_text(&speeds, 3), b" 12");
+        assert_eq!(speed_text(&speeds, -2), b"-02");
+        assert_eq!(speed_text(&speeds, 99), b" 12");
+        assert_eq!(
+            [0, 15, 16, 0xfe, 0xff].map(segments),
+            [0, 0, 1, 15, SEGMENTS]
+        );
+    }
+
+    #[test]
+    fn each_quadrant_turns_its_needle() {
+        use xeno_formats::ban::SpriteHeader;
+        let s = Sprite {
+            header: SpriteHeader {
+                size: 0,
+                width: 2,
+                height: 3,
+                flags: 0,
+                unknown_05: 0,
+            },
+            pixels: vec![1; 6],
+            spans: Vec::new(),
+            trailing_empty_span: false,
+        };
+        let q = quadrants();
+        // Upright, upside down, both, mirrored: clockwise from the top right.
+        assert_eq!(turn(q[0], 0, &s), (Orientation::Normal, 2, 0));
+        assert_eq!(turn(q[1], 1, &s), (Orientation::FlipVertical, 2, 1));
+        assert_eq!(turn(q[2], 2, &s), (Orientation::Rotate180, 0, 1));
+        assert_eq!(turn(q[3], 3, &s), (Orientation::Mirror, 0, 0));
+    }
+
+    #[test]
+    fn the_blink_steps_on_one_pass_in_16() {
+        // +0x1a loaded at 2: the 3rd pass steps it to 8.
+        assert_eq!(blink(2, 0, 2), 0);
+        assert_eq!(blink(2, 0, 3), 2);
+        assert_eq!(blink(2, 0, 18), 2);
+        assert_eq!(blink(2, 0, 19), 4);
+        // Loaded at 8: the 16th pass; an odd +0x1a counts the same.
+        assert_eq!((blink(8, 1, 15), blink(9, 1, 16)), (1, 3));
+        assert_eq!(blink(0, 0xff, 4), 1);
+    }
+}
