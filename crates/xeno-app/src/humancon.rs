@@ -9,7 +9,9 @@ use xeno_formats::humancon::HumanCon;
 use xeno_formats::maproom::Rect;
 use xeno_render::{BlitMode, Framebuffer, TextCursor, TextMode};
 
-use crate::console::{Look, NEXT, Robot, Sprites, calls, sprite};
+use crate::console::{
+    Coloured, Look, NEW_LINE, NEXT, Robot, Sprites, calls, draw_lines, sprite, target_part,
+};
 use crate::panels::digits;
 
 /// The widgets drawn at their rectangles, by type; the speed (0x9c), the compass
@@ -137,53 +139,17 @@ const TARGET_STATE: u8 = 0x5c;
 const TARGET_BACKGROUND: u8 = 0x68;
 const TARGET_AT: (i32, i32) = (0x116, 0x71);
 const WEAPONS_AT: (i32, i32) = (0x116, 0x88);
-/// +0xec bits 1 and 2: in range, in the arc.
-const IN_RANGE: u8 = 0x02;
-const IN_ARC: u8 = 0x04;
-/// `1000:a466`'s immediates: after the distance `M`, after the bearing glyph 0x17.
-const METRES: u8 = b'M';
-const DEGREE: u8 = 0x17;
-const NEW_LINE: u8 = 0x0c;
 
 /// The target panel (`0xa2`): the target's name, distance and bearing, or the no-target
 /// lines; then each weapon's state.
 pub fn draw_target(fb: &mut Framebuffer, font: &Font, con: &HumanCon, robot: &Robot) {
-    let mut cursor = TextCursor::at(0, 0, TARGET_COLOUR);
-    cursor.background = TARGET_BACKGROUND;
-    for (at, colour, text) in target_lines(con, robot) {
-        if let Some((x, y)) = at {
-            cursor.move_to(x, y);
-        }
-        cursor.colour = colour;
-        fb.draw_text(font, &mut cursor, &text, TextMode::Opaque);
-    }
+    draw_lines(fb, font, TARGET_BACKGROUND, target_lines(con, robot));
 }
-
-/// A piece of text with its colour: where it starts (none: where the last left the
-/// cursor), the colour, what it says.
-type Coloured = (Option<(i32, i32)>, u8, Vec<u8>);
 
 /// The target panel's texts in order, all opaque.
 fn target_lines(con: &HumanCon, robot: &Robot) -> Vec<Coloured> {
-    let warn = |bit: u8| {
-        if robot.targeting & bit == 0 {
-            TARGET_WARNING
-        } else {
-            TARGET_COLOUR
-        }
-    };
-    let mut lines = match &robot.target {
-        Some(name) => {
-            let mut bearing = digits(crate::editor::degrees(robot.target_bearing), 3);
-            bearing.extend([DEGREE, NEW_LINE]);
-            vec![
-                (Some(TARGET_AT), TARGET_COLOUR, name.clone()),
-                (None, warn(IN_RANGE), distance(robot.target_distance)),
-                (None, warn(IN_ARC), bearing),
-            ]
-        }
-        None => vec![(Some(TARGET_AT), TARGET_COLOUR, con.no_target.clone())],
-    };
+    let colours = (TARGET_COLOUR, TARGET_WARNING);
+    let mut lines = target_part(robot, &con.no_target, TARGET_AT, colours);
     for (w, bit) in [0x01, 0x02].into_iter().enumerate() {
         let (colour, state) = if robot.weapons & bit != 0 {
             (TARGET_STATE, &con.damaged)
@@ -195,20 +161,6 @@ fn target_lines(con: &HumanCon, robot: &Robot) -> Vec<Coloured> {
         lines.push(((w == 0).then_some(WEAPONS_AT), colour, state.clone()));
     }
     lines
-}
-
-/// `02b7`'s five digits with leading zeros as spaces (`1000:0301`, the last kept),
-/// `M` and a new line.
-fn distance(value: u16) -> Vec<u8> {
-    let mut text = digits(value, 5);
-    for d in text.iter_mut().take(4) {
-        if *d != b'0' {
-            break;
-        }
-        *d = b' ';
-    }
-    text.extend([METRES, NEW_LINE]);
-    text
 }
 
 /// `1000:a93e`: the status panel's heading and lines.
@@ -391,6 +343,7 @@ fn button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::IN_ARC;
 
     fn con() -> HumanCon {
         let r = |top, left, bottom, right| Rect {
@@ -453,7 +406,6 @@ mod tests {
         assert_eq!(lines[1], (None, TARGET_WARNING, b"  640M\x0c".to_vec()));
         assert_eq!(lines[2], (None, TARGET_COLOUR, b"270\x17\x0c".to_vec()));
         assert_eq!(lines[4], (None, TARGET_STATE, b"D".to_vec()));
-        assert_eq!(distance(0), b"    0M\x0c");
     }
 
     #[test]

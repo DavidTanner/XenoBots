@@ -846,8 +846,10 @@ changes).
 **In the port**: `xeno_formats::scorpcon` reads the texts, tables, rectangles and the
 bank's handle; `xeno-app`'s `scorpcon` draws the power panel, the warning light, the
 speed, the speed lever, the compass, the damage panel and the cargo gauges from the sim
-(part 1), with the consoles' shared pieces in `console`. Shortcuts, each named in the
-code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
+(part 1), with the consoles' shared pieces in `console`; the target panel (`0xd0`), the
+relay panel (`0xe4`) and the buttons (part 2): the shared look as the humanoid's (only
+bit 3 of +0x22 added), the switches lit for whoever drives and while held. Shortcuts,
+each named in the code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
 out from the passes since the load (T-167); the gauges are worked out each frame from
 the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
 original leaves the picture there when the console opens with bit 7 set). Still to
