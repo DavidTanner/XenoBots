@@ -29,6 +29,8 @@ pub const ECM_TYPE: u16 = 0xae;
 pub const LEFT_TYPE: u16 = 0xb2;
 pub const AHEAD_TYPE: u16 = 0xb4;
 pub const RIGHT_TYPE: u16 = 0xb6;
+/// `1000:dfd5`: a pressed switch's frame is XORed with 9.
+pub const PRESSED_XOR: u8 = 9;
 /// The font of the speed and the compass's heading (`mov ax, 2` before
 /// `gfx_select_font`).
 pub const FONT: u16 = 2;

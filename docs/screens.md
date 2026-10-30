@@ -782,17 +782,20 @@ room's briefing and status modes leave 0x17 on 0 (`1fe6:700d`, `7070`), the log 
 bank's handle; `xeno-app`'s `humancon` draws every widget above but the third display
 from the sim: the power (`0xb0`), the warning light (`0xa0`), the speed (`0x9c`), the
 compass (`0xa6`) and the gear lever (`0xa4`) (part 1), the target panel (`0xa2`), the
-status panel (`0xa8`) and the buttons (part 2). The console keeps one shared look for
-whichever robot is viewed (`Mission::look`). Shortcuts, each
+status panel (`0xa8`) and the buttons (part 2). In part 3 the fire button held sends
+`Pilot::Fire` every retrace; the weapon buttons `Pilot::Weapon`; the switches hand the
+robot over as F2 and F3; the lock button's left and right releases `Pilot::NextTarget`
+and `DropTarget` (T-162's humanoid half). The console keeps one shared look and fire
+button for whichever robot is viewed (`Mission::look`, `firing`). Shortcuts, each
 named in the code: the signal, a target's serial and the cloak and ECM counts are the
 scenario's as loaded (T-148, T-136); +0xee and the status page are worked out from
 the passes since the load (`World::ticks`) and the robot's +0x1a, +0xfa and +0x10a
 as loaded (T-167), the pages going round in threes as while the console is open; the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
-+0x22. Not ported: the buttons' mouse (part 3; the gear lever's, compass's and turn
-buttons' T-165, the cloak and ECM buttons' T-136), the status panel's press (T-167),
-the third display (T-166). Still to check in DOSBox (T-168): every widget's look, the
-blink and page timing.
++0x22; the fire request is sent before the tick, not set at its end. Not ported: the
+gear lever's, compass's and turn buttons' mouse (T-165), the cloak and ECM buttons'
+(T-136), the status panel's press (T-167), the third display (T-166). Still to check
+in DOSBox (T-168): every widget's look, the blink and page timing.
 
 ### The situation room's main view (T-103)
 
