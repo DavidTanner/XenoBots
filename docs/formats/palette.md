@@ -245,13 +245,41 @@ Contents are the user's to read, never committed; this is the shape only.
     palette back until the weight changes, which is why each view's draw forces a
     restart. The port (T-102): `xeno_sim::Clock::tint`, started by `xeno-app` on
     records 5 and 6 of the screens' list once no fade is pending or running.
-  The views' draws also start records of their own (found by T-102, not yet read
-  through): the situation room 0, 1, 0x10 and 0x11 (`1000:54b9` on), the console
-  drawn at `1000:bb86` 0xc, 4, 0x10 and 0x11 between a hold and a release (`1000:bb35`
-  on); the other two consoles' draws (before `845f`, `a0c3`) not read. Not ported
-  (T-125).
-  T-037 missed those (it saw only direct callers); calls through the word slots from
-  the `1fe6` segment or `mapdvr.dvr` are still to be searched for.
+  - **The views' records** (T-125). Each mission view's picture is a widget whose
+    draw handler (table `DS:0x3328`) loads and draws the picture, sets its palette
+    (slot `0x494`) and then starts the view's records with `pal_start_anim`, before
+    restarting the tint (`1000:ecff`): the situation room (type 0x4e, `1000:5484`)
+    records 0, 1, 0x10 and 0x11; the humanoid console (type 0x82) 0xa, 0xb, 2, 0x10
+    and 0x11; the scorpion console (type 0xba) 0xd, 3, 0x10 and 0x11; the scout
+    console (type 0x104) 0xc, 4, 0x10 and 0x11. The three consoles hold the records
+    (`1000:13f2`) before the first start and release them (`13fe`) after the tint's
+    restart, so no retrace runs a half-started set; the situation room does not. All
+    of them are rotates or frames (none a blend), so the weight in `AH` (whatever
+    the picture's palette call left there) is unused. What they animate: record 0, 2,
+    3 or 4 blinks colour 255 between two colours (each record its own pair, every 32
+    retraces), record 1 blinks 23..25 (every 16), record 0x10 cycles colour 253
+    through 14 colours (every 3) and 0x11 colour 254 through 16 (every 2), all looping;
+    record 0xa rotates 16..23 and 0xb 24..31 (every 5), 0xc and 0xd 16..31 (every 4).
+    In the stock pictures 253 and 254 are only in the consoles' art and 16..31 only in
+    the situation room's, so several records start on screens with no pixel of their
+    colours (until the code draws some); colour 255 is every view's region for the 3D
+    view and the second display (`docs/screens.md`), drawn over each frame. The picture widget's close handler (table
+    `DS:0x31b8`, run on every widget of the set when the mission switches to another
+    view's set, `1000:2690`) turns the same records off where they stand (slot
+    `0x31a`) and switches the second display's record off (`1000:d9ef` with 0xff:
+    `0x31a` on `DS:0x70d0`, a T-134 matter); the next view's draw restarts the shared
+    0x10 and 0x11 from their beginning. When the mission ends, `ui_map_room_run_mission`
+    holds the records, turns every one off (slot `0x310`, its only caller) and fades
+    out over 32 retraces, then releases them. The port (T-125):
+    `xeno_app::mission::view_records`, started by `xeno-app` with the tint once no fade
+    is pending or running, turned off as the view is left, all off when the mission is
+    left. It starts them on showing a view only: the original restarts them whenever
+    the picture widget is drawn again, which the port does not trace (T-180).
+  T-037 missed the views' records (it saw only direct callers: the views call
+  `1000:140b` near, not through slot `0x316`). Nothing in the `1fe6` segment calls
+  through the word slots `0x30e`..`0x320` (a search of its code for each slot word
+  found only other operands); in segment `1000` only `0x310` is called through its
+  slot, every other service is called near. `mapdvr.dvr` is not searched.
 - **`vgaintro.dvr`'s list** (its data at load offset 0x13090, 0x1de1 bytes): six
   records, all off at start. Records 0..=4 are blends from the palette (kind 3) over
   colours 0..=251 (two frames of 252 colours each, speed 5); record 5 is a blend between

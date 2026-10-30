@@ -277,6 +277,20 @@ const LOG_MODE: u8 = 8;
 /// `pal_tint_for_time_of_day` (`1000:ed70`) starts.
 pub const TINT_RECORDS: [u8; 2] = [5, 6];
 
+/// The records of `mgavideo.dvr`'s list a view's picture starts as it is drawn and
+/// turns off where they stand as it is left (`docs/formats/palette.md`, "The views'
+/// records"): blinks and frame cycles of colours 23..=25 and 253..=255, rotates over
+/// 16..=31. None is a blend, so no weight.
+pub fn view_records(view: crate::screens::View) -> &'static [u8] {
+    use crate::screens::View;
+    match view {
+        View::SitRoom => &[0, 1, 0x10, 0x11],
+        View::Humanoid => &[0xa, 0xb, 2, 0x10, 0x11],
+        View::Scorpion => &[0xd, 3, 0x10, 0x11],
+        View::Scout => &[0xc, 4, 0x10, 0x11],
+    }
+}
+
 /// Alt+Q, the only key word the situation room's end handler acts on.
 const ALT_Q: u16 = 0x2010;
 /// The situation room's sprite buttons, by widget type (`docs/screens.md`).

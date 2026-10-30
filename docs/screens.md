@@ -495,7 +495,8 @@ builds a run-length region of the pixels of colour 255 (and, in the consoles, 25
 colour 255 of `m@l.md` is.
 
 *The situation room* (sprite bank `msprite1` loaded at handle 0x2a0 by the picture's
-draw handler, which also starts colour records 0, 1, 16 and 17):
+draw handler, which also starts colour records 0, 1, 16 and 17; each console's starts
+its own: `palette.md`, "The views' records", T-125):
 
 | Type | Rectangle | What |
 |---|---|---|
