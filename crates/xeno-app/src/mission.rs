@@ -556,6 +556,13 @@ pub struct Mission {
     /// The object under the pointer in the last frame of the 3D view and of the second
     /// display (the humanoid's `DS:0x6a78`, `0x6a7a`, read by `1000:41b7`).
     probed: Cell<[Option<u16>; 2]>,
+    /// The point under the pointer on the second display's last map frame
+    /// (`ui_map_pointer_to_world`); none after a camera frame.
+    map_point: Cell<Option<xeno_sim::Position>>,
+    /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
+    alt: bool,
+    /// The map display's Alt press waits for the next frame (+0x23 bit 2).
+    goal_press: bool,
     dirty: bool,
     /// The tint's last weight (`DS:0x7d4c`); none (0xff) restarts it.
     tint: Option<u8>,
@@ -639,6 +646,9 @@ impl Mission {
             pointer: None,
             region: None,
             probed: Cell::default(),
+            map_point: Cell::default(),
+            alt: false,
+            goal_press: false,
             dirty: true,
             tint: None,
             map: MapState::default(),
@@ -818,6 +828,10 @@ impl Mission {
         self.panel_pressed = false;
         self.unit_pressed = false;
         self.capture = None;
+        // A new view has drawn no frame yet: nothing is under the pointer.
+        (self.goal_press, self.region) = (false, None);
+        self.probed.set([None; 2]);
+        self.map_point.set(None);
         self.dirty = true;
     }
 
@@ -983,6 +997,22 @@ impl Mission {
         &mut self,
         events: impl IntoIterator<Item = &'a InputEvent>,
     ) -> Option<Request> {
+        // The map display's press (`1000:466b`), after a frame of the map: the object
+        // under the pointer becomes the goal, or else the point there the destination.
+        // shortcut: it acts in the press's retrace (unless an Alt release came in the
+        // same retrace), on the last frame drawn; the original acts when the next map
+        // frame is done, a few retraces on, on that frame's probe.
+        if let (true, Viewed::Robot(slot), Some(point)) = (
+            std::mem::take(&mut self.goal_press),
+            self.viewed,
+            self.map_point.get(),
+        ) {
+            let key = match self.probed.get()[1] {
+                Some(object) => Pilot::GoalObject(EntityId(object)),
+                None => Pilot::Destination(point),
+            };
+            self.pilot(slot, key);
+        }
         // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
         let (Run::Running(sim), None, None) = (&mut self.run, &self.terrain, &self.dialog) else {
             return None;
@@ -1448,6 +1478,11 @@ impl Mission {
         true
     }
 
+    /// The last key word's Alt (`DS:0x1bf1` bit 0x20), which the mouse events carry.
+    pub fn set_alt(&mut self, alt: bool) {
+        self.alt = alt;
+    }
+
     /// The pointer moved to `at`: in the terrain editor, the ground point under it. A
     /// console draws again, so its views probe the new position (the original draws
     /// them continuously).
@@ -1771,7 +1806,7 @@ impl Mission {
         .chain(
             regions
                 .into_iter()
-                .flat_map(|r| [(r[0], Target::Region(0))]),
+                .flat_map(|r| [(r[0], Target::Region(0)), (r[1], Target::Region(1))]),
         )
         .find_map(|(kind, target)| hit(kind).then_some(target))
     }
@@ -1803,6 +1838,12 @@ impl Mission {
             Target::Roster(row) if button == MouseButton::Left => {
                 let slot = self.robots().get(self.roster_top + row).copied();
                 self.select_unit(slot);
+            }
+            // The map display's Alt press (`1000:9eea`), acted on after the next frame.
+            Target::Region(1) if button == MouseButton::Left && self.alt => {
+                if let Viewed::Robot(slot) = self.viewed {
+                    self.goal_press |= self.display_mode(slot, assets) == MAP_DISPLAY;
+                }
             }
             Target::Roster(_) | Target::Corner | Target::Region(_) => {}
         }
@@ -1865,6 +1906,11 @@ impl Mission {
                 let (Viewed::Robot(slot), true) = (self.viewed, self.region == Some(i)) else {
                     return None;
                 };
+                // On the second display a left release with Alt takes the press back.
+                if i == 1 && !right && self.alt {
+                    self.goal_press = false;
+                    return None;
+                }
                 let object = self.probed.get()[i]?;
                 if right {
                     // shortcut: only the player's robots can be viewed, so `7eac`'s
@@ -2020,11 +2066,7 @@ impl Mission {
             .as_ref()
             .and_then(|s| s.terrain.as_ref())
             .map_or(&[][..], |t| &t.features);
-        // The pointer probe at the pointer less the region's top left (`1000:4042`).
-        let probe = self.pointer.and_then(|(x, y)| {
-            let x = usize::from(x).checked_sub(left)?;
-            Some((x, usize::from(y).checked_sub(top)?))
-        });
+        let probe = self.probe_at(left, top);
         let robot_view = |buffer: &mut Framebuffer, slot: u16| {
             let drawn = scene::draw(
                 buffer,
@@ -2070,6 +2112,7 @@ impl Mission {
                             selected,
                             &inputs,
                             [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
+                            None,
                         );
                         true
                     }
@@ -2106,6 +2149,14 @@ impl Mission {
         drawn
     }
 
+    /// The pointer probe's pixel in a view whose region starts at (`left`, `top`): the
+    /// pointer less that (`1000:4042`).
+    fn probe_at(&self, left: usize, top: usize) -> Option<(usize, usize)> {
+        let (x, y) = self.pointer?;
+        let x = usize::from(x).checked_sub(left)?;
+        Some((x, usize::from(y).checked_sub(top)?))
+    }
+
     /// The open console's second display (the colour-254 region, `1000:dbe8` and the
     /// kinds' draw handlers): the camera turned by the pan at its zoom, or the map
     /// around the robot. `false` (nothing drawn) in the other modes and without the
@@ -2131,7 +2182,8 @@ impl Mission {
             .and_then(|s| s.terrain.as_ref())
             .map_or(&[][..], |t| &t.features);
         let mut buffer = Framebuffer::new(Size::new(width, height));
-        match tables.view_modes.get(usize::from(mode)) {
+        let probe = self.probe_at(left, top);
+        let (under, point) = match tables.view_modes.get(usize::from(mode)) {
             Some(&CAMERA_VIEW) => {
                 let id = EntityId(slot);
                 let zoom_pan = (d.zoom, d.pan);
@@ -2140,7 +2192,7 @@ impl Mission {
                 };
                 let sky = assets.skies.get(&self.file);
                 let models = &assets.models;
-                scene::draw_from(
+                let under = scene::draw_from(
                     &mut buffer,
                     world,
                     &camera,
@@ -2149,8 +2201,9 @@ impl Mission {
                     terrain,
                     models,
                     sky,
-                    None,
+                    probe,
                 );
+                (under, None)
             }
             Some(&MAP_VIEW) => {
                 let (Some(room), Some(e)) = (&assets.sitroom, world.get(EntityId(slot))) else {
@@ -2168,7 +2221,7 @@ impl Mission {
                 let flags = mainview::flags(self.scenario.as_ref());
                 let colours = tables.map_colours[robot.kind.index()];
                 let (map_ref, selected) = (&map, Some(e));
-                mainview::draw_map(
+                let under = mainview::draw_map(
                     &mut buffer,
                     world,
                     &camera,
@@ -2178,10 +2231,26 @@ impl Mission {
                     selected,
                     &inputs,
                     colours,
+                    probe,
                 );
+                // The display's rectangle, the bottom and right edges outside.
+                let (x, y) = (left as u16, top as u16);
+                let rect = Rect {
+                    top: y,
+                    left: x,
+                    bottom: y + height as u16,
+                    right: x + width as u16,
+                };
+                let point = self
+                    .pointer
+                    .map(|at| mainview::pointer_to_world(&camera, rect, at));
+                (under, point)
             }
             _ => return false,
-        }
+        };
+        let [main, _] = self.probed.get();
+        self.probed.set([main, under]);
+        self.map_point.set(point);
         review::copy_through_colour(fb, &buffer, (left, top), SECOND_DISPLAY);
         true
     }
@@ -3186,6 +3255,70 @@ pub mod tests {
         let opened = click(&mut m, &assets, (100, 50), right);
         assert_eq!(opened, Some(Request::Show(View::Scorpion)));
         assert_eq!(m.viewed(), Viewed::Robot(friend));
+    }
+
+    /// On the second display a left release locks as on the 3D view; in the map mode an
+    /// Alt press gives the robot, after the next frame, the object under the pointer
+    /// as its goal or the point there as its destination, and an Alt release before
+    /// then takes it back.
+    #[test]
+    fn the_map_display_s_alt_press_sets_a_goal_after_the_next_frame() {
+        let mut assets = test_assets();
+        // The map needs no device (the synthetic map's bit is the lock warning's).
+        assets.views.second_display.devices[usize::from(MAP_DISPLAY)] = 0;
+        let mut m = mission(&assets);
+        let (robot, enemy) = (2, 7);
+        m.view_robot(robot).unwrap();
+        // Its displays' devices whole (the fixture's are damaged).
+        if let Some(xeno_sim::Damage::Robot(c)) = m
+            .world_mut()
+            .get_mut(EntityId(robot))
+            .map(|e| &mut e.damage)
+        {
+            c.systems = 0;
+        }
+        let state = |m: &Mission| match m.world().get(EntityId(robot)).map(|e| e.state) {
+            Some(State::Robot(r)) => (r.goal, r.goal_object, r.destination),
+            other => panic!("{other:?}"),
+        };
+        let point = xeno_sim::Position {
+            x: xeno_sim::Fixed(5 << 16),
+            y: xeno_sim::Fixed(-(3 << 16)),
+        };
+        let (left, at) = (MouseButton::Left, (100, 110));
+        m.pointer_shape(&assets, at, SECOND_DISPLAY, false);
+        // Not in the map mode, the Alt press does nothing.
+        m.set_alt(true);
+        m.map_point.set(Some(point));
+        m.mouse_down(left, Some(at), &assets);
+        m.tick(&[]);
+        assert_ne!(state(&m).0, 0x02);
+        m.mouse_up(left, Some(at), &assets);
+        m.set_display_mode(robot, MAP_DISPLAY);
+        // Released with Alt before the next frame: nothing.
+        click(&mut m, &assets, at, left);
+        m.tick(&[]);
+        assert_ne!(state(&m).0, 0x02);
+        // Held over a frame: the destination, then the object under the pointer.
+        m.mouse_down(left, Some(at), &assets);
+        m.tick(&[]);
+        assert_eq!((state(&m).0, state(&m).2), (0x02, point));
+        m.mouse_up(left, Some(at), &assets);
+        m.probed.set([None, Some(enemy)]);
+        m.mouse_down(left, Some(at), &assets);
+        m.tick(&[]);
+        assert_eq!((state(&m).0, state(&m).1), (0x01, enemy));
+        // Without Alt a release locks the object (here refused: the fixture's
+        // targeting computer is damaged, which posts its message).
+        m.mouse_up(left, Some(at), &assets);
+        m.set_alt(false);
+        let panel = |m: &Mission| match m.world().get(EntityId(robot)).map(|e| e.state) {
+            Some(State::Robot(r)) => r.panel.queue,
+            _ => unreachable!(),
+        };
+        let before = panel(&m);
+        click(&mut m, &assets, at, left);
+        assert_ne!(panel(&m), before, "the lock's message");
     }
 
     #[test]

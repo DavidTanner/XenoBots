@@ -10,10 +10,10 @@ use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
 use xeno_formats::views::Widget;
 use xeno_render::shape::fill_polygon;
-use xeno_render::view3d::{Camera, GameFloat, focal_shifted, focal_zoomed};
+use xeno_render::view3d::{Camera, GameFloat, PROBE, focal_shifted, focal_zoomed};
 use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::motion::Tables;
-use xeno_sim::{Damage, Entity, Fixed, Position, State, World};
+use xeno_sim::{Damage, Entity, EntityId, Fixed, Position, State, World};
 
 use crate::scene::trig;
 
@@ -27,6 +27,7 @@ pub const MAP_HILL: u8 = 0x42;
 const HILL_OP: u8 = 0x14;
 /// The objects' map routines' sprite handles (in `msprite0`) and dot colours.
 const MARKER_SPRITE: u16 = 0x198;
+const OBJECT_MARKER_SPRITE: u16 = 0x1a0;
 const BASE_SPRITE: u16 = 0x1b8;
 const BASE_SPRITES: [u16; 2] = [0x1a8, 0x1b0];
 const RELAY_SPRITE: u16 = 0x180;
@@ -432,6 +433,54 @@ pub fn octagon(buffer: &mut Framebuffer, camera: &Camera, (x, y): (i32, i32), r:
     fill_polygon(buffer, &corners, colour);
 }
 
+/// The maps' pointer probe (`docs/render.md`, "The pointer probe (T-133)"): armed on
+/// a pixel after the clear, it names the object of the last sprite node drawn over it,
+/// or of a dot drawn exactly on it.
+#[derive(Debug, Default)]
+pub struct Probe {
+    at: Option<(usize, usize)>,
+    pub under: Option<u16>,
+}
+
+impl Probe {
+    /// `1000:4042`: the pixel `at` (in the buffer), if it is in it, marked [`PROBE`].
+    pub fn arm(buffer: &mut Framebuffer, at: Option<(usize, usize)>) -> Probe {
+        let size = buffer.surface();
+        let at = at.filter(|&(x, y)| x < size.width && y < size.height);
+        if let Some((x, y)) = at {
+            buffer.pixels_mut()[y * size.width + x] = PROBE;
+        }
+        Probe { at, under: None }
+    }
+
+    /// After a sprite node (`1000:3912` calls `40bc`): `object` named if the node
+    /// changed the pixel, which is marked again.
+    fn sprite(&mut self, buffer: &mut Framebuffer, object: Option<u16>) {
+        let Some((x, y)) = self.at else {
+            return;
+        };
+        let i = y * buffer.surface().width + x;
+        if buffer.pixels()[i] != PROBE {
+            buffer.pixels_mut()[i] = PROBE;
+            self.under = object;
+        }
+    }
+
+    /// After a dot (`1000:38bc`): `object` named if the dot is on the pixel and is not
+    /// the viewer's; the pixel keeps the dot's colour.
+    fn dot(&mut self, at: (i32, i32), object: u16, viewer: u16) {
+        if self.at.map(|(x, y)| (x as i32, y as i32)) == Some(at) && object != viewer {
+            self.under = Some(object);
+        }
+    }
+}
+
+/// A map node of [`draw_objects`]: a dot (type 0xc) or a sprite with its dot (0xa).
+enum Node<'a> {
+    Dot(u8),
+    Mark(Option<&'a Sprite>, u8),
+}
+
 /// What the main view needs to draw.
 pub struct Inputs<'a> {
     pub room: &'a SitRoom,
@@ -447,8 +496,9 @@ impl Inputs<'_> {
     }
 }
 
-/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, then the hills, then
-/// [`draw_objects`]. `colours`: the clear and hill colours (`DS:0x1457`, `0x1458`).
+/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, the pointer probe armed at
+/// `probe`, then the hills, then [`draw_objects`]; the object under the probe.
+/// `colours`: the clear and hill colours (`DS:0x1457`, `0x1458`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_map(
     buffer: &mut Framebuffer,
@@ -460,8 +510,10 @@ pub fn draw_map(
     selected: Option<&Entity>,
     inputs: &Inputs,
     [clear, hill_colour]: [u8; 2],
-) {
+    probe: Option<(usize, usize)>,
+) -> Option<u16> {
     buffer.clear(clear);
+    let mut probe = Probe::arm(buffer, probe);
     for f in terrain.iter().filter(|f| f.shape.first() == Some(&HILL_OP)) {
         octagon(
             buffer,
@@ -471,12 +523,16 @@ pub fn draw_map(
             hill_colour,
         );
     }
-    draw_objects(buffer, world, camera, map, flags, selected, inputs);
+    draw_objects(
+        buffer, world, camera, map, flags, selected, inputs, &mut probe,
+    );
+    probe.under
 }
 
-/// The map's nodes after the terrain's: the selected unit's destination and the
-/// objects in slot order, then the zoom label (the situation room's, drawn only with a
-/// font).
+/// The map's nodes after the terrain's: the selected unit's goal and the objects in
+/// slot order, each probed, then the zoom label (the situation room's, drawn only with
+/// a font).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_objects(
     buffer: &mut Framebuffer,
     world: &World,
@@ -485,14 +541,21 @@ pub fn draw_objects(
     flags: &Flags,
     selected: Option<&Entity>,
     inputs: &Inputs,
+    probe: &mut Probe,
 ) {
-    // `1000:f914`: the selected robot's destination (+0x32 bit 1). shortcut: bit 0,
-    // a target object (+0x3a, sprite 0x1a0), is not kept by the sim, so not shown.
-    if let Some(State::Robot(m)) = selected.map(|e| e.state)
-        && m.goal & 3 == 2
-    {
-        let at = pixel(camera, buffer, m.destination.x.0, m.destination.y.0);
-        mark(buffer, at, inputs.sprite(MARKER_SPRITE), 0);
+    // `1000:f914` (through `1000:4714`): the selected robot's goal object (+0x32 bit
+    // 0, at the object) or else its destination (bit 1), a node with no object.
+    let goal = match selected.map(|e| e.state) {
+        Some(State::Robot(m)) if m.goal & 1 != 0 => world
+            .get(EntityId(m.goal_object))
+            .map(|o| (o.position, OBJECT_MARKER_SPRITE)),
+        Some(State::Robot(m)) if m.goal & 2 != 0 => Some((m.destination, MARKER_SPRITE)),
+        _ => None,
+    };
+    if let Some((point, sprite)) = goal {
+        let at = pixel(camera, buffer, point.x.0, point.y.0);
+        mark(buffer, at, inputs.sprite(sprite), 0);
+        probe.sprite(buffer, None);
     }
     let sprites = map.overlays & Base::MAP_SPRITES != 0;
     for (id, e) in world.iter() {
@@ -500,7 +563,7 @@ pub fn draw_objects(
         let side = usize::from(e.side == Side::Alien);
         let at = pixel(camera, buffer, e.position.x.0, e.position.y.0);
         let kind = u16::from(e.kind);
-        match kind {
+        let node = match kind {
             // `1000:f976` (and 10 through `1000:e5fe`, not traced).
             0..=2 | 10 => {
                 let unseen = e.side == Side::Alien && f17 & DETECTED == 0 && !map.reveal;
@@ -509,15 +572,14 @@ pub fn draw_objects(
                 }
                 let model = usize::from(inputs.view.kind_models[usize::from(kind)] / 2);
                 if !sprites {
-                    let colour = inputs.room.robot_dots.get(model).copied().unwrap_or(0);
-                    dot(buffer, at, colour);
-                    continue;
+                    Node::Dot(inputs.room.robot_dots.get(model).copied().unwrap_or(0))
+                } else {
+                    let size = usize::from(map.factor() >= LARGE_ZOOM);
+                    let first = inputs.room.robot_sprites[size].get(model).copied();
+                    let octant = (e.heading.wrapping_add(0x1000) >> 13) * HANDLE_STEP;
+                    let sprite = first.and_then(|h| inputs.sprite(h + octant));
+                    Node::Mark(sprite, if side == 1 { ALIEN_DOT } else { 0 })
                 }
-                let size = usize::from(map.factor() >= LARGE_ZOOM);
-                let first = inputs.room.robot_sprites[size].get(model).copied();
-                let octant = (e.heading.wrapping_add(0x1000) >> 13) * HANDLE_STEP;
-                let sprite = first.and_then(|h| inputs.sprite(h + octant));
-                mark(buffer, at, sprite, if side == 1 { ALIEN_DOT } else { 0 });
             }
             // `1000:f9e5`.
             3 => {
@@ -526,34 +588,40 @@ pub fn draw_objects(
                 } else {
                     BASE_SPRITE
                 };
-                mark(buffer, at, inputs.sprite(handle), 0);
+                Node::Mark(inputs.sprite(handle), 0)
             }
             // `1000:fa04`.
             4 if map.overlays & Base::MAP_RELAYS != 0 => {
                 let linked = f16 & flag::RELAY_LINKED != 0;
                 match (sprites, linked) {
-                    (false, false) => dot(buffer, at, RELAY_UNLINKED_DOT),
-                    (false, true) => dot(buffer, at, RELAY_DOTS[side]),
-                    (true, false) => mark(buffer, at, inputs.sprite(RELAY_SPRITE), 0),
-                    (true, true) => mark(buffer, at, inputs.sprite(RELAY_SPRITES[side]), 0),
+                    (false, false) => Node::Dot(RELAY_UNLINKED_DOT),
+                    (false, true) => Node::Dot(RELAY_DOTS[side]),
+                    (true, false) => Node::Mark(inputs.sprite(RELAY_SPRITE), 0),
+                    (true, true) => Node::Mark(inputs.sprite(RELAY_SPRITES[side]), 0),
                 }
             }
             // `1000:fa6a`, `fa5c`.
-            9 | 12 => dot(buffer, at, MARK_DOT),
-            11 => dot(
-                buffer,
-                at,
-                if f16 & flag::RELAY_LINKED != 0 {
-                    0xff
-                } else {
-                    MARK_DOT
-                },
-            ),
+            9 | 12 => Node::Dot(MARK_DOT),
+            11 => Node::Dot(if f16 & flag::RELAY_LINKED != 0 {
+                0xff
+            } else {
+                MARK_DOT
+            }),
             // `1000:fa47`.
-            16 => dot(buffer, at, OBSTACLE_DOT),
+            16 => Node::Dot(OBSTACLE_DOT),
             // Shots (5 to 8) only with the developer's Ctrl+Alt+S (`DS:0x62ec` bit
             // 6, not modelled); 13 to 15 never.
-            _ => {}
+            _ => continue,
+        };
+        match node {
+            Node::Dot(colour) => {
+                dot(buffer, at, colour);
+                probe.dot(at, id.0, camera.viewer);
+            }
+            Node::Mark(sprite, colour) => {
+                mark(buffer, at, sprite, colour);
+                probe.sprite(buffer, Some(id.0));
+            }
         }
     }
     if let (Some(font), Some(name)) = (
@@ -738,7 +806,7 @@ pub(crate) mod tests {
     /// A base at (10, 10); robots at (15, 13), (5, 8) (alien, detected) and (0, 0)
     /// (alien, not detected); relays at (0, 10) (not linked) and (2, 10) (alien,
     /// linked); an obstacle at (10, 5); a hill of radius 3 at (10, 16). The humanoid
-    /// heads for (20, 12), the scout for a target object.
+    /// heads for (20, 12), the scout for the obstacle as its goal object.
     fn world() -> (World, Flags, Vec<TerrainFeature>) {
         let robot = State::Robot(Movement {
             goal: 2,
@@ -763,6 +831,7 @@ pub(crate) mod tests {
         put(2, entity(ObjectKind::Humanoid, h, 15, 13, robot), (0, 0));
         let target = State::Robot(Movement {
             goal: 3,
+            goal_object: 7,
             ..match robot {
                 State::Robot(m) => m,
                 _ => unreachable!(),
@@ -812,6 +881,15 @@ pub(crate) mod tests {
     }
 
     fn draw_with(map: MapState, selected: Option<u16>) -> Framebuffer {
+        probed(map, selected, None).0
+    }
+
+    /// The map, and the object the probe at `probe` names.
+    fn probed(
+        map: MapState,
+        selected: Option<u16>,
+        probe: Option<(usize, usize)>,
+    ) -> (Framebuffer, Option<u16>) {
         let (world, flags, terrain) = world();
         let tables = crate::mission::tests::test_assets().motion;
         let (room, view, sprites) = (room(), view(), sprites());
@@ -825,7 +903,7 @@ pub(crate) mod tests {
             sprites: &sprites,
             font: None,
         };
-        draw_map(
+        let under = draw_map(
             &mut buffer,
             &world,
             &camera,
@@ -835,8 +913,34 @@ pub(crate) mod tests {
             selected,
             &inputs,
             [MAP_BACKGROUND, MAP_HILL],
+            probe,
         );
-        buffer
+        (buffer, under)
+    }
+
+    /// The probe names a dot drawn exactly on it, the last sprite drawn over it, and
+    /// not the goal's marker nor the background.
+    #[test]
+    fn the_map_s_probe_names_the_object_under_the_pointer() {
+        let map = |overlays| MapState {
+            overlays,
+            ..MapState::default()
+        };
+        let dots = map(Base::MAP_ROBOTS | Base::MAP_RELAYS);
+        let under = |m, selected, at| probed(m, selected, Some(at)).1;
+        assert_eq!(under(dots, None, (25, 7)), Some(2), "the humanoid's dot");
+        assert_eq!(under(dots, None, (24, 7)), None, "next to it");
+        assert_eq!(under(dots, None, (20, 15)), Some(7), "the obstacle's dot");
+        let sprites = map(Base::MAP_ROBOTS | Base::MAP_RELAYS | Base::MAP_SPRITES);
+        assert_eq!(under(sprites, None, (21, 11)), Some(0), "the base's sprite");
+        assert_eq!(
+            under(sprites, None, (24, 6)),
+            Some(2),
+            "the humanoid's sprite"
+        );
+        assert_eq!(under(sprites, None, (0, 0)), None);
+        // The humanoid's destination marker (25, 11) names nothing.
+        assert_eq!(under(dots, Some(2), (25, 11)), None);
     }
 
     #[test]
@@ -909,10 +1013,12 @@ pub(crate) mod tests {
         // row down and five columns right.
         assert_eq!(b.get(25, 11), Some(colour(MARKER_SPRITE)));
         assert_eq!(b.get(20, 10), Some(0x30));
-        // A robot after a target object (bit 0) has no marker: the scout, whose
-        // destination is 4 rows up and 15 columns right.
+        // A robot after a goal object (bit 0) has its marker on the object: the scout
+        // at (5, 8) after the obstacle at (10, 5), not on its destination 4 rows up
+        // and 15 columns right (the obstacle's own dot is over the marker's middle).
         let b = draw(Base::MAP_ROBOTS, 0, Some(3));
         assert_eq!(b.get(35, 6), Some(MAP_BACKGROUND));
+        assert_eq!(b.get(24, 13), Some(colour(OBJECT_MARKER_SPRITE)));
         // With the map free the camera stays on the centre, (0, 0) here.
         let b = draw(Base::MAP_ROBOTS | Base::MAP_FREE, 0, Some(2));
         assert_eq!(b.get(20, 10), Some(MAP_BACKGROUND));
