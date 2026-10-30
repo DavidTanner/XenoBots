@@ -526,6 +526,8 @@ enum Target {
     Control(usize),
     /// A console's 3D view (0) or second display (1).
     Region(usize),
+    /// One of the humanoid console's buttons (T-130).
+    Instrument(views::Widget),
 }
 
 /// The mission's sim: running, with the run's random word, or parked without it.
@@ -565,6 +567,12 @@ pub struct Mission {
     unit_pressed: bool,
     /// The situation room's buttons' shared pressed look (base +0x40).
     button_look: bool,
+    /// The humanoid console's buttons' look (+0x22 bits 3 and 7) and its fire button
+    /// held (+0x1b = 7).
+    // shortcut: one for every console, put back when a view opens; the original keeps
+    // +0x22 and +0x1b in each robot.
+    look: crate::humancon::Look,
+    firing: bool,
     /// The briefing (`ORDR`), the main view's mode (base +0x37) and how many of the
     /// briefing's bytes are typed (+0x34).
     orders: Vec<u8>,
@@ -666,6 +674,8 @@ impl Mission {
             panel_swap: false,
             unit_pressed: false,
             button_look: false,
+            look: crate::humancon::Look::default(),
+            firing: false,
             orders: Vec::new(),
             mode: ORDERS_MODE,
             typed: 0,
@@ -860,6 +870,7 @@ impl Mission {
     fn reset_looks(&mut self) {
         self.panel_pressed = false;
         self.unit_pressed = false;
+        (self.look, self.firing) = (crate::humancon::Look::default(), false);
         self.capture = None;
         // A new view has drawn no frame yet: nothing is under the pointer.
         (self.goal_press, self.region) = (false, None);
@@ -1008,6 +1019,35 @@ impl Mission {
         }
     }
 
+    /// A release over one of the humanoid's buttons (T-130): a weapon button selects its
+    /// weapon (`1000:a396`, `b214`), the switches hand the robot to the pilot or the
+    /// program (`a5bb`, `a5fa`), the lock button takes the next target (left) or drops
+    /// it (right) and clears the look (`a3f1`).
+    fn instrument(&mut self, slot: u16, w: views::Widget, right: bool, programs: &Programs) {
+        use crate::humancon as h;
+        match w.kind {
+            h::WEAPON_TYPE => {
+                if let Some(n) = self.widget_byte(slot, &w) {
+                    self.pilot(slot, Pilot::Weapon(n));
+                }
+            }
+            h::PILOT_TYPE | h::PROGRAM_TYPE => {
+                let drives = w.kind == h::PROGRAM_TYPE;
+                self.change_orders(programs, |book| book.set_program_drives(slot, drives));
+            }
+            h::LOCK_TYPE => {
+                self.look = h::Look::default();
+                let key = if right {
+                    Pilot::DropTarget
+                } else {
+                    Pilot::NextTarget
+                };
+                self.pilot(slot, key);
+            }
+            _ => {}
+        }
+    }
+
     /// A cockpit key acts on robot `slot` through the running sim; a parked mission
     /// changes nothing.
     fn pilot(&mut self, slot: u16, key: Pilot) {
@@ -1045,6 +1085,12 @@ impl Mission {
                 None => Pilot::Destination(point),
             };
             self.pilot(slot, key);
+        }
+        // The fire button held: the robot's tick sets the fire request (`1000:b3cf`).
+        // shortcut: sent before the tick, so the request is a tick earlier than the
+        // original's, set at the end of the robot's tick.
+        if let (true, Viewed::Robot(slot)) = (self.firing, self.viewed) {
+            self.pilot(slot, Pilot::Fire);
         }
         // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
         let (Run::Running(sim), None, None) = (&mut self.run, &self.terrain, &self.dialog) else {
@@ -1850,6 +1896,20 @@ impl Mission {
                 .flat_map(|r| [(r[0], Target::Region(0)), (r[1], Target::Region(1))]),
         )
         .find_map(|(kind, target)| hit(kind).then_some(target))
+        .or_else(|| {
+            // The humanoid's buttons whose handlers are ported (T-130).
+            use crate::humancon as h;
+            let kinds = [h::FIRE_TYPE, h::WEAPON_TYPE, h::PILOT_TYPE, h::PROGRAM_TYPE];
+            (view == View::Humanoid)
+                .then(|| {
+                    tables.widgets.iter().chain(&tables.nested).find(|w| {
+                        (kinds.contains(&w.kind) || w.kind == h::LOCK_TYPE)
+                            && w.area.is_some_and(|a| a.contains(x, y))
+                    })
+                })
+                .flatten()
+                .map(|&w| Target::Instrument(w))
+        })
     }
 
     /// A mouse button went down at `at` (`None` off the picture).
@@ -1892,7 +1952,17 @@ impl Mission {
                     self.goal_press |= self.display_mode(slot, assets) == MAP_DISPLAY;
                 }
             }
-            Target::Roster(_) | Target::Corner | Target::Region(_) => {}
+            // `1000:a329`: the fire button fires every tick while held (+0x1b = 7);
+            // `a3f1`: the lock button's press sets +0x22 bit 7. Both flip the look.
+            Target::Instrument(w) if w.kind == crate::humancon::FIRE_TYPE => {
+                self.look.pressed = !self.look.pressed;
+                self.firing = true;
+            }
+            Target::Instrument(w) if w.kind == crate::humancon::LOCK_TYPE => {
+                self.look.pressed = !self.look.pressed;
+                self.look.lock_held = true;
+            }
+            Target::Roster(_) | Target::Corner | Target::Region(_) | Target::Instrument(_) => {}
         }
         self.dirty = true;
     }
@@ -1921,6 +1991,15 @@ impl Mission {
             self.dirty = true;
             return None;
         }
+        // So does the fire button (+0x1b = 0); the same shortcut.
+        if let Target::Instrument(w) = target
+            && w.kind == crate::humancon::FIRE_TYPE
+        {
+            self.look.pressed = !self.look.pressed;
+            self.firing = false;
+            self.dirty = true;
+            return None;
+        }
         // The handlers act only on events over the widget that captured the pointer:
         // released elsewhere, nothing happens and a pressed look stays as it is.
         if at.and_then(|at| self.target(assets, at)) != Some(target) {
@@ -1934,6 +2013,7 @@ impl Mission {
                 // The release clears the panel's state (+0x22 = 0) and redraws it.
                 self.panel_pressed = false;
                 self.panel_swap = false;
+                self.look = crate::humancon::Look::default();
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
@@ -1982,6 +2062,13 @@ impl Mission {
             }
             Target::Roster(_) if right => self.view_selected(),
             Target::Roster(_) => None,
+            Target::Instrument(w) => {
+                let Viewed::Robot(slot) = self.viewed else {
+                    return None;
+                };
+                self.instrument(slot, w, right, programs);
+                None
+            }
             Target::Button(i) => {
                 self.button_look = !self.button_look;
                 self.situation_button(assets.views.situation_buttons[i].kind)
@@ -2067,12 +2154,12 @@ impl Mission {
                 continue;
             }
             // The status view (S) is T-126; the consoles' other displays and
-            // instruments T-130 to T-132 and T-134.
+            // instruments T-166, T-131, T-132 and T-134.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-126",
                 (_, 255) => "T-101",
                 (_, SECOND_DISPLAY) => "T-134",
-                (View::Humanoid, _) => "T-130",
+                (View::Humanoid, _) => "T-166",
                 (View::Scorpion, _) => "T-131",
                 _ => "T-132",
             };
@@ -2566,7 +2653,7 @@ impl Mission {
         ) else {
             return;
         };
-        let Some(robot) = self.instruments(slot) else {
+        let Some(robot) = self.instruments(slot, room, con) else {
             return;
         };
         let tables = &assets.views.humanoid;
@@ -2595,30 +2682,95 @@ impl Mission {
         if let Some(a) = area(h::GEAR_TYPE) {
             h::draw_gear(fb, a, sprites, robot.gear);
         }
+        h::draw_target(fb, font, con, &robot);
+        if let Some(a) = area(h::STATUS_TYPE) {
+            let colours = assets.views.message_panel.colours[RobotKind::Humanoid.index()];
+            h::draw_status(fb, a, font, con, colours, &robot);
+        }
+        let widgets = tables.widgets.iter().chain(&tables.nested);
+        for w in widgets {
+            let Some(a) = w.area else { continue };
+            let weapon = self.widget_byte(slot, w).unwrap_or(0);
+            h::draw_button(fb, sprites, con, (w.kind, a, weapon), &robot, self.look);
+            // `1000:dfd5`: a switch held shows its frame XORed.
+            if self
+                .capture
+                .is_some_and(|(t, _)| t == Target::Instrument(*w))
+                && matches!(w.kind, h::WEAPON_TYPE | h::PILOT_TYPE | h::PROGRAM_TYPE)
+            {
+                xor_frame(fb, a, h::PRESSED_XOR);
+            }
+        }
+    }
+
+    /// The second byte of `widget`'s state in robot `slot`'s widget state (+0x10c), as
+    /// loaded: a weapon button's weapon. The sim never changes it.
+    fn widget_byte(&self, slot: u16, widget: &views::Widget) -> Option<u8> {
+        let robot = self.loaded_robot(slot)?;
+        let usg::Parts::Humanoid(p) = &robot.parts else {
+            return None;
+        };
+        p.widgets.0.get(usize::from(widget.state) + 1).copied()
+    }
+
+    /// Robot `slot` as the scenario loaded it.
+    fn loaded_robot(&self, slot: u16) -> Option<&usg::Robot> {
+        self.scenario
+            .iter()
+            .flat_map(|s| s.objects.iter().flatten())
+            .filter(|o| o.slot == slot)
+            .find_map(|o| o.robot())
     }
 
     /// Robot `slot` as its console's instruments read it.
-    fn instruments(&self, slot: u16) -> Option<crate::humancon::Robot> {
+    fn instruments(
+        &self,
+        slot: u16,
+        room: &SitRoom,
+        con: &HumanCon,
+    ) -> Option<crate::humancon::Robot> {
+        use crate::humancon as h;
         let world = self.world();
         let e = world.get(EntityId(slot))?;
         let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
             return None;
         };
-        // shortcut: the signal (+0x4f) is the scenario's as loaded (T-148), and +0xee
-        // is worked out from the passes since the load (`humancon::blink`, T-167).
-        let loaded = self
-            .scenario
-            .iter()
-            .flat_map(|s| s.objects.iter().flatten())
-            .filter(|o| o.slot == slot)
-            .find_map(|o| o.robot());
-        let (signal, blink) = loaded.map_or((0, 0), |r| {
+        // shortcut: the signal (+0x4f), the cloaks (+0xe0) and the ECM's charges (+0xde)
+        // are the scenario's as loaded (T-148, T-136); +0xee and the status page are
+        // worked out from the passes since the load (`humancon::blink`, `page`, T-167).
+        let loaded = self.loaded_robot(slot);
+        let passes = world.ticks;
+        let (signal, cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0, 0), |r| {
+            let light = match &r.parts {
+                usg::Parts::Humanoid(p) => p.light,
+                _ => 0,
+            };
             (
                 r.signal,
-                crate::humancon::blink(r.tick, r.blink, world.ticks),
+                r.cloaks,
+                r.ecm,
+                h::blink(r.tick, r.blink, passes),
+                h::page(r.tick, r.clock, light, passes),
             )
         });
-        Some(crate::humancon::Robot {
+        // `1fe6:7f38`: a robot's letters, `-` and its serial's last three digits; a
+        // base's name. shortcut: a robot's serial (+0x18) is the scenario's as loaded,
+        // and other kinds (never locked in the stock scenarios) get no name.
+        let target = m.target.and_then(|t| {
+            let name = match world.get(t)?.kind {
+                usg::ObjectKind::Base => con.base_name.to_vec(),
+                kind => {
+                    let index = RobotKind::of(kind)?.index();
+                    let mut name = room.detail.kind_letters[index].to_vec();
+                    name.push(b'-');
+                    let serial = self.loaded_robot(t.0).map_or(0, |r| r.serial);
+                    name.extend(panels::digits(serial & 0x7fff, 3));
+                    name
+                }
+            };
+            Some([name, vec![0x0c]].concat())
+        });
+        Some(h::Robot {
             heading: e.heading,
             speed: m.speed,
             gear: m.gear,
@@ -2627,6 +2779,23 @@ impl Mission {
             energy: m.guns.energy,
             locked_on: m.locked_on,
             blink,
+            target,
+            target_distance: m.target_distance,
+            target_bearing: m.target_bearing.wrapping_sub(e.heading),
+            targeting: c.targeting,
+            weapons: c.weapons,
+            cooldowns: m.guns.cooldown,
+            weapon: m.weapon,
+            power: c.power,
+            helm: c.helm,
+            systems: c.systems,
+            cloaks,
+            ecm,
+            program_drives: self
+                .book()
+                .get(slot)
+                .is_some_and(|r| r.orders.program_drives),
+            page,
         })
     }
 }
@@ -4647,7 +4816,100 @@ pub mod tests {
                 looks(&mut m, 0xff) > 2,
                 "{name}: the warning light never blinks"
             );
+            // The target panel: the no-target lines and both weapons ready, in 0x57 on
+            // 0x68; the status panel filled in the message panel's colours.
+            let shown = draw(&m);
+            let target = area(0xa2);
+            let count = |a, c| pixels(&shown, a).iter().filter(|&&p| p == c).count();
+            assert!(
+                count(target, 0x57) > 100 && count(target, 0x68) > 100,
+                "{name}"
+            );
+            let [fill, text] = assets.views.message_panel.colours[0];
+            let status = area(crate::humancon::STATUS_TYPE);
+            assert!(
+                count(status, fill) > 500 && count(status, text) > 50,
+                "{name}"
+            );
         }
+    }
+
+    /// The humanoid's buttons act on the robot through the sim, as their mouse handlers
+    /// do: the weapon buttons select, the switches hand over, the lock button's press
+    /// lights its other look and its release clears it, the fire button fires while
+    /// held.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_humanoid_buttons_act() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use crate::humancon as h;
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let name = "htrain.usg";
+        let mut m = Mission::new(
+            name.into(),
+            &assets.scenarios[name],
+            Random::seeded(1),
+            &assets.motion,
+        );
+        let robot = m
+            .robots()
+            .into_iter()
+            .find(|&s| m.book().get(s).unwrap().kind == RobotKind::Humanoid)
+            .unwrap();
+        m.view_robot(robot).unwrap();
+        let tables = &assets.views.humanoid;
+        let all: Vec<_> = tables.widgets.iter().chain(&tables.nested).collect();
+        let centre = |w: &views::Widget| {
+            let a = w.area.unwrap();
+            Some(((a.left + a.right) / 2, (a.top + a.bottom) / 2))
+        };
+        let click = |m: &mut Mission, w: &views::Widget, button| {
+            m.mouse_down(button, centre(w), &assets);
+            m.mouse_up(button, centre(w), &assets);
+        };
+        let weapon = |m: &Mission| match m.world().get(EntityId(robot)).unwrap().state {
+            State::Robot(r) => r.weapon,
+            _ => unreachable!(),
+        };
+        // The weapon buttons' weapons are 0 and 1 in the stock files.
+        let weapons: Vec<_> = all.iter().filter(|w| w.kind == h::WEAPON_TYPE).collect();
+        assert_eq!(weapons.len(), 2);
+        for (n, w) in weapons.into_iter().enumerate().rev() {
+            assert_eq!(m.widget_byte(robot, w), Some(n as u8));
+            click(&mut m, w, LEFT);
+            assert_eq!(weapon(&m), n as u8);
+        }
+        let find = |kind| *all.iter().find(|w| w.kind == kind).unwrap();
+        let drives = |m: &Mission| m.book().get(robot).unwrap().orders.program_drives;
+        click(&mut m, find(h::PILOT_TYPE), LEFT);
+        assert!(!drives(&m));
+        click(&mut m, find(h::PROGRAM_TYPE), RIGHT);
+        assert!(drives(&m));
+        // The lock button: held, its look is pressed and held; let go, both clear.
+        let lock = find(h::LOCK_TYPE);
+        m.mouse_down(LEFT, centre(lock), &assets);
+        assert_eq!(
+            m.look,
+            h::Look {
+                pressed: true,
+                lock_held: true
+            }
+        );
+        m.mouse_up(LEFT, centre(lock), &assets);
+        assert_eq!(m.look, h::Look::default());
+        // The fire button: held, every tick sets the fire request; let go, it stops.
+        let fire = find(h::FIRE_TYPE);
+        m.mouse_down(LEFT, centre(fire), &assets);
+        assert!(m.firing && m.look.pressed);
+        m.mouse_up(LEFT, None, &assets);
+        assert!(!m.firing && !m.look.pressed);
     }
 
     #[test]

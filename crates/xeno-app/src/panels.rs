@@ -216,7 +216,7 @@ pub(crate) fn digits(value: u16, n: usize) -> Vec<u8> {
 }
 
 /// `1000:ddb6`: the low seven bits as three digits, `%` and a new line.
-fn percent(value: u8) -> Vec<u8> {
+pub(crate) fn percent(value: u8) -> Vec<u8> {
     let mut text = digits((value & 0x7f).into(), 3);
     text.extend([b'%', NEW_LINE]);
     text
