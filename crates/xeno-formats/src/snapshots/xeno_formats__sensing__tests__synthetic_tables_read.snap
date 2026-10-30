@@ -47,6 +47,8 @@ Sensing {
         friendly: 71,
         lost: 72,
         destroyed: 73,
+        dropped: 74,
+        none_next: 75,
     },
     weapons: [
         [

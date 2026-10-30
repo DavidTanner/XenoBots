@@ -1673,6 +1673,7 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
     put(KEEP_LOCK, &[0xa3, 0x01, 0x72, 0x89, 0x1e]);
     put(SCAN_RANGE_AT, &op(&[0x8b, 0x87], 0x9760));
     put(LOCK_RANGE_AT, &op(&[0x8b, 0x87], 0x9766));
+    put(NEXT_RANGE_AT, &op(&[0x8b, 0x87], 0x9766));
     put(ds + 0x9760, &[0, 5, 0, 6, 0, 7, 0, 8, 0, 9, 0, 10]);
     for (kind, lock) in [5usize, 6, 5].into_iter().enumerate() {
         let (table, routine) = (0x9700 + 0x20 * kind as u16, 0xa200 + 0x10 * kind as u16);

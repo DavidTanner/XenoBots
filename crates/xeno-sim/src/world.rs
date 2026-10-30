@@ -573,6 +573,9 @@ pub struct World {
     /// `DS:0x7201`, `0x7203`: the arc and range the last lock's upkeep used, which a
     /// new lock also works its bits out with (`docs/sim.md`, "Sensing").
     pub lock_window: (u16, u16),
+    /// `DS:0x7205`, `0x7207`: the slot the A key's search goes on from, back to 0
+    /// whenever a console opens (`1000:d805`); not saved (`docs/sim.md`, "Sensing").
+    pub target_search: u16,
     /// `DS:0x4da4`: the point the scripts work out from a goal object (opcode 0x66),
     /// one for every robot.
     pub point: Position,
@@ -678,6 +681,7 @@ impl World {
             // shortcut: the original carries this from mission to mission (from the
             // image's value); a lock before any upkeep is rare and only its bits differ.
             lock_window: (0, 0),
+            target_search: 0,
             point: Position::default(),
         }
     }
@@ -801,6 +805,7 @@ impl StateHash for World {
         h.u64(self.call_signs);
         h.u16(self.lock_window.0);
         h.u16(self.lock_window.1);
+        h.u16(self.target_search);
         h.i32(self.point.x.0);
         h.i32(self.point.y.0);
         let c = self.clock;
