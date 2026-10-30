@@ -24,6 +24,7 @@ mod review;
 mod save;
 mod scene;
 mod scorpcon;
+mod scoutcon;
 mod screens;
 mod terrain;
 mod test_pattern;

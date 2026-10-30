@@ -1,12 +1,10 @@
-//! What the robot consoles' instruments share (T-130, T-131; `docs/screens.md`, "The
-//! humanoid console's instruments (T-130)" and "The scorpion console's instruments
-//! (T-131)"): what they read from the viewed robot, the buttons' shared look, the
+//! What the robot consoles' instruments share (T-130 to T-132; `docs/screens.md`, "The
+//! humanoid console's instruments (T-130)" and the scorpion's and scout's): what they read from the viewed robot, the buttons' shared look, the
 //! sprite blits, the lit numbers, the compass's needle, the power bars and the
 //! counters of the tick table's entry 4.
 
 use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
-use xeno_formats::humancon::NEEDLES;
 use xeno_formats::maproom::Rect;
 use xeno_render::{BlitMode, Framebuffer, Orientation, SpriteBlit, TextCursor, TextMode};
 
@@ -62,6 +60,8 @@ pub struct Robot {
     pub gauges: [u8; 2],
     pub deployer_damaged: bool,
     pub damage_shown: bool,
+    /// A scout's stance (+0x10b).
+    pub stance: u8,
 }
 
 /// What the console keeps of a press: +0x22 bit 3, the buttons' shared look, and bit
@@ -124,12 +124,12 @@ pub fn speed_text(speeds: &[u8], speed: i16) -> Vec<u8> {
     text
 }
 
-/// The heading's needle (`1000:a617`, `87d6`): sprite `first` plus 8 a needle, keyed
-/// and turned by its quadrant in that quadrant's rectangle.
+/// The heading's needle (`1000:a617`, `87d6`, `b8b8`): sprite `first` plus 8 a needle,
+/// keyed and turned by its quadrant in that quadrant's rectangle.
 pub fn draw_needle(
     fb: &mut Framebuffer,
     sprites: Sprites,
-    (needles, areas): (&[u16; NEEDLES], [Rect; 4]),
+    (needles, areas): (&[u16], [Rect; 4]),
     first: u16,
     heading: u16,
 ) {
@@ -167,11 +167,14 @@ fn turn(area: Rect, quadrant: usize, s: &Sprite) -> (Orientation, u16, u16) {
     (orientation, x, y)
 }
 
-/// The quadrant and needle sprite for `heading`: `((heading + 0x400) >> 11) & 31`
-/// into the needle table, the low byte the quadrant's word offset, the high byte the
-/// needle (`cbw`, times 8).
-fn needle(needles: &[u16; NEEDLES], first: u16, heading: u16) -> (usize, u16) {
-    let entry = needles[usize::from((heading.wrapping_add(0x400) >> 11) & 31)];
+/// The quadrant and needle sprite for `heading`: the nearest of the table's headings
+/// (32 of them: `((heading + 0x400) >> 11) & 31`; the scout's 64: `((heading + 0x200)
+/// >> 10) & 63`), the low byte the quadrant's word offset, the high byte the needle
+/// (`cbw`, times 8).
+fn needle(needles: &[u16], first: u16, heading: u16) -> (usize, u16) {
+    let shift = 16 - needles.len().trailing_zeros();
+    let i = heading.wrapping_add(1 << (shift - 1)) >> shift;
+    let entry = needles[usize::from(i) % needles.len()];
     let quadrant = usize::from((entry & 0xff) as u8 / 2) % 4;
     let n = (entry >> 8) as u8 as i8 as i16;
     (quadrant, first.wrapping_add_signed(n * 8))
@@ -185,14 +188,20 @@ pub fn draw_warning(fb: &mut Framebuffer, area: Rect, sprites: Sprites, base: u1
     sprite(fb, sprites, handle, area.left, area.top, BlitMode::Opaque);
 }
 
-/// The power panel (`1000:aab7`, `8fb9`): each light's sprite, then its bar of the
-/// signal and of the energy: `lit` segments, then `dark` ones, 2 pixels apart.
+/// The humanoid's and scorpion's bars run right from the corner, a segment every 2
+/// pixels; the scout's (`1000:c3ac`) up from 30 rows below it, every 2 rows.
+pub const BAR_RIGHT: [(i16, i16); 2] = [(0, 0), (2, 0)];
+pub const BAR_UP: [(i16, i16); 2] = [(0, 30), (0, -2)];
+
+/// The power panel (`1000:aab7`, `8fb9`, `c360`): each light's sprite, then its bar of
+/// the signal and of the energy: `lit` segments, then `dark` ones, the first and each
+/// next one placed by `[first, step]`.
 pub fn draw_power(
     fb: &mut Framebuffer,
     sprites: Sprites,
     (lights, bars): ([Rect; 2], [Rect; 2]),
-    handles: [u16; 2],
-    [lit, dark]: [u16; 2],
+    (handles, [lit, dark]): ([u16; 2], [u16; 2]),
+    [first, step]: [(i16, i16); 2],
     robot: &Robot,
 ) {
     let values = [robot.signal, robot.energy];
@@ -207,10 +216,11 @@ pub fn draw_power(
             BlitMode::Opaque,
         );
         let n = segments(values[i]);
-        for k in 0..SEGMENTS {
-            let handle = if k < n { lit } else { dark };
-            let x = bar.left + 2 * k;
-            sprite(fb, sprites, handle, x, bar.top, BlitMode::Opaque);
+        for k in 0..SEGMENTS as i16 {
+            let handle = if k < n as i16 { lit } else { dark };
+            let x = bar.left.wrapping_add_signed(first.0 + k * step.0);
+            let y = bar.top.wrapping_add_signed(first.1 + k * step.1);
+            sprite(fb, sprites, handle, x, y, BlitMode::Opaque);
         }
     }
 }
@@ -316,6 +326,23 @@ pub fn calls(loaded_tick: u8, passes: u16) -> u16 {
     }
 }
 
+/// The status panel's page `passes` object passes after the load, of `pages`: each call
+/// of entry 4 steps the page (humanoid +0x10a, scout +0x108) when +0xfa's low five bits
+/// are 0, then +0xfa. The humanoid's panel cuts its page by 3 when 3 or more; the
+/// scout's goes round all four (`1000:caf5`).
+// shortcut: with the humanoid's console open the draw cuts 3 to 0 before the next step,
+// so its pages go round in threes; closed, the original's +0x10a runs 0 to 3 (T-167).
+pub fn page(loaded_tick: u8, loaded_clock: u8, loaded_page: u8, passes: u16, pages: u8) -> u8 {
+    let calls = calls(loaded_tick, passes);
+    let first = u16::from(loaded_clock.wrapping_neg() & 0x1f);
+    let steps = if calls > first {
+        (calls - 1 - first) / 32 + 1
+    } else {
+        0
+    };
+    ((u16::from(loaded_page) + steps) % u16::from(pages)) as u8
+}
+
 /// +0xee as it stands `passes` object passes after the load: 2 a call of entry 4.
 pub fn blink(loaded_tick: u8, loaded_blink: u8, passes: u16) -> u8 {
     loaded_blink.wrapping_add((calls(loaded_tick, passes) as u8).wrapping_mul(2))
@@ -337,7 +364,7 @@ mod tests {
 
     #[test]
     fn needles_speeds_and_segments() {
-        let needles = std::array::from_fn(|i| match i {
+        let needles: [u16; 32] = std::array::from_fn(|i| match i {
             0 => 0,
             1 => 0x0102,
             2 => 0x0204,
@@ -350,6 +377,11 @@ mod tests {
         assert_eq!(needle(&needles, FIRST, 0x0c00), (2, FIRST + 16));
         // A negative needle counts down.
         assert_eq!(needle(&needles, FIRST, 0x1400), (3, FIRST - 8));
+        // The scout's 64 headings: 0x200 either side of each.
+        let scout: [u16; 64] = std::array::from_fn(|i| (i as u16) << 8);
+        assert_eq!(needle(&scout, 0, 0x01ff), (0, 0));
+        assert_eq!(needle(&scout, 0, 0x0200), (0, 8));
+        assert_eq!(needle(&scout, 0, 0xfe00), (0, 0));
         let speeds = [0, 1, 2, 12];
         assert_eq!(speed_text(&speeds, 3), b" 12");
         assert_eq!(speed_text(&speeds, -2), b"-02");
@@ -393,6 +425,18 @@ mod tests {
         // Loaded at 8: the 16th pass; an odd +0x1a counts the same.
         assert_eq!((blink(8, 1, 15), blink(9, 1, 16)), (1, 3));
         assert_eq!(blink(0, 0xff, 4), 1);
+    }
+
+    #[test]
+    fn the_pages_turn_every_512_passes() {
+        // +0x1a loaded at 6: entry 4 on pass 1, then every 16; +0xfa at 31 steps the
+        // page on the second call (pass 17), then every 32 calls.
+        assert_eq!((page(6, 31, 0, 16, 3), page(6, 31, 0, 17, 3)), (0, 1));
+        assert_eq!((page(6, 31, 0, 528, 3), page(6, 31, 0, 529, 3)), (1, 2));
+        assert_eq!(page(6, 31, 2, 17, 3), 0);
+        // The humanoid's page of 3 is cut to 0 by the first draw; the scout's shows.
+        assert_eq!((page(6, 0, 3, 0, 3), page(6, 0, 3, 0, 4)), (0, 3));
+        assert_eq!(page(6, 31, 3, 17, 4), 0);
     }
 
     #[test]

@@ -38,6 +38,7 @@ pub mod review;
 pub mod rst;
 pub mod scendef;
 pub mod scorpcon;
+pub mod scoutcon;
 pub mod script;
 pub mod sensing;
 pub mod sequence;
