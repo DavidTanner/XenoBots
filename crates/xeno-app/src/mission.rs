@@ -5538,16 +5538,22 @@ pub mod tests {
         assert!(assets.claims_escape(View::Humanoid));
     }
 
-    /// A training mission is won and lost by play alone, through the keys (T-150): on
-    /// `ntrain`, the first scorpion's console, Up for speed, F6 (the tail gun), steered
-    /// at the alien base by Left and Right, stopped by `.` near it; A when nothing is
-    /// locked or, near the base, until the base is; Space fires at what is locked. Won
-    /// about 17 minutes in. On `htrain`, nothing pressed: the aliens destroy the
-    /// player's base about 18 minutes in.
+    /// A training mission is won and lost by play alone, through the keys (T-150, T-177).
+    /// On `ntrain`, the first scorpion is left to its program for 110,000 retraces (about
+    /// 26 minutes: the alien escort's first attacks are spent on the human net), then
+    /// its console: Up for speed, F6 (the tail gun), steered at the alien base by Left
+    /// and Right, stopped by `.` near it; A when nothing is locked or, near the base,
+    /// until the base is; Space fires at what is locked. Won about 31 minutes in. On
+    /// `htrain`, each of the player's units in turn is steered by its console's keys to
+    /// stand just behind the player's base, away from the aliens, and stopped with `.`:
+    /// the aliens' shots at them hit the base, which falls about 15 minutes in. (Left
+    /// alone, the units fight the aliens on the human net, where the aliens run on
+    /// their batteries, and win: `docs/sim.md`, "The port (T-148)".)
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_a_training_mission_is_won_and_lost_by_play() {
         use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_sim::{Fixed, Position};
         let Some(path) = std::env::var_os(ENV_VAR) else {
             return;
         };
@@ -5561,10 +5567,25 @@ pub mod tests {
             Mission::new(name.into(), s, Random::seeded(1), &assets.motion)
         };
         let end = |m: &mut Mission, play: &mut dyn FnMut(&mut Mission)| {
-            (0..90_000).find_map(|_| {
+            (0..200_000).find_map(|_| {
                 play(m);
-                m.tick([])
+                m.tick([]).filter(|r| matches!(r, Request::Over { .. }))
             })
+        };
+        // What the player sees of `at` from robot `slot`: its bearing off the robot's
+        // heading, how far in units, and the robot's speed.
+        let sight = |m: &Mission, slot: u16, at: Position| {
+            let me = m.world().get(EntityId(slot))?;
+            let State::Robot(r) = me.state else {
+                return None;
+            };
+            let (dx, dy) = (
+                f64::from(at.x.0) - f64::from(me.position.x.0),
+                f64::from(at.y.0) - f64::from(me.position.y.0),
+            );
+            let off = ((dx.atan2(dy) / std::f64::consts::TAU * 65536.0) as i64 as u16)
+                .wrapping_sub(me.heading) as i16;
+            Some((off, dx.hypot(dy) / 65536.0, r))
         };
         let mut m = start("ntrain.usg");
         let robot = m
@@ -5574,26 +5595,21 @@ pub mod tests {
             .unwrap();
         m.view_robot(robot).unwrap();
         let base = m.world().base(Side::Alien).unwrap();
-        (0..5).for_each(|_| _ = m.key(0x48, &assets));
-        m.key(0x40, &assets);
         let mut retrace = 0u32;
         let won = end(&mut m, &mut |m| {
             retrace += 1;
-            let w = m.world();
-            let me = w.get(EntityId(robot));
-            let Some((me, State::Robot(r))) = me.map(|e| (e, e.state)) else {
+            if retrace < 110_000 {
+                return;
+            }
+            let at = m.world().get(base).unwrap().position;
+            let Some((off, units, r)) = sight(m, robot, at) else {
                 panic!("the scorpion is gone at retrace {retrace}");
             };
-            let at = w.get(base).unwrap().position;
-            // What the player sees: the base's bearing off the heading, and how far.
-            let (dx, dy) = (
-                f64::from(at.x.0) - f64::from(me.position.x.0),
-                f64::from(at.y.0) - f64::from(me.position.y.0),
-            );
-            let off = ((dx.atan2(dy) / std::f64::consts::TAU * 65536.0) as i64 as u16)
-                .wrapping_sub(me.heading) as i16;
-            let units = dx.hypot(dy) / 65536.0;
             let mut press = |word| _ = m.key(word, &assets);
+            if retrace == 110_000 {
+                (0..5).for_each(|_| press(0x48));
+                press(0x40);
+            }
             if off > 0x100 {
                 press(0x4d);
             } else if off < -0x100 {
@@ -5612,7 +5628,48 @@ pub mod tests {
             }
         });
         assert_eq!(won, Some(Request::Over { won: true }));
+
         let mut m = start("htrain.usg");
-        assert_eq!(end(&mut m, &mut |_| {}), Some(Request::Over { won: false }));
+        let at = m
+            .world()
+            .get(m.world().base(Side::Human).unwrap())
+            .unwrap()
+            .position;
+        let units = m.robots();
+        // Half a unit behind the base (the aliens come from +x), 0.3 units apart.
+        let spot = |k: usize| Position {
+            x: Fixed(at.x.0 - 0x8000),
+            y: Fixed(at.y.0 + (k as i32 - 1) * 0x4ccd),
+        };
+        let mut stood = vec![false; units.len()];
+        let mut retrace = 0u32;
+        let lost = end(&mut m, &mut |m| {
+            retrace += 1;
+            let k = (retrace / 4) as usize % units.len();
+            if !retrace.is_multiple_of(4) || stood[k] {
+                return;
+            }
+            let Some((off, distance, r)) = sight(m, units[k], spot(k)) else {
+                return;
+            };
+            if m.viewed() != Viewed::Robot(units[k]) {
+                m.view_robot(units[k]);
+            }
+            let mut press = |word| _ = m.key(word, &assets);
+            if distance < 0.08 {
+                press(0x34);
+                stood[k] = r.speed == 0;
+                return;
+            }
+            if off > 0x200 {
+                press(0x4d);
+            } else if off < -0x200 {
+                press(0x4b);
+            }
+            if r.speed == 0 && off.unsigned_abs() < 0x800 {
+                press(0x48);
+            }
+        });
+        assert_eq!(lost, Some(Request::Over { won: false }));
     }
 }

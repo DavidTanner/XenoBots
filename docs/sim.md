@@ -987,7 +987,13 @@ faithful:
 So in `htrain` with nothing pressed the alien attackers fight the human units on the
 human net, run their batteries dry and lose, and the port's mission is never lost; the
 original may be the same (T-175). Without units to shoot at they drive to the base and
-home again without firing: no stock program fires at a base.
+home again without firing: no stock program fires at a base. T-150's test now loses
+`htrain` by parking every unit (its console's arrows, Up and `.`) half a unit behind
+the base, away from the aliens, so their shots hit the base (lost at retrace 62,782),
+and wins `ntrain` by leaving the scorpion to its program for 110,000 retraces before
+taking it to the alien base (its tail missiles cost 1 energy each, so the battery
+never runs low; won at retrace 129,912; waits from 80,000 to 140,000 win, and 40,000
+to 60,000, but not 70,000 or under 40,000).
 
 ## Damage (T-054)
 
