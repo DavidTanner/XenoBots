@@ -848,8 +848,14 @@ bank's handle; `xeno-app`'s `scorpcon` draws the power panel, the warning light,
 speed, the speed lever, the compass, the damage panel and the cargo gauges from the sim
 (part 1), with the consoles' shared pieces in `console`; the target panel (`0xd0`), the
 relay panel (`0xe4`) and the buttons (part 2): the shared look as the humanoid's (only
-bit 3 of +0x22 added), the switches lit for whoever drives and while held. Shortcuts,
-each named in the code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
+bit 3 of +0x22 added), the switches lit for whoever drives and while held. In part 3
+the fire button held sends `Pilot::Fire` every retrace (as the humanoid's), the weapon
+buttons `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock
+button's left and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scorpion
+half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy`; the weapon buttons and the
+relay panel show their frame XORed while held. Not ported: the speed buttons, lever,
+compass and turn buttons (T-169), the drop buttons (T-137), C, D and L (T-149), the
+fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code: the signal is the scenario's as loaded (T-148); +0xee and +0xfa bit 7 are worked
 out from the passes since the load (T-167); the gauges are worked out each frame from
 the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
 original leaves the picture there when the console opens with bit 7 set). Still to

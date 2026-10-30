@@ -159,6 +159,29 @@ mod handler {
     ];
 }
 
+/// The consoles' buttons whose mouse handlers the port runs: the humanoid's fire,
+/// weapon, pilot, program and lock buttons, then the scorpion's, its stop and deploy
+/// buttons and its relay panel (which only shows its frame XORed while held).
+const INSTRUMENTS: [u16; 13] = [
+    crate::humancon::FIRE_TYPE,
+    crate::humancon::WEAPON_TYPE,
+    crate::humancon::PILOT_TYPE,
+    crate::humancon::PROGRAM_TYPE,
+    crate::humancon::LOCK_TYPE,
+    crate::scorpcon::FIRE_TYPE,
+    crate::scorpcon::WEAPON_TYPE,
+    crate::scorpcon::PILOT_TYPE,
+    crate::scorpcon::PROGRAM_TYPE,
+    crate::scorpcon::LOCK_TYPE,
+    crate::scorpcon::STOP_TYPE,
+    crate::scorpcon::DEPLOY_TYPE,
+    crate::scorpcon::RELAYS_TYPE,
+];
+const FIRE_TYPES: [u16; 2] = [crate::humancon::FIRE_TYPE, crate::scorpcon::FIRE_TYPE];
+const LOCK_TYPES: [u16; 2] = [crate::humancon::LOCK_TYPE, crate::scorpcon::LOCK_TYPE];
+/// Buttons that flip the shared look on a press and back on a release.
+const SHARED_LOOK_TYPES: [u16; 2] = [crate::scorpcon::STOP_TYPE, crate::scorpcon::DEPLOY_TYPE];
+
 /// A robot console's second display (+0xef to +0xf5): the display mode (0 the
 /// camera, 1 thermal, 2 the map, 3 the scorpion's missile camera), the camera's and
 /// the map's zoom steps, and the camera's pan (`docs/screens.md`, "The second display
@@ -1031,23 +1054,30 @@ impl Mission {
         }
     }
 
-    /// A release over one of the humanoid's buttons (T-130): a weapon button selects its
-    /// weapon (`1000:a396`, `b214`), the switches hand the robot to the pilot or the
-    /// program (`a5bb`, `a5fa`), the lock button takes the next target (left) or drops
-    /// it (right) and clears the look (`a3f1`).
+    /// A release over one of a console's buttons (T-130, T-131): a weapon button selects
+    /// its weapon (`1000:a396`, `b214`; scorpion `8ac1`, `98a9`), the switches hand the
+    /// robot to the pilot or the program (`a5bb`, `a5fa`; `8b5f`, `8bc9`), the lock
+    /// button takes the next target (left) or drops it (right) and clears the look
+    /// (`a3f1`, `8a26`); the scorpion's stop asks for speed 0 and hands it to the pilot
+    /// (`8e45`), its U deploys a relay (`8d0b`, `9b01`).
     fn instrument(&mut self, slot: u16, w: views::Widget, right: bool, programs: &Programs) {
-        use crate::humancon as h;
+        use crate::{humancon as h, scorpcon as s};
         match w.kind {
-            h::WEAPON_TYPE => {
+            h::WEAPON_TYPE | s::WEAPON_TYPE => {
                 if let Some(n) = self.widget_byte(slot, &w) {
                     self.pilot(slot, Pilot::Weapon(n));
                 }
             }
-            h::PILOT_TYPE | h::PROGRAM_TYPE => {
-                let drives = w.kind == h::PROGRAM_TYPE;
+            h::PILOT_TYPE | h::PROGRAM_TYPE | s::PILOT_TYPE | s::PROGRAM_TYPE => {
+                let drives = matches!(w.kind, h::PROGRAM_TYPE | s::PROGRAM_TYPE);
                 self.change_orders(programs, |book| book.set_program_drives(slot, drives));
             }
-            h::LOCK_TYPE => {
+            s::STOP_TYPE => {
+                self.pilot(slot, Pilot::Stop);
+                self.change_orders(programs, |book| book.set_program_drives(slot, false));
+            }
+            s::DEPLOY_TYPE => self.pilot(slot, Pilot::Deploy),
+            h::LOCK_TYPE | s::LOCK_TYPE => {
                 self.look = crate::console::Look::default();
                 let key = if right {
                     Pilot::DropTarget
@@ -1909,17 +1939,17 @@ impl Mission {
         )
         .find_map(|(kind, target)| hit(kind).then_some(target))
         .or_else(|| {
-            // The humanoid's buttons whose handlers are ported (T-130).
-            use crate::humancon as h;
-            let kinds = [h::FIRE_TYPE, h::WEAPON_TYPE, h::PILOT_TYPE, h::PROGRAM_TYPE];
-            (view == View::Humanoid)
-                .then(|| {
-                    tables.widgets.iter().chain(&tables.nested).find(|w| {
-                        (kinds.contains(&w.kind) || w.kind == h::LOCK_TYPE)
-                            && w.area.is_some_and(|a| a.contains(x, y))
-                    })
-                })
-                .flatten()
+            // The consoles' buttons whose handlers are ported (T-130, T-131).
+            let kinds: &[u16] = match view {
+                View::Humanoid => &INSTRUMENTS[..5],
+                View::Scorpion => &INSTRUMENTS[5..],
+                _ => &[],
+            };
+            tables
+                .widgets
+                .iter()
+                .chain(&tables.nested)
+                .find(|w| kinds.contains(&w.kind) && w.area.is_some_and(|a| a.contains(x, y)))
                 .map(|&w| Target::Instrument(w))
         })
     }
@@ -1964,15 +1994,19 @@ impl Mission {
                     self.goal_press |= self.display_mode(slot, assets) == MAP_DISPLAY;
                 }
             }
-            // `1000:a329`: the fire button fires every tick while held (+0x1b = 7);
-            // `a3f1`: the lock button's press sets +0x22 bit 7. Both flip the look.
-            Target::Instrument(w) if w.kind == crate::humancon::FIRE_TYPE => {
+            // `1000:a329`, `89b8`: the fire button fires every tick while held (+0x1b =
+            // 7); `a3f1`, `8a26`: the lock button's press sets +0x22 bit 7. Both, and the
+            // scorpion's stop and deploy buttons, flip the look.
+            Target::Instrument(w) if FIRE_TYPES.contains(&w.kind) => {
                 self.look.pressed = !self.look.pressed;
                 self.firing = true;
             }
-            Target::Instrument(w) if w.kind == crate::humancon::LOCK_TYPE => {
+            Target::Instrument(w) if LOCK_TYPES.contains(&w.kind) => {
                 self.look.pressed = !self.look.pressed;
                 self.look.lock_held = true;
+            }
+            Target::Instrument(w) if SHARED_LOOK_TYPES.contains(&w.kind) => {
+                self.look.pressed = !self.look.pressed;
             }
             Target::Roster(_) | Target::Corner | Target::Region(_) | Target::Instrument(_) => {}
         }
@@ -2003,14 +2037,19 @@ impl Mission {
             self.dirty = true;
             return None;
         }
-        // So does the fire button (+0x1b = 0); the same shortcut.
+        // So does the fire button (+0x1b = 0); the same shortcut. The scorpion's stop and
+        // deploy buttons flip the look back too, and act only over themselves.
+        // shortcut: the scorpion's fire release also clears +0xfd bit 5 (the "no energy"
+        // message told), which the port does not; upgrade with T-114's energy messages.
         if let Target::Instrument(w) = target
-            && w.kind == crate::humancon::FIRE_TYPE
+            && (FIRE_TYPES.contains(&w.kind) || SHARED_LOOK_TYPES.contains(&w.kind))
         {
             self.look.pressed = !self.look.pressed;
-            self.firing = false;
             self.dirty = true;
-            return None;
+            if FIRE_TYPES.contains(&w.kind) {
+                self.firing = false;
+                return None;
+            }
         }
         // The handlers act only on events over the widget that captured the pointer:
         // released elsewhere, nothing happens and a pressed look stays as it is.
@@ -2751,6 +2790,10 @@ impl Mission {
                 .capture
                 .is_some_and(|(t, _)| t == Target::Instrument(*w));
             s::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
+            // `1000:dfd5`: a weapon button or the relay panel held shows its frame XORed.
+            if held && matches!(w.kind, s::WEAPON_TYPE | s::RELAYS_TYPE) {
+                xor_frame(fb, a, crate::console::PRESSED_XOR);
+            }
         }
     }
 
@@ -5043,6 +5086,73 @@ pub mod tests {
             assert_eq!(numbers(s::DROP_TYPE), [0, 1, 2, 3], "{name}");
             assert_eq!(numbers(s::WEAPON_TYPE), [0, 1], "{name}");
         }
+    }
+
+    /// The scorpion's buttons act on the robot through the sim: the weapon buttons
+    /// select, the switches hand over, the lock button's look, the fire button held,
+    /// stop asks for speed 0 and hands the robot to the pilot, U deploys a relay.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_scorpion_buttons_act() {
+        use crate::scorpcon as s;
+        let Some((assets, mut m, robot)) = console_of(RobotKind::Scorpion, "ctrain.usg") else {
+            return;
+        };
+        let tables = &assets.views.scorpion;
+        let find = |kind| tables.all(kind).next().unwrap();
+        let centre = |w: &views::Widget| {
+            let a = w.area.unwrap();
+            Some(((a.left + a.right) / 2, (a.top + a.bottom) / 2))
+        };
+        let click = |m: &mut Mission, w: &views::Widget, button| {
+            m.mouse_down(button, centre(w), &assets);
+            m.mouse_up(button, centre(w), &assets);
+        };
+        let state = |m: &Mission| match m.world().get(EntityId(robot)).unwrap().state {
+            State::Robot(r) => r,
+            _ => unreachable!(),
+        };
+        for w in tables
+            .all(s::WEAPON_TYPE)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            click(&mut m, w, LEFT);
+            assert_eq!(state(&m).weapon, m.widget_byte(robot, w).unwrap());
+        }
+        assert_eq!(state(&m).weapon, 0);
+        let drives = |m: &Mission| m.book().get(robot).unwrap().orders.program_drives;
+        click(&mut m, find(s::PILOT_TYPE), LEFT);
+        assert!(!drives(&m));
+        click(&mut m, find(s::PROGRAM_TYPE), LEFT);
+        assert!(drives(&m));
+        // Stop: speed 0 asked for, the pilot drives; the look flips and back.
+        if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+        {
+            r.target_speed = 42;
+        }
+        m.mouse_down(LEFT, centre(find(s::STOP_TYPE)), &assets);
+        assert!(m.look.pressed);
+        m.mouse_up(LEFT, centre(find(s::STOP_TYPE)), &assets);
+        assert!(!m.look.pressed && !drives(&m));
+        assert_eq!(state(&m).target_speed, 0);
+        // U lays a relay where the scorpion stands.
+        let relays = state(&m).relays;
+        click(&mut m, find(s::DEPLOY_TYPE), LEFT);
+        assert_eq!(state(&m).relays, relays - 1);
+        // The lock button: held, its look is pressed and held; let go, both clear.
+        let lock = find(s::LOCK_TYPE);
+        m.mouse_down(LEFT, centre(lock), &assets);
+        assert!(m.look.pressed && m.look.lock_held);
+        m.mouse_up(LEFT, centre(lock), &assets);
+        assert_eq!(m.look, crate::console::Look::default());
+        // The fire button: held, every tick sets the fire request; let go, it stops.
+        let fire = find(s::FIRE_TYPE);
+        m.mouse_down(LEFT, centre(fire), &assets);
+        assert!(m.firing && m.look.pressed);
+        m.mouse_up(LEFT, None, &assets);
+        assert!(!m.firing && !m.look.pressed);
     }
 
     /// The humanoid's buttons act on the robot through the sim, as their mouse handlers
