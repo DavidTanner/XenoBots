@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140, T-148)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140, T-148, T-177)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -951,10 +951,49 @@ it) and gives full signal to a robot at the full reach from it that no other rel
 reaches. `real_assets_stock_relay_nets_are_steady`: in every stock scenario a run of
 the links reproduces every relay's side and links exactly (over 350 relays), and its
 power but for `ntrain` and `strain`, whose relays are saved 68 higher than any base
-gives. The training missions' play test from T-150 no longer holds: with the battery,
-`htrain`'s alien attackers run dry far from their net and the player's base is never
-destroyed (no loss in 400,000 ticks with nothing pressed), and `ntrain`'s scorpion
-reaches the alien base with its weapons wrecked or its energy spent (T-177).
+gives. With the battery, T-150's play test no longer held: `htrain`'s player's base is
+never destroyed with nothing pressed, and `ntrain`'s scorpion reached the alien base
+with its weapons wrecked (T-177, below).
+
+### Checked against the trace (T-177)
+
+A second T-090 pass re-read every step above against `relay.rs` and found the port
+faithful:
+- **Nothing gives signal near a base.** The writers of +0x16 bit 4 are the relay's up
+  state (`1000:cd61`) and another kind's tick (`1000:e61f`, not a base's); bases are made with
+  `or [di+0x16], 0x46` (`1000:6237`) and every stock base is saved without it, so the
+  signal's base test (`2000:7d16`, kinds 4 and 3 both reach the side and bit 4 tests)
+  never passes for a base. The last-in-slot-order reading stands (`mov [0x6fd9], ax`
+  for every reach under 0x5b8, no compare with the kept one).
+- **The battery.** `cmp al, 0x40` / `jbe` (on the battery at 0x40 and under); the
+  extra +1 on passes with no bit of 0x1f0 (`DS:0x62c6`, stepped before the object
+  pass, `1000:f631`); entry 3 of each kind's tick table holds `b2fc`, `99f8` and
+  `cad9`, as `xeno_formats::relay` checks. Firing on
+  the battery takes 10 (humanoid weapon 0, scout plasma) or 22 (humanoid missile) or 1
+  (scorpion cannon and tail, scout cannon), as `weapons.rs` reads them.
+- **The drive** (`1000:d3b2`): none at 0, half at 0x28 and under, then the helm, as
+  `motion::limit_speed`.
+- **Nothing else recharges a robot.** +0x50 is written only by the signal step, the
+  energy check (`1000:d1b0`), the new robot's set-up (`1000:d17d`, from `f812`) and
+  Ctrl+P (`d193`); no script opcode reads +0x4f, +0x50 or +0xfd bit 0, so no alien
+  program goes home to recharge: it does when its path ends, as in the port.
+- **Missed, not about power:** entry 14 of every kind's table (`1000:df79`) calls
+  `2000:7f10`, a repair on the net: with the signal at 0x80 or over and the damage
+  total +0xf9 not 0, +0xfc counts each run; at 0xf0 it restarts and mends the first of
+  the first weapon (+0xdc bit 0, unless +0xf6 bit 6), the second (bit 1, unless bit 7),
+  the targeting computer (+0xec bit 0) and +0xf6 bits 0 to 3, with a message
+  (`DS:0x18b3`). The port has no such step (T-179).
+
+So in `htrain` with nothing pressed the alien attackers fight the human units on the
+human net, run their batteries dry and lose, and the port's mission is never lost; the
+original may be the same (T-175). Without units to shoot at they drive to the base and
+home again without firing: no stock program fires at a base. T-150's test now loses
+`htrain` by parking every unit (its console's arrows, Up and `.`) half a unit behind
+the base, away from the aliens, so their shots hit the base (lost at retrace 62,782),
+and wins `ntrain` by leaving the scorpion to its program for 110,000 retraces before
+taking it to the alien base (its tail missiles cost 1 energy each, so the battery
+never runs low; won at retrace 129,912; waits from 80,000 to 140,000 win, and 40,000
+to 60,000, but not 70,000 or under 40,000).
 
 ## Damage (T-054)
 

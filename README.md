@@ -94,11 +94,14 @@ the original's scripts.
 A mission ends won or lost when a base is destroyed, after the base's end (about 7.5
 seconds of explosions): the alien base won, yours lost. Robots lock on and fire at each
 other (Space fires the viewed robot's selected weapon), and at bases, which take 300
-points. To win `NTRAIN` by play, for example: open the first scorpion's console, Up a
-few times for speed, F6 for the tail gun, steer at the alien base with Left and Right,
-stop near it with `.`, lock what comes in range with A and fire with Space, and near the
-base press A until the base is locked (about 17 minutes); leave a training mission alone
-and the aliens destroy your base (`HTRAIN`, about 18 minutes). Ctrl+C ends a mission
+points. To win `NTRAIN` by play, for example: leave the first scorpion to its program
+for about 26 minutes, then open its console, Up a few times for speed, F6 for the tail
+gun, steer at the alien base with Left and Right, stop near it with `.`, lock what comes
+in range with A and fire with Space, and near the base press A until the base is locked
+(about 31 minutes in all). To lose `HTRAIN`, park each of your units just behind your
+base, away from the aliens, with its console's arrows, Up and `.`: the aliens' shots at
+them hit the base (about 15 minutes). Robots off their side's relay net run on their
+batteries, so aliens that attack your units on your net run dry. Ctrl+C ends a mission
 with the campaign won (a placeholder). Then the original's cutscene plays from your files, `win.vcl`,
 `slose.vcl` or `nlose.vcl` (by the robot console you opened last), or `triumph.vcl`,
 with its caption and the mission's kills, losses and points; after a training mission,
