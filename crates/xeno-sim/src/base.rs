@@ -56,7 +56,7 @@ pub(crate) fn tick(
     }
     // The slider held (`DS:0x5b0a` by +0x2d), every tick.
     if let Some(d) = depot(world, id) {
-        slide(d, b);
+        slide(d, b, d.slider);
     }
 }
 
@@ -228,16 +228,17 @@ pub fn launch(
     events.push(Event::Launched(r));
 }
 
-/// The slider held moves (`DS:0x5b0a`): odd ones lower a slider into the pool, even
-/// ones raise it, taking from the pool or the other two (`1000:66c5`).
-fn slide(d: &mut Depot, b: &Bases) {
-    if !(1..=6).contains(&d.slider) {
+/// Slider routine `slider` (`DS:0x5b0a`, the one held or keys 1 to 6): odd ones lower a
+/// slider into the pool, even ones raise it, taking from the pool or the other two
+/// (`1000:66c5`).
+pub(crate) fn slide(d: &mut Depot, b: &Bases, slider: u8) {
+    if !(1..=6).contains(&slider) {
         return;
     }
-    let i = usize::from(d.slider + 1) / 2;
+    let i = usize::from(slider + 1) / 2;
     let p = &mut d.power;
     let (least, step) = (b.slider_least, b.slider_step);
-    if d.slider % 2 == 1 {
+    if slider % 2 == 1 {
         if p[i] >= least {
             p[i] -= step;
             p[0] = p[0].wrapping_add(step);

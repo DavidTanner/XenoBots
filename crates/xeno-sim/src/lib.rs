@@ -321,6 +321,17 @@ impl Sim {
         }
     }
 
+    /// Side `side`'s base moves slider routine `slider` once now (the situation room's
+    /// keys 1 to 6, `1000:6629` to `6694`, the routines the held slider runs).
+    pub fn step_slider(&mut self, side: xeno_formats::usg::Side, slider: u8) {
+        let (Some(tables), Some(b)) = (&self.tables, self.world.base(side)) else {
+            return;
+        };
+        if let Some(State::Base { depot, .. }) = self.world.get_mut(b).map(|e| &mut e.state) {
+            base::slide(depot, &tables.bases, slider);
+        }
+    }
+
     /// Ticks until `retrace` retraces have run, each with its events from `log`.
     pub fn run(&mut self, log: &InputLog, retrace: u64) {
         while self.retrace < retrace {

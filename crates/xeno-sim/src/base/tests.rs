@@ -193,10 +193,9 @@ fn a_slider_moves_through_the_pool_or_the_others() {
     let moved = |power: [u8; 4], slider: u8| {
         let mut d = Depot {
             power,
-            slider,
             ..Depot::default()
         };
-        slide(&mut d, &b);
+        slide(&mut d, &b, slider);
         d.power
     };
     assert_eq!(moved([0, 0x80, 0x40, 0x40], 1), [3, 0x7d, 0x40, 0x40]);

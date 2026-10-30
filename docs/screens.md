@@ -503,8 +503,8 @@ draw handler, which also starts colour records 0, 1, 16 and 17):
 | `0x52` | (14, 2, 70, 78) | The roster: five rows (rectangles from the table at `DS:0x5957`) of units from the base's list at +0x42, scrolled by +0x4c. A left press selects the row's unit (+0x3e), a right release opens its console |
 | `0x54`, `0x56` | (73, 13, 81, 20), (73, 21, 81, 28) | Sprite buttons: scroll the roster up and down |
 | `0x58` | (73, 29, 81, 69) | Sprite button: open the selected unit's console |
-| `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | The clock (`1000:61a5`), the status counts (`5979`: the base's +0x20 to +0x27 as two digits each, font 2, colour 0x1d), the selected unit's detail (`5a0e`) and the reserve bar (`614e`, +0x38); T-127 |
-| `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | The power rows (NET, REP, CON): left arrow (sprite 0x3f8 plus the pressed look), bar (`6047`, `60a0`, `60f7`: the base's +0x39, +0x3a, +0x3b over 8), right arrow (0x408); while an arrow is held the base's +0x2d is 1, 3 or 5 (left) or 2, 4 or 6 (right) for the row; T-127 |
+| `0x7e`, `0x60`, `0x62`, `0x7c` | (84, 17, 89, 65), (107, 16, 145, 83), (123, 162, 177, 240), (152, 103, 157, 143) | The clock (`1000:61a5`), the status counts (`5979`), the selected unit's detail (`5a0e`) and the reserve bar (`614e`, +0x38): below, "The situation room's panels (T-127)" |
+| `0x72`, `0x76`-`0x7a`, `0x74` | three rows at 159, 167, 175 from x 103 to 146 | The power rows (NET, REP, CON): left arrow (sprite 0x3f8 plus the pressed look), bar (`6047`, `60a0`, `60f7`: the base's +0x39, +0x3a, +0x3b), right arrow (0x408): below |
 | `0x04` x2 | (89, 284, 131, 318), (142, 254, 182, 306) | Groups: their members are the widgets after the list, up to a zero type (the group's state names its first and last); the map controls and the mode buttons (below, "The roster, map controls and mode buttons (T-103)") |
 | `0x5a`, `0x5c`, `0x5e` | (170, 29, 178, 66), 8 rows lower each | Sprite buttons: launch the selected unit from the base (release `1000:5ba0`, as F2: below), recall it (sets its +0x23 bit 3), and end the mission (the quit flag `DS:0xe87e`) |
 
@@ -517,8 +517,7 @@ acts. The corner hot spot (`0x15a`) ends the mission too.
 Situation room keys (`DS:0x5b20`): Alt+Q ends the mission (ESC is listed but its
 handler only acts on Alt+Q); Space and J view the selected unit; Tab and Alt+Tab step
 the roster selection; O, S, M, R, C the main view's mode; F3 recalls the selected
-unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; below); = and - (and keypad + and -) zoom the map; 1 to 6, B, G, I, N, U and F1 act
-on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
+unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; below); = and - (and keypad + and -) zoom the map; B, G, I, N and U flip the map's overlays; 1 to 6 step the power rows (below, "The situation room's panels (T-127)"); F1 acts on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
 
 **Launching (T-135).** F2 (`1000:6704`) and a release on the launch button
 (`1000:5ba0`) do the same: take the selected unit (the base's +0x3c), and if there is
@@ -821,6 +820,68 @@ base). Its label `DS:0x5a0a[mode]` (0x3a0 to 0x3e0, the next sprite for the curr
 mode; 0x3f0 for C while the base's +0xb4 says a message is new) at (+0x0e, +2), then
 the frame 0x390 plus the pressed look at its corner, both opaque. A press or release
 flips the look; a left release sets the mode (`ui_sitroom_set_view_mode`).
+
+### The situation room's panels (T-127)
+
+From a Ghidra pass over the panels' draw handlers (from the host's draw table,
+`DS:0x3328` by widget type), the arrows' mouse handlers (the mouse table `DS:0x3608`)
+and the key table. All draw over the picture, every time the view is drawn.
+
+**The status counts** (`0x60`, `1000:5979`): font 2, colour 0x1d on 0 (slot `0x39e`'s
+word: low byte the colour, high byte the background), then for each of the base's
++0x20 to +0x27 the cursor (`1fe6:491f`: `AX` = y, `BX` = x) and the number formatted by
+`txt_format_u16_to_buffer` (`1000:02b7`, five digits with leading zeros at `DS:0x1bfe`),
+of which the last two are drawn opaque (`1fe6:4b9d`, slot `0x598`, from `DS:0x1c01`).
+The places are fixed, not the widget's rectangle: x 0x3c and 0x49 in pairs, y 0x75,
+0x7c, 0x83 and 0x8a. So +0x20 (the relays in store) and +0x21 (relays counted) share
+the first row, then the humanoids, scorpions and scouts, each in the base and in the
+field (`docs/sim.md`, "The bases' phases"). A count of 100 or more shows its last two
+digits.
+
+**The bars** (`0x76`, `0x78`, `0x7a`: `1000:6047`, `60a0`, `60f7`; `0x7c`: `614e`):
+each copies the widget's rectangle twice (`1000:027a` into `DS:0x71e7` and `0x71ef`),
+takes its value (+0x39, +0x3a, +0x3b; the reserve +0x38), and reads a signed width
+from the byte table `DS:0x5a1e` by `(value >> 3) & 0x1f` (32 widths, 0 to 0x17, growing
+with the value). The first copy's right edge becomes left + width, and if the width is
+not 0 it is filled in 0x0d; the second copy's left edge moves by the width, and if the
+width is under 0x17 (an unsigned compare) it is filled in 0x41 (the reserve: 0). Both
+fills go through slot `0x51e` (`mgavideo.dvr` 0x0eae), which fills a rectangle with `AL`
+but leaves the pixels of colour `AH`: 0x7f here. The power rows' bars are 23 pixels
+wide, so a full bar is the whole widget; the reserve's widget is 40 wide, its right 17
+pixels always 0.
+
+**The clock** (`0x7e`, `1000:61a5`): the cursor at the widget's top-left corner, font 2,
+colour 0x14 on 0; `1000:edb6` writes the clock text at `DS:0x7d52` (the template
+`MMM DD HH:MM`: the month's four-byte name from `DS:0x7d5f` by the month `DS:0x7d4b`,
+the day `DS:0x7d4a` + 1 as two digits with a leading zero turned into a trailing space,
+the hours `DS:0x7d46` and minutes `0x7d47` as two digits each, `1000:edf5` counting the
+tens up from '0'), drawn opaque; then glyph 0x1e is drawn transparent after it (just
+right of the widget), in 0x14, or in 0 while the clock's seconds (`DS:0x7d48`) are odd.
+So a mark blinks once a game second. The date is the campaign's: the loader puts it
+back after reading a scenario.
+
+**The power rows' arrows** (`0x72` left, `0x74` right): each draws sprite 0x3f8 (0x408)
+plus the buttons' shared look (+0x40) at its corner (slot `0x5c4`). Its mouse handler
+(`1000:5f8c`, `5ff3`) takes events for itself (`AX` bit 0x80; otherwise carry, not
+handled), ignores moves (bit 0), and otherwise flips the shared look, reads the row
+(its state's second byte in the base's view state: 0, 2 and 4 in every stock base) and
+calls the row's routine from a word table in the code: the left arrows mark the row's
+bar for a redraw (+0xcf, +0xd4, +0xd9 = 3) and give 1, 3 or 5, the right arrows (+0xd2,
++0xd7, +0xdc) 2, 4 or 6. A release (0x4 or 0x10) or the pointer leaving (0x400) sets
++0x2d to 0; any other event (a press) sets it to that number. While +0x2d is not 0 the
+base's tick runs that slider routine every tick (`DS:0x5b0a`; `docs/sim.md`, "The
+bases' phases").
+
+**Keys 1 to 6** (`DS:0x5b20`): scan codes 2 to 7 call the slider routines themselves
+(`1000:6629`, `663a`, `6656`, `6667`, `6683`, `6694`, the same as `DS:0x5b0a`'s 1 to 6),
+so each key press moves one row's slider one step: 1 and 2 the net, 3 and 4 the
+repairs, 5 and 6 relays made, lowering and raising.
+
+**The selected unit's detail** (`0x62`, `1000:5a0e`): font 4, colour 0x1a, the heading
+`DS:0x5a58` at (0xa2, 0x84) opaque; with no selected unit (+0x3c is 0) two string-segment
+texts, opaque (`1fe6:4c04`): 0x816 where the heading left the cursor, 0x81e at
+(0xc5, 0x8e);
+otherwise `1fe6:7f38`. T-127's part 2.
 
 ### Orders (T-043)
 
@@ -1701,8 +1762,18 @@ original.
   and the view's nested widgets (`views::View::nested`). Shortcuts: a robot's call sign
   and repair state are the scenario's as loaded (robots made since show call sign 0);
   the C button's new-message look is not shown (the sim posts no messages). Not yet:
-  the status, detail, reserve and clock panels and the power rows (T-127), and a left
-  press on the map to move its centre or select a unit (T-128).
+  the detail panel (T-127 part 2), and a left press on the map to move its centre or
+  select a unit (T-128).
+- **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
+  bar, the power rows' bars and the clock as "The situation room's panels (T-127)"
+  above, from the player's base in the sim (`State::Base::counts`, `Depot`), the mission
+  clock and the campaign's date (`Mission::set_date`, set as a mission is played); the
+  bar widths, the clock's template, the months' names and where `1000:edb6` writes are
+  read by `xeno_formats::sitroom`. An arrow pressed holds its slider through
+  `Sim::hold_slider` and lets it go on the release, over it or not; keys 1 to 6 call
+  `Sim::step_slider`. Shortcut: the pointer leaving an arrow while it is held stops the
+  slider only at the release. Not checked in DOSBox: the counts' and clock's look, the
+  mark's blink.
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the

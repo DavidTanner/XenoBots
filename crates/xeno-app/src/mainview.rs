@@ -742,6 +742,10 @@ pub(crate) mod tests {
             empty_row: b"A".to_vec(),
             call_signs: vec![1; 64],
             mode_labels: [0x170, 0x178, 0x180, 0x188, 0x190],
+            bar_widths: [0; 32],
+            clock: b"mmmm dd hh:nn".to_vec(),
+            months: vec![b'M'; 48],
+            clock_fields: [0, 5, 8, 11],
             strings: b"\0A\0".to_vec(),
         }
     }

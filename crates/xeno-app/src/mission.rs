@@ -47,6 +47,7 @@ use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, MouseButton};
 use crate::mainview::{self, MapState};
 use crate::maproom::{Campaign, scenario_file};
+use crate::panels;
 use crate::pointer::{ARROW, CORNER};
 use crate::screens::View;
 use crate::terrain::{self, TerrainEditor};
@@ -111,6 +112,16 @@ mod handler {
     /// from the base (`1000:6704`).
     pub const RECALL: u16 = 0x675e;
     pub const LAUNCH: u16 = 0x6704;
+    /// Situation room: keys 1 to 6 run the power rows' slider routines 1 to 6 once
+    /// (`DS:0x5b0a`'s, as an arrow held does each tick).
+    pub const SLIDERS: [(u16, u8); 6] = [
+        (0x6629, 1),
+        (0x663a, 2),
+        (0x6656, 3),
+        (0x6667, 4),
+        (0x6683, 5),
+        (0x6694, 6),
+    ];
     /// Consoles: F5, F6 and the humanoid's F9 select a weapon (`docs/sim.md`, "The
     /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
@@ -331,6 +342,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         UNIT_FONT,
         ORDERS_FONT,
         mainview::LOG_FONT,
+        panels::PANEL_FONT,
     ]) {
         let font = video
             .font(id)
@@ -579,6 +591,8 @@ pub struct Mission {
     dialog: Option<(FileDialog, Purpose)>,
     /// The dialogs' name field, which each leaves for the next (none: the first's).
     dialog_name: Option<Vec<u8>>,
+    /// The calendar's day and month (`DS:0x7d4a`, `0x7d4b`), which the clock shows.
+    date: (u8, u8),
 }
 
 impl Mission {
@@ -596,6 +610,7 @@ impl Mission {
         let mut mission = Mission::with_run(file, Run::Running(sim));
         mission.orders = scenario.briefing.clone().unwrap_or_default();
         mission.scenario = Some(scenario.clone());
+        mission.date = (scenario.header.start.day, scenario.header.start.month);
         // The mission starts in the mode and map saved in the player's base.
         let base = mainview::base_of(Some(scenario), Side::Human);
         mission.mode = base.map_or(ORDERS_MODE, |b| b.view_mode);
@@ -657,10 +672,16 @@ impl Mission {
             terrain: None,
             dialog: None,
             dialog_name: None,
+            date: (0, 0),
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
         mission
+    }
+
+    /// The campaign's day and month, which the loader puts back after the file's.
+    pub fn set_date(&mut self, day: u8, month: u8) {
+        self.date = (day, month);
     }
 
     /// The mission stops (it ended, won, lost or with no result): its sim gives the
@@ -1236,6 +1257,14 @@ impl Mission {
             }
             (Viewed::Base, handler::LAUNCH) => {
                 self.launch();
+                None
+            }
+            (Viewed::Base, h) if handler::SLIDERS.iter().any(|&(k, _)| k == h) => {
+                let n = handler::SLIDERS.iter().find(|&&(k, _)| k == h)?.1;
+                if let Run::Running(sim) = &mut self.run {
+                    sim.step_slider(Side::Human, n);
+                }
+                self.dirty = true;
                 None
             }
             (Viewed::Base, h) if handler::MODES.iter().any(|&(m, _)| m == h) => {
@@ -1826,7 +1855,13 @@ impl Mission {
                 self.panel_swap = !self.panel_swap;
             }
             Target::UnitButton => self.unit_pressed = !self.unit_pressed,
-            Target::Button(_) => self.button_look = !self.button_look,
+            Target::Button(i) => {
+                self.button_look = !self.button_look;
+                // A power row's arrow holds its slider (+0x2d) until let go.
+                if let Some(n) = self.arrow(assets, i) {
+                    self.hold_slider(n);
+                }
+            }
             // The zoom and the mode buttons share the buttons' pressed look.
             Target::Control(i)
                 if mainview::toggle_bit(assets.views.situation.nested[i].kind).is_none() =>
@@ -1862,6 +1897,18 @@ impl Mission {
             return None;
         }
         self.capture = None;
+        // An arrow lets its slider go (+0x2d = 0) on a release over it or on the pointer
+        // leaving it (0x400), and either flips the shared look back.
+        // shortcut: leaving the arrow while it is held stops the slider only at the
+        // release; upgrade if the views get the pointer's leave events.
+        if let Target::Button(i) = target
+            && self.arrow(assets, i).is_some()
+        {
+            self.hold_slider(0);
+            self.button_look = !self.button_look;
+            self.dirty = true;
+            return None;
+        }
         // The handlers act only on events over the widget that captured the pointer:
         // released elsewhere, nothing happens and a pressed look stays as it is.
         if at.and_then(|at| self.target(assets, at)) != Some(target) {
@@ -2338,9 +2385,57 @@ impl Mission {
             })
             .collect();
         mainview::draw_roster(fb, &rows, room, font, sprite);
+        self.draw_panels(fb, assets, room);
     }
 
-    /// A mode button's mode: the second byte of its state in the base's view state.
+    /// The status counts, the reserve bar, the clock and the power rows ([`panels`]),
+    /// from the player's base and the mission clock.
+    fn draw_panels(&self, fb: &mut Framebuffer, assets: &Assets, room: &SitRoom) {
+        let tables = &assets.views.situation;
+        let area = |kind| tables.find(kind).and_then(|w| w.area);
+        let Some(font) = assets.fonts.get(&panels::PANEL_FONT) else {
+            return;
+        };
+        let world = self.world();
+        let base = world.base(Side::Human).and_then(|b| world.get(b));
+        if let Some(State::Base { counts, depot, .. }) = base.map(|e| e.state) {
+            let mut all = [depot.relays; 8];
+            all[1..].copy_from_slice(&counts);
+            panels::draw_counts(fb, font, all);
+            if let Some(a) = area(panels::RESERVE_TYPE) {
+                panels::draw_bar(fb, a, depot.power[0], room, panels::RESERVE_REST);
+            }
+            for (kind, &value) in panels::BAR_TYPES.into_iter().zip(&depot.power[1..]) {
+                if let Some(a) = area(kind) {
+                    panels::draw_bar(fb, a, value, room, panels::BAR_REST);
+                }
+            }
+        }
+        if let Some(a) = area(panels::CLOCK_TYPE) {
+            let (c, (day, month)) = (world.clock, self.date);
+            let text = room.clock_of(month, day, c.hour, c.minute);
+            panels::draw_clock(fb, a, font, &text, c.second);
+        }
+    }
+
+    /// The slider a power row's arrow (sprite button `i`) runs while held, by its row
+    /// (its state's second byte).
+    fn arrow(&self, assets: &Assets, i: usize) -> Option<u8> {
+        let b = assets.views.situation_buttons.get(i)?;
+        let tables = &assets.views.situation;
+        let w = tables.all(b.kind).find(|w| w.area == Some(b.area))?;
+        panels::slider(b.kind, self.mode_of(w)?)
+    }
+
+    /// The player's base holds slider `n` (`Sim::hold_slider`; 0 lets go).
+    fn hold_slider(&mut self, n: u8) {
+        if let Run::Running(sim) = &mut self.run {
+            sim.hold_slider(Side::Human, n);
+        }
+    }
+
+    /// A mode button's mode, or a power row's arrow's row: the second byte of its state
+    /// in the base's view state.
     fn mode_of(&self, widget: &views::Widget) -> Option<u8> {
         let base = mainview::base_of(self.scenario.as_ref(), Side::Human)?;
         base.view_state
@@ -3416,6 +3511,58 @@ pub mod tests {
         );
     }
 
+    /// Keys 1 to 6 step a power row once; an arrow holds its row's slider until let go,
+    /// even released off it.
+    #[test]
+    fn keys_and_arrows_move_the_power_rows() {
+        let mut assets = test_assets();
+        let mut m = mission(&assets);
+        let depot = |m: &Mission| {
+            let world = m.world();
+            match world.base(Side::Human).and_then(|b| world.get(b)) {
+                Some(e) => match e.state {
+                    State::Base { depot, .. } => depot,
+                    _ => panic!("{:?}", e.state),
+                },
+                None => panic!("no base"),
+            }
+        };
+        let before = depot(&m).power;
+        // Key 2 (`1000:663a`) raises the net's power a step.
+        assets.views.situation.keys.insert(0, (0x03, 0x663a));
+        m.key(0x03, &assets);
+        assert!(depot(&m).power[1] > before[1], "{before:?}");
+        // The left arrow of the row whose byte is 2 (repairs) holds slider 3.
+        let area = Rect {
+            top: 159,
+            left: 103,
+            bottom: 166,
+            right: 111,
+        };
+        let kind = panels::LOWER_TYPE;
+        let state = 0x12;
+        assets.views.situation.widgets.push(views::Widget {
+            kind,
+            state,
+            area: Some(area),
+        });
+        let handle = 0x3f8;
+        let arrow = views::SpriteButton { kind, area, handle };
+        assets.views.situation_buttons.insert(0, arrow);
+        if let Some(usg::Body::Base(b)) = m
+            .scenario
+            .as_mut()
+            .and_then(|s| s.objects.iter_mut().flatten().find(|o| o.slot == 0))
+            .map(|o| &mut o.body)
+        {
+            b.view_state.0[usize::from(state) + 1] = 2;
+        }
+        m.mouse_down(LEFT, Some((105, 160)), &assets);
+        assert_eq!((depot(&m).slider, m.button_look), (3, true));
+        m.mouse_up(LEFT, Some((0, 199)), &assets);
+        assert_eq!((depot(&m).slider, m.button_look), (0, false));
+    }
+
     /// The robot on view taken in turns the view to the base; it is then skipped by
     /// the consoles' Tab and cannot be viewed, but the roster steps to it, and F2
     /// launches it at the base's position.
@@ -3899,6 +4046,79 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    /// scen00a's panels: each bar as wide as the user's table says for its value (key 1
+    /// narrowing the net's), the counts typed once the base has counted, the clock's
+    /// mark blinking with the seconds.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_situation_room_panels_show_the_base() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let room = assets.sitroom.as_ref().unwrap();
+        let name = "scen00a.usg";
+        let scenario = &assets.scenarios[name];
+        let mut m = Mission::new(name.into(), scenario, Random::seeded(1), &assets.motion);
+        // Past the count (every 256 ticks).
+        for _ in 0..300 {
+            m.tick(&[]);
+        }
+        let area = |kind| {
+            let tables = &assets.views.situation;
+            tables.find(kind).and_then(|w| w.area).unwrap()
+        };
+        let draw = |m: &Mission| {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            m.draw(&mut fb, &assets);
+            fb
+        };
+        let count = |fb: &Framebuffer, a: Rect, colour| {
+            pixels(a)
+                .filter(|&(x, y)| fb.get(x, y) == Some(colour))
+                .count()
+        };
+        let depot = |m: &Mission| match m.world().get(EntityId(0)).map(|e| e.state) {
+            Some(State::Base { depot, .. }) => depot,
+            other => panic!("{other:?}"),
+        };
+        let fb = draw(&m);
+        let power = depot(&m).power;
+        let kinds = [panels::RESERVE_TYPE].into_iter().chain(panels::BAR_TYPES);
+        for (kind, value) in kinds.zip(power) {
+            let (a, w) = (area(kind), room.bar_widths[usize::from(value >> 3)]);
+            let h = usize::from(a.bottom - a.top);
+            assert_eq!(count(&fb, a, 0x0d), w as usize * h, "{kind:#x} at {value}");
+        }
+        let net = area(panels::BAR_TYPES[0]);
+        let wide = count(&fb, net, 0x0d);
+        assert!(count(&fb, area(0x60), 0x1d) > 50, "the counts");
+        assert!(count(&fb, area(panels::CLOCK_TYPE), 0x14) > 50, "the clock");
+        // Key 1 lowers the net's power a step at a time.
+        for _ in 0..8 {
+            m.key(0x02, &assets);
+        }
+        assert_eq!(depot(&m).power[1], power[1] - 16);
+        assert!(count(&draw(&m), net, 0x0d) < wide);
+        // The next second's mark, just right of the widget: drawn or not.
+        let second = m.world().clock.second;
+        let clock = area(panels::CLOCK_TYPE);
+        let clock = Rect {
+            right: clock.right + 8,
+            ..clock
+        };
+        let shown = count(&draw(&m), clock, 0x14);
+        while m.world().clock.second == second {
+            m.tick(&[]);
+        }
+        assert_ne!(count(&draw(&m), clock, 0x14), shown);
     }
 
     /// An obstacle placed with the pointer in every stock scenario's map (the editor
