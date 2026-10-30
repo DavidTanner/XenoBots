@@ -1294,24 +1294,6 @@ impl Mission {
         self.dirty = true;
     }
 
-    /// The port's stand-in for shots (T-114): `side`'s base takes hits until it is
-    /// destroyed, so the mission's end runs.
-    pub fn destroy_base(&mut self, side: Side) {
-        let Run::Running(sim) = &mut self.run else {
-            return;
-        };
-        let Some(base) = sim.world.base(side) else {
-            return;
-        };
-        while let Some(xeno_sim::State::Base {
-            destroyed: false, ..
-        }) = sim.world.get(base).map(|e| e.state)
-        {
-            sim.hit(base, u8::MAX);
-        }
-        log::info!("mission: the {side:?} base is destroyed");
-    }
-
     /// The robots the player's side destroyed and lost (its base's +0x2c and +0x2b).
     pub fn kills_and_losses(&self) -> (u8, u8) {
         let world = self.world();
@@ -3701,6 +3683,21 @@ pub mod tests {
         assert_eq!((base.x, base.y), (-10 << 16, -10 << 16));
     }
 
+    /// The tests' stand-in for play (T-150): `side`'s base takes hits through the sim
+    /// until it is destroyed, so the mission ends by its real end script.
+    pub(crate) fn destroy_base(m: &mut Mission, side: Side) {
+        let Run::Running(sim) = &mut m.run else {
+            return;
+        };
+        let base = sim.world.base(side).unwrap();
+        while let Some(State::Base {
+            destroyed: false, ..
+        }) = sim.world.get(base).map(|e| e.state)
+        {
+            sim.hit(base, u8::MAX);
+        }
+    }
+
     fn click(
         m: &mut Mission,
         assets: &Assets,
@@ -3725,7 +3722,7 @@ pub mod tests {
             }
             assert_eq!(m.kills_and_losses(), (kills + 1, losses + 1));
             assert_eq!((0..600).find_map(|_| m.tick([])), None);
-            m.destroy_base(side);
+            destroy_base(&mut m, side);
             let ended = (1..=33 * 16).find_map(|t| m.tick([]).map(|w| (t, w)));
             assert!(
                 ended.is_some_and(|(t, w)| t > 32 * 16 && w == Request::Over { won }),
@@ -5539,5 +5536,83 @@ pub mod tests {
         let left: Vec<_> = (100..140).filter_map(|x| fb.get(x, 69)).collect();
         assert!(left.contains(&0) && left.contains(&255));
         assert!(assets.claims_escape(View::Humanoid));
+    }
+
+    /// A training mission is won and lost by play alone, through the keys (T-150): on
+    /// `ntrain`, the first scorpion's console, Up for speed, F6 (the tail gun), steered
+    /// at the alien base by Left and Right, stopped by `.` near it; A when nothing is
+    /// locked or, near the base, until the base is; Space fires at what is locked. Won
+    /// about 17 minutes in. On `htrain`, nothing pressed: the aliens destroy the
+    /// player's base about 18 minutes in.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_training_mission_is_won_and_lost_by_play() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let start = |name: &str| {
+            let s = &assets.scenarios[name];
+            Mission::new(name.into(), s, Random::seeded(1), &assets.motion)
+        };
+        let end = |m: &mut Mission, play: &mut dyn FnMut(&mut Mission)| {
+            (0..90_000).find_map(|_| {
+                play(m);
+                m.tick([])
+            })
+        };
+        let mut m = start("ntrain.usg");
+        let robot = m
+            .robots()
+            .into_iter()
+            .find(|&s| m.book().get(s).unwrap().kind == RobotKind::Scorpion)
+            .unwrap();
+        m.view_robot(robot).unwrap();
+        let base = m.world().base(Side::Alien).unwrap();
+        (0..5).for_each(|_| _ = m.key(0x48, &assets));
+        m.key(0x40, &assets);
+        let mut retrace = 0u32;
+        let won = end(&mut m, &mut |m| {
+            retrace += 1;
+            let w = m.world();
+            let me = w.get(EntityId(robot));
+            let Some((me, State::Robot(r))) = me.map(|e| (e, e.state)) else {
+                panic!("the scorpion is gone at retrace {retrace}");
+            };
+            let at = w.get(base).unwrap().position;
+            // What the player sees: the base's bearing off the heading, and how far.
+            let (dx, dy) = (
+                f64::from(at.x.0) - f64::from(me.position.x.0),
+                f64::from(at.y.0) - f64::from(me.position.y.0),
+            );
+            let off = ((dx.atan2(dy) / std::f64::consts::TAU * 65536.0) as i64 as u16)
+                .wrapping_sub(me.heading) as i16;
+            let units = dx.hypot(dy) / 65536.0;
+            let mut press = |word| _ = m.key(word, &assets);
+            if off > 0x100 {
+                press(0x4d);
+            } else if off < -0x100 {
+                press(0x4b);
+            }
+            if units < 5.0 && r.speed > 0 {
+                press(0x34);
+            }
+            if retrace.is_multiple_of(16)
+                && (r.target.is_none() || units < 8.0 && r.target != Some(base))
+            {
+                press(0x1e);
+            }
+            if retrace.is_multiple_of(4) && r.target.is_some() {
+                press(0x39);
+            }
+        });
+        assert_eq!(won, Some(Request::Over { won: true }));
+        let mut m = start("htrain.usg");
+        assert_eq!(end(&mut m, &mut |_| {}), Some(Request::Over { won: false }));
     }
 }

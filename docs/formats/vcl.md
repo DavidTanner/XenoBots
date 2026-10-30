@@ -255,8 +255,8 @@ console opened last in the mission (reset to the humanoid's when a mission start
 points are the bonus alone (1000 in the stock game). Without music the counter starts at
 0 with the cutscene (`TRIUMPH`: one retrace later, where `BIGWIN3` would start). One
 difference: the 15 ticks the routines wait after leaving the mode are waited before
-it, still in the 320x240 mode (the screen is black either way). `--screen won`, `lost` and `triumph` play one alone, then the map room; Ctrl+W,
-Ctrl+L and Ctrl+C end a mission in one.
+it, still in the 320x240 mode (the screen is black either way). `--screen won`, `lost` and `triumph` play one alone, then the map room; a base
+destroyed in play, or Ctrl+C, ends a mission in one.
 
 With the stock entries the chain lasts about 7,690 retraces (2 min 8 s) when not
 aborted: `PRESENTS` is held until counter 7,640.

@@ -1150,8 +1150,9 @@ worn by many small hits is destroyed by its damage total (T-140).
 Part 3 (`t-114-scene`): the scout's plasma gun fires from its eye height (+0x1c, kept
 since T-119); `xeno-app`'s 3D view draws a
 shot at its own height with its frame, and the humanoid's arms with their frames.
-`xeno-app`'s Ctrl+W and Ctrl+L stay: a base takes 300 points, which no robot's program
-shoots at in a stock mission's first minutes (T-150).
+A base takes 300 points, which no robot's program shoots at in a stock mission's first
+minutes, but a player does: `xeno-app`'s `real_assets_a_training_mission_is_won_and_lost_by_play`
+wins `ntrain` with one scorpion through its console's keys (T-150).
 
 ## The mission's end (T-055)
 
@@ -1244,9 +1245,10 @@ it reports `motion::Event::MissionOver { won }` (won for the alien base), and ag
 each later run, as the step stays. `xeno-tool simulate` stops there. In `xeno-app`
 the mission's tick returns it, and the screens end the mission with that result
 through the campaign rules and the cutscenes, passing the player's base's kills and
-losses; a training mission goes back to the map room. Ctrl+W and Ctrl+L in a mission
-hit the alien or the player's base until it is destroyed (`Mission::destroy_base`,
-through `Sim::hit`), standing in for the shots (T-114).
+losses; a training mission goes back to the map room. A base falls to shots in play;
+the screens' flow tests end missions through `Sim::hit` (`mission::tests::destroy_base`),
+as `xeno-tool simulate --hit` does; the port's Ctrl+W and Ctrl+L that did it in a mission
+are gone (T-150).
 
 Each step's sound is a `motion::Event::Sound` for everyone (T-061), the events
 written in `damage::step_base_end` rather than read from `DS:0x7342`.
