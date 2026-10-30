@@ -343,6 +343,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         ORDERS_FONT,
         mainview::LOG_FONT,
         panels::PANEL_FONT,
+        panels::DETAIL_FONT,
     ]) {
         let font = video
             .font(id)
@@ -2416,6 +2417,45 @@ impl Mission {
             let text = room.clock_of(month, day, c.hour, c.minute);
             panels::draw_clock(fb, a, font, &text, c.second);
         }
+        if let Some(font) = assets.fonts.get(&panels::DETAIL_FONT) {
+            let unit = self.detail_unit(assets);
+            panels::draw_detail(fb, font, &room.detail, unit.as_ref());
+        }
+    }
+
+    /// The selected unit (+0x3c) as the detail panel reads it; none without one.
+    fn detail_unit<'a>(&self, assets: &'a Assets) -> Option<panels::DetailUnit<'a>> {
+        let slot = self.selected?;
+        let world = self.world();
+        let e = world.get(EntityId(slot))?;
+        let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
+            return None;
+        };
+        let robot = self.book().get(slot)?;
+        let base = world.base(Side::Human).and_then(|b| world.get(b));
+        let repairing = matches!(base.map(|b| &b.state),
+            Some(State::Base { depot, .. }) if depot.repairing == Some(EntityId(slot)));
+        // shortcut: +0x18 and +0x4f are the scenario's as loaded (robots made since
+        // show 0): the sim keeps neither; the signal is T-148's.
+        let scenario = self.scenario.as_ref();
+        let objects = scenario
+            .into_iter()
+            .flat_map(|s| s.objects.iter().flatten());
+        let loaded = objects.filter(|o| o.slot == slot).find_map(|o| o.robot());
+        let orders = robot.orders;
+        Some(panels::DetailUnit {
+            kind: robot.kind.index(),
+            serial: loaded.map_or(0, |r| r.serial),
+            in_base: mainview::in_base(e),
+            repairing,
+            total: c.total,
+            program: orders
+                .program_drives
+                .then(|| assets.programs.name(orders.program)),
+            heading: e.heading,
+            speed: m.speed,
+            signal: loaded.map_or(0, |r| r.signal),
+        })
     }
 
     /// The slider a power row's arrow (sprite button `i`) runs while held, by its row
@@ -4050,7 +4090,7 @@ pub mod tests {
 
     /// scen00a's panels: each bar as wide as the user's table says for its value (key 1
     /// narrowing the net's), the counts typed once the base has counted, the clock's
-    /// mark blinking with the seconds.
+    /// mark blinking with the seconds, the detail panel showing the selected unit.
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_the_situation_room_panels_show_the_base() {
@@ -4119,6 +4159,19 @@ pub mod tests {
             m.tick(&[]);
         }
         assert_ne!(count(&draw(&m), clock, 0x14), shown);
+        // The detail panel: the selected unit's lines in font 4's shades of 0x1a, fewer
+        // with no unit.
+        let detail = area(0x62);
+        let inked = |fb: &Framebuffer| {
+            pixels(detail)
+                .filter(|&(x, y)| fb.get(x, y).is_some_and(|p| (0x1a..=0x1d).contains(&p)))
+                .count()
+        };
+        assert!(m.selected.is_some());
+        let unit = inked(&draw(&m));
+        m.selected = None;
+        let none = inked(&draw(&m));
+        assert!(unit > none + 100 && none > 50, "{unit} {none}");
     }
 
     /// An obstacle placed with the pointer in every stock scenario's map (the editor

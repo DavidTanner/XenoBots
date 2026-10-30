@@ -877,11 +877,39 @@ bases' phases").
 so each key press moves one row's slider one step: 1 and 2 the net, 3 and 4 the
 repairs, 5 and 6 relays made, lowering and raising.
 
-**The selected unit's detail** (`0x62`, `1000:5a0e`): font 4, colour 0x1a, the heading
-`DS:0x5a58` at (0xa2, 0x84) opaque; with no selected unit (+0x3c is 0) two string-segment
-texts, opaque (`1fe6:4c04`): 0x816 where the heading left the cursor, 0x81e at
-(0xc5, 0x8e);
-otherwise `1fe6:7f38`. T-127's part 2.
+**The selected unit's detail** (`0x62`, `1000:5a0e`): font 4, colour 0x1a on 0, the
+cursor at (0xa2, 0x84) and the heading `DS:0x5a58` drawn opaque (`1fe6:4b9d`). With no
+selected unit (the base's +0x3c is 0) two string-segment texts follow, opaque
+(`1fe6:4c04`): 0x816 where the heading left the cursor (a word in place of a name),
+then 0x81e at (0xc5, 0x8e), lines of spaces that blank the five lines below. (So it is
+not `NO UNITS`: that is mode S's, `0x80d`.) Otherwise, all opaque but the status:
+
+- **Its name** (`1fe6:7f38`, the message log's sender name too), after the heading: for
+  a robot, its serial (+0x18, AND 0x7fff) formatted by `1000:02da` (`02b7`'s far twin)
+  into `DS:0x1bff`, then the kind's two letters from the word table `DS:0x6421` (by the
+  object kind) written over the first two bytes, `-` after them and a new line (0x0c)
+  after the last three digits: the two letters, `-`, the serial's last three digits.
+  Other kinds get fixed texts (a base, a relay, kind 0xa; and 0xffff); the selection is
+  always a robot. The developer's Ctrl+Alt+F (`1000:68fb`) flips `DS:0x5ba0`, and with it
+  set the panel shows `DS:0x62cc` instead (not traced further).
+- **Its place** at (0xc5, 0x8e): `DS:0x5a6d` in the base (+0xfd bit 2), `0x5a77` in the
+  field.
+- **Its status**: the rectangle at `DS:0x5a65` (the line under the place) filled with 0
+  (slot `0x51a`), then at (0xc5, 0x94), transparent (`1fe6:4b87`): in the base,
+  `DS:0x5ab3` if it is the robot the base repairs (`1000:f691` gives the object in the
+  base's slot +0x1a), else `0x5abd` with a damage total (+0xf9) not 0, else `0x5ac9`;
+  in the field, the running program's name (`1000:47c7`: +0x30 into the program table
+  `DS:0x4ff4`, as the console's panel) while the program drives (+0x23 bit 7), else
+  `DS:0x5acf`.
+- **Its heading** at (0xc5, 0x9a): +0x10 in degrees (`1000:0320`, as mode R's and the
+  editor's status), the last three of `02b7`'s five digits.
+- **Its speed** at (0xc5, 0xa0): the byte table `DS:0x7003` by the size of +0x26
+  (a word, negated if negative; 121 entries rising by 0 or 1 from 0, other data after),
+  the last two digits.
+- **Its damage total** at (0xc5, 0xa6) and **its signal** on the next line
+  (`1000:ddb6`: the value's low seven bits, the last three digits, `%` and a new line;
+  the signal +0x4f first scaled by `1000:df90`, `value * 100 >> 8` with 99 shown as
+  100).
 
 ### Orders (T-043)
 
@@ -1762,8 +1790,7 @@ original.
   and the view's nested widgets (`views::View::nested`). Shortcuts: a robot's call sign
   and repair state are the scenario's as loaded (robots made since show call sign 0);
   the C button's new-message look is not shown (the sim posts no messages). Not yet:
-  the detail panel (T-127 part 2), and a left press on the map to move its centre or
-  select a unit (T-128).
+  a left press on the map to move its centre or select a unit (T-128).
 - **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
   bar, the power rows' bars and the clock as "The situation room's panels (T-127)"
   above, from the player's base in the sim (`State::Base::counts`, `Depot`), the mission
@@ -1771,9 +1798,13 @@ original.
   bar widths, the clock's template, the months' names and where `1000:edb6` writes are
   read by `xeno_formats::sitroom`. An arrow pressed holds its slider through
   `Sim::hold_slider` and lets it go on the release, over it or not; keys 1 to 6 call
-  `Sim::step_slider`. Shortcut: the pointer leaving an arrow while it is held stops the
-  slider only at the release. Not checked in DOSBox: the counts' and clock's look, the
-  mark's blink.
+  `Sim::step_slider`. The detail panel (`panels::draw_detail`) shows the selected unit
+  from the sim (place, repair, program, heading, speed, damage total) and its texts,
+  letters and speed table from `xeno_formats::sitroom::Detail`. Shortcuts: the pointer
+  leaving an arrow while it is held stops the slider only at the release; the serial
+  (+0x18) and signal (+0x4f) are the scenario's as loaded (the signal is T-148's); a
+  speed past the table shows its last entry; Ctrl+Alt+F's developer text is not shown.
+  Not checked in DOSBox: the counts', clock's and detail's look, the mark's blink.
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the

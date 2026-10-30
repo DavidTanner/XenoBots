@@ -1,13 +1,14 @@
 //! What the port reads from the user's `xeno.exe` for the situation room's main view
 //! (`docs/screens.md`, "The situation room's main view"): the map's robot colours and
 //! sprites and its zoom labels, the message log's heading, rule and time, the robot
-//! view's at-base text, and the string segment the log's messages point into. Game
-//! data, read at run time through the instructions that use it.
+//! view's at-base text, the panels' bar widths, clock and detail texts (T-127), and the
+//! string segment the log's messages point into. Game data, read at run time through
+//! the instructions that use it.
 
 use crate::FormatError;
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
-use crate::maproom::{invalid, string, word};
+use crate::maproom::{Rect, invalid, rect, string, word};
 use crate::sequence;
 
 /// `mov ah, [bx + table]` in the robots' map routine: a dot's colour by model / 2.
@@ -54,6 +55,22 @@ pub(crate) const CLOCK_AT: usize = 0x61c6;
 pub(crate) const MONTHS_AT: usize = 0xedc0;
 pub(crate) const MONTH_AT: usize = 0xedc4;
 pub(crate) const CLOCK_FIELDS_AT: [usize; 3] = [0xeddf, 0xede8, 0xedf1];
+
+/// The detail panel (`1000:5a0e`): `mov si, text` for its heading, the texts without
+/// a unit (string segment), at the base and in the field, in repair, waiting for
+/// repair, ready and with the pilot driving; `mov bx, rect` for the line it clears;
+/// `mov al, [bx + table]` for the speed shown by the speed's size. `mov ax, [bx +
+/// table]` in `1fe6:7f38`: a robot's two letters by kind.
+pub(crate) const DETAIL_HEADING_AT: usize = 0x5a29;
+pub(crate) const NO_UNIT_AT: [usize; 2] = [0x5a3d, 0x5a50];
+pub(crate) const PLACES_AT: [usize; 2] = [0x5a82, 0x5a8c];
+pub(crate) const STATUS_CLEAR_AT: usize = 0x5a96;
+pub(crate) const REPAIR_STATES_AT: [usize; 3] = [0x5abe, 0x5ac5, 0x5acf];
+pub(crate) const MANUAL_AT: usize = 0x5ada;
+pub(crate) const SPEEDS_AT: usize = 0x5b2a;
+pub(crate) const KIND_LETTERS_AT: usize = 0x17dbe;
+/// The most speeds read: the table rises by 0 or 1 a step to its end.
+const MAX_SPEEDS: usize = 0x100;
 
 /// The bars' widths, by value / 8.
 pub const BAR_STEPS: usize = 32;
@@ -108,8 +125,30 @@ pub struct SitRoom {
     pub clock: Vec<u8>,
     pub months: Vec<u8>,
     pub clock_fields: [usize; 4],
+    pub detail: Detail,
     /// The string segment, from its start.
     pub strings: Vec<u8>,
+}
+
+/// The detail panel's texts and tables (`docs/screens.md`, "The situation room's
+/// panels (T-127)").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Detail {
+    pub heading: Vec<u8>,
+    /// Without a unit: after the heading, then the lines below.
+    pub no_unit: [Vec<u8>; 2],
+    /// In the base (+0xfd bit 2), in the field.
+    pub places: [Vec<u8>; 2],
+    /// The status line, cleared to 0 before its text.
+    pub status_clear: Rect,
+    /// In the base: in repair, waiting for repair, ready.
+    pub repair_states: [Vec<u8>; 3],
+    /// In the field with the pilot driving.
+    pub manual: Vec<u8>,
+    /// A robot's name's letters, by kind.
+    pub kind_letters: [[u8; 2]; 3],
+    /// The speed shown, by the speed's size.
+    pub speeds: Vec<u8>,
 }
 
 impl SitRoom {
@@ -217,6 +256,26 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             .get(at..at + n)
             .ok_or_else(|| invalid(at, "past the end"))
     };
+    let text = |at| string(image, at_ds(at, &[0xbe])?);
+    let in_strings = |at| string(image, strings + usize::from(operand(image, at, &[0xbe])?));
+    let letters = at_ds(KIND_LETTERS_AT, &[0x8b, 0x87])?;
+    let letter_pair = |kind: usize| -> Result<[u8; 2], FormatError> {
+        let b = bytes(letters + 2 * kind, 2)?;
+        Ok([b[0], b[1]])
+    };
+    let speeds = at_ds(SPEEDS_AT, &[0x8a, 0x87])?;
+    let speeds = image
+        .get(speeds..)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| invalid(speeds, "past the end"))?
+        .iter()
+        .take(MAX_SPEEDS)
+        .scan(None, |last: &mut Option<u8>, &b| {
+            let rises = last.is_none_or(|l| b == l || b == l.wrapping_add(1));
+            *last = Some(b);
+            rises.then_some(b)
+        })
+        .collect();
     Ok(SitRoom {
         robot_dots: [
             *image
@@ -276,6 +335,20 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             field(CLOCK_FIELDS_AT[1])?,
             field(CLOCK_FIELDS_AT[2])?,
         ],
+        detail: Detail {
+            heading: text(DETAIL_HEADING_AT)?,
+            no_unit: [in_strings(NO_UNIT_AT[0])?, in_strings(NO_UNIT_AT[1])?],
+            places: [text(PLACES_AT[0])?, text(PLACES_AT[1])?],
+            status_clear: rect(image, at_ds(STATUS_CLEAR_AT, &[0xbb])?)?,
+            repair_states: [
+                text(REPAIR_STATES_AT[0])?,
+                text(REPAIR_STATES_AT[1])?,
+                text(REPAIR_STATES_AT[2])?,
+            ],
+            manual: text(MANUAL_AT)?,
+            kind_letters: [letter_pair(0)?, letter_pair(1)?, letter_pair(2)?],
+            speeds,
+        },
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
             .ok_or_else(|| invalid(strings, "no string segment"))?
@@ -374,6 +447,29 @@ pub(crate) mod tests {
         ] {
             put(at, &op(&[0xa3], field));
         }
+        // The detail panel: "D:" heading, "-0-" and "~" without a unit, "IN"/"OUT",
+        // "R1".."R3", "MAN", letters "AA" "BB" "CC", speeds 0, 1, 1, 2 then a jump.
+        for (at, value, text) in [
+            (DETAIL_HEADING_AT, 0x700, &b"D:\0"[..]),
+            (PLACES_AT[0], 0x704, b"IN\0"),
+            (PLACES_AT[1], 0x708, b"OUT\0"),
+            (REPAIR_STATES_AT[0], 0x70c, b"R1\0"),
+            (REPAIR_STATES_AT[1], 0x710, b"R2\0"),
+            (REPAIR_STATES_AT[2], 0x714, b"R3\0"),
+            (MANUAL_AT, 0x718, b"MAN\0"),
+        ] {
+            put(at, &op(&[0xbe], value));
+            put(DS + usize::from(value), text);
+        }
+        put(NO_UNIT_AT[0], &op(&[0xbe], 0x60));
+        put(NO_UNIT_AT[1], &op(&[0xbe], 0x64));
+        put(STRINGS + 0x60, b"-0-\0~\0");
+        put(STATUS_CLEAR_AT, &op(&[0xbb], 0x720));
+        put(DS + 0x720, &[1, 0, 2, 0, 3, 0, 4, 0]);
+        put(KIND_LETTERS_AT, &op(&[0x8b, 0x87], 0x730));
+        put(DS + 0x730, b"AABBCC");
+        put(SPEEDS_AT, &op(&[0x8a, 0x87], 0x740));
+        put(DS + 0x740, &[0, 1, 1, 2, 9]);
         image
     }
 
@@ -401,6 +497,15 @@ pub(crate) mod tests {
         // Day 4 is the 5th: no leading zero; past the months the template's name stays.
         assert_eq!(room.clock_of(11, 4, 7, 9), b"M11 /5 /07/09");
         assert_eq!(room.clock_of(12, 10, 23, 59), b"mmmm/11/23/59");
+        let d = &room.detail;
+        assert_eq!(
+            (d.no_unit[1].as_slice(), d.status_clear.right),
+            (&b"~"[..], 4)
+        );
+        assert_eq!(
+            (d.kind_letters[2], d.speeds.as_slice()),
+            (*b"CC", &[0, 1, 1, 2][..])
+        );
         insta::assert_debug_snapshot!(SitRoom {
             strings: Vec::new(),
             ..room
@@ -434,6 +539,14 @@ pub(crate) mod tests {
             MONTHS_AT,
             MONTH_AT,
             CLOCK_FIELDS_AT[2],
+            DETAIL_HEADING_AT,
+            NO_UNIT_AT[1],
+            PLACES_AT[0],
+            STATUS_CLEAR_AT,
+            REPAIR_STATES_AT[2],
+            MANUAL_AT,
+            SPEEDS_AT + 1,
+            KIND_LETTERS_AT,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -478,6 +591,23 @@ pub(crate) mod tests {
         assert_eq!(room.bar_widths[BAR_STEPS - 1], 23);
         assert_eq!(room.clock_fields, [0, 4, 7, 10]);
         assert_eq!(room.clock_of(0, 8, 6, 5)[4..], *b"9  06:05");
+        // The detail panel's status line is one row of font 4 under the place's.
+        let d = &room.detail;
+        assert_eq!(d.status_clear.bottom - d.status_clear.top, 5);
+        assert!(
+            d.places
+                .iter()
+                .chain(&d.repair_states)
+                .all(|t| !t.is_empty())
+        );
+        // Every robot's letters are two capitals; the speeds rise by 0 or 1.
+        assert!(
+            d.kind_letters
+                .as_flattened()
+                .iter()
+                .all(u8::is_ascii_uppercase)
+        );
+        assert!(d.speeds.len() > 100 && d.speeds[0] == 0);
         // Every call sign is six printable bytes (names like `EAGLE `).
         for i in 0..CALL_SIGNS as u8 {
             let sign = room.call_sign(i);

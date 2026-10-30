@@ -746,6 +746,7 @@ pub(crate) mod tests {
             clock: b"mmmm dd hh:nn".to_vec(),
             months: vec![b'M'; 48],
             clock_fields: [0, 5, 8, 11],
+            detail: crate::panels::tests::detail(),
             strings: b"\0A\0".to_vec(),
         }
     }
