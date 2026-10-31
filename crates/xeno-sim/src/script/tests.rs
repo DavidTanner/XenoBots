@@ -374,6 +374,25 @@ fn a_message_waits_in_the_panel_and_is_typed_after_the_move() {
 }
 
 #[test]
+fn the_log_opcodes_write_the_side_s_base_log() {
+    // 0x75 text 5, 0x76 text 6, halt: an alien robot, so no copies (the original walks
+    // only the human list).
+    let (mut world, tables) = setup(&[0x75, 0x05, 0x00, 0x76, 0x06, 0x00, 0x0a]);
+    world.insert(
+        EntityId(2),
+        crate::motion::tests::base(Side::Alien, 0, 0, 0),
+    );
+    world.bases[1] = Some(EntityId(2));
+    steps(&mut world, &tables, 3);
+    let State::Base { depot, .. } = world.get(EntityId(2)).unwrap().state else {
+        unreachable!()
+    };
+    assert_eq!(depot.log.map(|l| l.text)[..3], [5, 6, 0]);
+    assert_eq!(depot.log[0].name, *b"HU-000\0");
+    assert_eq!(m(&world).panel.queue, [0; 5]);
+}
+
+#[test]
 fn the_gear_opcodes_step_the_gear_and_the_set_speeds_match_it() {
     // High speed, a gear up, a gear down twice, stop, halt: each waits 30 ticks.
     let (mut world, tables) = setup(&[0x55, 0x51, 0x52, 0x52, 0x53, 0x0a]);

@@ -217,6 +217,13 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             r.u16(0x30, *end_step);
             r.put(0x38, &d.power);
             r.u8(0x41, *tick);
+            for (i, l) in d.log.iter().enumerate() {
+                let at = 0x59 + 13 * i;
+                r.put(at, &l.name);
+                r.put(at + 7, &[l.hour, l.minute, l.second, l.tick]);
+                r.u16(at + 11, l.text);
+            }
+            r.u8(0xb4, d.new_message);
             r.u16(0xb5, d.relay_wait);
         }
         State::Explosion {

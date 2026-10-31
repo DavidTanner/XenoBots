@@ -415,8 +415,9 @@ events dispatch to the header's or the tables' handlers.
 
 Shortcuts, each named in the code: an opcode not ported (the relay net until T-113)
 **halted the script on itself**, so a robot kept its speed and heading; opcode 0x74
-puts its message in the robot's panel (T-104) and 0x75 and 0x76 do nothing (the base's
-log and 0x76's copies are T-129); firing (0x7d) does nothing until T-114; field
+puts its message in the robot's panel (T-104), 0x75 writes the side's base log and 0x76
+the log and copies to the side's robots (T-129; `docs/screens.md`, "The message log
+(T-129)"); firing (0x7d) does nothing until T-114; field
 opcodes read 0 at other offsets; return addresses are pushed as offsets from the
 script area, not the program table; the stagger starts at 0 each mission.
 So in the stock missions the alien robots on PATROL drive point to point along their
@@ -1095,7 +1096,8 @@ Ctrl+D):
 takes nothing. Otherwise the points are added to +0x2e; at 300 or more the base sets
 +0x16 bit 0 and the other side is told (a message), and the mission's end runs from
 the base's +0x30 (T-055); below that its own side is told at most once every 480
-counts of `DS:0x374`. A base is never removed.
+counts of `DS:0x374` (both through `1000:d54c`; `docs/screens.md`, "The message log
+(T-129)"). A base is never removed.
 
 **Relays** (`sim_damage_relay`, `1000:cfba`): the points are added to the byte at
 +0x33; when that carries or reaches 20, an explosion is made and the slot freed. No

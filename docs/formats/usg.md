@@ -434,7 +434,8 @@ destroyed at once (`sim_destroy_robot`, `1000:de51`). Otherwise each point of da
 picks one of the kind's components by chance from a table (`DS:0x6856` humanoid,
 `0x659a` scorpion, `0x6c06` scout; three-byte entries of a chance out of 256 and a
 routine) and damages it: the helm or the power percentage drops, or a bit above is
-set (a second hit on a damaged weapon destroys it). The message panel reports each.
+set (a second hit on a damaged weapon destroys it). The message panel reports each
+(each routine's own text, `xeno_formats::damage::Part`).
 A robot hit for 80 or less is worn down, and destroyed when the damage it has
 added up (+0xf9) reaches its kind's limit (above, T-107). T-054 traced the
 details, destruction and the explosions it leaves (`docs/sim.md`, "Damage").
@@ -590,7 +591,8 @@ wrapping or paging (`docs/screens.md`, "The briefing (T-044)"). The base's +0x34
 typing position, and +0x37 the mode the mission starts in. The other main view modes
 read more of the base (`usg::Base`, T-103): +0x32 the map's overlay bits, +0x36 its
 zoom, +0x4f its centre (16.16 x and y) and +0x59 seven 13-byte log messages (name,
-hour, minute, two unknown bytes, a string-segment text offset); stock bases save their
+hour, minute, second and sixtieth, a string-segment text offset), +0xb4 set when one is
+written (`docs/screens.md`, "The message log (T-129)"); stock bases save their
 logs, with the texts of the build that wrote them (`docs/screens.md`, "The situation
 room's main view (T-103)").
 

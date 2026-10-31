@@ -1423,7 +1423,8 @@ pub fn synthetic_endings(image: &mut [u8], ds: usize) -> Vec<usize> {
 /// starts at `ds`: every kind destroyed over 0x50; chance tables at `DS:0x9b00` (the
 /// humanoid's: 0x80 wear the helm by 7, then 0xff the weapon bit 0 or else systems
 /// bit 0x40), `0x9b10` (the scorpion's: 0x40 nothing, 0xc0 wear the power by 0xf) and
-/// `0x9b20` (the scout's: 0x10 nothing, 0xff wear the power); component routines at 0x8000 to 0x8050;
+/// `0x9b20` (the scout's: 0x10 nothing, 0xff wear the power); component routines at 0x8000 to 0x8070
+/// (messages 0x61 to 0x64);
 /// a base destroyed at 300, a relay at 20, explosions of kind 13 from templates at
 /// `DS:0x9b40` (frames 0 to 9, 10 ticks each) and `0x9b45` (8 ticks each).
 pub fn synthetic_damage(image: &mut [u8], ds: usize) {
@@ -1431,19 +1432,31 @@ pub fn synthetic_damage(image: &mut [u8], ds: usize) {
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
     put(0x8000, &[0xc3]);
-    put(0x8010, &[0xe8, 0, 0, 0x24, 7, 0x28, 0x45, 0x24]);
-    put(0x8020, &[0xe8, 0, 0, 0x24, 0xf, 0x28, 0x45, 0x4e]);
-    let bit = |offset: u16, bit: u8| {
-        let [lo, hi] = offset.to_le_bytes();
-        [0xf6, 0x85, lo, hi, bit, 0x75, 9, 0x80, 0x8d, lo, hi, bit]
+    // Each sends message 0x60 + its routine's number.
+    let wear = |mask: u8, offset: u8, message: u8| {
+        let jnc = [0x73, 0x04, 0xc6, 0x45, offset, 0x00];
+        [
+            &[0xe8, 0, 0, 0x24, mask, 0x28, 0x45, offset][..],
+            &jnc,
+            &[0xbe, message, 0],
+        ]
+        .concat()
     };
-    put(0x8030, &bit(0xdc, 1));
-    put(0x8040, &bit(0xf6, 0x40));
+    put(0x8010, &wear(7, 0x24, 0x61));
+    put(0x8060, &wear(0xf, 0x4e, 0x62));
+    let bit = |offset: u16, bit: u8, message: u8| {
+        let [lo, hi] = offset.to_le_bytes();
+        [
+            0xf6, 0x85, lo, hi, bit, 0x75, 9, 0x80, 0x8d, lo, hi, bit, 0xbe, message, 0,
+        ]
+    };
+    put(0x8030, &bit(0xdc, 1, 0x63));
+    put(0x8040, &bit(0xf6, 0x40, 0x64));
     put(0x8050, &[0xc3]);
     let tables: [&[(u8, u16)]; 3] = [
         &[(0x80, 0x8010), (0xff, 0x8030)],
-        &[(0x40, 0x8000), (0xc0, 0x8020)],
-        &[(0x10, 0x8000), (0xff, 0x8020)],
+        &[(0x40, 0x8000), (0xc0, 0x8060)],
+        &[(0x10, 0x8000), (0xff, 0x8060)],
     ];
     for (kind, table) in tables.into_iter().enumerate() {
         let at = 0x9b00 + 0x10 * kind as u16;
@@ -1656,6 +1669,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_weapons(image, ds);
     synthetic_bases(image, ds);
     synthetic_calendar(image, ds);
+    synthetic_messages(image, ds);
 }
 
 /// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
@@ -2287,6 +2301,45 @@ pub fn synthetic_base_tables() -> crate::base::Bases {
     let mut image = vec![0; 0x2_0000];
     synthetic_bases(&mut image, 0x1_0000);
     crate::base::read_image(&image, 0x1_0000).expect("synthetic base tables")
+}
+
+/// Writes made-up message tables (`crate::messages`): the names `BB`, `RR` and `??`
+/// padded with spaces, the letters `HU`, `SC`, `ST` at `DS:0x9e00`, the base's texts
+/// 0x30 (destroyed) and 0x40 (attacked) 0x1e0 counts apart, and the header at 0x50
+/// bracketed by 0xad and 0xba around six bytes.
+pub fn synthetic_messages(image: &mut [u8], ds: usize) {
+    use crate::messages::*;
+    let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
+    let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
+    for (at, name) in NAMES_AT.into_iter().zip([b"BB    ", b"RR    ", b"??    "]) {
+        for i in 0..3 {
+            let word = u16::from_le_bytes([name[2 * i], name[2 * i + 1]]);
+            let [lo, hi] = (0x1bfe + 2 * i as u16).to_le_bytes();
+            put(at + 6 * i, &op(&[0xc7, 0x06, lo, hi], word));
+        }
+    }
+    put(LETTERS_AT, &op(&[0x8b, 0x87], 0x9e00));
+    put(ds + 0x9e00, b"HUSCST");
+    put(DESTROYED_AT, &op(&[0xbe], 0x30));
+    put(ATTACKED_AT, &op(&[0xbe], 0x40));
+    put(INTERVAL_AT, &op(&[0x3d], 0x1e0));
+    put(NAME_LENGTH_AT, &op(&[0xb9], 6));
+    put(
+        HEADER_START_AT,
+        &[&op(&[0x26, 0xc6, 0x06], 0x50)[..], &[0xad]].concat(),
+    );
+    put(
+        HEADER_END_AT,
+        &[&op(&[0x26, 0xc6, 0x87], 0x51)[..], &[0xba]].concat(),
+    );
+    put(HEADER_AT, &op(&[0xbe], 0x50));
+}
+
+/// The made-up message tables of [`synthetic_messages`].
+pub fn synthetic_messages_tables() -> crate::messages::Messages {
+    let mut image = vec![0; 0x2_0000];
+    synthetic_messages(&mut image, 0x1_0000);
+    crate::messages::read_image(&image, 0x1_0000).expect("synthetic messages")
 }
 
 #[cfg(test)]

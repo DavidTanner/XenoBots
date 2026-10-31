@@ -564,11 +564,10 @@ it is dropped. The scripts' opcode 0x74 does it for the robot itself (for a base
 `1000:d53f` writes the base's log instead); 0x75 writes the side's base log
 (`1000:65a6`: the sender's name from `1fe6:7f38`, the clock from `DS:0x7d46`, the text;
 the oldest of seven lines dropped when full; +0xb4 set, the "new message" mode button);
-0x76 writes the log and then queues, for every robot of the sender's side, a header of
-the sender's name between `-` and `:` with bit 7 set on every byte (so drawn in the high
-colour), built in the string segment at 0x1714, and then the text. No stock script uses
-0x76. Messages are also queued by `1000:8d8c`, `9b28`, `9b82` and `d801`, and through
-`d53f` and `65a6` by other routines (hits, the bases); those are T-129.
+0x76 writes the log and then queues a header and the text for the side's robots
+(below, "The message log (T-129)"). No stock script uses 0x76. Messages are also queued
+by `1000:8d8c`, `9b28`, `9b82` and `d801`, and through `d53f` and `65a6` by other
+routines (hits, the bases; T-129).
 
 **Typing** (`1fe6:826d`, every tick right after the robot moves, all three kinds): with
 a message waiting, one byte of it from the string segment (`ES` = the word at
@@ -601,6 +600,62 @@ top-left corner, then types the text from `DS:0x71ae` to its NUL through slot `0
 text. The port fills the rectangle and types the whole text every frame
 (`xeno-app`'s `mission`), which gives the same pixels. Font 2's six lines run a few
 rows below the rectangle in the original too.
+
+### The message log (T-129)
+
+Each base keeps a log of seven 13-byte lines at +0x59 (`usg::Message`): the sender's
+name (six bytes and a NUL), the mission clock `DS:0x7d46` as it was (hours, minutes,
+seconds, sixtieths) and the text, a string-segment offset; a line with text 0 is free.
+
+**Writing** (`1000:65a6`, the sender in `DI`, the text in `SI`): the sender's name is
+made (`1fe6:7f38`, into `DS:0x1bfe`: a robot's kind's two letters, `-` and its serial's
+last three digits, as the status view's; a base, a relay and kind 0xa have fixed
+six-byte names, written as immediates in that routine), then the log of the base of the
+sender's side (`1000:6619`: `DS:0x568e`, or `0x5690` with +0x16 bit 3 set) gets the
+line: in the first free line or, with none, the six newer lines move up and the line
+goes last. The base's +0xb4 is set to 1 (the C button's new-message look) and its
+widgets +0xe3 and +0xfd (and +0xc6 when the main view is in mode C) set to 3 to redraw.
+`1000:65ae` does the same with the sender's name replaced by a fixed alert name
+(`DI` = 0xffff for the name only).
+
+**To a whole side** (`1000:d54c`): the log line, then the name made again; the
+routine meant to copy it into a header in the string segment at 0x1714 (`-` with bit 7,
+the name, `:` with bit 7, NUL), but the copy has no `es:` override and lands in the
+data segment at `DS:0x1715` (six bytes nothing reads). So the header is the first byte,
+then the image's zeros: a robot types a high-colour `-` and a new line. The loop walks
+the 38 words at `DS:0x62f5`, which is the human base's unit list (+0x4d; the alien's is
+`0x6341`), and queues the header and the text (`1000:d2a2`) for every robot whose side
+bit matches the sender's. So only the human side's robots get copies.
+
+**Who writes** (texts as string-segment offsets, read from the user's `xeno.exe` at run
+time):
+- The scripts: 0x74 through `1000:d53f` (a base: the log; anything else: its panel),
+  0x75 the log (`d537`), 0x76 the whole side (`1000:51f9`, `5202`, `520b`).
+- `sim_damage_base` (`1000:62b7`): the base destroyed sends its text to the *other* side
+  (the base's side bit flipped around the call, so the other base's log and, for the
+  alien base, every human robot); a hit below that tells its own side, unless less
+  than 480 counts of the game clock `DS:0x374` have passed since the last time
+  (`DS:0x5946`, one for both bases).
+- Each component routine of a robot hit ends with its own message to the robot's
+  panel (`mov si`, `call 1000:d53f`, a `push dx` before in the humanoid's): the helm and
+  power always, a bit only when it is set (`xeno_formats::damage::Part`).
+- The robots' own panel messages already ported: the lock's (`sense`), the weapons'
+  (`weapons`), the relays' (`net`) and the weapon selection's (`motion`).
+- Not ported (T-186), where the port has no such routine yet: the alert name's three
+  (`1000:e5c7`, `e639`, `e66b`: a mine detonated, alarm and ECM buoys triggered by an
+  enemy), the field repair's (`1000:df79`), the cargo's (`8d8c`, `9ac7`, `9ad3`,
+  `9ae7`, `9b28`, `9b82`), the decoys', mines' and buoys' (`d605` to `d66b`, `e5b1` to
+  `e647`), the ECM's and cloak's (`d94c` to `d999`), the jump's (`7ee3`) and the
+  console's status lines (`9177` to `9268`).
+
+**In the port**: `xeno_formats::messages` reads the names, letters, the base's two
+texts, the interval and the header's bytes (and writes the header into the string
+segment as the first copy leaves it); `xeno_sim::log` writes the lines (`write`,
+`say`, `tell_side`) into the base's `Depot::log`, seeded from the loaded base and saved
+back by `World::save`. Shortcuts: the game clock is the 70 Hz retrace count times
+60/70 from the mission's start, and the first attack of a run is always told (the
+original's `DS:0x5946` and clock run from start-up); the redraw states are not set (the
+port redraws every frame). Not checked in DOSBox (T-187).
 
 ### The second display (T-104)
 

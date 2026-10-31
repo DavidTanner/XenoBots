@@ -117,6 +117,10 @@ pub struct Depot {
     pub power: [u8; 4],
     /// +0x2d: the slider held (1 to 6), 0 none.
     pub slider: u8,
+    /// +0x59: the units' message log (`crate::log`); +0xb4, set when a line is
+    /// written.
+    pub log: [usg::Message; crate::log::LINES],
+    pub new_message: u8,
 }
 
 impl Depot {
@@ -129,6 +133,8 @@ impl Depot {
             repair_clock: b.repair_clock,
             power: b.power,
             slider: b.slider,
+            log: b.messages,
+            new_message: b.new_message,
         }
     }
 }
@@ -205,6 +211,8 @@ pub struct Movement {
     pub guns: Guns,
     pub script: Script,
     pub panel: Panel,
+    /// +0x18: the serial its name ends with (`crate::log::name`).
+    pub serial: u16,
 }
 
 /// A robot's weapons (`docs/sim.md`, "Weapons and shots"); the fire request and the
@@ -350,6 +358,7 @@ impl Movement {
                 queue: r.panel_queue,
                 text: r.panel_text.0,
             },
+            serial: r.serial,
         }
     }
 }
@@ -423,6 +432,7 @@ impl StateHash for State {
                 h.bytes(&[p.flags, p.length]);
                 p.queue.iter().for_each(|&q| h.u16(q));
                 h.bytes(&p.text);
+                h.u16(m.serial);
             }
             State::Base {
                 tick,
@@ -443,6 +453,12 @@ impl StateHash for State {
                 h.u16(d.relay_wait);
                 h.u16(d.repairing.map_or(0xffff, |r| r.0));
                 h.u16(d.repair_clock);
+                for l in &d.log {
+                    h.bytes(&l.name);
+                    h.bytes(&[l.hour, l.minute, l.second, l.tick]);
+                    h.u16(l.text);
+                }
+                h.u8(d.new_message);
             }
             State::Explosion {
                 frame,
@@ -598,6 +614,11 @@ pub struct World {
     /// one. shortcut: a destroyed robot does not give its sign back (`1000:dfc9`) until
     /// the sim keeps loaded robots' signs.
     pub call_signs: u64,
+    /// `DS:0x374`, the host's 60 Hz game clock, as of the last tick.
+    pub game_clock: u16,
+    /// `DS:0x5946`: the game clock when a base last said it is under attack; none
+    /// yet this run.
+    pub attack_told: Option<u16>,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -697,6 +718,11 @@ impl World {
             lock_window: (0, 0),
             target_search: 0,
             point: Position::default(),
+            // shortcut: the original's clock runs from start-up and DS:0x5946 is
+            // carried from mission to mission; the port's runs from the mission's
+            // start and the first attack of a run is always told.
+            game_clock: 0,
+            attack_told: None,
         }
     }
 
@@ -817,6 +843,8 @@ impl StateHash for World {
         h.u8(self.stagger);
         h.u16(self.ticks);
         h.u64(self.call_signs);
+        h.u16(self.game_clock);
+        h.u16(self.attack_told.unwrap_or(0xffff));
         h.u16(self.lock_window.0);
         h.u16(self.lock_window.1);
         h.u16(self.target_search);

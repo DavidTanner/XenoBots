@@ -12,6 +12,7 @@ Damage {
                     Wear {
                         offset: 36,
                         mask: 7,
+                        message: 97,
                     },
                 ),
                 (
@@ -21,10 +22,12 @@ Damage {
                             (
                                 220,
                                 1,
+                                99,
                             ),
                             (
                                 246,
                                 64,
+                                100,
                             ),
                         ],
                     ),
@@ -43,6 +46,7 @@ Damage {
                     Wear {
                         offset: 78,
                         mask: 15,
+                        message: 98,
                     },
                 ),
             ],
@@ -59,6 +63,7 @@ Damage {
                     Wear {
                         offset: 78,
                         mask: 15,
+                        message: 98,
                     },
                 ),
             ],
