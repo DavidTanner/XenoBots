@@ -5795,17 +5795,17 @@ pub mod tests {
         assert!(assets.claims_escape(View::Humanoid));
     }
 
-    /// A training mission is won and lost by play alone, through the keys (T-150, T-177).
-    /// On `ntrain`, the first scorpion is left to its program for 110,000 retraces (about
-    /// 26 minutes: the alien escort's first attacks are spent on the human net), then
-    /// its console: Up for speed, F6 (the tail gun), steered at the alien base by Left
-    /// and Right, stopped by `.` near it; A when nothing is locked or, near the base,
-    /// until the base is; Space fires at what is locked. Won about 31 minutes in. On
-    /// `htrain`, each of the player's units in turn is steered by its console's keys to
-    /// stand just behind the player's base, away from the aliens, and stopped with `.`:
-    /// the aliens' shots at them hit the base, which falls about 15 minutes in. (Left
-    /// alone, the units fight the aliens on the human net, where the aliens run on
-    /// their batteries, and win: `docs/sim.md`, "The port (T-148)".)
+    /// A training mission is won and lost by play alone, through the keys (T-150, T-177,
+    /// T-141). On `ntrain`, the first scorpion is left to its program for 60,000
+    /// retraces (about 14 minutes: the alien escort's first attacks are spent on the
+    /// human net), then its console: Up for speed, F6 (the tail gun), steered at the
+    /// alien base by Left and Right, stopped by `.` near it; A when nothing is locked or,
+    /// near the base, until the base is; Space fires at what is locked. Won about 22
+    /// minutes in. On `htrain`, each of the player's units in turn is steered by its
+    /// console's keys to stand just behind the player's base, away from the aliens, and
+    /// stopped with `.`: the aliens' shots at them hit the base, which falls about 15
+    /// minutes in. (Left alone, the units fight the aliens on the human net, where the
+    /// aliens run on their batteries, and win: `docs/sim.md`, "The port (T-148)".)
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_a_training_mission_is_won_and_lost_by_play() {
@@ -5855,7 +5855,7 @@ pub mod tests {
         let mut retrace = 0u32;
         let won = end(&mut m, &mut |m| {
             retrace += 1;
-            if retrace < 110_000 {
+            if retrace < 60_000 {
                 return;
             }
             let at = m.world().get(base).unwrap().position;
@@ -5863,7 +5863,7 @@ pub mod tests {
                 panic!("the scorpion is gone at retrace {retrace}");
             };
             let mut press = |word| _ = m.key(word, &assets);
-            if retrace == 110_000 {
+            if retrace == 60_000 {
                 (0..5).for_each(|_| press(0x48));
                 press(0x40);
             }

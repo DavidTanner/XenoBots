@@ -144,7 +144,8 @@ pub struct Movement {
     /// +0x1e, +0x20: added to x and y every tick, in 1/65,536ths.
     pub velocity: (i16, i16),
     /// +0x23 without bit 7 (the program bit, kept in the [`OrderBook`]): bit 0 no
-    /// path from the alien base, bit 3 recalled, bits 4 and 5 the turn keys.
+    /// path from the alien base, bit 1 bumped, bit 3 recalled, bits 4 and 5 the turn
+    /// keys.
     pub mode: u8,
     /// +0x26, +0x28: the speed and the speed asked for.
     pub speed: i16,
@@ -187,6 +188,8 @@ pub struct Movement {
     pub status: u8,
     /// +0xf7: the enemy units the last scan found (`docs/sim.md`, "Sensing").
     pub contacts: u8,
+    /// +0xfb: contact checks to skip after a bump (`crate::contact`).
+    pub bump_wait: u8,
     /// +0xe6: the target, locked (the loader clears it); +0xe8 and +0xea its
     /// distance (8.8) and bearing when the lock was last kept.
     pub target: Option<EntityId>,
@@ -323,6 +326,7 @@ impl Movement {
             legs,
             status,
             contacts: r.contacts,
+            bump_wait: r.bump_wait,
             target: None,
             target_distance: r.target_distance,
             target_bearing: r.target_bearing,
@@ -392,7 +396,7 @@ impl StateHash for State {
                 h.u8(m.relays);
                 h.u8(m.stride);
                 h.bytes(&m.legs);
-                h.bytes(&[m.status, m.contacts, m.locked_on]);
+                h.bytes(&[m.status, m.contacts, m.locked_on, m.bump_wait]);
                 h.u16(m.target.map_or(0xffff, |t| t.0));
                 h.u16(m.target_distance);
                 h.u16(m.target_bearing);

@@ -1,6 +1,5 @@
 ---
 source: crates/xeno-formats/src/motion.rs
-assertion_line: 715
 expression: motion
 ---
 Motion {
@@ -1367,6 +1366,7 @@ Motion {
                 arc: 4096,
                 range: 768,
                 locked_on: 6,
+                contact: 8,
             },
             KindTicks {
                 scan: 15,
@@ -1374,6 +1374,7 @@ Motion {
                 arc: 4352,
                 range: 784,
                 locked_on: 7,
+                contact: 8,
             },
             KindTicks {
                 scan: 15,
@@ -1381,6 +1382,7 @@ Motion {
                 arc: 4608,
                 range: 800,
                 locked_on: 6,
+                contact: 8,
             },
         ],
         messages: Messages {

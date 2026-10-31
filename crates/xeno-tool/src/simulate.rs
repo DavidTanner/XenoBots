@@ -145,6 +145,7 @@ pub fn run(
 fn describe(event: Event) -> String {
     match event {
         Event::HillHit(id) => format!("{} hit a hill", id.0),
+        Event::Bumped { robot, object } => format!("{} bumped into {}", robot.0, object.0),
         Event::Destroyed(id) => format!("{} destroyed", id.0),
         Event::TakenIn(id) => format!("{} taken in", id.0),
         Event::Launched(id) => format!("{} launched", id.0),
