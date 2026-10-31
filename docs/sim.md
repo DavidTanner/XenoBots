@@ -694,7 +694,7 @@ arrows act the same, and the keyboard's repeat repeats them.
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
 | C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4 (the dump) with a message (T-149) |
 | S | `ddb0` | | the same | +0xfa = 0 (not traced) |
-| X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4; T-134) |
+| X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4): X adds the pan step of the zoom (`DS:0x70d1[+0xf1]`), Z takes it off, Y sets 0; each clears `TRACKING` (`docs/screens.md`, "The display's other modes (T-134)") |
 | F1 | `cff3` | the same | the same | A box over the view until a key (not traced) |
 | Ctrl+P | `d193` | the same | the same | With unlock word 8 (`key.md`): power (+0x4e) 100 and +0x4f, +0x50, +0x51 (the drive) 0xff |
 | Ctrl+Alt+S | `d177` | the same | the same | Flips `DS:0x62ec` bit 6 (a developer switch) |

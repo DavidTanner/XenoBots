@@ -239,6 +239,11 @@ impl Sim {
             Pilot::Lock(target) => sense::lock(world, id, target, tables, &mut events),
             Pilot::Destination(point) => script::set_destination(world, id, point, tables),
             Pilot::GoalObject(object) => script::set_goal_object(world, id, object, tables),
+            Pilot::Untrack => {
+                if let Some(m) = motion::movement(world, id) {
+                    m.status &= !xeno_formats::usg::status::TRACKING;
+                }
+            }
             _ => {}
         }
         // The rest act on the robot's own movement.
@@ -399,6 +404,11 @@ pub enum Pilot {
     /// (`script::set_goal_object`).
     Destination(Position),
     GoalObject(EntityId),
+    /// The second display's zoom and pan keys (`1000:da0e`, `da37`, `b377`, `b389`,
+    /// `b39b` and the other kinds'): +0x17 bit 6 (`TRACKING`) cleared, so the display
+    /// no longer follows the target (`docs/screens.md`, "The display's other modes
+    /// (T-134)").
+    Untrack,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -580,6 +590,12 @@ mod tests {
         assert_eq!(robot(&sim).0.target_heading, heading.wrapping_add(0x100));
         sim.pilot(id, Pilot::Stance(0x60));
         assert_eq!(robot(&sim).0.stance_target, 0x60);
+        // A display key stops the tracking and nothing else.
+        if let Some(m) = motion::movement(&mut sim.world, id) {
+            m.status |= xeno_formats::usg::status::TRACKING | 1;
+        }
+        assert!(sim.pilot(id, Pilot::Untrack).is_empty());
+        assert_eq!(robot(&sim).0.status & 0x41, 1);
         // The keys are part of the state, and nothing acts on a slot without a robot.
         let before = sim.state_hash();
         assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());

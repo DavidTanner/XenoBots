@@ -44,6 +44,19 @@ pub const POINTERS: DataBlock = DataBlock {
     at: 0x3c,
     descriptor: 0x626,
 };
+/// The first block, whose bytes from the thermal remap's offset are the table slot
+/// `0x5f0` remaps a frame through (`docs/screens.md`, "The display's other modes
+/// (T-134)").
+pub const REMAP: DataBlock = DataBlock {
+    at: 0x0a,
+    descriptor: 0x61a,
+};
+/// Slot `0x5f0`'s routine: `mov ds, [0x61a]` then `mov bx, offset` (the table's in the
+/// first block), and the `lodsw` / `xlat` it remaps by.
+const REMAP_AT: usize = 0x2908;
+const REMAP_HEAD: [u8; 5] = [0x8e, 0x1e, 0x1a, 0x06, 0xbb];
+const REMAP_LOOP: (usize, [u8; 3]) = (0x2911, [0x26, 0xad, 0xd7]);
+
 /// Load-image offsets of the pointer set-up's last two calls (`gfx_init_pointer`):
 /// `mov al, shape; call gfx_set_pointer_shape` and `mov al, colour; call
 /// gfx_set_pointer_colour`, with their call displacements.
@@ -174,6 +187,8 @@ pub struct Mgavideo {
     pub pointers: Vec<Pointer>,
     /// The shape the driver sets up at start-up.
     pub pointer: u8,
+    /// The thermal camera's remap: each pixel of the frame becomes `thermal[pixel]`.
+    pub thermal: Vec<u8>,
 }
 
 impl Mgavideo {
@@ -207,6 +222,22 @@ impl Mgavideo {
     }
 }
 
+/// The 256-byte table slot `0x5f0` remaps a frame through.
+pub fn thermal(image: &[u8]) -> Result<Vec<u8>, FormatError> {
+    let (at, code) = REMAP_LOOP;
+    let head = image.get(REMAP_AT..REMAP_AT + 7);
+    let offset = match head {
+        Some(h) if h[..5] == REMAP_HEAD && image.get(at..at + 3) == Some(&code[..]) => {
+            usize::from(u16::from_le_bytes([h[5], h[6]]))
+        }
+        _ => return Err(invalid(REMAP_AT, "not the thermal remap")),
+    };
+    data_block(image, REMAP)?
+        .get(offset..offset + 256)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| invalid(REMAP_AT, "the remap table is past its block"))
+}
+
 /// Reads the colour-animation list and the fonts from the bytes of `mgavideo.dvr`.
 pub fn parse(bytes: &[u8]) -> Result<Mgavideo, FormatError> {
     let image = vgaintro::load_image(bytes)?;
@@ -226,6 +257,7 @@ pub fn parse(bytes: &[u8]) -> Result<Mgavideo, FormatError> {
         fonts,
         pointers,
         pointer,
+        thermal: thermal(image)?,
     })
 }
 
@@ -243,6 +275,17 @@ mod tests {
         assert_eq!(video.font(6), Some(&video.fonts[3]));
         assert_eq!(video.font(3), None);
         assert_eq!(video.font(8), None);
+    }
+
+    #[test]
+    fn the_synthetic_thermal_remap_reads() {
+        let video = parse(&synthetic_mgavideo()).unwrap();
+        assert_eq!(video.thermal.len(), 256);
+        assert_eq!((video.thermal[0], video.thermal[255]), (255, 0));
+        // Another remap routine is refused.
+        let mut bytes = synthetic_mgavideo();
+        bytes[0x20 + REMAP_LOOP.0 + 2] = 0x90;
+        assert!(parse(&bytes).is_err());
     }
 
     #[test]
@@ -325,6 +368,11 @@ mod tests {
         assert_eq!(video.font(0).unwrap().style(), font::Style::Bitmap);
         // The list has 24 records (`palette.md`).
         assert_eq!(video.anim_records(), 24);
+        // T-134: the thermal remap turns every colour into 32 of 16..=47.
+        let mut ramp = video.thermal.clone();
+        ramp.sort_unstable();
+        ramp.dedup();
+        assert_eq!(ramp, (16..=47).collect::<Vec<u8>>());
         // An arrow 9 by 11 with its hot spot one pixel in (`docs/screens.md`).
         let pointer = video.set_up_pointer();
         assert_eq!(

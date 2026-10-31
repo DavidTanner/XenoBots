@@ -23,11 +23,11 @@ pointer probe (below) and moves on to the list for the **view mode**, the byte a
 |---|---|---|---|
 | 4 | `DS:0x391a` | camera (`DS:0x4d2a`), **build**, ground, sky, **draw**, static, end | A console's main view (`1000:dba0`) |
 | 6 | `DS:0x3928` | camera, reuse, ground, sky, draw, static, end | A console's second display, mode 0 |
-| 8 | `DS:0x3936` | camera, build, ground, sky, draw, `1000:4164`, slot `0x5f0`, static, end | The second display, mode 3 |
-| 0xa | `DS:0x3948` | as 6, plus `4164` and slot `0x5f0` | The second display, mode 1 |
+| 8 | `DS:0x3936` | camera, build, ground, sky, draw, `1000:4164`, the remap (`1000:3f3d`, slot `0x5f0`), static, end | The second display, mode 3 (the missile camera) |
+| 0xa | `DS:0x3948` | as 6, plus `4164` and the remap | The second display, mode 1 (thermal) |
 | 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps | The second display, mode 2; the situation room's map (T-103); 0xe the terrain editor (T-109) |
 | 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room (T-103) |
-| 0x18 | `DS:0x3988` | other | Not the 3D view |
+| 0x18 | `DS:0x3988` | noise (`1000:3c20`), end | The second display's damaged modes 4 to 7 (`docs/screens.md`, "The display's other modes (T-134)") |
 | 0x1a | `DS:0x398c` | camera, clear, one node at a time, end | The review (below, "The review's view") |
 
 The steps of the 3D lists:
@@ -40,8 +40,8 @@ The steps of the 3D lists:
   with colour 0x3f.
 - **sky** (`gfx_draw_sky`, `1000:2bfb`; `docs/formats/b@n.md`).
 - **draw** (`gfx_draw_render_list`, `1000:2e5b`): every node, far to near (below).
-- **static** (`1000:3c91`): when `DS:0x1455` is not 0, noise over the buffer (a
-  damaged camera; T-104).
+- **static** (`1000:3c91`): when `DS:0x1455` is not 0, noise over the buffer; nothing
+  in this build sets it, so it never draws (T-134).
 - **end** (`1000:2982`): marks the frame ready (`DS:0x1450` bit 7) and goes back to the
   start step.
 
@@ -485,7 +485,7 @@ are shared with the mission's 3D view (T-101), which still needs the projection 
 - The ground's `GROUND.BIN` (`1000:435c`, drawn by `1fe6:67d3`; not in a stock
   install). The map marks (types 0xa, 0xc, 0xe, 0x12) and the map table are in
   `docs/screens.md`, "The situation room's main view (T-103)".
-- The second display's extra steps (`1000:4164`, slot `0x5f0`) and the static (T-104).
+- The second display's extra steps (`1000:4164`, slot `0x5f0`), its noise and the static: traced (T-134, `docs/screens.md`, "The display's other modes (T-134)").
 
 ## In the port
 
