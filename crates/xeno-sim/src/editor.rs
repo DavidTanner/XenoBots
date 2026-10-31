@@ -28,6 +28,8 @@ pub enum Place {
     Obstacle,
     /// Kind 3: the side's base moves there; no base is made (`1000:6c49`).
     Base(Side),
+    /// Kind 4: a relay, where none stands in the cell (`1000:6c65`).
+    Relay,
 }
 
 /// What [`Sim::place`] did.
@@ -45,7 +47,7 @@ pub const OBSTACLE_RADIUS: u16 = 0x0d00;
 impl Sim {
     /// Places `what` at `at`, a robot with the user's `editor` tables. `None` when
     /// nothing could be placed: no free slot, no base for the side, no free call sign,
-    /// or no movement tables for a robot.
+    /// a relay already in the cell, or no movement tables for a robot or a relay.
     pub fn place(&mut self, what: Place, at: Position, editor: &Editor) -> Option<Placed> {
         match what {
             Place::Robot {
@@ -57,6 +59,26 @@ impl Sim {
                 let id = self.world.base(side)?;
                 self.world.get_mut(id)?.position = at;
                 Some(Placed::Moved(id))
+            }
+            Place::Relay => {
+                // The cell (`1000:49a1`) on the mask the net opcodes leave, 0xfe, and
+                // the relay check (`2000:7faa`): a relay of either side there refuses.
+                if crate::net::relay_at(&self.world, crate::net::cell(0xfe, at)) {
+                    return None;
+                }
+                let tables = self.tables.as_ref()?;
+                let (_, pool_index) = alloc(&self.world, false)?;
+                // shortcut: the scratch object's z (`DS:0x5cb4`, `1000:6c65`) is taken
+                // as 0, as every relay stands; upgrade if DOSBox shows another height.
+                let id = crate::net::make(&mut self.world, at, Fixed(0), tables, &mut self.random)?;
+                // `1000:cca8`: onto the relays' lattice, whole.
+                let (x, y) = crate::net::lattice(at);
+                self.world.get_mut(id)?.position = Position {
+                    x: Fixed::from_int(x),
+                    y: Fixed::from_int(y),
+                };
+                crate::pack::made_object(&self.world, id, pool_index)
+                    .map(|o| Placed::Made(Box::new(o)))
             }
             Place::Obstacle => {
                 // `sim_alloc_object_slot` (`1000:f4b1`): the lowest free slot, the
@@ -516,5 +538,52 @@ mod tests {
             sim.place(Place::Base(Side::Alien), at(7, 8), &editor()),
             None
         );
+    }
+    #[test]
+    fn a_relay_lands_on_the_lattice_unless_one_stands_in_the_cell() {
+        let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let half = |p: Position| Position {
+            x: Fixed(p.x.0 + 0x8000),
+            y: Fixed(p.y.0 + 0x8000),
+        };
+        let Some(Placed::Made(o)) = sim.place(Place::Relay, half(at(129, 131)), &editor()) else {
+            panic!()
+        };
+        // Whole, even, and bit 1 cleared where x and y differ in it.
+        assert_eq!(
+            (o.slot, o.kind, o.x, o.y, o.z),
+            (1, ObjectKind::Relay, 128 << 16, 132 << 16, 0)
+        );
+        let tables = motion::synthetic_tables();
+        assert_eq!(o.radius, tables.net.radius);
+        assert_eq!(o.flags, flag::TARGETABLE);
+        let Body::Relay(r) = &o.body else { panic!() };
+        assert_eq!((r.state, r.stage, r.power), (usg::Relay::FOLDED, 0, 0));
+        assert_eq!(sim.world.get(EntityId(1)).unwrap().position, at(128, 132));
+        // The save holds it as placed.
+        let saved = sim.world.save(&scenario, editor().program_table);
+        // (Its pool index is the editor's own pick, `alloc`'s shortcut.)
+        let mut s = saved
+            .objects
+            .unwrap()
+            .into_iter()
+            .find(|s| s.slot == 1)
+            .unwrap();
+        s.pool_index = o.pool_index;
+        assert_eq!(s, *o);
+        // A relay of either side in the cell refuses the press.
+        let before = sim.state_hash();
+        assert_eq!(sim.place(Place::Relay, at(128, 132), &editor()), None);
+        assert_eq!(sim.state_hash(), before);
+        sim.world.get_mut(EntityId(1)).unwrap().side = Side::Alien;
+        let before = sim.state_hash();
+        assert_eq!(sim.place(Place::Relay, at(127, 133), &editor()), None);
+        assert_eq!(sim.state_hash(), before);
+        // The next cell along is free.
+        let Some(Placed::Made(o)) = sim.place(Place::Relay, at(130, 130), &editor()) else {
+            panic!()
+        };
+        assert_eq!((o.slot, o.x, o.y), (4, 130 << 16, 130 << 16));
     }
 }

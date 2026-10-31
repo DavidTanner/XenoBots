@@ -90,23 +90,10 @@ impl World {
                 let mut r = match template(id, e) {
                     Some(o) => Record(o.to_record()),
                     None => {
-                        let size = if big(e.kind) {
-                            Object::BIG
-                        } else {
-                            Object::SMALL
-                        };
                         let index = (0..)
                             .find(|&i| pools.insert((big(e.kind), i)))
                             .expect("a free pool index");
-                        let mut b = [size, id.0, 1].map(u16::to_le_bytes).concat();
-                        b.resize(6 + usize::from(size), 0);
-                        let mut r = Record(b);
-                        r.u16(2, index);
-                        if e.kind == ObjectKind::Relay {
-                            // `1000:cc2a`: the links' words, which nothing reads.
-                            (0..4).for_each(|n| r.u16(0x25 + 4 * n, NONE));
-                        }
-                        r
+                        made(id, e.kind, index)
                     }
                 };
                 pack(&mut r, w, id, e, program_table);
@@ -118,6 +105,33 @@ impl World {
         s.alien_paths = paths(&w.paths.alien, loaded.alien_paths.as_ref());
         s
     }
+}
+
+/// The record of an object made in play: zeros, its reference count 1 and pool
+/// index `index`.
+fn made(id: EntityId, kind: ObjectKind, index: u16) -> Record {
+    let size = if big(kind) {
+        Object::BIG
+    } else {
+        Object::SMALL
+    };
+    let mut b = [size, id.0, 1].map(u16::to_le_bytes).concat();
+    b.resize(6 + usize::from(size), 0);
+    let mut r = Record(b);
+    r.u16(2, index);
+    if kind == ObjectKind::Relay {
+        // `1000:cc2a`: the links' words, which nothing reads.
+        (0..4).for_each(|n| r.u16(0x25 + 4 * n, NONE));
+    }
+    r
+}
+
+/// Object `id`, made in play with pool index `index`, as [`World::save`] writes it.
+pub(crate) fn made_object(world: &World, id: EntityId, index: u16) -> Option<Object> {
+    let e = world.get(id)?;
+    let mut r = made(id, e.kind, index);
+    pack(&mut r, world, id, e, 0);
+    Object::from_record(&r.0).ok()
 }
 
 /// One side's table over the loaded one: the count, and each slot's mission, weight
