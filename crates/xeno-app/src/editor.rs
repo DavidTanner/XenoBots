@@ -186,8 +186,8 @@ impl Editor {
 
     /// A Ctrl+left press on the map in mode M (`ui_editor_place_at_pointer`,
     /// `1000:6be8`) at `at`, with the picked kind and side: a path point goes on the
-    /// side's current path, a robot or an obstacle is made, the side's base moved
-    /// (relays are part 3 of T-108). Returns
+    /// side's current path, a robot, a relay (T-142) or an obstacle is made, the side's
+    /// base moved. Returns
     /// whether the status changed (only a point redraws it).
     pub fn place(
         &self,
@@ -220,9 +220,10 @@ impl Editor {
                 heading: self.heading,
             },
             3 => Place::Base(side),
+            4 => Place::Relay,
             16 => Place::Obstacle,
             kind => {
-                log::info!("editor: placing kind {kind} is not in the port yet (T-108)");
+                log::debug!("editor: kind {kind} is none the keys pick");
                 return false;
             }
         };
@@ -234,7 +235,9 @@ impl Editor {
                     (o.x, o.y) = (at.x.0, at.y.0);
                 }
             }
-            None => log::info!("editor: nothing placed (no free slot, sign or base)"),
+            None => {
+                log::info!("editor: nothing placed (no free slot, sign or base, or a relay there)")
+            }
         }
         false
     }

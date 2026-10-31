@@ -9,7 +9,7 @@ use xeno_formats::usg::{ObjectKind, Side};
 use crate::motion::{Event, Tables};
 use crate::random::Random;
 use crate::relay::Relay;
-use crate::world::{Damage, Entity, EntityId, Position, State, World};
+use crate::world::{Damage, Entity, EntityId, Fixed, Position, State, World};
 
 /// +0xfd bit 7: the relay deployer is damaged.
 const DEPLOYER_DAMAGED: u8 = 0x80;
@@ -166,7 +166,9 @@ pub fn deploy(
     events: &mut Vec<Event>,
 ) -> bool {
     let net = &tables.net;
-    let made = relays(world, id) > 0 && make(world, id, tables, random);
+    let at = world.get(id).map(|e| (e.position, e.z));
+    let made = relays(world, id) > 0
+        && at.is_some_and(|(at, z)| make(world, at, z, tables, random).is_some());
     let Some(e) = world.get_mut(id) else {
         return false;
     };
@@ -189,16 +191,17 @@ pub fn deploy(
     true
 }
 
-/// `1000:cc69`: a relay in the lowest free slot at robot `id`'s position, set up
+/// `1000:cc69`: a relay in the lowest free slot at `at`, height `z`, set up
 /// (`1000:cc2a`) folded, unpowered, on no side (+0x16 cleared), its clock a random
-/// byte, with its look. False with no room.
-fn make(world: &mut World, id: EntityId, tables: &Tables, random: &mut Random) -> bool {
-    let (Some(slot), Some((at, z))) = (
-        crate::damage::alloc_small(world),
-        world.get(id).map(|e| (e.position, e.z)),
-    ) else {
-        return false;
-    };
+/// byte, with its look. `None` with no room.
+pub(crate) fn make(
+    world: &mut World,
+    at: Position,
+    z: Fixed,
+    tables: &Tables,
+    random: &mut Random,
+) -> Option<EntityId> {
+    let slot = crate::damage::alloc_small(world)?;
     let (state, model_height) = Relay::made(random.word() as u8, tables);
     let relay = Entity {
         kind: ObjectKind::Relay,
@@ -212,7 +215,7 @@ fn make(world: &mut World, id: EntityId, tables: &Tables, random: &mut Random) -
         state: State::Relay(state),
     };
     world.insert(slot, relay);
-    true
+    Some(slot)
 }
 
 #[cfg(test)]

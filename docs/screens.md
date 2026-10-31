@@ -1536,8 +1536,14 @@ By the picked kind (`DS:0x5c3f`):
   else 0xfc) and the check is `2000:7faa` (not traced); the set-up `1000:cc2a`
   clears +0x18 and +0x1f, sets radius 0x500 and `TARGETABLE`, a random byte at +0x1e,
   +0x21/+0x22 = 0, the four links' words (+0x25, +0x29, +0x2d, +0x31) 0xffff, then
-  `1000:ccf0`; `1000:cca8` puts the relay on the lattice: x and y whole and even
-  (rounded up), and if their bit 1 differs, cleared in both. Not in the port yet.
+  `1000:ccf0` (the look: colour, frames and height for stage 0, `docs/sim.md`, "The
+  relay's tick"); `1000:cca8` puts the relay on the lattice: x and y whole and even
+  (rounded up), and if their bit 1 differs, cleared in both. Between the net opcodes
+  the mask is always 0xfe, and the check clears the carry (refuses) when a relay of
+  either side stands in the cell (`docs/sim.md`, "Relay nets"). In the port since
+  T-142 (`xeno_sim::Sim::place` with `Place::Relay`; Ctrl+R picks kind 4): made as
+  a scorpion deploys one (`net::make`: folded, unpowered, no side, its clock a random
+  byte), then snapped; the scratch object's z is taken as 0 (to check, T-185).
 - **Obstacles** (16): allocated (`sim_alloc_object_slot`, `1000:f4b1`: the lowest free
   slot of the 240, the reference count 1, the lowest free entry of its pool, the bytes
   from +4 cleared, 0x30 of them for the small pool), then radius 13 (0x0d00) and
