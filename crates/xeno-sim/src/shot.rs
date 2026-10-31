@@ -68,7 +68,7 @@ fn kind_number(kind: ObjectKind) -> usize {
 /// its base (the take-in and launch move both bits together, T-115), a relay once up
 /// (`crate::relay`).
 // shortcut: bases and obstacles by kind, as the port keeps no flags for them (T-147).
-fn in_field(e: &Entity) -> bool {
+pub(crate) fn in_field(e: &Entity) -> bool {
     match e.state {
         State::Relay(r) => r.flags & flag::IN_FIELD != 0,
         _ => {

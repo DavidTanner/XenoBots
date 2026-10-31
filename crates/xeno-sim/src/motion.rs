@@ -23,6 +23,8 @@ pub enum Event {
     /// The robot ended its move inside a hill: its speed was negated and it takes a
     /// 0-point hit (`sim_damage_object`).
     HillHit(EntityId),
+    /// The robot ran into `object` and backs off (`crate::contact`).
+    Bumped { robot: EntityId, object: EntityId },
     /// The object was destroyed (`docs/sim.md`, "Damage"): a robot or relay is gone
     /// and an explosion stands where it was; a base stays, destroyed.
     Destroyed(EntityId),
@@ -762,6 +764,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 m.panel.type_one(&tables.strings);
             }
             crate::sense::step(world, id, tables);
+            crate::contact::step(world, id, tables, random, &mut events);
             crate::weapons::step(world, id, tables, random, &mut events);
             crate::relay::signal_step(world, id, tables);
             let ticks = world.ticks;

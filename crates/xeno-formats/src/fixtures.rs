@@ -1660,9 +1660,9 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
 
 /// Writes made-up sensing tables (`crate::sensing`): tick tables at `DS:0x9700`,
 /// `0x9720`, `0x9740` with the scan at entry 15, the lock's upkeep at 5, 6, 5 (code
-/// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320) and the
-/// lock warning's decay after it; scanning ranges 0x500, 0x600, 0x700 and locking
-/// ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`); the lock's messages 0x40 to
+/// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320), the
+/// lock warning's decay after it and the contact check at 8; scanning ranges 0x500,
+/// 0x600, 0x700 and locking ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`); the lock's messages 0x40 to
 /// 0x49 in `MESSAGES_AT`'s order and its sound event 26; weapons by kind needing
 /// drives 10 and 22 (the scorpion's first with all of bits 3 damaged); the
 /// worked-out point (1.0000 + 2/65536, -1/65536) at `DS:0x9770`.
@@ -1684,6 +1684,7 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
         put(t + 2 * lock, &routine.to_le_bytes());
         put(t + 2 * (lock + 1), &(LOCKED_ON.0 as u16).to_le_bytes());
         put(t + 30, &(SCAN.0 as u16).to_le_bytes());
+        put(t + 16, &(CONTACT as u16).to_le_bytes());
         let (arc, range) = (0x1000 + 0x100 * kind as u16, 0x300 + 0x10 * kind as u16);
         let call = (KEEP_LOCK as u16).wrapping_sub(routine + 9);
         let r = usize::from(routine);

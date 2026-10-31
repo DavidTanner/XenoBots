@@ -24,6 +24,8 @@ const RANGE_OP: &[u8] = &[0x8b, 0x87];
 pub(crate) const SCAN: (usize, &[u8]) = (0xdcba, &[0xf6, 0x45, 0x1a, 0xe0]);
 pub(crate) const KEEP_LOCK: usize = 0xd66f;
 pub(crate) const LOCKED_ON: (usize, &[u8]) = (0xdc95, &[0xd0, 0xad, 0xed, 0x00]);
+/// The contact check (`1000:d464`, T-141), found in the tick tables by its address.
+pub(crate) const CONTACT: usize = 0xd464;
 /// Entries in a tick table.
 pub const TICKS: usize = 16;
 /// `mov si, message` before each of the lock's messages to the robot's panel, in
@@ -64,6 +66,8 @@ pub struct KindTicks {
     pub range: u16,
     /// The lock warning's decay (`1000:dc95`).
     pub locked_on: u8,
+    /// The contact check (`1000:d464`).
+    pub contact: u8,
 }
 
 /// The sensing tables.
@@ -131,13 +135,15 @@ fn starts(image: &[u8], at: usize, bytes: &[u8]) -> bool {
 /// the routine that calls the lock's upkeep (`mov ax, arc`, `mov bx, range`, `call`).
 fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatError> {
     let table = ds + usize::from(operand(image, at, TICKS_OP)?);
-    let (mut scan, mut lock, mut locked_on) = (None, None, None);
+    let (mut scan, mut lock, mut locked_on, mut contact) = (None, None, None, None);
     for n in 0..TICKS {
         let routine = usize::from(word(image, table + 2 * n)?);
         if routine == SCAN.0 {
             scan = scan.or(Some(n as u8));
         } else if routine == LOCKED_ON.0 {
             locked_on = locked_on.or(Some(n as u8));
+        } else if routine == CONTACT {
+            contact = contact.or(Some(n as u8));
         } else if let Some(&[0xb8, a0, a1, 0xbb, r0, r1, 0xe8, c0, c1]) =
             image.get(routine..routine + 9)
         {
@@ -148,13 +154,14 @@ fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatErr
             }
         }
     }
-    match (scan, lock, locked_on) {
-        (Some(scan), Some((lock, arc, range)), Some(locked_on)) => Ok(KindTicks {
+    match (scan, lock, locked_on, contact) {
+        (Some(scan), Some((lock, arc, range)), Some(locked_on), Some(contact)) => Ok(KindTicks {
             scan,
             lock,
             arc,
             range,
             locked_on,
+            contact,
         }),
         _ => Err(invalid(table, "a tick table without the sensing routines")),
     }
@@ -272,7 +279,10 @@ mod tests {
         assert_eq!(sensing.scan_range, [0x500, 0x600, 0x700]);
         assert_eq!(sensing.lock_range, [0x800, 0x900, 0xa00]);
         let t = sensing.ticks;
-        assert_eq!((t[0].scan, t[0].lock, t[0].locked_on), (15, 5, 6));
+        assert_eq!(
+            (t[0].scan, t[0].lock, t[0].locked_on, t[0].contact),
+            (15, 5, 6, 8)
+        );
         assert_eq!((t[1].lock, t[1].arc, t[1].range), (6, 0x1100, 0x310));
         let m = sensing.messages;
         assert_eq!(

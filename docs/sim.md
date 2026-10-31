@@ -536,7 +536,7 @@ at 0 in the image.
 
 **Events.** Posted by sensing: 1 and 2 by the scan, 3 by the lock warning, 4 when the
 upkeep loses a lock, 5 by an object goal (and the hold order). The others: 7 by
-hits, 9 by the contact check (`1000:d4df`, T-141), 0xa and 0xb by the switches, 0xc
+hits, 9 by the contact check (`1000:d4df`, "Contacts (T-141)"), 0xa and 0xb by the switches, 0xc
 when crippled (the damage totals, T-140). Nothing posts 0, 6 or 8 (FIRE ALL's
 handler for 8 is never run).
 
@@ -634,6 +634,40 @@ keeps the next slot; it is hashed, not saved (a load opens the situation room, a
 opening a console, `Sim::open_console`, starts it at 0). The R and A messages are read
 from `xeno.exe` with the lock's (`xeno_formats::sensing::Messages::dropped`,
 `none_next`).
+
+## Contacts (T-141)
+
+The contact check (`1000:d464`) is in every kind's tick table, so it runs once every
+16 ticks; its entry is found by its address (`xeno_formats::sensing::KindTicks::contact`:
+12, 8 and 7 in the stock build). In order:
+
+1. A robot in its base (+0xfd bit 2) clears `BUMPED` (+0x23 bit 1) and is not checked.
+2. While `bump_wait` (+0xfb) is not 0 it counts down by one and nothing is checked.
+3. Every other object in the field (`IN_FIELD`), not its own side's base, whose
+   distance (`1000:08ec`, 16.16) less both radii (+0x14, taken in the distance's low
+   word's units, so a robot's 0x0a00 is 10/256 of a unit) is under 0x6400 (about 0.4
+   units) is a contact. One ahead (`1000:45f2`) posts **event 9**. One closer than both
+   radii (the difference negative) **bumps** the robot: `BUMPED` is set, the speed is
+   negated and the speed asked for set to 0 (the velocity waits for the speed's next
+   step, as for a hill), the kind's bounce routine runs (`DS:0x7209`, "The cockpit
+   keys"), it takes a hit of 1 point (`sim_damage_object`, event 7 and the hit's
+   sound) and `bump_wait` becomes 4, so the next four checks (64 ticks) are skipped.
+
+Nothing in the check clears `BUMPED` but the base. Only robots run it, so the other
+object bumps on its own check.
+
+### The port (T-141)
+
+`xeno_sim::contact::step`, after the sensing step in the robot's tick; `Movement::
+bump_wait` is loaded from and saved to +0xfb and hashed; a bump reports
+`Event::Bumped` (`xeno-tool simulate` prints "bumped into"). Shortcuts, each named in
+the code (T-183): "ahead" (`1000:45f2`) is not traced, and is taken as the coarse
+bearing within a quarter turn of the heading; the check stops at the first bump, and
+whether the original goes on through the field, and whether a bump needs the object
+ahead, is untraced. The stock scripts' event 9 handlers now run, and `ntrain`
+plays out differently: at 110,000 retraces the first human scorpion is 27 units from
+the alien base instead of 9 (it never bumps), so `xeno-app`'s
+`real_assets_a_training_mission_is_won_and_lost_by_play` takes it over at 60,000.
 
 ## The cockpit keys (T-105)
 

@@ -5,6 +5,7 @@
 
 pub mod base;
 pub mod clock;
+pub mod contact;
 pub mod damage;
 pub mod editor;
 pub mod hash;

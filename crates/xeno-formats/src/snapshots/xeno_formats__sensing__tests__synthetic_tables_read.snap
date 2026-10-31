@@ -20,6 +20,7 @@ Sensing {
             arc: 4096,
             range: 768,
             locked_on: 6,
+            contact: 8,
         },
         KindTicks {
             scan: 15,
@@ -27,6 +28,7 @@ Sensing {
             arc: 4352,
             range: 784,
             locked_on: 7,
+            contact: 8,
         },
         KindTicks {
             scan: 15,
@@ -34,6 +36,7 @@ Sensing {
             arc: 4608,
             range: 800,
             locked_on: 6,
+            contact: 8,
         },
     ],
     messages: Messages {
