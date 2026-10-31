@@ -312,6 +312,8 @@ pub const TRAINING_PRESSED_XOR: u8 = 9;
 /// The colours that mark where the mission draws (`docs/formats/m@l.md`): 255 in the
 /// situation room, 253 to 255 in the consoles.
 const VIEW_COLOURS: [u8; 3] = [253, 254, 255];
+/// A view's region in the frame: left, top, width and height (`review::region_of`).
+type Region = (usize, usize, usize, usize);
 /// The port's own placeholder marks (not the original's).
 const PLACEHOLDER: u8 = 255;
 const PLACEHOLDER_INK: u8 = 0;
@@ -2288,11 +2290,14 @@ impl Mission {
             self.draw_orders(fb, assets);
         }
         let font = assets.fonts.get(&UNIT_FONT);
+        // Measured from the picture before anything is drawn, which can leave the
+        // regions' colours behind (the placeholders' labels, a probe's pixel).
+        let [main, second] = [255, SECOND_DISPLAY].map(|c| review::region_of(fb, c));
         for &colour in colours {
-            if colour == 255 && self.draw_view(fb, assets) {
+            if colour == 255 && main.is_some_and(|r| self.draw_view(fb, assets, r)) {
                 continue;
             }
-            if colour == SECOND_DISPLAY && self.draw_second(fb, assets) {
+            if colour == SECOND_DISPLAY && second.is_some_and(|r| self.draw_second(fb, assets, r)) {
                 continue;
             }
             // Without the situation room's tables, its main view (T-103); the
@@ -2342,16 +2347,14 @@ impl Mission {
     /// copied through it: a console's 3D view (T-101), or the situation room's main
     /// view in modes M, R and C (T-103, [`mainview`]). `false` (nothing drawn) without
     /// the tables, when the robot is gone, and in the other modes.
-    fn draw_view(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+    fn draw_view(&self, fb: &mut Framebuffer, assets: &Assets, region: Region) -> bool {
         if self.viewed == Viewed::Base && self.mode == STATUS_MODE {
             return self.draw_status(fb, assets);
         }
         let Some(view) = &assets.view3d else {
             return false;
         };
-        let Some((left, top, width, height)) = review::region(fb) else {
-            return false;
-        };
+        let (left, top, width, height) = region;
         let terrain = self
             .scenario
             .as_ref()
@@ -2478,15 +2481,12 @@ impl Mission {
     /// kinds' draw handlers): the camera turned by the pan at its zoom, or the map
     /// around the robot. `false` (nothing drawn) in the other modes and without the
     /// tables.
-    fn draw_second(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+    fn draw_second(&self, fb: &mut Framebuffer, assets: &Assets, region: Region) -> bool {
         let Viewed::Robot(slot) = self.viewed else {
             return false;
         };
-        let (Some(view), Some((left, top, width, height)), Some(robot)) = (
-            &assets.view3d,
-            review::region_of(fb, SECOND_DISPLAY),
-            self.book().get(slot),
-        ) else {
+        let (left, top, width, height) = region;
+        let (Some(view), Some(robot)) = (&assets.view3d, self.book().get(slot)) else {
             return false;
         };
         let tables = &assets.views.second_display;
@@ -5172,6 +5172,65 @@ pub mod tests {
                     let clear = assets.views.second_display.map_colours[kind.index()][0];
                     if mode == MAP_DISPLAY {
                         assert!(count(clear) > before / 2, "{name} {kind:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each console's 3D view is drawn in a buffer the size of its picture's colour-255
+    /// region, whatever the displays drawn after it leave there: the placeholders'
+    /// labels, or the pointer probe's pixel on the second display (T-163).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_3d_view_keeps_its_picture_s_region() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let (name, scenario) = assets.scenarios.iter().next().unwrap();
+        let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+        for kind in RobotKind::ALL {
+            let robot = m
+                .robots()
+                .into_iter()
+                .find(|&s| m.book().get(s).unwrap().kind == kind)
+                .unwrap();
+            let view = m.view_robot(robot).unwrap();
+            let file = crate::screens::Screen::Mission(view).file().unwrap();
+            let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            fb.pixels_mut().copy_from_slice(&picture.pixels);
+            let (left, top, width, height) = review::region(&fb).unwrap();
+            let (second_left, second_top, ..) = review::region_of(&fb, SECOND_DISPLAY).unwrap();
+            let terrain = m.scenario.as_ref().and_then(|s| s.terrain.as_ref());
+            let mut want = Framebuffer::new(Size::new(width, height));
+            scene::draw(
+                &mut want,
+                m.world(),
+                EntityId(robot),
+                assets.view3d.as_ref().unwrap(),
+                &assets.motion,
+                terrain.map_or(&[][..], |t| &t.features),
+                &assets.models,
+                assets.skies.get(&m.file),
+                None,
+            );
+            let second = ((second_left + 1) as u16, (second_top + 1) as u16);
+            for pointer in [None, Some(second)] {
+                m.pointer = pointer;
+                fb.pixels_mut().copy_from_slice(&picture.pixels);
+                m.draw(&mut fb, &assets);
+                for (y, x) in (0..height).flat_map(|y| (0..width).map(move |x| (y, x))) {
+                    if picture.pixels[(top + y) * 320 + left + x] == 255 {
+                        let got = fb.get(left + x, top + y);
+                        assert_eq!(got, want.get(x, y), "{kind:?} {pointer:?} at ({x}, {y})");
                     }
                 }
             }
