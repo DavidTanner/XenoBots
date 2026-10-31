@@ -47,13 +47,15 @@ pub fn hit(
                 destroy(world, id, tables, events);
                 return;
             }
+            let mut sent = Vec::new();
             for _ in 0..points {
                 let high = (random.word() >> 8) as u8;
                 if let Some(part) = pick(&robot.parts, high) {
-                    wear(parts, part, random);
+                    sent.extend(wear(parts, part, random));
                 }
             }
             if let Some(m) = movement(world, id) {
+                sent.into_iter().for_each(|text| m.panel.post(text));
                 crate::script::post(m, EVENT_HIT);
             }
             events.push(Event::Sound {
@@ -64,10 +66,19 @@ pub fn hit(
         (_, Damage::Taken(taken), State::Base { destroyed, .. }) => {
             if !*destroyed {
                 *taken = taken.wrapping_add(points.into());
-                // shortcut: the messages to each side are the consoles' (T-104).
                 *destroyed = *taken >= d.base_destroyed;
-                if *destroyed {
+                let (side, destroyed) = (e.side, *destroyed);
+                let m = &tables.messages;
+                if destroyed {
+                    // Sent as from the other side's base (its side bit flipped).
+                    crate::log::tell_side(world, id, other(side), m.destroyed, tables);
                     events.push(Event::Destroyed(id));
+                } else if world
+                    .attack_told
+                    .is_none_or(|t| world.game_clock.wrapping_sub(t) > m.interval)
+                {
+                    world.attack_told = Some(world.game_clock);
+                    crate::log::tell_side(world, id, side, m.attacked, tables);
                 }
             }
         }
@@ -123,6 +134,13 @@ pub fn total(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<
     }
 }
 
+fn other(side: Side) -> Side {
+    match side {
+        Side::Human => Side::Alien,
+        Side::Alien => Side::Human,
+    }
+}
+
 /// The part a random byte `high` picks: the first entry where the chances, added up
 /// in a byte, carry or reach `high`.
 fn pick(parts: &[(u8, Part)], high: u8) -> Option<&Part> {
@@ -134,26 +152,26 @@ fn pick(parts: &[(u8, Part)], high: u8) -> Option<&Part> {
     })
 }
 
-/// One component routine on the robot's `parts`.
-fn wear(parts: &mut Components, part: &Part, random: &mut Random) {
+/// One component routine on the robot's `parts`; the message it sends the robot.
+fn wear(parts: &mut Components, part: &Part, random: &mut Random) -> Option<u16> {
     match part {
-        Part::Wear { offset, mask } => {
+        Part::Wear {
+            offset,
+            mask,
+            message,
+        } => {
             let off = random.word() as u8 & mask;
             if let Some(byte) = parts.byte(*offset) {
                 *byte = byte.saturating_sub(off);
             }
+            Some(*message)
         }
-        Part::Bits(bits) => {
-            for &(offset, bit) in bits {
-                if let Some(byte) = parts.byte(offset)
-                    && *byte & bit == 0
-                {
-                    *byte |= bit;
-                    break;
-                }
-            }
-        }
-        Part::Nothing => {}
+        Part::Bits(bits) => bits.iter().find_map(|&(offset, bit, message)| {
+            let byte = parts.byte(offset).filter(|b| **b & bit == 0)?;
+            *byte |= bit;
+            Some(message)
+        }),
+        Part::Nothing => None,
     }
 }
 
@@ -167,11 +185,7 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
         return;
     };
     let (side, at, z) = (e.side, e.position, e.z);
-    let other = match side {
-        Side::Human => Side::Alien,
-        Side::Alien => Side::Human,
-    };
-    for (side, loss) in [(side, true), (other, false)] {
+    for (side, loss) in [(side, true), (other(side), false)] {
         if let Some(State::Base { kills, losses, .. }) = world
             .base(side)
             .and_then(|b| world.get_mut(b))
@@ -343,4 +357,4 @@ pub fn tick_explosion(state: &mut State) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

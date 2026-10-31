@@ -3328,6 +3328,7 @@ pub mod tests {
                 weapons: xeno_formats::fixtures::synthetic_weapon_tables(),
                 bases: xeno_formats::fixtures::synthetic_base_tables(),
                 calendar: xeno_formats::fixtures::synthetic_calendar_tables(),
+                messages: xeno_formats::fixtures::synthetic_messages_tables(),
                 // Legs that never leave frame 0: no footsteps; heights with no bob.
                 walk: motion::Walk {
                     humanoid_legs: [[0; motion::STEPS]; 2],

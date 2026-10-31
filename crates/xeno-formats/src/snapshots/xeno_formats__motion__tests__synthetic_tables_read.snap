@@ -1154,6 +1154,7 @@ Motion {
                         Wear {
                             offset: 36,
                             mask: 7,
+                            message: 97,
                         },
                     ),
                     (
@@ -1163,10 +1164,12 @@ Motion {
                                 (
                                     220,
                                     1,
+                                    99,
                                 ),
                                 (
                                     246,
                                     64,
+                                    100,
                                 ),
                             ],
                         ),
@@ -1185,6 +1188,7 @@ Motion {
                         Wear {
                             offset: 78,
                             mask: 15,
+                            message: 98,
                         },
                     ),
                 ],
@@ -1201,6 +1205,7 @@ Motion {
                         Wear {
                             offset: 78,
                             mask: 15,
+                            message: 98,
                         },
                     ),
                 ],
@@ -1875,15 +1880,15 @@ Motion {
             1,
             2,
             3,
-            4,
-            5,
+            199,
             6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
+            254,
+            27,
+            82,
+            82,
+            199,
+            6,
+            0,
         ],
     },
     walk: Walk {
@@ -2158,6 +2163,55 @@ Motion {
         ],
         scout_crouched: 3216,
         scout_eye: 3328,
+    },
+    messages: Messages {
+        base: [
+            66,
+            66,
+            32,
+            32,
+            32,
+            32,
+        ],
+        relay: [
+            82,
+            82,
+            32,
+            32,
+            32,
+            32,
+        ],
+        other: [
+            63,
+            63,
+            32,
+            32,
+            32,
+            32,
+        ],
+        letters: [
+            [
+                72,
+                85,
+            ],
+            [
+                83,
+                67,
+            ],
+            [
+                83,
+                84,
+            ],
+        ],
+        destroyed: 48,
+        attacked: 64,
+        interval: 480,
+        header: 80,
+        header_bytes: [
+            173,
+            186,
+        ],
+        name_length: 6,
     },
     strings: Strings(8192 bytes),
 }

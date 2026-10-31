@@ -38,6 +38,7 @@ fn as_loaded(running: &World, loaded: &World) -> World {
     (expected.stagger, expected.ticks, expected.call_signs) = (loaded.stagger, loaded.ticks, 0);
     (expected.lock_window, expected.point) = (loaded.lock_window, loaded.point);
     expected.target_search = loaded.target_search;
+    (expected.game_clock, expected.attack_told) = (loaded.game_clock, loaded.attack_told);
     expected
 }
 

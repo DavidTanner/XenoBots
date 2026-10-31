@@ -13,6 +13,7 @@ use crate::damage::{self, Damage};
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
 use crate::maproom::{invalid, word};
+use crate::messages::{self, Messages};
 use crate::net::{self, Net};
 use crate::relay::{self, Relays};
 use crate::script::{self, Scripts};
@@ -148,7 +149,10 @@ pub struct Motion {
     /// The clock's days per month (`xeno_formats::calendar`).
     pub calendar: Calendar,
     pub walk: Walk,
-    /// The string segment, where the scripts' messages are.
+    /// The bases' logs and the side's messages (`xeno_formats::messages`).
+    pub messages: Messages,
+    /// The string segment, where the scripts' messages are, with the side's header
+    /// as a message to a side leaves it ([`Messages::write_header`]).
     pub strings: Strings,
 }
 
@@ -304,6 +308,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         }
     }
 
+    let messages = messages::read_image(image, ds)?;
     Ok(Motion {
         sine,
         turn_step,
@@ -364,12 +369,15 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
                 .expect("4 bytes"),
             scorpion_legs: scorpion_legs(image)?,
         },
-        strings: Strings(
-            image
+        strings: {
+            let mut s = image
                 .get(strings..)
                 .ok_or_else(|| invalid(strings, "no string segment"))?
-                .to_vec(),
-        ),
+                .to_vec();
+            messages.write_header(&mut s);
+            Strings(s)
+        },
+        messages,
     })
 }
 
@@ -619,6 +627,7 @@ mod tests {
         crate::fixtures::synthetic_weapons(&mut image, DS);
         crate::fixtures::synthetic_bases(&mut image, DS);
         crate::fixtures::synthetic_calendar(&mut image, DS);
+        crate::fixtures::synthetic_messages(&mut image, DS);
         put(&mut image, ATAN_AT.0, &[0x36, 0x8b, 0x87, 0x00, 0x0c]);
         for i in 0..ATAN_ENTRIES {
             put(

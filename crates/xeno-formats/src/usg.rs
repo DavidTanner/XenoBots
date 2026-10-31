@@ -678,7 +678,8 @@ pub struct Base {
     /// +0x59: the units' message log the situation room's mode C shows; the first
     /// slot with no text ends it.
     pub messages: [Message; 7],
-    pub unknown_b4: u8,
+    /// +0xb4: set when a line is written; the C button's new-message look.
+    pub new_message: u8,
     /// +0xb5: carries of [`Base::relay_clock`] towards the next relay made.
     pub relay_wait: u16,
     pub unknown_b7: Unknown<6>,
@@ -705,14 +706,16 @@ impl Base {
 /// One line of a base's message log (13 bytes).
 #[binrw]
 #[brw(little)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Message {
     /// The unit's name, NUL-terminated.
     pub name: [u8; 7],
-    /// The mission clock when it was sent.
+    /// The mission clock (`DS:0x7d46`) when it was sent: hours, minutes, seconds and
+    /// sixtieths.
     pub hour: u8,
     pub minute: u8,
-    pub unknown_09: [u8; 2],
+    pub second: u8,
+    pub tick: u8,
     /// The text: an offset in `xeno.exe`'s string segment; 0 for an empty slot.
     pub text: u16,
 }

@@ -10,6 +10,7 @@ pub mod damage;
 pub mod editor;
 pub mod hash;
 pub mod input;
+pub mod log;
 pub mod motion;
 pub mod net;
 pub mod orders;
@@ -149,6 +150,8 @@ impl Sim {
         self.retrace += 1;
         let month_days = self.tables.as_ref().map(|t| &t.calendar.month_days[..]);
         self.world.clock.advance(month_days.unwrap_or_default());
+        // shortcut: the 60 Hz chain from 70 Hz retraces (docs/game-loop.md).
+        self.world.game_clock = (self.retrace * 60 / 70) as u16;
         for event in events {
             self.keys.apply(event);
             self.mouse.apply(event);

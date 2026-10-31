@@ -71,10 +71,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 221,
                         minute: 236,
-                        unknown_09: [
-                            126,
-                            101,
-                        ],
+                        second: 126,
+                        tick: 101,
                         text: 57078,
                     },
                     Message {
@@ -89,10 +87,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 219,
                         minute: 187,
-                        unknown_09: [
-                            224,
-                            63,
-                        ],
+                        second: 224,
+                        tick: 63,
                         text: 8608,
                     },
                     Message {
@@ -107,10 +103,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 31,
                         minute: 142,
-                        unknown_09: [
-                            25,
-                            77,
-                        ],
+                        second: 25,
+                        tick: 77,
                         text: 204,
                     },
                     Message {
@@ -125,10 +119,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 151,
                         minute: 151,
-                        unknown_09: [
-                            63,
-                            187,
-                        ],
+                        second: 63,
+                        tick: 187,
                         text: 21892,
                     },
                     Message {
@@ -143,10 +135,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 134,
                         minute: 127,
-                        unknown_09: [
-                            127,
-                            43,
-                        ],
+                        second: 127,
+                        tick: 43,
                         text: 5904,
                     },
                     Message {
@@ -161,10 +151,8 @@ expression: "&objects[..3]"
                         ],
                         hour: 233,
                         minute: 102,
-                        unknown_09: [
-                            52,
-                            172,
-                        ],
+                        second: 52,
+                        tick: 172,
                         text: 17541,
                     },
                     Message {
@@ -179,14 +167,12 @@ expression: "&objects[..3]"
                         ],
                         hour: 11,
                         minute: 16,
-                        unknown_09: [
-                            43,
-                            96,
-                        ],
+                        second: 43,
+                        tick: 96,
                         text: 56065,
                     },
                 ],
-                unknown_b4: 13,
+                new_message: 13,
                 relay_wait: 9713,
                 unknown_b7: 18928a03a96a,
                 view_state: 2fca0dd9f1f5ed4c63d27bd66a4954697240f5d4017cdd7b4f4cdbf1825e9300332392bc2eb86910d5e17db59ed24016635cb4ab9df0a272384d0f7a1d52ee4f45f372,

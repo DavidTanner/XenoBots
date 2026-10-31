@@ -53,11 +53,12 @@ const MAX_WEIGHTS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Part {
     /// A fresh random word's low byte, masked, comes off the byte at `offset`,
-    /// stopping at 0 (the helm, the power).
-    Wear { offset: u16, mask: u8 },
-    /// The first of these bits that is clear is set; all set, nothing (a weapon
-    /// damaged, then destroyed).
-    Bits(Vec<(u16, u8)>),
+    /// stopping at 0 (the helm, the power), and the robot is sent `message` (a
+    /// string-segment offset).
+    Wear { offset: u16, mask: u8, message: u16 },
+    /// (offset, bit, message): the first of these bits that is clear is set and its
+    /// message sent; all set, nothing (a weapon damaged, then destroyed).
+    Bits(Vec<(u16, u8, u16)>),
     /// Nothing.
     Nothing,
 }
@@ -139,8 +140,18 @@ fn byte(image: &[u8], at: usize) -> Result<u8, FormatError> {
 }
 
 /// The part the component routine at `at` is: `ret`; `call` (the random word), `and
-/// al, mask`, `sub [di + offset], al`; or `test [di + offset], bit`, `jnz`, `or [di +
-/// offset], bit`, where the `jnz` goes to a `ret` or to the next such test.
+/// al, mask`, `sub [di + offset], al`, `jnc`, `mov byte [di + offset], 0`; or `test
+/// [di + offset], bit`, `jnz`, `or [di + offset], bit`, where the `jnz` goes to a
+/// `ret` or to the next such test. Each ends `mov si, message`, `call 1000:d53f`.
+const WEAR_MESSAGE_AT: usize = 14;
+const BIT_MESSAGE_AT: usize = 12;
+
+/// The `mov si, message` at `at`, after a `push dx` in the humanoid's routines.
+fn message(image: &[u8], at: usize) -> Result<u16, FormatError> {
+    let at = at + usize::from(image.get(at) == Some(&0x52));
+    operand(image, at, &[0xbe])
+}
+
 fn part(image: &[u8], at: usize) -> Result<Part, FormatError> {
     let bytes = image
         .get(at..at + 12)
@@ -150,6 +161,7 @@ fn part(image: &[u8], at: usize) -> Result<Part, FormatError> {
         [0xe8, _, _, 0x24, mask, 0x28, 0x45, offset, ..] => Ok(Part::Wear {
             offset: offset.into(),
             mask,
+            message: message(image, at + WEAR_MESSAGE_AT)?,
         }),
         _ => {
             let mut bits = Vec::new();
@@ -170,7 +182,8 @@ fn part(image: &[u8], at: usize) -> Result<Part, FormatError> {
                         hi2,
                         bit2,
                     ] if (lo, hi, bit) == (lo2, hi2, bit2) => {
-                        bits.push((u16::from_le_bytes([lo, hi]), bit));
+                        let message = message(image, at + BIT_MESSAGE_AT)?;
+                        bits.push((u16::from_le_bytes([lo, hi]), bit, message));
                         at = (at + 7).wrapping_add_signed(isize::from(jump as i8));
                     }
                     _ => return Err(invalid(at, "not a component routine")),
@@ -366,11 +379,15 @@ mod tests {
                 0x80,
                 Part::Wear {
                     offset: 0x24,
-                    mask: 7
+                    mask: 7,
+                    message: 0x61
                 }
             )
         );
-        assert_eq!(humanoid[1].1, Part::Bits(vec![(0xdc, 1), (0xf6, 0x40)]));
+        assert_eq!(
+            humanoid[1].1,
+            Part::Bits(vec![(0xdc, 1, 0x63), (0xf6, 0x40, 0x64)])
+        );
         assert_eq!(damage.robots[1].parts[0].1, Part::Nothing);
         assert_eq!((damage.base_destroyed, damage.relay_removed), (300, 20));
         assert_eq!(damage.explosion_kind, 13);
@@ -415,9 +432,11 @@ mod tests {
             0x2226 + 29,
             0x2030 + 6,
             0x2226 + 55,
-            // A component routine's `or` of another bit, and an unknown routine.
+            // A component routine's `or` of another bit, an unknown routine and a
+            // message's `mov si`.
             0x803b,
-            0x8020,
+            0x8060,
+            0x806e,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -451,7 +470,10 @@ mod tests {
                     }
                     Part::Bits(b) => {
                         bits += 1;
-                        assert!(b.iter().all(|(o, _)| [0xdc, 0xec, 0xf6, 0xfd].contains(o)));
+                        assert!(
+                            b.iter()
+                                .all(|(o, _, m)| [0xdc, 0xec, 0xf6, 0xfd].contains(o) && *m != 0)
+                        );
                     }
                     Part::Nothing => {}
                 }

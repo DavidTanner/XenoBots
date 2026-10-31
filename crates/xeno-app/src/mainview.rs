@@ -1166,7 +1166,8 @@ pub(crate) mod tests {
             name: *b"A\0\0\0\0\0\0",
             hour: 9,
             minute: 5,
-            unknown_09: [0; 2],
+            second: 0,
+            tick: 0,
             text,
         };
         base.messages = [

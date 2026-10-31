@@ -542,7 +542,7 @@ fn run(
     let Some(e) = world.get(id) else {
         return;
     };
-    let (heading, position, kind) = (e.heading, e.position, e.kind);
+    let (heading, position, kind, side) = (e.heading, e.position, e.kind, e.side);
     let (drives, program) = (program_drives(world, id), running(world, id));
     let Some(m) = movement(world, id) else {
         return;
@@ -810,10 +810,10 @@ fn run(
                 .is_some_and(|t| t.kind == xeno_formats::usg::ObjectKind::Base);
             set_carry(world, id, !base);
         }
-        (0x74, &Operand::Word(text)) => m.panel.post(text),
-        // shortcut: the base's message log (0x75, and 0x76's too) and 0x76's copy to
-        // every robot of the side are T-129's; no stock script uses 0x76.
-        (0x75 | 0x76, _) => {}
+        (0x74, &Operand::Word(text)) => crate::log::say(world, id, text, tables),
+        (0x75, &Operand::Word(text)) => crate::log::write(world, id, side, text, tables),
+        // No stock script uses 0x76.
+        (0x76, &Operand::Word(text)) => crate::log::tell_side(world, id, side, text, tables),
         (0x77, &Operand::Byte(command)) => match command {
             4 => m.path |= Movement::NEXT,
             8 => m.path |= 0x10,

@@ -5,7 +5,7 @@ use crate::orders::{Orders, Robot};
 
 /// A human humanoid (slot 4, with orders) and scorpion (6), an alien scout (9), both
 /// bases (0 human, 1 alien), an obstacle (2) and a relay (3).
-fn world() -> World {
+pub(crate) fn world() -> World {
     let mut world = World::default();
     world.insert(EntityId(0), base(Side::Human, 0, 0, 0));
     world.insert(EntityId(1), base(Side::Alien, 50, 0, 0));
@@ -84,23 +84,25 @@ fn wear_stops_at_0_and_bits_set_the_first_clear_one() {
     let helm = Part::Wear {
         offset: 0x24,
         mask: 0xff,
+        message: 7,
     };
     let mut expected = random.clone();
     let off = expected.word() as u8;
-    wear(&mut c, &helm, &mut random);
+    assert_eq!(wear(&mut c, &helm, &mut random), Some(7));
     assert_eq!(c.helm, 2u8.saturating_sub(off));
     assert_eq!(random, expected);
-    let weapon = Part::Bits(vec![(0xdc, 1), (0xf6, 0x40)]);
-    wear(&mut c, &weapon, &mut random);
+    let weapon = Part::Bits(vec![(0xdc, 1, 8), (0xf6, 0x40, 9)]);
+    assert_eq!(wear(&mut c, &weapon, &mut random), Some(8));
     assert_eq!((c.weapons, c.systems), (1, 0));
-    wear(&mut c, &weapon, &mut random);
+    assert_eq!(wear(&mut c, &weapon, &mut random), Some(9));
     assert_eq!((c.weapons, c.systems), (1, 0x40));
     let before = c;
-    wear(&mut c, &weapon, &mut random);
-    wear(&mut c, &Part::Nothing, &mut random);
+    // All set: nothing, and no message.
+    assert_eq!(wear(&mut c, &weapon, &mut random), None);
+    assert_eq!(wear(&mut c, &Part::Nothing, &mut random), None);
     assert_eq!(c, before);
     // Bytes the sim does not keep are left alone, and so is the random word.
-    wear(&mut c, &Part::Bits(vec![(0x99, 1)]), &mut random);
+    wear(&mut c, &Part::Bits(vec![(0x99, 1, 10)]), &mut random);
     assert_eq!(c, before);
     assert_eq!(random, expected);
 }
@@ -136,6 +138,11 @@ fn a_hit_wears_a_robot_point_by_point_and_posts_event_7() {
     assert!(power < 100);
     assert_eq!(parts(&world, 9).power, power);
     assert_eq!(random, expected);
+    // Each wear sends the scout its message; four of them wait.
+    match world.get(EntityId(9)).unwrap().state {
+        State::Robot(m) => assert_eq!(m.panel.queue, [0x62, 0x62, 0x62, 0x62, 0]),
+        _ => unreachable!(),
+    }
     // 80 points is not over the threshold: the scout is still there.
     assert!(world.get(EntityId(9)).is_some());
 }
@@ -265,11 +272,31 @@ fn a_base_is_destroyed_at_300_and_a_relay_removed_at_20() {
     let mut world = world();
     let mut random = Random::seeded(1);
     world.get_mut(EntityId(0)).unwrap().damage = Damage::Taken(250);
-    assert!(hit_for(&mut world, 0, 49, &mut random).is_empty());
+    assert!(hit_for(&mut world, 0, 48, &mut random).is_empty());
+    // Under attack: told to its own side once, until the clock passes the interval.
+    let log = |w: &World, side| match w.get(w.base(side).unwrap()).unwrap().state {
+        State::Base { depot, .. } => depot.log.map(|l| l.text),
+        _ => unreachable!(),
+    };
+    let t = synthetic_tables().messages;
+    world.game_clock = t.interval + 1;
+    hit_for(&mut world, 0, 1, &mut random);
+    assert_eq!(log(&world, Side::Human)[..3], [t.attacked, t.attacked, 0]);
+    let panel = |w: &World| match w.get(EntityId(4)).unwrap().state {
+        State::Robot(m) => m.panel.queue,
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        panel(&world)[..4],
+        [t.header, t.attacked, t.header, t.attacked]
+    );
     assert_eq!(
         hit_for(&mut world, 0, 1, &mut random),
         [Event::Destroyed(EntityId(0))]
     );
+    // Destroyed: the other side is told.
+    assert_eq!(log(&world, Side::Alien)[0], t.destroyed);
+    assert_eq!(log(&world, Side::Human)[2], 0);
     // A destroyed base stays, and takes no more.
     assert!(hit_for(&mut world, 0, 9, &mut random).is_empty());
     let b = world.get(EntityId(0)).unwrap();
@@ -522,4 +549,37 @@ fn real_assets_ntrain_is_won_and_lost_by_a_base_destroyed() {
         let ended = (1..=33 * 16).find(|_| sim.tick(&[]).contains(&Event::MissionOver { won }));
         assert!(ended.is_some_and(|t| t > 32 * 16), "{side:?}: {ended:?}");
     }
+}
+
+/// On stock data a hit on a robot sends it its parts' messages, and a hit on the
+/// player's base logs that it is under attack, signed with the base's name.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_hits_send_messages_and_log_an_attack() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let t = tables.messages.clone();
+    let file = std::fs::read(dir.join("scen00a.usg")).unwrap();
+    let scenario = xeno_formats::usg::parse(&file).unwrap();
+    let mut sim = crate::Sim::load(&scenario, Random::seeded(1), tables);
+    let robot = sim.world.units(Side::Human)[0];
+    sim.hit(robot, 40);
+    let State::Robot(m) = sim.world.get(robot).unwrap().state else {
+        panic!()
+    };
+    assert_ne!(m.panel.queue[0], 0);
+    let base = sim.world.base(Side::Human).unwrap();
+    sim.hit(base, 1);
+    let State::Base { depot, .. } = sim.world.get(base).unwrap().state else {
+        panic!()
+    };
+    let line = depot.log.iter().rev().find(|l| l.text != 0).unwrap();
+    assert_eq!((line.text, &line.name[..6]), (t.attacked, &t.base[..]));
+    assert_eq!(depot.new_message, 1);
 }
