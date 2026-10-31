@@ -81,6 +81,17 @@ pub(crate) const STATUS_PLACES_AT: usize = 0x16f38;
 pub(crate) const STATUS_CAPTIONS_AT: usize = 0x16f41;
 pub(crate) const NO_UNITS_AT: usize = 0x16f55;
 pub(crate) const STATUS_RECORDS_AT: usize = 0x6897;
+/// Mode S's `call [bx + table]`: each kind's figure routine, an offset in segment
+/// `1fe6`. `mov si, text` twice in `1000:de12`: a flag's texts, clear and set.
+pub(crate) const FIGURES_AT: usize = 0x16f0b;
+pub(crate) const FLAG_TEXTS_AT: [usize; 2] = [0xde13, 0xde1a];
+/// Segment `1fe6`'s start in the load image.
+const KERNEL: usize = 0xfe60;
+/// The far calls a figure routine's entries end with: a flag, a percentage.
+const FLAG_CALL: u16 = 0x5583;
+const PERCENT_CALL: u16 = 0x5576;
+/// The most entries read from a figure routine before its `ret` (the stock has 11).
+const MAX_FIGURES: usize = 32;
 /// The robot kinds mode S shows.
 pub const KINDS: usize = 3;
 /// The most caption ops read for a kind before its end word (the stock has 21).
@@ -179,6 +190,77 @@ pub struct Status {
     pub captions: [Vec<Caption>; KINDS],
     /// The text without a unit.
     pub no_units: Vec<u8>,
+    /// Each kind's figures, in order.
+    pub figures: [Vec<Figure>; KINDS],
+    /// A flag's texts: its masked byte 0, and not.
+    pub flags: [Vec<u8>; 2],
+}
+
+/// One entry of a kind's figure routine: the object's byte at `field` ANDed with
+/// `mask` (0xff without an `and`), drawn opaque at (`x`, `y`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Figure {
+    pub x: u16,
+    pub y: u16,
+    pub field: u16,
+    pub mask: u8,
+    /// `1000:5583`'s flag, or `1000:5576`'s percentage.
+    pub percent: bool,
+}
+
+/// A figure routine at `at`: entries of `mov ax, y`, `mov bx, x`, `mov cl, [di +
+/// field]` (an 8- or 16-bit displacement), an optional `and cl, mask` and a far call to
+/// the flag or percentage routine, up to a `ret`.
+fn figures(image: &[u8], mut at: usize) -> Result<Vec<Figure>, FormatError> {
+    let mut entries = Vec::new();
+    let byte = |at: usize| {
+        image
+            .get(at)
+            .copied()
+            .ok_or_else(|| invalid(at, "past the end"))
+    };
+    while byte(at)? != 0xc3 {
+        if entries.len() == MAX_FIGURES {
+            return Err(invalid(at, "too many figures"));
+        }
+        let (y, x) = (
+            operand(image, at, &[0xb8])?,
+            operand(image, at + 3, &[0xbb])?,
+        );
+        at += 6;
+        let field = match (byte(at)?, byte(at + 1)?) {
+            (0x8a, 0x4d) => {
+                at += 3;
+                u16::from(byte(at - 1)?)
+            }
+            (0x8a, 0x8d) => {
+                at += 4;
+                word(image, at - 2)?
+            }
+            _ => return Err(invalid(at, "not a figure's field")),
+        };
+        let mask = match (byte(at)?, byte(at + 1)?) {
+            (0x80, 0xe1) => {
+                at += 3;
+                byte(at - 1)?
+            }
+            _ => 0xff,
+        };
+        let percent = match operand(image, at, &[0x9a])? {
+            FLAG_CALL => false,
+            PERCENT_CALL => true,
+            _ => return Err(invalid(at, "not a figure's call")),
+        };
+        at += 5;
+        entries.push(Figure {
+            x,
+            y,
+            field,
+            mask,
+            percent,
+        });
+    }
+    Ok(entries)
 }
 
 /// One op of a kind's captions.
@@ -356,6 +438,8 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
     let scripts = by_kind(STATUS_CAPTIONS_AT, &[0x8b, 0xb5])?;
     let script = |kind: usize| captions(image, ds, strings, ds + usize::from(scripts[kind]));
     let records = bytes(at_ds(STATUS_RECORDS_AT, &[0x8a, 0x85])?, KINDS)?;
+    let routines = by_kind(FIGURES_AT, &[0xff, 0x97])?;
+    let routine = |kind: usize| figures(image, KERNEL + usize::from(routines[kind]));
     let speeds = at_ds(SPEEDS_AT, &[0x8a, 0x87])?;
     let speeds = image
         .get(speeds..)
@@ -448,6 +532,8 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             records: [records[0], records[1], records[2]],
             captions: [script(0)?, script(1)?, script(2)?],
             no_units: in_strings(NO_UNITS_AT)?,
+            figures: [routine(0)?, routine(1)?, routine(2)?],
+            flags: [text(FLAG_TEXTS_AT[0])?, text(FLAG_TEXTS_AT[1])?],
         },
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
@@ -594,6 +680,28 @@ pub(crate) mod tests {
         put(NO_UNITS_AT, &op(&[0xbe], 0x74));
         put(STATUS_RECORDS_AT, &op(&[0x8a, 0x85], 0x890));
         put(DS + 0x890, &[7, 8, 9]);
+        // Kind 0's figures: +0x24 as a percentage at (0x20, 0x10), +0xdc bit 1 as a
+        // flag at (0x21, 0x11); the others none. Flag texts "ok" and "bad".
+        put(FIGURES_AT, &op(&[0xff, 0x97], 0x8a0));
+        put(DS + 0x8a0, &[0, 1, 0x20, 1, 0x30, 1]);
+        put(
+            KERNEL + 0x100,
+            &[0xb8, 0x10, 0, 0xbb, 0x20, 0, 0x8a, 0x4d, 0x24],
+        );
+        put(
+            KERNEL + 0x109,
+            &[0x9a, 0x76, 0x55, 0, 0, 0xb8, 0x11, 0, 0xbb, 0x21, 0],
+        );
+        put(
+            KERNEL + 0x114,
+            &[0x8a, 0x8d, 0xdc, 0, 0x80, 0xe1, 2, 0x9a, 0x83, 0x55],
+        );
+        put(KERNEL + 0x120, &[0xc3]);
+        put(KERNEL + 0x130, &[0xc3]);
+        put(KERNEL + 0x11e, &[0, 0]);
+        put(FLAG_TEXTS_AT[0], &op(&[0xbe], 0x8b0));
+        put(FLAG_TEXTS_AT[1], &op(&[0xbe], 0x8b4));
+        put(DS + 0x8b0, b"ok\0\0bad\0");
         image
     }
 
@@ -651,6 +759,22 @@ pub(crate) mod tests {
         );
         assert!(status.captions[1].is_empty());
         assert_eq!(status.no_units, b"nil");
+        let figure = |x, y, field, mask, percent| Figure {
+            x,
+            y,
+            field,
+            mask,
+            percent,
+        };
+        assert_eq!(
+            status.figures[0],
+            [
+                figure(0x20, 0x10, 0x24, 0xff, true),
+                figure(0x21, 0x11, 0xdc, 2, false)
+            ]
+        );
+        assert!(status.figures[2].is_empty());
+        assert_eq!(status.flags, [b"ok".to_vec(), b"bad".to_vec()]);
         insta::assert_debug_snapshot!(SitRoom {
             strings: Vec::new(),
             ..room
@@ -697,6 +821,8 @@ pub(crate) mod tests {
             STATUS_CAPTIONS_AT,
             NO_UNITS_AT,
             STATUS_RECORDS_AT,
+            FIGURES_AT + 1,
+            FLAG_TEXTS_AT[1],
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -778,6 +904,17 @@ pub(crate) mod tests {
                 }
             }
         }
+        // The figures: the helm and power as percentages, the parts damage wears as
+        // flags; a flag set shows in the second colour pair.
+        for kind in &status.figures {
+            let percent: Vec<_> = kind.iter().filter(|f| f.percent).map(|f| f.field).collect();
+            assert_eq!(percent, [0x24, 0x4e]);
+            assert!(kind.iter().all(|f| f.percent
+                || [0xdc, 0xec, 0xf6, 0xfd].contains(&f.field) && f.mask.count_ones() == 1));
+        }
+        assert_eq!(status.figures.each_ref().map(Vec::len), [9, 11, 9]);
+        assert!(status.flags[0].iter().all(|&b| b < 0x80));
+        assert!(status.flags[1].iter().any(|&b| b >= 0x80));
         // Every call sign is six printable bytes (names like `EAGLE `).
         for i in 0..CALL_SIGNS as u8 {
             let sign = room.call_sign(i);

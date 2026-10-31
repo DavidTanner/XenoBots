@@ -2413,14 +2413,24 @@ impl Mission {
     }
 
     /// Mode S ([`status`]): the main view cleared to 0 (slot `0x5b4`), then the selected
-    /// robot's picture, captions and name, or the no-unit text; `false` without the
-    /// tables.
+    /// robot's picture, captions, name and figures, or the no-unit text; `false`
+    /// without the tables.
     fn draw_status(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
         let (Some(room), Some(font)) = (&assets.sitroom, assets.fonts.get(&status::FONT)) else {
             return false;
         };
         recolour(fb, self.main_view(assets), 255, 0);
-        let unit = self.detail_unit(assets).map(|u| (u.kind, u.serial));
+        let parts = |slot| match self.world().get(EntityId(slot)).map(|e| &e.damage) {
+            Some(xeno_sim::Damage::Robot(parts)) => Some(*parts),
+            _ => None,
+        };
+        let unit = self.detail_unit(assets).and_then(|u| {
+            Some(status::Unit {
+                kind: u.kind,
+                serial: u.serial,
+                parts: parts(self.selected?)?,
+            })
+        });
         status::draw(fb, room, font, unit, |h| assets.sprite(h));
         true
     }
@@ -4549,8 +4559,8 @@ pub mod tests {
         assert_eq!(fb.get(10, 10), Some(0xff));
     }
 
-    /// Mode S draws each robot kind's picture, captions and name from the user's files
-    /// inside the main view.
+    /// Mode S draws each robot kind's picture, captions, name and figures from the
+    /// user's files inside the main view.
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_mode_s_draws_every_kind_inside_the_main_view() {
@@ -4571,7 +4581,21 @@ pub mod tests {
         );
         for kind in 0..xeno_formats::sitroom::KINDS {
             let mut fb = Framebuffer::new(Size::MODE_13H);
-            status::draw(&mut fb, room, font, Some((kind, 123)), |h| assets.sprite(h));
+            let unit = status::Unit {
+                kind,
+                serial: 123,
+                // Some parts damaged, the helm whole, the power not.
+                parts: xeno_sim::Components {
+                    helm: 100,
+                    power: 37,
+                    weapons: 1,
+                    targeting: 0,
+                    systems: 5,
+                    equipment: 0x80,
+                    total: 0,
+                },
+            };
+            status::draw(&mut fb, room, font, Some(unit), |h| assets.sprite(h));
             let screen = Rect {
                 top: 0,
                 left: 0,

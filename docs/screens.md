@@ -2069,13 +2069,15 @@ original.
   (+0x18) is the scenario's as loaded (the signal +0x4f is the sim's since T-148); a
   speed past the table shows its last entry; Ctrl+Alt+F's developer text is not shown.
   Not checked in DOSBox: the counts', clock's and detail's look, the mark's blink.
-- **Status view** (`crates/xeno-app/src/status.rs`, T-126 part 1): mode S as "The
-  status view (T-126)" above, from `xeno_formats::sitroom::Status` (pictures, places,
-  records, captions and the no-unit text) and msprite1: the main view cleared to 0, the
-  selected robot's picture, captions and name, or the no-unit text; the kind's colour
+- **Status view** (`crates/xeno-app/src/status.rs`, T-126): mode S as "The status
+  view (T-126)" above, from `xeno_formats::sitroom::Status` (pictures, places, records,
+  captions, figures, flag texts and the no-unit text) and msprite1: the main view
+  cleared to 0, the selected robot's picture, captions, name and figures, or the
+  no-unit text; the kind's colour
   record is started (`Mission::status_record`) when the mode is set, the situation room
   shown or a unit selected while in it, once no fade runs. The serial is the detail
-  panel's (the scenario's as loaded). The figures are part 2. Not checked in DOSBox.
+  panel's (the scenario's as loaded). The kinds' figures (part 2) read the sim's
+  `Components`. Not checked in DOSBox (T-181).
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the

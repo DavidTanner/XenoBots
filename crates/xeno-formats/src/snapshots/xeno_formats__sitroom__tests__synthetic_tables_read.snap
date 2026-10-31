@@ -423,6 +423,37 @@ SitRoom {
             105,
             108,
         ],
+        figures: [
+            [
+                Figure {
+                    x: 32,
+                    y: 16,
+                    field: 36,
+                    mask: 255,
+                    percent: true,
+                },
+                Figure {
+                    x: 33,
+                    y: 17,
+                    field: 220,
+                    mask: 2,
+                    percent: false,
+                },
+            ],
+            [],
+            [],
+        ],
+        flags: [
+            [
+                111,
+                107,
+            ],
+            [
+                98,
+                97,
+                100,
+            ],
+        ],
     },
     strings: [],
 }
