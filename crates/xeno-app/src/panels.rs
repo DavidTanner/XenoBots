@@ -171,19 +171,7 @@ fn pieces(d: &Detail, unit: Option<&DetailUnit>) -> Vec<Piece> {
         pieces.push(Piece::Text(at(0), d.no_unit[1].clone(), Opaque));
         return pieces;
     };
-    // `1fe6:7f38`: the kind's letters, `-`, the serial's last three digits.
-    // shortcut: with the developer's Ctrl+Alt+F (`DS:0x5ba0`) the original shows
-    // `DS:0x62cc` here instead; not ported, as nothing the port runs writes it.
-    let mut name = d
-        .kind_letters
-        .get(u.kind)
-        .copied()
-        .unwrap_or_default()
-        .to_vec();
-    name.push(b'-');
-    name.extend(digits(u.serial & 0x7fff, 3));
-    name.push(NEW_LINE);
-    pieces.push(Piece::Text(None, name, Opaque));
+    pieces.push(Piece::Text(None, unit_name(d, u.kind, u.serial), Opaque));
     pieces.push(Piece::Text(
         at(0),
         d.places[usize::from(!u.in_base)].clone(),
@@ -208,6 +196,23 @@ fn pieces(d: &Detail, unit: Option<&DetailUnit>) -> Vec<Piece> {
     pieces.push(Piece::Text(at(4), percent(u.total), Opaque));
     pieces.push(Piece::Text(None, percent(signal_percent(u.signal)), Opaque));
     pieces
+}
+
+/// A robot's name (`1fe6:7f38`): the kind's letters, `-`, the serial's last three
+/// digits and a new line.
+/// shortcut: with the developer's Ctrl+Alt+F (`DS:0x5ba0`) the original shows
+/// `DS:0x62cc` instead; not ported, as nothing the port runs writes it.
+pub(crate) fn unit_name(d: &Detail, kind: usize, serial: u16) -> Vec<u8> {
+    let mut name = d
+        .kind_letters
+        .get(kind)
+        .copied()
+        .unwrap_or_default()
+        .to_vec();
+    name.push(b'-');
+    name.extend(digits(serial & 0x7fff, 3));
+    name.push(NEW_LINE);
+    name
 }
 
 /// `1000:02b7`'s five digits with zeros, the last `n` of them.

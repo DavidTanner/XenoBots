@@ -55,6 +55,7 @@ use crate::maproom::{Campaign, scenario_file};
 use crate::panels;
 use crate::pointer::{ARROW, CORNER};
 use crate::screens::View;
+use crate::status;
 use crate::terrain::{self, TerrainEditor};
 use crate::{review, scene};
 
@@ -265,9 +266,9 @@ const ORDERS_COLOUR: u8 = 0x1d;
 const ORDERS_HIGH_COLOUR: u8 = 0x17;
 const ORDERS_CLEAR: u8 = 0x10;
 const ORDERS_CURSOR: (i32, i32) = (96, 30);
-/// The main view's mode 2 (S), whose routine (`1fe6:704a`) sets `DS:0x7d4d`: no
-/// time-of-day tint while it is shown.
-const UNTINTED_MODE: u8 = 2;
+/// The main view's mode 2 (S, the selected unit's status, [`status`]), whose routine
+/// (`1fe6:704a`) sets `DS:0x7d4d`: no time-of-day tint while it is shown.
+const STATUS_MODE: u8 = 2;
 /// The main view's modes 4 (M, the map), 6 (R, the selected unit's view) and 8 (C,
 /// the message log).
 const MAP_MODE: u8 = 4;
@@ -422,6 +423,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         mainview::LOG_FONT,
         panels::PANEL_FONT,
         panels::DETAIL_FONT,
+        status::FONT,
     ]) {
         let font = video
             .font(id)
@@ -683,6 +685,9 @@ pub struct Mission {
     dirty: bool,
     /// The tint's last weight (`DS:0x7d4c`); none (0xff) restarts it.
     tint: Option<u8>,
+    /// The main view is to be redrawn (base +0x32 bit 14): mode S starts its colour
+    /// record then.
+    redraw: bool,
     /// What the situation room's map shows (base +0x32, +0x36, +0x4f).
     map: MapState,
     /// The scenario as loaded, which the editor's keys change; Ctrl+Alt+P and a save
@@ -770,6 +775,7 @@ impl Mission {
             goal_press: false,
             dirty: true,
             tint: None,
+            redraw: true,
             map: MapState::default(),
             scenario: None,
             editor: Editor::default(),
@@ -1025,6 +1031,8 @@ impl Mission {
         if let Some(slot) = slot {
             log::debug!("situation room: unit {slot} selected");
             self.selected = Some(slot);
+            // `1fe6:6f89`: in mode S a selection redraws the main view.
+            self.redraw = true;
             let robots = self.robots();
             if let Some(i) = robots.iter().position(|&r| r == slot) {
                 let rows = 5;
@@ -1068,6 +1076,19 @@ impl Mission {
     /// (`1000:ecff`, called as each view is drawn).
     pub fn restart_tint(&mut self) {
         self.tint = None;
+        // The main view's draw (`1000:54d3` on) also sets +0x32 bit 14.
+        self.redraw = true;
+    }
+
+    /// The colour record mode S starts for the selected robot's kind on a redraw
+    /// (`1000:686a`, `DS:0x56b8`): it sets colours 128 to 254 to the kind's picture's.
+    pub fn status_record(&mut self, assets: &Assets) -> Option<u8> {
+        let redraw = std::mem::take(&mut self.redraw);
+        if !redraw || self.viewed != Viewed::Base || self.mode != STATUS_MODE {
+            return None;
+        }
+        let kind = self.book().get(self.selected?)?.kind.index();
+        assets.sitroom.as_ref()?.status.records.get(kind).copied()
     }
 
     /// The weight to start [`TINT_RECORDS`] with now, if the mission clock's
@@ -1077,7 +1098,7 @@ impl Mission {
         let Run::Running(sim) = &self.run else {
             return None;
         };
-        if self.viewed == Viewed::Base && self.mode == UNTINTED_MODE {
+        if self.viewed == Viewed::Base && self.mode == STATUS_MODE {
             return None;
         }
         let weight = sim.world.clock.tint();
@@ -1444,12 +1465,10 @@ impl Mission {
     /// The situation room's main view mode (`ui_sitroom_set_view_mode`).
     fn set_mode(&mut self, mode: u8) {
         log::debug!("situation room: main view mode {mode}");
-        if mode == UNTINTED_MODE {
-            log::debug!("situation room: the status view (S) is not drawn yet (T-126)");
-        }
         self.mode = mode;
         self.typed = 0;
         self.tint = None;
+        self.redraw = true;
         self.dirty = true;
     }
 
@@ -2248,10 +2267,10 @@ impl Mission {
             if colour == SECOND_DISPLAY && self.draw_second(fb, assets) {
                 continue;
             }
-            // The status view (S) is T-126; the consoles' other displays and
-            // third displays T-166, T-170 and T-173.
+            // Without the situation room's tables, its main view (T-103); the
+            // consoles' other displays and third displays T-166, T-170 and T-173.
             let task = match (view, colour) {
-                (View::SitRoom, _) => "T-126",
+                (View::SitRoom, _) => "T-103",
                 (_, 255) => "T-101",
                 (_, SECOND_DISPLAY) => "T-134",
                 (View::Humanoid, _) => "T-166",
@@ -2296,6 +2315,9 @@ impl Mission {
     /// view in modes M, R and C (T-103, [`mainview`]). `false` (nothing drawn) without
     /// the tables, when the robot is gone, and in the other modes.
     fn draw_view(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+        if self.viewed == Viewed::Base && self.mode == STATUS_MODE {
+            return self.draw_status(fb, assets);
+        }
         let Some(view) = &assets.view3d else {
             return false;
         };
@@ -2388,6 +2410,19 @@ impl Mission {
             review::copy_through(fb, &buffer, left, top);
         }
         drawn
+    }
+
+    /// Mode S ([`status`]): the main view cleared to 0 (slot `0x5b4`), then the selected
+    /// robot's picture, captions and name, or the no-unit text; `false` without the
+    /// tables.
+    fn draw_status(&self, fb: &mut Framebuffer, assets: &Assets) -> bool {
+        let (Some(room), Some(font)) = (&assets.sitroom, assets.fonts.get(&status::FONT)) else {
+            return false;
+        };
+        recolour(fb, self.main_view(assets), 255, 0);
+        let unit = self.detail_unit(assets).map(|u| (u.kind, u.serial));
+        status::draw(fb, room, font, unit, |h| assets.sprite(h));
+        true
     }
 
     /// The pointer probe's pixel in a view whose region starts at (`left`, `top`): the
@@ -3326,11 +3361,30 @@ pub mod tests {
         assert_eq!(m.tint(), Some(0));
         m.restart_tint();
         assert_eq!(m.tint(), Some(0));
-        m.mode = UNTINTED_MODE;
+        m.mode = STATUS_MODE;
         m.restart_tint();
         assert_eq!(m.tint(), None);
         m.mode = ORDERS_MODE;
         assert_eq!(m.tint(), Some(0));
+    }
+
+    /// Mode S starts the selected robot's kind's record once a redraw, and only there.
+    #[test]
+    fn mode_s_starts_its_record_on_a_redraw() {
+        let mut assets = test_assets();
+        assets.sitroom = Some(crate::mainview::tests::room());
+        let mut m = mission(&assets);
+        let robot = m.robots()[0];
+        let record = assets.sitroom.as_ref().unwrap().status.records
+            [m.book().get(robot).unwrap().kind.index()];
+        m.set_mode(MAP_MODE);
+        m.select_unit(Some(robot));
+        assert_eq!(m.status_record(&assets), None, "not in mode M");
+        m.set_mode(STATUS_MODE);
+        assert_eq!(m.status_record(&assets), Some(record));
+        assert_eq!(m.status_record(&assets), None, "once a redraw");
+        m.select_unit(Some(robot));
+        assert_eq!(m.status_record(&assets), Some(record));
     }
 
     /// With unlock word 9 the editor's keys act in the situation room; its terrain
@@ -4493,6 +4547,45 @@ pub mod tests {
         let bar: Vec<u8> = (147..200).filter_map(|x| fb.get(x, 32)).collect();
         assert!(bar.contains(&6) && bar.contains(&0), "the title on its bar");
         assert_eq!(fb.get(10, 10), Some(0xff));
+    }
+
+    /// Mode S draws each robot kind's picture, captions and name from the user's files
+    /// inside the main view.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_mode_s_draws_every_kind_inside_the_main_view() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let tables = &assets.views.situation;
+        let area = tables.find(MAIN_VIEW_TYPE).and_then(|w| w.area).unwrap();
+        let (room, font) = (
+            assets.sitroom.as_ref().unwrap(),
+            &assets.fonts[&status::FONT],
+        );
+        for kind in 0..xeno_formats::sitroom::KINDS {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            status::draw(&mut fb, room, font, Some((kind, 123)), |h| assets.sprite(h));
+            let screen = Rect {
+                top: 0,
+                left: 0,
+                bottom: 200,
+                right: 320,
+            };
+            let drawn: Vec<_> = pixels(screen)
+                .filter(|&(x, y)| fb.get(x, y) != Some(0))
+                .collect();
+            assert!(drawn.len() > 500, "kind {kind}: {} pixels", drawn.len());
+            for (x, y) in drawn {
+                assert!(area.contains(x as u16, y as u16), "kind {kind}: ({x}, {y})");
+            }
+        }
     }
 
     /// Types every stock scenario's briefing from the user's files to its end in the

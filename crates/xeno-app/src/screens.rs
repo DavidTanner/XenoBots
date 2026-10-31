@@ -783,6 +783,9 @@ impl Screens {
                     self.dac.start_anim(record, weight);
                 }
             }
+            if let Some(record) = self.mission.status_record(&self.mission_assets) {
+                self.dac.start_anim(record, 0);
+            }
         }
         if matches!(self.screen, Mission(_))
             && self.next.is_none()

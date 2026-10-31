@@ -941,7 +941,7 @@ most every 4 ticks for the map); modes O, S and C draw on the screen.
 | Mode | Key | Routine | What it draws |
 |---|---|---|---|
 | 0 | O | `1fe6:6fc1` | The briefing (T-044) |
-| 2 | S | `1fe6:704a` | The selected unit's status: no time-of-day tint; on a redraw (+0x32 bit 14) the view cleared to 0, the kind's picture (slot `0x5d8`, handles from `DS:0x5694`/`0x569a`) and `1fe6:6b4b`; then its name at (0x70, 0x7b) and the kind's routine from `DS:0x5858`. `NO UNITS` (string segment 0x80d) without one. Not traced further (T-126) |
+| 2 | S | `1fe6:704a` | The selected unit's status: its kind's picture, captions and figures and its name (below, "The status view (T-126)") |
 | 4 | M | `1000:5590`, frame `1fe6:6c05` | The map (below) |
 | 6 | R | `1000:55d6`, frame `1fe6:6b84` | The selected unit's own 3D view: the console's camera (`1000:dbe8`'s: eye height, zoom `1 << +0xf1`, heading plus the pan +0xf4), view mode `DS:0x59b5[+0xef]` (4, 8, 4, 4 for the console's display modes; 0x18 when mode 4 and its camera is damaged, +0xf6 bit 0). Over it (`1000:5630`) its heading in degrees in font 0 at (0x0c, 0x60) of the buffer, three digits (`1000:02b7` prints five) and code 0x17; a unit at its base (+0xfd bit 2) gets the buffer cleared to 0 and the string-segment text at 0x855 at (0x30, 0x28) instead. No unit: the view cleared to 0 |
 | 8 | C | `1000:56a7` | The log: the view cleared to 0x10; font 0, colours 0x14 / 0xff, `UNIT TIME MESSAGE` (`DS:0x5a83`) at (0x60, 0x1e) and a rule in 0x14 (slot `0x558`, `DS:0x5a95`: (36, 95) to (36, 288)); then (`1fe6:6d02`) for each of the base's seven 13-byte messages up to the first with no text: in font 2, colour 0x14 on 0x10, the unit's name at (0x60, y) and its time (`DS:0x5a9d`, `"  00:00  "`, hours and minutes from bytes 7 and 8), then the text (a string-segment offset at byte 11) in 0x13 at (0x9c, y); y from 0x28, 12 a row |
@@ -992,6 +992,63 @@ The nodes, in order:
 | 13 to 15 | | Nothing |
 
 The pointer over the main view takes shape `DS:0x5a14[mode]` (3 in M and R; T-106).
+
+### The status view (T-126)
+
+From a Ghidra pass over mode 2's routine (`1fe6:704a`), its redraw (`1fe6:70b5`), the
+caption walker (`1fe6:6b4b`), the kinds' figure routines and `mgavideo.dvr`'s line
+routine. Every pass it sets `DS:0x7d4d` (no time-of-day tint) and restarts the tint
+(`1000:ecff`), selects text surface `DS:0x59e4` (slot `0x488`, put back at the end),
+font 4, colour 0x1d on 0 and 0x17 on 0 for codes with bit 7.
+
+**The redraw** runs while the base's +0x32 bit 14 is set (the main view's draw at
+`1000:5505`, `ui_sitroom_set_view_mode`, and a selection while in mode 2, `1fe6:6f89`;
+`ui_draw_sitroom_main_view` clears it after the mode's routine). It clears the view's
+colour-255 region to 0 (slot `0x5b4` on `DS:0x5680`), then `1000:686a`, which by mode
+starts a colour record: for mode 2 with a selected unit, record `DS:0x56b8[kind]` of
+`mgavideo.dvr`'s list (`pal_start_anim`; 0x12, 0x13 and 0x14 in the stock driver: one
+frame of colours 128 to 254, no loop, so it sets those colours on the DAC once, for the
+kind's picture; `docs/formats/palette.md`). With no selected unit (+0x3c is 0) it types
+the string-segment text at 0x80d at (0xb0, 0x46), transparent, and nothing else is
+drawn. Otherwise, by the unit's kind (its first word):
+
+- **The picture**: slot `0x5d8` (keyed: colour 0 transparent) with the handle from the
+  word table `DS:0x5694` (msprite1's 0x418, 0x420, 0x428) at the top-left corner of the
+  rectangle the word table `DS:0x569a` points at.
+- **The captions** (`1fe6:6b4b` on the script from the word table `DS:0x56bb`): a word
+  op, then its operands, up to the word 0xffff; the op indexes a two-entry table in the
+  code. Op 0: x, y and a string-segment offset, the text typed there transparent
+  (`1fe6:4be7`) in the colours above. Op 2: a colour byte and the offset of four words,
+  a line in that colour through slot `0x558`. The stock scripts label each kind's
+  devices and lead a line from each label to the picture.
+
+**Every pass** after that, with a selected unit: its name (`1fe6:7f38`, as the detail
+panel's: the kind's letters, `-`, the serial's last three digits, a new line) opaque
+at (0x70, 0x7b), then the kind's routine from the word table `DS:0x5858` (offsets in
+segment `1fe6`), with `DI` the unit.
+
+**The figures**: each kind's routine is a list of entries, each `mov ax, y`, `mov bx,
+x`, `mov cl, [di + field]`, an optional `and cl, mask`, and a far call to `1000:5583`
+(a flag) or `1000:5576` (a percentage), ended by `ret`. Both set the cursor (`1fe6:491f`)
+and draw opaque (`1fe6:4b9d`): a flag (`1000:de12`) is one of two texts in the data
+segment, the first (`mov si` at `1000:de13`) when the masked byte is 0, the second (at
+`de1a`) otherwise, whose letters have bit 7 set, so a damaged part shows in 0x17; a
+percentage (`1000:ddd5`) is the byte's low seven bits as three digits, `%` and a new
+line, every byte from 0x20 up with bit 7 set (so in 0x17) unless it is exactly 100. The
+stock routines show, at places of their own beside the captions: the two weapons
+(+0xdc bits 0 and 1; the scorpion's third, bit 2), the cameras, map and radar (+0xf6
+bits 0 to 3), the helm (+0x24) and power (+0x4e) as percentages, the targeting computer
+(+0xec bit 0) and the scorpion's relay deployer (+0xfd bit 7): the parts damage wears
+(`docs/sim.md`, "Damage").
+
+**Slot `0x558`** (`mgavideo.dvr` 0x13f9) draws a line between (`y0`, `x0`) and (`y1`,
+`x1`) (four words at `DS:BX`, colour `AL`), hiding the pointer over its box and
+clipping it to the surface's clip rectangle first. A level or upright line covers the
+lower end up to, not including, the higher one (nothing if the two are the same);
+any other line runs from its left end to its right one, both drawn, a pixel at each
+step along the longer side, the shorter side stepped when an error, started at minus
+half the longer side, has the shorter side added and is no longer negative. A driver
+flag (`CS:0x13f8`) XORs the pixels instead; nothing in the situation room sets it.
 
 ### The roster, map controls and mode buttons (T-103)
 
@@ -1979,8 +2036,7 @@ original.
   original's handlers) set the mode; in the orders mode the main view's colour-255
   pixels are recoloured to 0x10 and the text is typed from (96, 30) in the user's font
   4, colour 0x1d, one byte per retrace, until its NUL or 0x1a, CR LF as the font's
-  control codes. O, and coming back to the situation room, start it again. Mode S keeps
-  the placeholder (T-126). The speed (one byte a retrace) is the port's
+  control codes. O, and coming back to the situation room, start it again. The speed (one byte a retrace) is the port's
   reading of "one per pass of the mission loop"; check it in DOSBox.
 - **Main view** (`crates/xeno-app/src/mainview.rs`, T-103 part 1): modes M, R and C
   as "The situation room's main view (T-103)" above, from the tables
@@ -1990,7 +2046,8 @@ original.
   `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection bits are the
   scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the grid and
   path overlays are not drawn, the log is the base's as loaded (the sim posts no
-  messages), the rule's line routine (slot `0x558`) is not traced. Mode R uses the
+  messages). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
+  "The status view (T-126)" (since T-126, without its right end). Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
 - **Roster and controls** (`crates/xeno-app/src/mainview.rs`, T-103 part 2): as "The
   roster, map controls and mode buttons (T-103)" above, from `xeno_formats::sitroom`
@@ -2012,6 +2069,13 @@ original.
   (+0x18) is the scenario's as loaded (the signal +0x4f is the sim's since T-148); a
   speed past the table shows its last entry; Ctrl+Alt+F's developer text is not shown.
   Not checked in DOSBox: the counts', clock's and detail's look, the mark's blink.
+- **Status view** (`crates/xeno-app/src/status.rs`, T-126 part 1): mode S as "The
+  status view (T-126)" above, from `xeno_formats::sitroom::Status` (pictures, places,
+  records, captions and the no-unit text) and msprite1: the main view cleared to 0, the
+  selected robot's picture, captions and name, or the no-unit text; the kind's colour
+  record is started (`Mission::status_record`) when the mode is set, the situation room
+  shown or a unit selected while in it, once no fade runs. The serial is the detail
+  panel's (the scenario's as loaded). The figures are part 2. Not checked in DOSBox.
 - **Review** (`crates/xeno-app/src/review.rs`, T-044): as "The review (T-044)" above,
   from the tables `xeno_formats::review` reads (kept in `maproom::Assets`). The map
   room's R opens it at once with its palette, on the first page; each page fills the
