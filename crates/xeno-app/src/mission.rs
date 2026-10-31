@@ -1677,6 +1677,8 @@ impl Mission {
     /// position (the original draws them continuously).
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
         self.pointer = Some(at);
+        // shortcut: redraws on every move, the original every 4 ticks; follow the
+        // original when the map gets its frame rate (T-134).
         self.dirty |= matches!(self.viewed, Viewed::Robot(_))
             || (self.viewed == Viewed::Base && self.mode == MAP_MODE);
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
@@ -3644,6 +3646,7 @@ pub mod tests {
         use xeno_sim::{Fixed, Position};
         let mut assets = test_assets();
         assets.view3d = Some(mainview::tests::view());
+        assets.sitroom = Some(mainview::tests::room());
         let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
         main_view.kind = MAIN_VIEW_TYPE;
         main_view.area = Some(Rect {
@@ -3663,7 +3666,7 @@ pub mod tests {
         let unit = Fixed::from_int;
         assert_eq!((m.map.centre.x, m.map.centre.y), (unit(5), unit(3)));
         // One of the player's robots: selected, the centre let go.
-        let robot = *m.robots().last().unwrap();
+        let robot = m.robots()[0];
         m.probed.set([Some(robot), None]);
         press(&mut m, (100, 50));
         assert_eq!(m.selected, Some(robot));
@@ -3673,8 +3676,9 @@ pub mod tests {
         let base = m
             .world()
             .iter()
-            .find(|(_, e)| e.kind == usg::ObjectKind::Base);
-        m.probed.set([base.map(|(id, _)| id.0), None]);
+            .find(|(_, e)| e.kind == usg::ObjectKind::Base)
+            .map(|(id, _)| id.0);
+        m.probed.set([base, None]);
         press(&mut m, (165, 67));
         assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
         assert_eq!(m.selected, Some(robot));
@@ -3684,6 +3688,26 @@ pub mod tests {
         m.mode = LOG_MODE;
         press(&mut m, (130, 50));
         assert_eq!(m.map, before);
+        // Drawn: the map probes the pointer over another robot's dot, and the press
+        // there selects it.
+        let other = *m.robots().last().unwrap();
+        assert_ne!(other, robot);
+        let at = m.world().get(xeno_sim::EntityId(other)).unwrap().position;
+        let objects = m.scenario.as_mut().unwrap().objects.iter_mut().flatten();
+        for o in objects.filter(|o| o.slot == other) {
+            o.status &= !1; // Not hidden (+0x17 bit 0), so its dot is drawn.
+        }
+        (m.mode, m.probed) = (MAP_MODE, Cell::default());
+        let camera = m.map_camera(&assets).unwrap();
+        let map = Framebuffer::new(Size::new(120, 60));
+        let (x, y) = mainview::pixel(&camera, &map, at.x.0, at.y.0);
+        let at = ((100 + x) as u16, (40 + y) as u16);
+        m.hover(at, &assets);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.fill_rect(xeno_render::Rect::new(100, 40, 120, 60), 255);
+        m.draw(&mut fb, &assets);
+        press(&mut m, at);
+        assert_eq!(m.selected, Some(other));
     }
 
     /// With unlock word 9, a Ctrl+left press on the map in mode M places the picked
