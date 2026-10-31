@@ -712,7 +712,7 @@ A left release on the 3D view locks the object through the sim (`Pilot::Lock`, w
 runs `sense::lock`); a right release opens its console if it is one of the player's
 robots (`Mission::view_robot`). The second display probes the same way in its camera
 mode, and in the map mode through `mainview::Probe` (dots by their pixel, sprites by
-the change, the goal's marker naming nothing; the situation room's map can take it,
+the change, the goal's marker naming nothing; the situation room's map takes it,
 T-128), keeping the point under the pointer (`mainview::pointer_to_world` with the
 display's rectangle) for the press. An Alt press there in the map mode (the screens
 pass Alt with each mouse event, `Mission::set_alt`) is acted on in `Mission::tick`
@@ -2053,8 +2053,15 @@ original.
   roster, map controls and mode buttons (T-103)" above, from `xeno_formats::sitroom`
   and the view's nested widgets (`views::View::nested`). Shortcuts: a robot's call sign
   and repair state are the scenario's as loaded (robots made since show call sign 0);
-  the C button's new-message look is not shown (the sim posts no messages). Not yet:
-  a left press on the map to move its centre or select a unit (T-128).
+  the C button's new-message look is not shown (the sim posts no messages).
+- **The map's press** (`Mission::map_press`, T-128): the map's frame probes at the
+  pointer (`mainview::Probe`, kept in `Mission::probed` as `1000:5619` keeps it); a
+  left press on the map in mode M with no widget there selects the probed object if it
+  is one of the player's robots and clears the map's bit 15, else sets bit 15 and moves
+  the centre to the point under the pointer (`mainview::pointer_to_world`). Shortcuts:
+  the camera is the map's now, not the last frame's (as the editor's press), and the
+  map redraws on every pointer move so the probe follows it. Not checked in DOSBox
+  (T-182).
 - **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
   bar, the power rows' bars and the clock as "The situation room's panels (T-127)"
   above, from the player's base in the sim (`State::Base::counts`, `Depot`), the mission
