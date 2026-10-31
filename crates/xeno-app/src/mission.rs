@@ -1673,11 +1673,12 @@ impl Mission {
     }
 
     /// The pointer moved to `at`: in the terrain editor, the ground point under it. A
-    /// console draws again, so its views probe the new position (the original draws
-    /// them continuously).
+    /// console and the situation room's map draw again, so their views probe the new
+    /// position (the original draws them continuously).
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
         self.pointer = Some(at);
-        self.dirty |= matches!(self.viewed, Viewed::Robot(_));
+        self.dirty |= matches!(self.viewed, Viewed::Robot(_))
+            || (self.viewed == Viewed::Base && self.mode == MAP_MODE);
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
             dialog.mouse_move(at, tables);
             return;
@@ -1751,6 +1752,28 @@ impl Mission {
         }
         self.dirty = true;
         true
+    }
+
+    /// A left press on the situation room's map in mode M with no widget there
+    /// (`1000:5781`): on one of the player's units probed in the last frame it clears
+    /// the map's bit 15 and selects it (`1fe6:6f31`); otherwise it sets bit 15 and
+    /// moves the centre (+0x4f, +0x53) to the point under the pointer
+    /// (`ui_map_pointer_to_world`).
+    fn map_press(&mut self, at: (u16, u16), assets: &Assets) {
+        let view = self.main_view(assets);
+        if self.viewed != Viewed::Base || self.mode != MAP_MODE || !view.contains(at.0, at.1) {
+            return;
+        }
+        // The roster's robots are the objects with +0x16 bit 5 on the player's side.
+        let unit = self.probed.get()[0].filter(|s| self.robots().contains(s));
+        if unit.is_some() {
+            self.map.overlays &= !usg::Base::MAP_FREE;
+            self.select_unit(unit);
+        } else if let Some(camera) = self.map_camera(assets) {
+            self.map.overlays |= usg::Base::MAP_FREE;
+            self.map.centre = mainview::pointer_to_world(&camera, view, at);
+            self.dirty = true;
+        }
     }
 
     /// The situation room map's camera, as the last frame drew it.
@@ -2021,6 +2044,9 @@ impl Mission {
             return;
         }
         let Some(target) = at.and_then(|at| self.target(assets, at)) else {
+            if let (MouseButton::Left, Some(at)) = (button, at) {
+                self.map_press(at, assets);
+            }
             return;
         };
         self.capture = Some((target, button));
@@ -2365,7 +2391,7 @@ impl Mission {
                         };
                         let flags = mainview::flags(self.scenario.as_ref(), self.world());
                         let map = self.shown_map();
-                        mainview::draw_map(
+                        let under = mainview::draw_map(
                             &mut buffer,
                             world,
                             &camera,
@@ -2375,8 +2401,11 @@ impl Mission {
                             selected,
                             &inputs,
                             [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
-                            None,
+                            probe,
                         );
+                        // `1000:5619`: the press reads it (`map_press`).
+                        let [_, second] = self.probed.get();
+                        self.probed.set([under, second]);
                         true
                     }
                     ROBOT_VIEW_MODE => match (self.selected, selected) {
@@ -3605,6 +3634,56 @@ pub mod tests {
         };
         assert!(sim.world.terrain.hill_at(at(201)).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A left press on the map in mode M (`1000:5781`): on one of the player's robots
+    /// probed in the last frame it frees the camera's hold on the centre and selects
+    /// it; elsewhere (nothing probed, or not the player's) it moves the centre there.
+    #[test]
+    fn a_press_on_the_map_selects_or_recentres() {
+        use xeno_sim::{Fixed, Position};
+        let mut assets = test_assets();
+        assets.view3d = Some(mainview::tests::view());
+        let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
+        main_view.kind = MAIN_VIEW_TYPE;
+        main_view.area = Some(Rect {
+            top: 40,
+            left: 100,
+            bottom: 100,
+            right: 220,
+        });
+        assets.views.situation.widgets.push(main_view);
+        let mut m = mission(&assets);
+        m.mode = MAP_MODE;
+        m.map.overlays |= usg::Base::MAP_FREE;
+        (m.map.centre, m.map.zoom) = (Position::default(), 0);
+        let press = |m: &mut Mission, at| m.mouse_down(MouseButton::Left, Some(at), &assets);
+        // Nothing under the pointer: the centre moves to the point (5, 3).
+        press(&mut m, (165, 67));
+        let unit = Fixed::from_int;
+        assert_eq!((m.map.centre.x, m.map.centre.y), (unit(5), unit(3)));
+        // One of the player's robots: selected, the centre let go.
+        let robot = *m.robots().last().unwrap();
+        m.probed.set([Some(robot), None]);
+        press(&mut m, (100, 50));
+        assert_eq!(m.selected, Some(robot));
+        assert_eq!(m.map.overlays & usg::Base::MAP_FREE, 0);
+        assert_eq!(m.map.centre.x, unit(5), "the centre kept");
+        // Not a unit (the base): the centre moves and is held again.
+        let base = m
+            .world()
+            .iter()
+            .find(|(_, e)| e.kind == usg::ObjectKind::Base);
+        m.probed.set([base.map(|(id, _)| id.0), None]);
+        press(&mut m, (165, 67));
+        assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
+        assert_eq!(m.selected, Some(robot));
+        // Off the main view, or in another mode, nothing.
+        let before = m.map;
+        press(&mut m, (10, 10));
+        m.mode = LOG_MODE;
+        press(&mut m, (130, 50));
+        assert_eq!(m.map, before);
     }
 
     /// With unlock word 9, a Ctrl+left press on the map in mode M places the picked
