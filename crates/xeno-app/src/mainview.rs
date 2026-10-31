@@ -802,6 +802,8 @@ pub(crate) mod tests {
                 records: [0x12, 0x13, 0x14],
                 captions: [Vec::new(), Vec::new(), Vec::new()],
                 no_units: b"A".to_vec(),
+                figures: [Vec::new(), Vec::new(), Vec::new()],
+                flags: [b"A".to_vec(), b"A".to_vec()],
             },
             strings: b"\0A\0".to_vec(),
         }
