@@ -26,6 +26,7 @@ mod scene;
 mod scorpcon;
 mod scoutcon;
 mod screens;
+mod status;
 mod terrain;
 mod test_pattern;
 mod translate;

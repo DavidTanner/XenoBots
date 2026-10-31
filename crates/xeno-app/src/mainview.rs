@@ -667,6 +667,54 @@ fn robot_label(e: &Entity, room: &SitRoom) -> ((i32, i32), Vec<u8>) {
     (HEADING_LABEL, text)
 }
 
+/// Slot `0x558` (`mgavideo.dvr` 0x13f9) from row and column `[y0, x0, y1, x1]`: a level
+/// or upright line covers its lower end to its higher one, not the higher one itself
+/// (none if the two are the same); any other runs from its left end to its right one,
+/// both drawn, one pixel a step along its longer side, the other side stepped when an
+/// error from minus half the longer side has the shorter added and is no longer
+/// negative. Pixels off the surface are dropped (the driver clips first).
+pub fn draw_line(fb: &mut Framebuffer, [y0, x0, y1, x1]: [u16; 4], colour: u8) {
+    let [y0, x0, y1, x1] = [y0, x0, y1, x1].map(i32::from);
+    let width = fb.surface().width as i32;
+    let mut set = |x: i32, y: i32| {
+        if (0..width).contains(&x)
+            && let Some(p) = fb.pixels_mut().get_mut((y * width + x) as usize)
+        {
+            *p = colour;
+        }
+    };
+    if y0 == y1 {
+        (x0.min(x1)..x0.max(x1)).for_each(|x| set(x, y0));
+        return;
+    }
+    if x0 == x1 {
+        (y0.min(y1)..y0.max(y1)).for_each(|y| set(x0, y));
+        return;
+    }
+    let ((mut x, mut y), (dx, dy), step) = if x1 > x0 {
+        ((x0, y0), (x1 - x0, (y1 - y0).abs()), (y1 - y0).signum())
+    } else {
+        ((x1, y1), (x0 - x1, (y0 - y1).abs()), (y0 - y1).signum())
+    };
+    let (long, short) = (dx.max(dy), dx.min(dy));
+    let mut error = -(long >> 1);
+    for _ in 0..=long {
+        set(x, y);
+        error += short;
+        let side = error >= 0;
+        if side {
+            error -= long;
+        }
+        if dx > dy {
+            x += 1;
+            y += step * i32::from(side);
+        } else {
+            y += step;
+            x += i32::from(side);
+        }
+    }
+}
+
 /// Mode C (`1000:56a7`) on the screen, whose main view is already cleared: the
 /// heading and its rule, then a row for each message up to the first empty slot.
 /// shortcut: the log is the base's as loaded; the sim posts no messages yet.
@@ -680,17 +728,7 @@ pub fn draw_log(fb: &mut Framebuffer, base: &Base, room: &SitRoom, heading: &Fon
         &room.log_heading,
         TextMode::Transparent,
     );
-    // shortcut: slot 0x558's line is not traced; the stock rule is level, drawn here
-    // with both ends.
-    let [top, left, bottom, right] = room.log_rule.map(usize::from);
-    let width = fb.surface().width;
-    for y in top..=bottom {
-        for x in left..=right.min(width - 1) {
-            if let Some(p) = fb.pixels_mut().get_mut(y * width + x) {
-                *p = LOG_COLOUR;
-            }
-        }
-    }
+    draw_line(fb, room.log_rule, LOG_COLOUR);
     let rows_y = (LOG_TOP..).step_by(LOG_STEP as usize);
     for (m, y) in base.messages.iter().take_while(|m| m.text != 0).zip(rows_y) {
         let name = m.name.split(|&b| b == 0).next().unwrap_or_default();
@@ -753,6 +791,18 @@ pub(crate) mod tests {
             months: vec![b'M'; 48],
             clock_fields: [0, 5, 8, 11],
             detail: crate::panels::tests::detail(),
+            status: xeno_formats::sitroom::Status {
+                pictures: [0x2a0, 0x2a8, 0x2b0],
+                places: [Rect {
+                    top: 0,
+                    left: 0,
+                    bottom: 1,
+                    right: 1,
+                }; 3],
+                records: [0x12, 0x13, 0x14],
+                captions: [Vec::new(), Vec::new(), Vec::new()],
+                no_units: b"A".to_vec(),
+            },
             strings: b"\0A\0".to_vec(),
         }
     }
@@ -1071,6 +1121,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn lines_cover_their_ends_as_slot_0x558_does() {
+        let mut fb = Framebuffer::new(xeno_render::Size::new(8, 8));
+        let lit = |fb: &Framebuffer| {
+            let mut at: Vec<_> = (0..8)
+                .flat_map(|y| (0..8).map(move |x| (x, y)))
+                .filter(|&(x, y)| fb.get(x, y) == Some(1))
+                .collect();
+            at.sort_by_key(|&(x, y)| (y, x));
+            at
+        };
+        // Upright, bottom to top: the lower row up to, not with, the higher one.
+        draw_line(&mut fb, [4, 2, 1, 2], 1);
+        assert_eq!(lit(&fb), [(2, 1), (2, 2), (2, 3)]);
+        // Steep, from the right end: from the left one, both ends drawn.
+        let mut fb = Framebuffer::new(xeno_render::Size::new(8, 8));
+        draw_line(&mut fb, [5, 3, 0, 2], 1);
+        assert_eq!(lit(&fb), [(2, 0), (2, 1), (3, 2), (3, 3), (3, 4), (3, 5)]);
+        // The same ends: nothing.
+        let mut fb = Framebuffer::new(xeno_render::Size::new(8, 8));
+        draw_line(&mut fb, [3, 3, 3, 3], 1);
+        assert!(lit(&fb).is_empty());
+    }
+
+    #[test]
     fn the_log_lists_messages_to_the_first_empty_slot() {
         let font = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
             .unwrap()
@@ -1115,7 +1189,8 @@ pub(crate) mod tests {
         );
         assert!(rows.iter().any(|&y| y >= 0x34));
         assert_eq!(fb.get(6, 5), Some(LOG_COLOUR), "the rule");
-        assert_eq!(fb.get(60, 5), Some(LOG_COLOUR));
+        assert_eq!(fb.get(59, 5), Some(LOG_COLOUR));
+        assert_eq!(fb.get(60, 5), Some(0), "not the rule's right end");
         assert_eq!(fb.get(61, 5), Some(0));
     }
 
@@ -1153,7 +1228,7 @@ pub(crate) mod tests {
         assert!(buffer.pixels().contains(&LABEL_COLOUR));
     }
 
-    fn roster_font() -> Font {
+    pub(crate) fn roster_font() -> Font {
         xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
             .unwrap()
             .remove(0)

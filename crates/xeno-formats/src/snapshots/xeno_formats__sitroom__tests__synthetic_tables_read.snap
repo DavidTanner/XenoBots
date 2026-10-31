@@ -363,5 +363,66 @@ SitRoom {
             2,
         ],
     },
+    status: Status {
+        pictures: [
+            16,
+            24,
+            32,
+        ],
+        places: [
+            Rect {
+                top: 1,
+                left: 2,
+                bottom: 50,
+                right: 60,
+            },
+            Rect {
+                top: 3,
+                left: 4,
+                bottom: 50,
+                right: 60,
+            },
+            Rect {
+                top: 5,
+                left: 6,
+                bottom: 50,
+                right: 60,
+            },
+        ],
+        records: [
+            7,
+            8,
+            9,
+        ],
+        captions: [
+            [
+                Text {
+                    x: 5,
+                    y: 6,
+                    text: [
+                        76,
+                        66,
+                        76,
+                    ],
+                },
+                Line {
+                    colour: 9,
+                    ends: [
+                        1,
+                        2,
+                        1,
+                        9,
+                    ],
+                },
+            ],
+            [],
+            [],
+        ],
+        no_units: [
+            110,
+            105,
+            108,
+        ],
+    },
     strings: [],
 }

@@ -72,6 +72,20 @@ pub(crate) const KIND_LETTERS_AT: usize = 0x17dbe;
 /// The most speeds read: the table rises by 0 or 1 a step to its end.
 const MAX_SPEEDS: usize = 0x100;
 
+/// Mode S (`1fe6:704a`, on a redraw): `mov ax, [di + pictures]`, `mov bx, [di +
+/// places]` and `mov si, [di + captions]` by the selected unit's kind times two; `mov
+/// si, text` (string segment) without a unit. `mov al, [di + records]` in `1000:686a`:
+/// the colour record mode S starts, by kind.
+pub(crate) const STATUS_PICTURES_AT: usize = 0x16f34;
+pub(crate) const STATUS_PLACES_AT: usize = 0x16f38;
+pub(crate) const STATUS_CAPTIONS_AT: usize = 0x16f41;
+pub(crate) const NO_UNITS_AT: usize = 0x16f55;
+pub(crate) const STATUS_RECORDS_AT: usize = 0x6897;
+/// The robot kinds mode S shows.
+pub const KINDS: usize = 3;
+/// The most caption ops read for a kind before its end word (the stock has 21).
+const MAX_CAPTIONS: usize = 64;
+
 /// The bars' widths, by value / 8.
 pub const BAR_STEPS: usize = 32;
 /// The months' names, four bytes each.
@@ -126,6 +140,7 @@ pub struct SitRoom {
     pub months: Vec<u8>,
     pub clock_fields: [usize; 4],
     pub detail: Detail,
+    pub status: Status,
     /// The string segment, from its start.
     pub strings: Vec<u8>,
 }
@@ -149,6 +164,71 @@ pub struct Detail {
     pub kind_letters: [[u8; 2]; 3],
     /// The speed shown, by the speed's size.
     pub speeds: Vec<u8>,
+}
+
+/// Mode S's pictures and captions (`docs/screens.md`, "The status view (T-126)").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    /// Each kind's picture (a sprite handle) and the rectangle whose top-left corner
+    /// it is drawn at, colour 0 transparent.
+    pub pictures: [u16; KINDS],
+    pub places: [Rect; KINDS],
+    /// The colour record each kind's picture starts.
+    pub records: [u8; KINDS],
+    /// Each kind's labels and lines, in order (`1fe6:6b4b`).
+    pub captions: [Vec<Caption>; KINDS],
+    /// The text without a unit.
+    pub no_units: Vec<u8>,
+}
+
+/// One op of a kind's captions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Caption {
+    /// Op 0: a string-segment text at (`x`, `y`), drawn transparent.
+    Text { x: u16, y: u16, text: Vec<u8> },
+    /// Op 2: a line in `colour` (slot `0x558`) between the rows and columns `[y0, x0,
+    /// y1, x1]`.
+    Line { colour: u8, ends: [u16; 4] },
+}
+
+/// The captions at `at`: words of op 0 (x, y, a string-segment offset) or op 2 (a
+/// colour byte, an offset of four words), up to a word 0xffff.
+fn captions(
+    image: &[u8],
+    ds: usize,
+    strings: usize,
+    at: usize,
+) -> Result<Vec<Caption>, FormatError> {
+    let mut ops = Vec::new();
+    let mut at = at;
+    loop {
+        match word(image, at)? {
+            0xffff => return Ok(ops),
+            _ if ops.len() == MAX_CAPTIONS => return Err(invalid(at, "too many captions")),
+            0 => {
+                let text = strings + usize::from(word(image, at + 6)?);
+                ops.push(Caption::Text {
+                    x: word(image, at + 2)?,
+                    y: word(image, at + 4)?,
+                    text: string(image, text)?,
+                });
+                at += 8;
+            }
+            2 => {
+                let colour = *image
+                    .get(at + 2)
+                    .ok_or_else(|| invalid(at, "past the end"))?;
+                let line = ds + usize::from(word(image, at + 3)?);
+                let end = |i| word(image, line + i);
+                ops.push(Caption::Line {
+                    colour,
+                    ends: [end(0)?, end(2)?, end(4)?, end(6)?],
+                });
+                at += 5;
+            }
+            _ => return Err(invalid(at, "not a caption op")),
+        }
+    }
 }
 
 impl SitRoom {
@@ -263,6 +343,19 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
         let b = bytes(letters + 2 * kind, 2)?;
         Ok([b[0], b[1]])
     };
+    let by_kind = |at, op: &[u8]| -> Result<[u16; KINDS], FormatError> {
+        let table = at_ds(at, op)?;
+        Ok([
+            word(image, table)?,
+            word(image, table + 2)?,
+            word(image, table + 4)?,
+        ])
+    };
+    let places = by_kind(STATUS_PLACES_AT, &[0x8b, 0x9d])?;
+    let place = |kind: usize| rect(image, ds + usize::from(places[kind]));
+    let scripts = by_kind(STATUS_CAPTIONS_AT, &[0x8b, 0xb5])?;
+    let script = |kind: usize| captions(image, ds, strings, ds + usize::from(scripts[kind]));
+    let records = bytes(at_ds(STATUS_RECORDS_AT, &[0x8a, 0x85])?, KINDS)?;
     let speeds = at_ds(SPEEDS_AT, &[0x8a, 0x87])?;
     let speeds = image
         .get(speeds..)
@@ -348,6 +441,13 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             manual: text(MANUAL_AT)?,
             kind_letters: [letter_pair(0)?, letter_pair(1)?, letter_pair(2)?],
             speeds,
+        },
+        status: Status {
+            pictures: by_kind(STATUS_PICTURES_AT, &[0x8b, 0x85])?,
+            places: [place(0)?, place(1)?, place(2)?],
+            records: [records[0], records[1], records[2]],
+            captions: [script(0)?, script(1)?, script(2)?],
+            no_units: in_strings(NO_UNITS_AT)?,
         },
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
@@ -470,6 +570,30 @@ pub(crate) mod tests {
         put(DS + 0x730, b"AABBCC");
         put(SPEEDS_AT, &op(&[0x8a, 0x87], 0x740));
         put(DS + 0x740, &[0, 1, 1, 2, 9]);
+        // Mode S: pictures 0x10, 0x18, 0x20 at rectangles from (1, 2), (3, 4), (5, 6);
+        // kind 0 captioned "LBL" at (5, 6) and a line in 9, the others not; "nil"
+        // without a unit; records 7, 8, 9.
+        put(STATUS_PICTURES_AT, &op(&[0x8b, 0x85], 0x800));
+        put(DS + 0x800, &[0x10, 0, 0x18, 0, 0x20, 0]);
+        put(STATUS_PLACES_AT, &op(&[0x8b, 0x9d], 0x810));
+        put(DS + 0x810, &[0x20, 8, 0x28, 8, 0x30, 8]);
+        for (i, at) in [0x820, 0x828, 0x830].into_iter().enumerate() {
+            let n = 2 * i as u8 + 1;
+            put(DS + at, &[n, 0, n + 1, 0, 50, 0, 60, 0]);
+        }
+        put(STATUS_CAPTIONS_AT, &op(&[0x8b, 0xb5], 0x840));
+        put(DS + 0x840, &[0x50, 8, 0x70, 8, 0x80, 8]);
+        put(
+            DS + 0x850,
+            &[0, 0, 5, 0, 6, 0, 0x70, 0, 2, 0, 9, 0x60, 8, 0xff, 0xff],
+        );
+        put(DS + 0x860, &[1, 0, 2, 0, 1, 0, 9, 0]);
+        put(DS + 0x870, &[0xff, 0xff]);
+        put(DS + 0x880, &[0xff, 0xff]);
+        put(STRINGS + 0x70, b"LBL\0nil\0");
+        put(NO_UNITS_AT, &op(&[0xbe], 0x74));
+        put(STATUS_RECORDS_AT, &op(&[0x8a, 0x85], 0x890));
+        put(DS + 0x890, &[7, 8, 9]);
         image
     }
 
@@ -506,6 +630,27 @@ pub(crate) mod tests {
             (d.kind_letters[2], d.speeds.as_slice()),
             (*b"CC", &[0, 1, 1, 2][..])
         );
+        let status = &room.status;
+        assert_eq!(
+            (status.pictures, status.places[2].left, status.records),
+            ([0x10, 0x18, 0x20], 6, [7, 8, 9])
+        );
+        assert_eq!(
+            status.captions[0],
+            [
+                Caption::Text {
+                    x: 5,
+                    y: 6,
+                    text: b"LBL".to_vec()
+                },
+                Caption::Line {
+                    colour: 9,
+                    ends: [1, 2, 1, 9]
+                }
+            ]
+        );
+        assert!(status.captions[1].is_empty());
+        assert_eq!(status.no_units, b"nil");
         insta::assert_debug_snapshot!(SitRoom {
             strings: Vec::new(),
             ..room
@@ -547,6 +692,11 @@ pub(crate) mod tests {
             MANUAL_AT,
             SPEEDS_AT + 1,
             KIND_LETTERS_AT,
+            STATUS_PICTURES_AT,
+            STATUS_PLACES_AT + 1,
+            STATUS_CAPTIONS_AT,
+            NO_UNITS_AT,
+            STATUS_RECORDS_AT,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -608,6 +758,26 @@ pub(crate) mod tests {
                 .all(u8::is_ascii_uppercase)
         );
         assert!(d.speeds.len() > 100 && d.speeds[0] == 0);
+        // Mode S: each kind's picture from msprite1's, the records after the views',
+        // captions of texts and lines on the screen.
+        let status = &room.status;
+        assert_eq!(status.pictures, [0x418, 0x420, 0x428]);
+        assert_eq!(status.records, [0x12, 0x13, 0x14]);
+        assert!(!status.no_units.is_empty());
+        for kind in &status.captions {
+            assert!(kind.iter().any(|c| matches!(c, Caption::Line { .. })));
+            for c in kind {
+                match c {
+                    Caption::Text { text, .. } => assert!(!text.is_empty()),
+                    Caption::Line {
+                        ends: [y0, x0, y1, x1],
+                        ..
+                    } => {
+                        assert!(*y0.max(y1) < 200 && *x0.max(x1) < 320, "{c:?}")
+                    }
+                }
+            }
+        }
         // Every call sign is six printable bytes (names like `EAGLE `).
         for i in 0..CALL_SIGNS as u8 {
             let sign = room.call_sign(i);
