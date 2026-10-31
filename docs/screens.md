@@ -2106,15 +2106,15 @@ original.
   the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
   `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection bits are the
   scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the grid and
-  path overlays are not drawn, the log is the base's as loaded (the sim posts no
-  messages). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
+  path overlays are not drawn. The log is the sim's (`xeno_sim::log`, T-129). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
   "The status view (T-126)" (since T-126, without its right end). Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
 - **Roster and controls** (`crates/xeno-app/src/mainview.rs`, T-103 part 2): as "The
   roster, map controls and mode buttons (T-103)" above, from `xeno_formats::sitroom`
   and the view's nested widgets (`views::View::nested`). Shortcuts: a robot's call sign
   and repair state are the scenario's as loaded (robots made since show call sign 0);
-  the C button's new-message look is not shown (the sim posts no messages).
+  the C button's new-message look (the base's +0xb4, which the sim sets since T-129) is
+  not shown.
 - **The map's press** (`Mission::map_press`, T-128): the map's frame probes at the
   pointer (`mainview::Probe`, kept in `Mission::probed` as `1000:5619` keeps it); a
   left press on the map in mode M with no widget there selects the probed object if it
