@@ -2426,13 +2426,20 @@ impl Mission {
                     },
                     _ => {
                         recolour(fb, self.main_view(assets), 255, mainview::LOG_CLEAR);
-                        let base = mainview::base_of(self.scenario.as_ref(), Side::Human);
+                        let world = self.world();
+                        let log = match world.base(Side::Human).and_then(|b| world.get(b)) {
+                            Some(e) => match e.state {
+                                State::Base { depot, .. } => Some(depot.log),
+                                _ => None,
+                            },
+                            None => None,
+                        };
                         let fonts = (
                             assets.fonts.get(&UNIT_FONT),
                             assets.fonts.get(&mainview::LOG_FONT),
                         );
-                        if let (Some(base), (Some(heading), Some(rows))) = (base, fonts) {
-                            mainview::draw_log(fb, base, room, heading, rows);
+                        if let (Some(log), (Some(heading), Some(rows))) = (log, fonts) {
+                            mainview::draw_log(fb, &log, room, heading, rows);
                         }
                         return true;
                     }

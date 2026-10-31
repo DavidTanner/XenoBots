@@ -6,7 +6,7 @@ use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
 use xeno_formats::sitroom::SitRoom;
-use xeno_formats::usg::{Base, ObjectKind, Scenario, Side, TerrainFeature, flag};
+use xeno_formats::usg::{Base, Message, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
 use xeno_formats::views::Widget;
 use xeno_render::shape::fill_polygon;
@@ -716,9 +716,15 @@ pub fn draw_line(fb: &mut Framebuffer, [y0, x0, y1, x1]: [u16; 4], colour: u8) {
 }
 
 /// Mode C (`1000:56a7`) on the screen, whose main view is already cleared: the
-/// heading and its rule, then a row for each message up to the first empty slot.
-/// shortcut: the log is the base's as loaded; the sim posts no messages yet.
-pub fn draw_log(fb: &mut Framebuffer, base: &Base, room: &SitRoom, heading: &Font, rows: &Font) {
+/// heading and its rule, then a row for each line of the base's `log` (the sim's,
+/// `xeno_sim::log`) up to the first empty one.
+pub fn draw_log(
+    fb: &mut Framebuffer,
+    log: &[Message],
+    room: &SitRoom,
+    heading: &Font,
+    rows: &Font,
+) {
     let (x, y) = LOG_HEADING;
     let mut cursor = TextCursor::at(x, y, LOG_COLOUR);
     cursor.high_colour = LOG_HIGH_COLOUR;
@@ -730,7 +736,7 @@ pub fn draw_log(fb: &mut Framebuffer, base: &Base, room: &SitRoom, heading: &Fon
     );
     draw_line(fb, room.log_rule, LOG_COLOUR);
     let rows_y = (LOG_TOP..).step_by(LOG_STEP as usize);
-    for (m, y) in base.messages.iter().take_while(|m| m.text != 0).zip(rows_y) {
+    for (m, y) in log.iter().take_while(|m| m.text != 0).zip(rows_y) {
         let name = m.name.split(|&b| b == 0).next().unwrap_or_default();
         let mut cursor = TextCursor::at(LOG_NAME_X, y, LOG_COLOUR);
         fb.draw_text(rows, &mut cursor, name, TextMode::Transparent);
@@ -764,7 +770,7 @@ pub fn base_of(scenario: Option<&Scenario>, side: Side) -> Option<&Base> {
 pub(crate) mod tests {
     use super::*;
     use xeno_formats::ban::SpriteHeader;
-    use xeno_formats::usg::{Message, Point};
+    use xeno_formats::usg::Point;
     use xeno_formats::view3d::Float;
     use xeno_sim::{Components, EntityId, Fixed, Movement};
 
@@ -1181,7 +1187,7 @@ pub(crate) mod tests {
         ];
         base.map_centre = Point::default();
         let mut fb = Framebuffer::new(xeno_render::Size::MODE_13H);
-        draw_log(&mut fb, &base, &room(), &font, &font);
+        draw_log(&mut fb, &base.messages, &room(), &font, &font);
         let rows: Vec<usize> = (0..200)
             .filter(|&y| (0x9c..320).any(|x| fb.get(x, y) == Some(LOG_TEXT_COLOUR)))
             .collect();
