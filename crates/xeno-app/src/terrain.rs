@@ -13,7 +13,7 @@ use xeno_sim::motion::Tables;
 use xeno_sim::terrain::approx_distance;
 use xeno_sim::{Entity, Fixed, Position, World};
 
-use crate::mainview::{self, Flags, Inputs, MapState};
+use crate::mainview::{self, Inputs, MapState};
 use crate::scene::trig;
 
 /// The handlers in the driver's key table (`DS:0x186`), by their offset in its code.
@@ -249,7 +249,6 @@ impl TerrainEditor {
         camera: &Camera,
         world: &World,
         map: &MapState,
-        flags: &Flags,
         selected: Option<&Entity>,
         inputs: &Inputs,
     ) {
@@ -274,7 +273,7 @@ impl TerrainEditor {
             ..*inputs
         };
         let probe = &mut mainview::Probe::default();
-        mainview::draw_objects(buffer, world, camera, map, flags, selected, &inputs, probe);
+        mainview::draw_objects(buffer, world, camera, map, selected, &inputs, probe);
     }
 
     /// The status the original prints on its debug screen (`0x086b`).
@@ -387,7 +386,7 @@ mod tests {
         let mut b = Framebuffer::new(xeno_render::Size::new(40, 20));
         let world = World::default();
         let map = MapState::default();
-        e.draw(&mut b, &camera, &world, &map, &[(0, 0); 240], None, &inputs);
+        e.draw(&mut b, &camera, &world, &map, None, &inputs);
         // Zoom 2: two pixels a unit, x along the columns from the middle.
         let at = |x, y| b.get(x, y).unwrap();
         assert_eq!([at(30, 10), at(10, 10), at(20, 10)], [0x0c, 0x0e, 53]);

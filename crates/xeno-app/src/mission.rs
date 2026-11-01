@@ -2683,9 +2683,8 @@ impl Mission {
         };
         let world = self.world();
         let selected = self.selected.and_then(|s| world.get(EntityId(s)));
-        let flags = mainview::flags(self.scenario.as_ref(), self.world());
         let map = self.shown_map();
-        editor.draw(fb, &camera, world, &map, &flags, selected, &inputs);
+        editor.draw(fb, &camera, world, &map, selected, &inputs);
         true
     }
 
@@ -2740,7 +2739,6 @@ impl Mission {
                         let Some(camera) = self.map_camera(assets) else {
                             return false;
                         };
-                        let flags = mainview::flags(self.scenario.as_ref(), self.world());
                         let map = self.shown_map();
                         let under = mainview::draw_map(
                             &mut buffer,
@@ -2748,7 +2746,6 @@ impl Mission {
                             &camera,
                             &map,
                             terrain,
-                            &flags,
                             selected,
                             &inputs,
                             [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
@@ -2910,7 +2907,6 @@ impl Mission {
                     sprites: &assets.map_sprites,
                     font: None,
                 };
-                let flags = mainview::flags(self.scenario.as_ref(), self.world());
                 let colours = tables.map_colours[robot.kind.index()];
                 let (map_ref, selected) = (&map, Some(e));
                 let under = mainview::draw_map(
@@ -2919,7 +2915,6 @@ impl Mission {
                     &camera,
                     map_ref,
                     terrain,
-                    &flags,
                     selected,
                     &inputs,
                     colours,
@@ -4198,10 +4193,11 @@ pub mod tests {
         let other = *m.robots().last().unwrap();
         assert_ne!(other, robot);
         let at = m.world().get(xeno_sim::EntityId(other)).unwrap().position;
-        let objects = m.scenario.as_mut().unwrap().objects.iter_mut().flatten();
-        for o in objects.filter(|o| o.slot == other) {
-            o.status &= !1; // Not hidden (+0x17 bit 0), so its dot is drawn.
-        }
+        // Not cloaked (+0x17 bit 0, the sim's), so its dot is drawn.
+        m.world_mut()
+            .get_mut(xeno_sim::EntityId(other))
+            .unwrap()
+            .status &= !1;
         (m.mode, m.probed) = (MAP_MODE, Cell::default());
         let camera = m.map_camera(&assets).unwrap();
         let map = Framebuffer::new(Size::new(120, 60));

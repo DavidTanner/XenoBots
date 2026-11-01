@@ -2966,6 +2966,56 @@ pub(crate) mod tests {
     }
 
     /// In the humanoid training's console with the second display on the map (M): an
+    /// alien robot 3 units from the unit is not drawn until the sim's scan marks it
+    /// spotted (+0x17 bit 2, T-147), and then it is.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_an_alien_robot_spotted_in_play_shows_on_the_console_map() {
+        use xeno_formats::usg::{Side, status};
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        let Some((mut screens, id)) = humanoid_console(fb) else {
+            return;
+        };
+        screens.retrace(&[down(0x32)], fb);
+        screens.retrace(&[up(0x32)], fb);
+        let alien = screens.mission().world().units(Side::Alien)[0];
+        let world = screens.mission_mut().world_mut();
+        world.get_mut(alien).unwrap().status &= !(status::SPOTTED | status::CLOAKED);
+        let picture = screens
+            .pictures
+            .iter()
+            .find(|(n, _)| Some(*n) == Mission(View::Humanoid).file())
+            .map(|(_, p)| p)
+            .unwrap();
+        let region: Vec<usize> = (0..64_000).filter(|&i| picture.pixels[i] == 254).collect();
+        // The alien `units` east of the unit, a retrace drawn; the region's pixels.
+        let place = |screens: &mut Screens, fb: &mut Framebuffer, units: i32| {
+            let world = screens.mission_mut().world_mut();
+            let at = world.get(id).unwrap().position;
+            let e = world.get_mut(alien).unwrap();
+            e.position = at;
+            e.position.x.0 += units << 16;
+            screens.retrace([], fb);
+            region.iter().map(|&i| fb.pixels()[i]).collect::<Vec<u8>>()
+        };
+        let spotted = |screens: &Screens| {
+            let e = screens.mission().world().get(alien).unwrap();
+            e.status & status::SPOTTED != 0
+        };
+        let (away, there) = (place(&mut screens, fb, 50), place(&mut screens, fb, 3));
+        if !spotted(&screens) {
+            assert_eq!(away, there, "drawn before it was spotted");
+        }
+        let found = (0..5000).find(|_| {
+            place(&mut screens, fb, 3);
+            spotted(&screens)
+        });
+        assert!(found.is_some(), "never spotted");
+        let (away, there) = (place(&mut screens, fb, 50), place(&mut screens, fb, 3));
+        assert_ne!(away, there, "spotted but not drawn");
+    }
+
+    /// In the humanoid training's console with the second display on the map (M): an
     /// Alt press on another human robot 3 units ahead (the map shows aliens only once
     /// detected) makes it the unit's goal object; one near the map's left edge, on
     /// nothing, sets the unit's destination there.

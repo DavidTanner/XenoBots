@@ -2029,6 +2029,12 @@ relay's and drop's copies are gone). Tests: `weapons`'
 `real_assets_every_scenario_loads_with_its_units` (every stock object's bytes load and
 save unchanged) and `real_assets_a_stock_scan_spots_an_alien_robot_in_play`.
 
+Part 2 (`t-147-maps`): `xeno-app`'s maps (`mainview::draw_map`, `draw_objects`, the
+terrain editor's) read each object's bytes from the sim, not the scenario's file (the
+`mainview::flags` table is gone). `real_assets_an_alien_robot_spotted_in_play_shows_on_the_console_map`:
+in the humanoid training's console map, an alien robot 3 units away is not drawn until
+the scan spots it, and then is.
+
 ## Loading a scenario
 
 `World::from_scenario(&usg::Scenario)` (T-051, T-058) copies each `DCBS` object
