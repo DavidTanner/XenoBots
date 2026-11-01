@@ -736,6 +736,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             }
             State::Base { .. } => base = true,
             state @ State::Explosion { .. } => gone = crate::damage::tick_explosion(state),
+            State::Sparkle { .. } => gone = crate::weapons::tick_sparkle(e, tables),
             State::Shot(_) => shot = true,
             State::Relay(_) => relay = true,
             State::None => {}

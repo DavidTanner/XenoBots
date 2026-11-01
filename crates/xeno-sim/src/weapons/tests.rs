@@ -336,3 +336,198 @@ fn a_scorpion_selecting_an_empty_weapon_hears_it_is_empty() {
     let w = &tables.weapon_keys;
     assert_eq!(m.panel.queue[..2], [w.scorpion_empty[0], w.selected[1][1]]);
 }
+
+fn sparkles(world: &World) -> Vec<(EntityId, Entity)> {
+    world
+        .iter()
+        .filter(|(_, e)| matches!(e.state, State::Sparkle { .. }))
+        .map(|(id, e)| (id, e.clone()))
+        .collect()
+}
+
+#[test]
+fn the_ecm_takes_a_charge_and_energy_and_runs_for_its_steps() {
+    let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
+    let d = tables.weapons.devices;
+    let mut world = armed(ObjectKind::Scout);
+    // None left: only the message.
+    ecm(&mut world, EntityId(4), &tables);
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.ecm_time, m.status & status::ECM), (0, 0));
+    assert!(m.panel.queue.contains(&d.no_ecm));
+    // Short on the battery: the energy goes, the charge stays.
+    let (m, c) = robot_parts(&mut world, EntityId(4)).unwrap();
+    (m.guns.ecm, m.guns.energy, c.equipment) = (2, d.ecm_energy - 1, ON_BATTERY);
+    ecm(&mut world, EntityId(4), &tables);
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.ecm, m.guns.energy, m.guns.ecm_time), (2, 0, 0));
+    assert!(m.panel.queue.contains(&d.no_power));
+    // Off the battery: on.
+    robot_parts(&mut world, EntityId(4)).unwrap().1.equipment = 0;
+    ecm(&mut world, EntityId(4), &tables);
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.ecm, m.guns.ecm_time), (1, d.ecm_time));
+    assert_ne!(m.status & status::ECM, 0);
+    assert!(m.panel.queue.contains(&d.ecm_on));
+    // Each weapon step counts it down; at 0 the bit goes.
+    for n in (0..d.ecm_time).rev() {
+        step_at(&mut world, 1, &mut random);
+        assert_eq!(parts(&mut world).0.guns.ecm_time, n);
+    }
+    assert_eq!(parts(&mut world).0.status & status::ECM, 0);
+    // A step between the weapon steps leaves it.
+    ecm(&mut world, EntityId(4), &tables);
+    step_at(&mut world, 2, &mut random);
+    assert_eq!(parts(&mut world).0.guns.ecm_time, d.ecm_time);
+}
+
+#[test]
+fn the_cloak_ignores_short_energy_makes_the_sparkle_and_runs_out() {
+    let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
+    let d = tables.weapons.devices;
+    let mut world = armed(ObjectKind::Humanoid);
+    cloak(&mut world, EntityId(4), &tables);
+    assert!(parts(&mut world).0.panel.queue.contains(&d.no_cloak));
+    assert!(sparkles(&world).is_empty());
+    let (m, c) = robot_parts(&mut world, EntityId(4)).unwrap();
+    (m.guns.cloaks, m.guns.energy, c.equipment) = (1, 1, ON_BATTERY);
+    cloak(&mut world, EntityId(4), &tables);
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.cloaks, m.guns.energy), (0, 0));
+    assert_eq!(
+        (m.guns.cloak_time, m.status & status::CLOAKED),
+        (d.cloak_time, status::CLOAKED)
+    );
+    assert!(m.panel.queue.contains(&d.cloak_on));
+    let [(_, e)] = &sparkles(&world)[..] else {
+        panic!("one sparkle");
+    };
+    let me = world.get(EntityId(4)).unwrap();
+    assert_eq!(
+        (e.kind, e.position, e.z),
+        (ObjectKind::Other(d.sparkle), me.position, me.z)
+    );
+    assert_eq!((e.heading, e.radius), (d.heading, d.radius));
+    for _ in 0..d.cloak_time {
+        step_at(&mut world, 1, &mut random);
+    }
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.cloak_time, m.status & status::CLOAKED), (0, 0));
+    // A scorpion's step counts no cloak.
+    let mut world = armed(ObjectKind::Scorpion);
+    robot_parts(&mut world, EntityId(4))
+        .unwrap()
+        .0
+        .guns
+        .cloak_time = 5;
+    step_at(&mut world, 1, &mut random);
+    assert_eq!(parts(&mut world).0.guns.cloak_time, 5);
+}
+
+#[test]
+fn the_sparkle_grows_holds_shrinks_and_goes_at_its_life() {
+    let tables = synthetic_tables();
+    let d = tables.weapons.devices;
+    let mut world = armed(ObjectKind::Humanoid);
+    robot_parts(&mut world, EntityId(4)).unwrap().0.guns.cloaks = 1;
+    cloak(&mut world, EntityId(4), &tables);
+    let (id, mut e) = sparkles(&world).remove(0);
+    let per_frame = u32::from(d.frame_ticks) + 1;
+    let (mut ticks, mut sizes) = (0, Vec::new());
+    while !tick_sparkle(&mut e, &tables) {
+        ticks += 1;
+        if ticks % per_frame == 0 {
+            sizes.push(e.heading);
+        }
+    }
+    assert_eq!(ticks + 1, u32::from(d.life) * per_frame);
+    let step = u16::from(d.heading_step);
+    let grown = d.heading + step * u16::from(d.grown - 1);
+    // Grows to frame `grown`, holds, shrinks from `shrinking` through the last.
+    assert_eq!(sizes[usize::from(d.grown) - 2], grown);
+    assert_eq!(sizes[usize::from(d.shrinking) - 2], grown);
+    assert_eq!(
+        e.heading,
+        grown - step * u16::from(d.life - d.shrinking + 1)
+    );
+    assert!(matches!(e.state, State::Sparkle { frame, .. } if frame == d.life & d.frames));
+    // In the world, its tick removes it.
+    for _ in 0..u32::from(d.life) * per_frame {
+        crate::motion::tick(&mut world, &tables, &mut Random::seeded(1));
+    }
+    assert!(world.get(id).is_none());
+}
+
+/// Scen00a's first human humanoid turns on its ECM and cloak: each takes a charge, its
+/// message is a stock one, the sparkle stands where it was, and the ECM, then the cloak
+/// and the sparkle, run out as the user's numbers say.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_stock_humanoid_s_ecm_and_cloak_run_out() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let d = tables.weapons.devices;
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, Random::seeded(5), tables.clone());
+    let world = &sim.world;
+    let id = *world
+        .units(Side::Human)
+        .iter()
+        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
+        .unwrap();
+    let guns = |sim: &crate::Sim| match sim.world.get(id).unwrap().state {
+        State::Robot(m) => (m.guns, m.status),
+        _ => unreachable!(),
+    };
+    let before = guns(&sim).0;
+    assert!(before.ecm > 0 && before.cloaks > 0, "{before:?}");
+    sim.pilot(id, crate::Pilot::Ecm);
+    sim.pilot(id, crate::Pilot::Cloak);
+    let (g, s) = guns(&sim);
+    assert_eq!((g.ecm, g.cloaks), (before.ecm - 1, before.cloaks - 1));
+    assert_eq!(
+        s & (status::ECM | status::CLOAKED),
+        status::ECM | status::CLOAKED
+    );
+    for text in [d.ecm_on, d.cloak_on, d.no_ecm, d.no_cloak] {
+        assert_ne!(tables.strings.byte(text), 0, "{text:#x}");
+    }
+    let [(sparkle, e)] = &sparkles(&sim.world)[..] else {
+        panic!("one sparkle");
+    };
+    assert_eq!(e.position, sim.world.get(id).unwrap().position);
+    let (mut ecm_off, mut cloak_off, mut gone) = (None, None, None);
+    for t in 1..2000u32 {
+        sim.tick(&[]);
+        let (_, s) = guns(&sim);
+        if s & status::ECM == 0 {
+            ecm_off.get_or_insert(t);
+        }
+        if s & status::CLOAKED == 0 {
+            cloak_off.get_or_insert(t);
+        }
+        if sim
+            .world
+            .get(*sparkle)
+            .is_none_or(|e| e.kind != ObjectKind::Other(d.sparkle))
+        {
+            gone.get_or_insert(t);
+        }
+    }
+    // Two weapon steps in 16 ticks; a sparkle frame every `frame_ticks + 1` ticks.
+    let near = |t: Option<u32>, want: u32| t.is_some_and(|t| t.abs_diff(want) <= 8);
+    assert!(near(ecm_off, 8 * u32::from(d.ecm_time)), "{ecm_off:?}");
+    assert!(
+        near(cloak_off, 8 * u32::from(d.cloak_time)),
+        "{cloak_off:?}"
+    );
+    let life = u32::from(d.life) * (u32::from(d.frame_ticks) + 1);
+    assert_eq!(gone, Some(life), "{gone:?}");
+}

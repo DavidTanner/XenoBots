@@ -288,6 +288,22 @@ fn the_upkeep_loses_a_far_target_and_drops_a_destroyed_one() {
 }
 
 #[test]
+fn a_target_s_running_ecm_loses_the_lock() {
+    let t = synthetic_tables();
+    let mut world = world();
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    // The time running loses it, not the status bit.
+    movement(&mut world, EntityId(2)).unwrap().status |= xeno_formats::usg::status::ECM;
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, Some(EntityId(2)));
+    movement(&mut world, EntityId(2)).unwrap().guns.ecm_time = 1;
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, None);
+    assert_eq!(m(&world, 1).script.events, 1 << EVENT_LOST);
+    assert!(m(&world, 1).panel.queue.contains(&t.sensing.messages.lost));
+}
+
+#[test]
 fn steering_for_the_nearest_enemy_takes_the_scanning_range() {
     let t = synthetic_tables();
     let mut world = world();

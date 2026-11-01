@@ -1892,6 +1892,17 @@ pub fn synthetic_weapons(image: &mut [u8], ds: usize) {
         put(ds + 0x9c90 + 2 * kind, &hit.to_le_bytes());
         put(ds + 0x9cc0 + 2 * kind, &height.to_le_bytes());
     }
+    // The ECM, the cloak and the sparkle (kind 14), made-up numbers and messages.
+    let devices = [
+        3, 30, 4, 100, 14, 0x20, 0x1000, 3, 3, 10, 20, 30, 2, 0x40, 0x70, 0x71, 0x72, 0x73,
+    ];
+    for (&s, v) in DEVICES
+        .iter()
+        .chain([&NO_CLOAK_AT])
+        .zip(devices.into_iter().chain([0x74]))
+    {
+        put(s.0, &site(s, v));
+    }
 }
 
 /// [`synthetic_weapons`]' tables, read.

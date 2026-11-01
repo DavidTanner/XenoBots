@@ -109,6 +109,31 @@ pub(crate) const COUNTS_AT: (usize, &[u8]) = (0x98cd, &[0x8b, 0x9c]);
 /// `mov si, message` before each weapon message, in [`Messages`]' order.
 pub(crate) const MESSAGES_AT: [usize; 7] = [0xb156, 0xb15b, 0x9810, 0x9806, 0x980b, 0xca0a, 0x97ea];
 
+/// The ECM (F7, `1000:d92e`), the cloak (F8, `d95e`) and the sparkle's set-up
+/// (`dfff`) and tick (`e03b`), in [`Devices`]' order: the numbers, then the messages.
+pub(crate) const DEVICES: [Site; 18] = [
+    (0xd935, ENERGY, false),
+    (0xd940, &[0xc6, 0x85, 0xdf, 0x00], false),
+    (0xd965, ENERGY, false),
+    (0xd970, &[0xc6, 0x85, 0xe1, 0x00], false),
+    (0xd97a, MOV_AX, true),
+    (0xe030, &[0xc7, 0x44, 0x10], true),
+    (0xe035, &[0xc7, 0x44, 0x14], true),
+    (0xe03e, &[0xf6, 0x45, 0x19], false),
+    (0xe047, &[0x80, 0x65, 0x18], false),
+    (0xe04e, &[0x80, 0x7d, 0x1a], false),
+    (0xe054, &[0x80, 0x7d, 0x1a], false),
+    (0xe066, &[0x80, 0x7d, 0x1a], false),
+    (0xe079, &[0x83, 0x45, 0x10], false),
+    (0xe07d, &[0x81, 0x45, 0x14], true),
+    (0xd949, &[0xbe], true),
+    (0xd950, &[0xbe], true),
+    (0xd957, &[0xbe], true),
+    (0xd988, &[0xbe], true),
+];
+/// `mov si, message` when F8 finds no cloak left (`1000:d98f`).
+pub(crate) const NO_CLOAK_AT: Site = (0xd98f, &[0xbe], true);
+
 /// The shell's set-up (`1000:e235`) and tick (`e2c8`), in [`Shell`]'s order.
 pub(crate) const SHELL: [Site; 9] = [
     (0xe238, &[0xc7, 0x44, 0x20], true),
@@ -196,6 +221,39 @@ pub struct Weapons {
     /// aiming adds to the target's z shifted left by 8 (8.8 units, as a radius).
     pub hits: [Hit; KINDS],
     pub heights: [u16; KINDS],
+    pub devices: Devices,
+}
+
+/// The ECM (F7), the sparkle cloak (F8) and the sparkle they make (kind 14;
+/// `docs/sim.md`, "The ECM and the cloak (T-136)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Devices {
+    /// The energy each takes on the battery, and the weapon steps each stays on.
+    pub ecm_energy: u8,
+    pub ecm_time: u8,
+    pub cloak_energy: u8,
+    pub cloak_time: u8,
+    /// The sparkle's kind, its first heading (+0x10, its size in the 3D view) and radius.
+    pub sparkle: u16,
+    pub heading: u16,
+    pub radius: u16,
+    /// The tick mask a frame waits on, and the frames' mask (+0x18).
+    pub frame_ticks: u8,
+    pub frames: u8,
+    /// The frame counts (+0x1a) at which it stops growing, starts shrinking, and goes.
+    pub grown: u8,
+    pub shrinking: u8,
+    pub life: u8,
+    /// What each frame adds to its heading and radius while growing (and takes off while
+    /// shrinking).
+    pub heading_step: u8,
+    pub radius_step: u16,
+    /// The messages: the ECM on, none left, no power; the cloak on, none left.
+    pub ecm_on: u16,
+    pub no_ecm: u16,
+    pub no_power: u16,
+    pub cloak_on: u16,
+    pub no_cloak: u16,
 }
 
 /// A kind's hit test: `stc`, `clc`, a band of the shot's height over the object
@@ -457,6 +515,44 @@ fn by_kind<T: Copy + Default>(
     Ok(out)
 }
 
+fn devices(image: &[u8]) -> Result<Devices, FormatError> {
+    let [
+        ecm_energy,
+        ecm_time,
+        cloak_energy,
+        cloak_time,
+        sparkle,
+        heading,
+        radius,
+        ticks,
+    ] = values(image, DEVICES[..8].try_into().expect("8 sites"))?;
+    let [frames, grown, shrinking, life, heading_step, radius_step] =
+        values(image, DEVICES[8..14].try_into().expect("6 sites"))?;
+    let [ecm_on, no_ecm, no_power, cloak_on] =
+        values(image, DEVICES[14..].try_into().expect("4 sites"))?;
+    Ok(Devices {
+        ecm_energy: ecm_energy as u8,
+        ecm_time: ecm_time as u8,
+        cloak_energy: cloak_energy as u8,
+        cloak_time: cloak_time as u8,
+        sparkle,
+        heading,
+        radius,
+        frame_ticks: ticks as u8,
+        frames: frames as u8,
+        grown: grown as u8,
+        shrinking: shrinking as u8,
+        life: life as u8,
+        heading_step: heading_step as u8,
+        radius_step,
+        ecm_on,
+        no_ecm,
+        no_power,
+        cloak_on,
+        no_cloak: value(image, &NO_CLOAK_AT)?,
+    })
+}
+
 /// Reads the tables from a load image whose data segment starts at `ds`.
 pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
     let (steps, reload_step) = steps(image, ds)?;
@@ -564,6 +660,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
         blast_sound,
         hits: by_kind(image, ds, HITS_AT, |r| hit(image, usize::from(r)))?,
         heights: by_kind(image, ds, HEIGHTS_AT, Ok)?,
+        devices: devices(image)?,
     })
 }
 
@@ -623,6 +720,9 @@ mod tests {
             HEIGHTS_AT.0 + 1,
             0x8104,
             0x8110 + 2,
+            DEVICES[1].0 + 2,
+            DEVICES[13].0,
+            NO_CLOAK_AT.0,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -680,8 +780,16 @@ mod tests {
             m.damaged,
             m.no_missiles,
             m.launched,
+            w.devices.ecm_on,
+            w.devices.no_ecm,
+            w.devices.no_power,
+            w.devices.cloak_on,
+            w.devices.no_cloak,
         ] {
             assert!(motion.strings.byte(at) != 0, "{at:#x}");
         }
+        let d = w.devices;
+        assert_eq!((d.sparkle, d.no_power), (14, m.no_power));
+        assert!(d.grown < d.shrinking && d.shrinking < d.life && d.ecm_time < d.cloak_time);
     }
 }

@@ -575,8 +575,7 @@ its distance and bearing (+0xe8, +0xea) and `locked_on` (+0xed); `World::lock_wi
 keeps `DS:0x7201` and `0x7203`; the targeting and warning bits are the robot's
 `Components`. All hashed. Messages go to the robot's panel and the lock's sound is a
 `motion::Event::Sound` for the robot. Shortcuts, each named in the code: the true
-distance is exact in x and y (no z); the upkeep's bearing is the coarse one; the
-target's ECM never breaks a lock (T-136); a locked base is not marked spotted; the
+distance is exact in x and y (no z); the upkeep's bearing is the coarse one; a locked base is not marked spotted; the
 field +0xe6 reads the target's slot plus one, not a pointer; the lock window starts
 at 0 each mission; a target is gone when its slot is empty or holds another kind.
 
@@ -687,8 +686,8 @@ arrows act the same, and the keyboard's repeat repeats them.
 | F5, F6 | `d131`, `d142`: weapon 0 or 1, by kind through `cs:0xd13c` (`b214`, `98a9`, `ca1d`) | | | The selected weapon (+0xdd) changes, with a message and sound 27 (`docs/formats/dsounds.md`) |
 | F9 | `b20c` | | | The humanoid's weapon flips (+0xdd XOR 1), as F5/F6 |
 | Space | `d0da`: fire, by kind through `cs:0xd0e3` (`b242`, `98f1`, `ca46`) | | | T-114 |
-| F7 | `d92d` (humanoid, scout) | | | Launch a missile: with one left (+0xde) and the energy (`1000:d1b0`), one fewer, +0xdf = 20, +0x17 bit 1, a message; else a message |
-| F8 | `d95e` (humanoid, scout) | | | With one left (+0xe0): one fewer, +0xe1 = 120, +0x17 bit 0, and a kind 0xe object made (`1000:f4b1`, `dfff`); a message |
+| F7 | `d92d` (humanoid, scout) | | | The ECM (not a missile): "The ECM and the cloak (T-136)" |
+| F8 | `d95e` (humanoid, scout) | | | The sparkle cloak: "The ECM and the cloak (T-136)" |
 | 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine or buoy: with one left (+0xe2, +0xe4, +0xe3, +0xe5), an object of kind 9, 12, 11 or 10 is made (`1000:f4b1`) and set up (`e5ab`, `e63d`, `e602`, `e5e8`); else a message |
 | A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
@@ -740,8 +739,63 @@ so the empty one is never posted. `Sim::recall` sets +0x23 bit 3 (the situation
 room's F3 and recall button, for the selected unit); `motion::tick` gives a robot with
 it the recall's program (`Tables::recall_program`) and its program takes over, before
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
-(T-138, "Sensing"). The keys still to port are T-149 (the other relay keys), T-134
-(pan), T-136, T-137 and T-139.
+(T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). The keys
+still to port are T-149 (the other relay keys), T-137 and T-139.
+
+## The ECM and the cloak (T-136)
+
+Traced with Ghidra. Both keys' routines are shared by the humanoid's and scout's key
+tables (`DS:0x6b21`, `0x6f14` hold `d92d` and `d95e`) and by those consoles' cloak and
+ECM buttons on a release (`docs/screens.md`, T-130, T-132). Neither checks the kind,
+the robot's damage or whether it is in the field; neither plays a sound. Their
+messages go through `1000:d53f` (`xeno_sim::log::say`: the robot's panel). The numbers
+and messages below are read from the user's `xeno.exe` (`xeno_formats::weapons::Devices`).
+
+**F7, the ECM** (`d92d` is an `int 3`, which DOS returns from; the routine is `d92e`).
+With no charge left (+0xde is 0) it posts the "none left" message. Else it takes 1 of
+energy through the energy check (`1000:d1b0`: only on the battery, +0xfd bit 0; short,
+the energy goes to 0 and the check fails); short, it posts the weapons' "no power"
+message (the humanoid gun's, `Messages::no_power`) and keeps the charge. Otherwise one
+charge fewer, +0xdf = 20, +0x17 bit 1 (`ECM`) set, and the "ECM on" message.
+
+**F8, the cloak** (`d95e`). With no cloak left (+0xe0 is 0) its own message. Else it
+takes 2 of energy, **ignoring the check's answer** (short, the energy goes to 0 and it
+cloaks anyway), one cloak fewer, +0xe1 = 120, +0x17 bit 0 (`CLOAKED`) set, then makes
+an object of kind 14 (`sim_alloc_object_slot`, `1000:f4b1`, small pool) and, if a slot
+was free, sets it up as the sparkle (`dfff`); the "cloak on" message either way.
+
+**The timers.** They count weapon steps, not ticks: each kind's weapon step (two
+tick-table entries in 16 ticks, so about every 8 ticks; humanoid `1000:b08a`, scout
+`c8ab`) first takes one off a running +0xdf, clearing `ECM` when it reaches 0, then the
+same for +0xe1 and `CLOAKED`. The scorpion's step (`972e`) counts only +0xdf. So the ECM
+lasts about 160 ticks and the cloak about 960. Nothing else ends them.
+
+**What they do.** `CLOAKED` hides the robot from the scanners, the map, the A key and
+locks ("Sensing"). The ECM breaks locks on the robot: the lock's upkeep (`1000:d66f`),
+after the damaged and range checks, loses a robot target (+0x16 bit 5) whose +0xdf is
+not 0 (the time, not the status bit), as a lost lock: the lost message, event 4, +0xe6
+cleared. A lock can still be taken on it; the next upkeep loses it.
+
+**The sparkle** (kind 14). Set-up (`dfff`): the robot's x, y and z (32-bit each),
++0x18 (frame), +0x19 (ticks), +0x1a (age) and the word +0x1b (stage) 0, the heading
+(+0x10) 0x10 and the radius (+0x14) 0x2000. It does not follow the robot. Its tick
+(`e03b`, from `DS:0xe6e8[14]`, every tick): +0x19 one more; when its low three bits are
+0 (every 8 ticks), the frame steps (0 to 7, wrapping) and the age one more; at age 40
+and again at 80 the stage word adds 2; then the stage's routine from `CS:0xe073` runs:
+stage 0 adds 6 to the heading and 0xcc to the radius, stage 1 nothing, stage 2 takes
+them off. At age 120 or more it is removed (`f656`, `f5cd`). So it grows for 39
+frames, holds for 40 and shrinks for 41, and lasts 960 ticks, as the cloak. The 3D
+view draws it as the `cloak` model with the frame from +0x18 and, as a node type 6, its
+heading as its size (`docs/render.md`).
+
+### The port (T-136)
+
+`Pilot::Ecm` and `Pilot::Cloak` (`weapons::ecm`, `weapons::cloak`); the weapon step
+counts the times down; `sense`'s upkeep loses a lock on a robot with `Guns::ecm_time`
+running. `Guns` keeps +0xde to +0xe1 (loaded, hashed, saved); `State::Sparkle` keeps
+the sparkle's frame, ticks, age and stage (hashed, saved, read back from a save) and
+`weapons::tick_sparkle` runs it. Shortcut: the sparkle is removed at once, as the
+other kinds (T-054).
 
 ## Relay nets (T-113)
 
@@ -1349,7 +1403,7 @@ raise, loaded from the file and hashed (the state hash changes). The guns' sound
 `real_assets_two_stock_robots_fight`: scen00a's two robots of the closing test fire
 and both are hit and worn (since T-140, with seed 5, until the alien is destroyed by
 its damage total 55 s in). Shortcuts, each named in the
-code: the ECM's and cloak's times are not counted down (T-136); the missile camera's
+code: the missile camera's
 switch is the console's (T-134); the arms' swing step is the legs'. (Until T-148 nothing recharged
 the energy or set `ON_BATTERY`, so stock robots fired freely; now a robot off its net
 pays for its shots, "The relay's tick (T-148)".) A robot

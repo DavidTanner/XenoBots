@@ -98,6 +98,15 @@ pub enum State {
     Shot(crate::shot::Shot),
     /// A relay (`crate::relay`).
     Relay(crate::relay::Relay),
+    /// The cloak's sparkle (kind 14, `crate::weapons::tick_sparkle`): its frame (+0x18),
+    /// the ticks it has lived (+0x19), its frames (+0x1a) and its stage (+0x1b / 2: 0
+    /// growing, 1 still, 2 shrinking).
+    Sparkle {
+        frame: u8,
+        ticks: u8,
+        age: u8,
+        stage: u8,
+    },
     /// Obstacles and objects without a known layout do nothing.
     #[default]
     None,
@@ -236,6 +245,12 @@ pub struct Guns {
     /// (+0x103, +0x104: 0 down, 1 rising, 2 ready, 3 lowering).
     pub arms: [u8; 2],
     pub raised: [u8; 2],
+    /// +0xde to +0xe1: the ECM's charges and the weapon steps it stays on, the sparkle
+    /// cloaks and the steps one stays on (`docs/sim.md`, "The ECM and the cloak").
+    pub ecm: u8,
+    pub ecm_time: u8,
+    pub cloaks: u8,
+    pub cloak_time: u8,
 }
 
 /// A robot's script state (`docs/sim.md`, "Orders"); the program running is in the
@@ -341,6 +356,10 @@ impl Movement {
             locked_on: r.locked_on,
             guns: Guns {
                 energy: r.energy,
+                ecm: r.ecm,
+                ecm_time: r.ecm_time,
+                cloaks: r.cloaks,
+                cloak_time: r.cloak_time,
                 ..guns
             },
             grid: match &r.parts {
@@ -419,6 +438,7 @@ impl StateHash for State {
                 let g = m.guns;
                 h.bytes(&[g.energy, g.missiles, g.burst, g.fired]);
                 h.bytes(&[g.arms[0], g.arms[1], g.raised[0], g.raised[1]]);
+                h.bytes(&[g.ecm, g.ecm_time, g.cloaks, g.cloak_time]);
                 g.cooldown.iter().for_each(|&c| h.u16(c));
                 h.u16(g.rounds);
                 h.u16(g.missile.map_or(0xffff, |t| t.0));
@@ -482,6 +502,15 @@ impl StateHash for State {
             State::Relay(r) => {
                 h.u8(5);
                 r.hash(h);
+            }
+            State::Sparkle {
+                frame,
+                ticks,
+                age,
+                stage,
+            } => {
+                h.u8(6);
+                h.bytes(&[frame, ticks, age, stage]);
             }
             State::None => h.u8(2),
         }
