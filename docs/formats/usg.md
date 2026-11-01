@@ -646,7 +646,11 @@ and always all of them:
 5. `ORDR` (`scen_write_ordr`): the briefing buffer up to and including its first NUL.
 6. `BGND` (`scen_write_bgnd`): the 64-byte sky name buffer (`DS:0x4c90`): the
    default name the video driver gives for `BACKLAND.BIN`'s file id with the
-   scenario's base name written over its first 8 characters, then NULs.
+   scenario's base name written over its first 8 characters, then NULs. The
+   editor's Ctrl+Alt+B rewrites it from a chosen file's name by the same rules
+   (`scen_set_sky_name`: the stem after the last `\` and before the first `.`, space
+   padded to 8, nothing if longer than 8; `docs/screens.md`, "Ctrl+Alt+B: the sky
+   from a file (T-145)"); `usg::sky_buffer` builds it.
 7. `TERM`.
 
 The save game (`file_write_save_game`, `1000:f01b`) is the same with `SDEF` after

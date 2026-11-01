@@ -1673,7 +1673,7 @@ is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` headin
 | Ctrl+Alt+R | `1000:6ac8` | Remove every relay (`1000:f60f` with kind 4) |
 | Ctrl+M | `ui_run_map_editor` (`1000:448c`) | The terrain editor (`mapdvr.dvr`, below) |
 | Ctrl+Alt+O | `1000:6d67` | Open-file dialog, then read up to 800 bytes of the chosen text file into the briefing buffer (`38fa:04ed`) and switch the main view to the orders (mode 0). An unused string at `DS:0x5d61` names a developer's `ORDERS1.TXT` |
-| Ctrl+Alt+B | `1000:6dc3` | Open-file dialog, then the chosen file's base name becomes the sky (`scen_set_sky_name`) and is loaded |
+| Ctrl+Alt+B | `1000:6dc3` | Open-file dialog, then the chosen file's base name becomes the sky (`scen_set_sky_name`) and is loaded; below, "Ctrl+Alt+B: the sky from a file (T-145)" |
 | Ctrl+Alt+arrows | `1000:6dde`..`6df0` | Scroll the situation room's map by half a unit (base +0x4f x, +0x53 y; `1fe6:7243`..`727a`) |
 | Alt+F1 | `1000:6bcf` | As above |
 
@@ -2074,6 +2074,56 @@ and pops it after, so no game time passes.
   (no beep, no message). Then the event queue is emptied (slot `0x338`, `1fe6:398c`),
   dropping any input that arrived during the write.
 
+**Ctrl+Alt+B: the sky from a file (T-145).** `1000:6dc3` saves the game clock
+(`DS:0x374`), runs the open dialog (`ui_call_open_file_dialog`, so its name field
+starts as the open pattern, the `.USG` one), and on a cancel (carry) puts the clock
+back and does nothing else. On an accept it calls `scen_set_sky_name` (`1000:2822`)
+with the returned path in `SI`, then `gfx_load_sky` (`1000:2894`), and puts the clock
+back. `scen_set_sky_name`:
+
+1. Has the video driver build the name of file id **0x34** (slot `0x480`,
+   `file_build_name_from_id` in `mgavideo.dvr`: the first data block's word at the
+   id is the offset, in that block, of an 8.3 name padded with spaces and ended by a
+   NUL, copied to the host's name buffer `DS:0x64e`), and copies **64 bytes** from
+   `DS:0x64e` to the `BGND` buffer `DS:0x4c90`. Past the name's 13 bytes they are
+   whatever the host's buffer holds there (zeros in the image; nothing found writing
+   past 13).
+2. Finds the path's end (its NUL). An empty path stops here.
+3. Finds the last `\` (scanning back from the end); the base name is what follows it,
+   or the whole path without one. An empty base name (a path ending in `\`) stops
+   here.
+4. Finds the base name's first `.`; the part before it (the whole base name without
+   one) is the stem. A stem **longer than 8** stops here.
+5. Writes 8 spaces over the buffer's first 8 bytes and the stem over them (as typed:
+   the dialog upper-cases typed characters, and DOS gives upper-case names). The
+   template's dot, extension, NUL and the bytes after them stay: the chosen file's
+   own extension is ignored. A stem of 0 bytes (a name starting with a dot) leaves
+   8 spaces.
+6. Frees the old sky's block (descriptor `DS:0x4c8a`; far call `2000:1a4f`) and
+   zeroes the descriptor's first word.
+
+Every early stop leaves the buffer as the template with the old sky still loaded and
+drawn, so a save then writes the template's name, which is not the sky shown.
+`gfx_load_sky` loads unless the descriptor's byte `DS:0x4c8c` has bit 7 (not traced
+what sets it), through slot `0x2b0` (`file_load_block_any_form`) with the buffer as
+the name: it tries the name with the extension's middle letter as is, then `!` and
+`@` (`packed.md`), checking each exists (DOS 4300h); when none exists it returns
+**without carry** and without a block, and nothing else happens: no message, no
+beep. The 3D view then draws the flat sky (`b@n.md`, "Drawing"). A file that exists
+but is not a sky is loaded as it is and drawn as a strip (not traced further).
+
+In the port (`Mission::set_sky`, `crates/xeno-app/src/mission.rs`): the editor's
+Ctrl+Alt+B opens the open dialog (`Purpose::Sky`), and the chosen path's file name,
+upper-cased, goes through `xeno_formats::usg::sky_buffer` (the rules above) with the
+template `xeno_formats::mgavideo::file_name` reads from the user's `mgavideo.dvr`.
+The buffer becomes the mission's scenario's `BGND`, which Ctrl+Alt+P's save writes;
+when it was written, the sky is loaded from the game directory as a scenario's is
+(`scene::load_sky`) and the mission's 3D views draw it instead of the scenario
+file's. Differences: the directory is split off by the host's own path rules rather
+than at a `\`; the bytes past the template's 13 are NULs; a file that is not a
+342x54 strip gives the flat sky. `set_sky` takes any path, so T-197's native picker
+can call it as it is.
+
 ### Which parts need the running simulation (T-056)
 
 The 3D views, scanners and map (the colour-255, 254 and 253 regions), the message
@@ -2343,7 +2393,8 @@ original.
   stands (`Mission::saved`: the sim's world over the scenario copy, T-116) with
   `usg::write` to the name chosen (`EDITED.USG` if the port cannot read the dialogs
   from `xeno.exe`); Ctrl+Alt+O opens the open dialog and reads the chosen file as the
-  orders. Not done: Ctrl+Alt+B (T-145), Ctrl+C (T-103). The edits
+  orders. Ctrl+Alt+B opens the open dialog and takes the chosen file's name as the sky
+  (T-145, above). Not done: Ctrl+C (T-103). The edits
   change the scenario copy, not the sim's world (which does not run yet).
 - **The terrain editor** (T-109, `crates/xeno-app/src/terrain.rs`): Ctrl+M, with the
   key table read from the user's `mapdvr.dvr` (`xeno_formats::mapdvr`; without it

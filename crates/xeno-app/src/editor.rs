@@ -53,11 +53,10 @@ pub(crate) mod handler {
         (0x6dea, 0, -0x7fff),
         (0x6df0, 0, 0x7fff),
     ];
-    /// Ctrl+C and Ctrl+Alt+B: not in the port yet.
-    pub const LATER: [(u16, &str); 2] = [
-        (0x6901, "clears the base's messages (T-103)"),
-        (0x6dc3, "picks the sky from a file (T-110)"),
-    ];
+    /// Ctrl+Alt+B (`1000:6dc3`): the sky from a file (T-145).
+    pub const SKY: u16 = 0x6dc3;
+    /// Ctrl+C: not in the port yet.
+    pub const LATER: [(u16, &str); 1] = [(0x6901, "clears the base's messages (T-103)")];
 }
 
 /// A heading step: a degree, 65,536 to a turn.
@@ -76,6 +75,8 @@ pub enum Effect {
     DestroySelected,
     /// Ctrl+Alt+O: the open dialog, then the chosen file as the orders.
     Orders,
+    /// Ctrl+Alt+B: the open dialog, then the chosen file's name as the sky.
+    Sky,
 }
 
 /// The editor's state (`DS:0x5c3f`..`0x5c47`), as `ui_reset_editor_state` leaves it.
@@ -172,6 +173,7 @@ impl Editor {
             handler::TERRAIN => return Effect::TerrainEditor,
             handler::DESTROY => return Effect::DestroySelected,
             handler::ORDERS => return Effect::Orders,
+            handler::SKY => return Effect::Sky,
             handler::TOGGLE => {
                 self.flag = !self.flag;
                 log::info!("editor: Alt+F1 flag {} (nothing reads it)", self.flag);

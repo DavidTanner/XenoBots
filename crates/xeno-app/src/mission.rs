@@ -435,6 +435,10 @@ pub struct Assets {
     pub scoutcon_sprites: Vec<Sprite>,
     /// The thermal and missile cameras' remap, from `mgavideo.dvr` (T-134).
     pub thermal: Vec<u8>,
+    /// Ctrl+Alt+B's sky name template (`mgavideo.dvr`'s name for file id 0x34) and the
+    /// game files it loads the sky from (T-145); without them the key does nothing.
+    pub sky_template: Option<Vec<u8>>,
+    pub files: Option<GameFiles>,
 }
 
 /// What a file dialog was opened for.
@@ -450,6 +454,8 @@ enum Purpose {
     /// The map room's and training menu's Alt+L (`ui_load_scenario_with_dialog`): the
     /// path handed to the screens ([`Mission::take_load`]), which load it.
     LoadScenario,
+    /// The editor's Ctrl+Alt+B (`1000:6dc3`): the file's name as the sky.
+    Sky,
 }
 
 /// The most Ctrl+Alt+O reads of a file (`mov cx, 0x320` at `1000:6d8e`).
@@ -484,8 +490,8 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .map_err(|e| format!("{name}: {e}"))
     };
     let sprites = bank("msprite1.b@n")?;
-    let video =
-        mgavideo::parse(&read("mgavideo.dvr")?).map_err(|e| format!("mgavideo.dvr: {e}"))?;
+    let video_bytes = read("mgavideo.dvr")?;
+    let video = mgavideo::parse(&video_bytes).map_err(|e| format!("mgavideo.dvr: {e}"))?;
     let mut fonts = BTreeMap::new();
     for id in views.program_panel.iter().map(|s| s.font).chain([
         UNIT_FONT,
@@ -576,6 +582,10 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
             .inspect_err(|e| log::warn!("scout console: no sprites: {e}"))
             .unwrap_or_default(),
         thermal: video.thermal.clone(),
+        sky_template: mgavideo::file_name(&video_bytes, mgavideo::SKY_FILE)
+            .inspect_err(|e| log::warn!("mgavideo.dvr: no sky name for Ctrl+Alt+B: {e}"))
+            .ok(),
+        files: Some(files.clone()),
     })
 }
 
@@ -783,6 +793,9 @@ pub struct Mission {
     dialog_name: Option<Vec<u8>>,
     /// The file Alt+L's dialog chose, for the screens to load.
     load: Option<PathBuf>,
+    /// The sky Ctrl+Alt+B loaded (none failed: the flat sky); without one, the
+    /// scenario file's.
+    sky: Option<Option<Sky>>,
     /// F1's pause: the sim stands still under the box until a key or button press.
     paused: bool,
     /// Ctrl+Alt+S: the maps show the shots (`DS:0x62ec` bit 6).
@@ -880,6 +893,7 @@ impl Mission {
             dialog: None,
             dialog_name: None,
             load: None,
+            sky: None,
             paused: false,
             shots: false,
         };
@@ -1754,8 +1768,14 @@ impl Mission {
         if effect == Effect::DestroySelected {
             self.destroy_selected();
         }
-        if let (Effect::Orders, Some(dialogs)) = (effect, &assets.file_dialogs) {
-            self.open_dialog(Purpose::Orders, dialogs, &assets.save_dir);
+        match (effect, &assets.file_dialogs) {
+            (Effect::Orders, Some(dialogs)) => {
+                self.open_dialog(Purpose::Orders, dialogs, &assets.save_dir)
+            }
+            (Effect::Sky, Some(dialogs)) => {
+                self.open_dialog(Purpose::Sky, dialogs, &assets.save_dir)
+            }
+            _ => {}
         }
     }
 
@@ -2043,7 +2063,9 @@ impl Mission {
             .unwrap_or_else(|| tables.first_name.clone());
         let kind = match purpose {
             Purpose::SaveScenario | Purpose::SaveMap => dialog::Kind::Save,
-            Purpose::Orders | Purpose::LoadMap | Purpose::LoadScenario => dialog::Kind::Open,
+            Purpose::Orders | Purpose::LoadMap | Purpose::LoadScenario | Purpose::Sky => {
+                dialog::Kind::Open
+            }
         };
         let dialog = FileDialog::open(kind, dir.to_path_buf(), name, tables);
         self.dialog = Some((dialog, purpose));
@@ -2069,7 +2091,40 @@ impl Mission {
             Purpose::LoadMap => self.load_map(&path),
             Purpose::SaveMap => self.save_map(&path),
             Purpose::LoadScenario => self.load = Some(path),
+            Purpose::Sky => self.set_sky(&path, assets),
         }
+    }
+
+    /// The 3D views' sky: the one Ctrl+Alt+B loaded, else the scenario file's.
+    fn sky<'a>(&'a self, assets: &'a Assets) -> Option<&'a Sky> {
+        match &self.sky {
+            Some(sky) => sky.as_ref(),
+            None => assets.skies.get(&self.file),
+        }
+    }
+
+    /// Ctrl+Alt+B's file (`1000:6dc3`): its name, upper-cased as DOS gives it, over the
+    /// template as `scen_set_sky_name` writes it into the scenario's `BGND`; if it was
+    /// written, the sky is loaded from the game directory (`gfx_load_sky`), a missing
+    /// or unreadable one leaving the flat sky. Any path will do, whoever picked it.
+    fn set_sky(&mut self, path: &Path, assets: &Assets) {
+        let (Some(template), Some(scenario)) = (&assets.sky_template, &mut self.scenario) else {
+            return log::info!("editor: no sky template or scenario for Ctrl+Alt+B");
+        };
+        // The host's own paths may use `/`; the original's rule splits only on `\`.
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let (buffer, written) = usg::sky_buffer(template, name.to_ascii_uppercase().as_bytes());
+        scenario.background = Some(buffer);
+        if written {
+            self.sky = Some(
+                assets
+                    .files
+                    .as_ref()
+                    .and_then(|f| scene::load_sky(f, scenario)),
+            );
+        }
+        log::info!("editor: sky {:?}", scenario.background_name());
+        self.dirty = true;
     }
 
     /// Ctrl+Alt+O's file (`1000:6d75`): its first 800 bytes over the briefing buffer's,
@@ -2661,7 +2716,7 @@ impl Mission {
                 &assets.motion,
                 terrain,
                 &assets.models,
-                assets.skies.get(&self.file),
+                self.sky(assets),
                 probe,
             );
             let [_, second] = self.probed.get();
@@ -2813,7 +2868,7 @@ impl Mission {
                 };
                 match camera {
                     Some(camera) => {
-                        let sky = assets.skies.get(&self.file);
+                        let sky = self.sky(assets);
                         let models = &assets.models;
                         let under = scene::draw_from(
                             &mut buffer,
@@ -3721,6 +3776,8 @@ pub mod tests {
             scoutcon_sprites: Vec::new(),
             // Each colour turned to 255 less it: not the stock table.
             thermal: (0..=255u8).rev().collect(),
+            sky_template: None,
+            files: None,
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -3781,6 +3838,24 @@ pub mod tests {
     fn mission(assets: &Assets) -> Mission {
         let (file, scenario) = assets.sample(None).unwrap();
         Mission::new(file, scenario, Random::seeded(1), &assets.motion)
+    }
+
+    /// Ctrl+Alt+B's name goes into the mission's `BGND`, which a save writes; without
+    /// game files the sky is the flat one.
+    #[test]
+    fn a_picked_sky_is_saved() {
+        let mut assets = test_assets();
+        assets.sky_template = Some(b"QQQQQQQQ.ZZZ\0".to_vec());
+        let mut m = mission(&assets);
+        m.set_sky(Path::new("dir/ab.x"), &assets);
+        let saved = m.saved(&assets).unwrap();
+        let back = usg::parse(&usg::write(&saved).unwrap()).unwrap();
+        assert_eq!(back.background_name().as_deref(), Some("AB.ZZZ"));
+        assert_eq!(m.sky, Some(None));
+        // A name too long keeps the template and the sky.
+        m.set_sky(Path::new("abcdefghi.x"), &assets);
+        let saved = m.saved(&assets).unwrap();
+        assert_eq!(saved.background_name().as_deref(), Some("QQQQQQQQ.ZZZ"));
     }
 
     /// Each tick of the world asks for the views again, so a console's 3D view and the
@@ -5253,6 +5328,35 @@ pub mod tests {
         let bar: Vec<u8> = (147..200).filter_map(|x| fb.get(x, 32)).collect();
         assert!(bar.contains(&6) && bar.contains(&0), "the title on its bar");
         assert_eq!(fb.get(10, 10), Some(0xff));
+    }
+
+    /// T-145: Ctrl+Alt+B on a stock sky's file loads that sky for the mission's views,
+    /// whatever its case or extension on disk.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_ctrl_alt_b_loads_a_stock_sky() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let (file, scenario) = assets.sample(None).unwrap();
+        let mut m = Mission::new(file, scenario, Random::seeded(1), &assets.motion);
+        // The stock file the scenario's own `BGND` names, picked in lower case.
+        let stock = scenario.background_name().unwrap().to_lowercase();
+        let base = stock.split('.').next().unwrap();
+        let sky = files.path(&format!("{base}.b@n")).unwrap().to_path_buf();
+        m.scenario.as_mut().unwrap().background = None;
+        m.set_sky(&sky, &assets);
+        let name = m.scenario.as_ref().unwrap().background_name().unwrap();
+        assert_eq!(name, stock.to_uppercase());
+        let want = scene::load_sky(&files, m.scenario.as_ref().unwrap());
+        assert!(want.is_some());
+        assert_eq!(m.sky.as_ref(), Some(&want));
     }
 
     /// The user's key tables bind F1 and Ctrl+Alt+S in every view and Ctrl+P on the

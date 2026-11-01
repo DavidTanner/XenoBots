@@ -1234,6 +1234,29 @@ fn parse_objects(data: &[u8], data_at: usize) -> Result<Vec<Object>, FormatError
 
 /// The size of the `BGND` chunk the game writes: its 64-byte sky name buffer.
 pub const BACKGROUND_SIZE: usize = 64;
+
+/// The sky name buffer `scen_set_sky_name` (`1000:2822`) leaves for `path`, and whether
+/// it wrote the name (and so freed the old sky for `gfx_load_sky` to load the new
+/// one). The buffer is always `template` (the driver's name for file id 0x34, an 8.3
+/// name padded with spaces) to 64 bytes; then, if the part of `path` after its last
+/// `\` is not empty and the part of that before its first `.` is at most 8 bytes, the
+/// first 8 bytes become spaces and that part is written over them. An empty or longer
+/// name leaves the template and the old sky.
+pub fn sky_buffer(template: &[u8], path: &[u8]) -> (Vec<u8>, bool) {
+    let mut buffer = template[..template.len().min(BACKGROUND_SIZE)].to_vec();
+    // shortcut: the host copies 64 bytes from its 13-byte name buffer; the rest are
+    // taken as the NULs the image has there.
+    buffer.resize(BACKGROUND_SIZE, 0);
+    let base = &path[path.iter().rposition(|&b| b == b'\\').map_or(0, |i| i + 1)..];
+    let stem = &base[..base.iter().position(|&b| b == b'.').unwrap_or(base.len())];
+    if base.is_empty() || stem.len() > 8 {
+        return (buffer, false);
+    }
+    buffer[..8].fill(b' ');
+    buffer[..stem.len()].copy_from_slice(stem);
+    (buffer, true)
+}
+
 /// The `MAPP` chunk is the whole terrain buffer, which the game allocates in 16-byte
 /// paragraphs.
 pub const TERRAIN_PARAGRAPH: usize = 16;
@@ -1333,6 +1356,25 @@ pub fn write(scenario: &Scenario) -> Result<Vec<u8>, FormatError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sky_names_follow_the_editor_rules() {
+        let template = b"QQQQQQQQ.ZZZ\0";
+        let name = |path: &[u8]| {
+            let (b, written) = super::sky_buffer(template, path);
+            assert_eq!(b.len(), super::BACKGROUND_SIZE);
+            assert!(b[13..].iter().all(|&c| c == 0));
+            (String::from_utf8_lossy(&b[..12]).into_owned(), written)
+        };
+        assert_eq!(name(b"AB.XYZ"), ("AB      .ZZZ".into(), true));
+        assert_eq!(name(b"ABCDEFGH.X"), ("ABCDEFGH.ZZZ".into(), true));
+        assert_eq!(name(b"ABCDEFGHI.X"), ("QQQQQQQQ.ZZZ".into(), false));
+        assert_eq!(name(b"NODOT"), ("NODOT   .ZZZ".into(), true));
+        assert_eq!(name(b"C:\\A.B\\DIR\\XY.Q"), ("XY      .ZZZ".into(), true));
+        assert_eq!(name(b"DIR\\"), ("QQQQQQQQ.ZZZ".into(), false));
+        assert_eq!(name(b""), ("QQQQQQQQ.ZZZ".into(), false));
+        assert_eq!(name(b".Q"), ("        .ZZZ".into(), true));
+    }
+
     use super::*;
     use crate::fixtures::{synthetic_usg, synthetic_usg_chunks, synthetic_usg_from};
 

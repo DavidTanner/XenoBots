@@ -141,8 +141,11 @@ high, row by row.
 **Loading.** A scenario's `BGND` chunk names the strip (`usg.md`). Its handler
 (`scen_set_sky_name`) starts from `BACKLAND.BIN` (file id 0x34), puts the chunk's base
 name (up to 8 characters, space padded) over the first 8 characters, and frees the old
-sky; an empty or longer name keeps the previous sky. `gfx_load_sky` loads the named
-file when the sky is not present.
+sky; an empty or longer name keeps the previous sky (but leaves the buffer as the
+template). `gfx_load_sky` loads the named file when the sky is not present; a missing
+file leaves no sky, so the flat one is drawn. The scenario editor's Ctrl+Alt+B goes
+through the same two routines with a chosen file's path (`docs/screens.md`,
+"Ctrl+Alt+B: the sky from a file (T-145)").
 
 **Drawing** (`gfx_draw_sky`, into the 3D view's buffer, which is `w` by `h`):
 
