@@ -107,6 +107,8 @@ pub enum State {
         age: u8,
         stage: u8,
     },
+    /// A mine, buoy or decoy (kinds 9 to 12, `crate::drops`).
+    Drop(crate::drops::Drop),
     /// Obstacles and objects without a known layout do nothing.
     #[default]
     None,
@@ -251,6 +253,8 @@ pub struct Guns {
     pub ecm_time: u8,
     pub cloaks: u8,
     pub cloak_time: u8,
+    /// +0xe2 to +0xe5: the mines, alarm buoys, ECM buoys and decoys left (`crate::drops`).
+    pub drops: [u8; 4],
 }
 
 /// A robot's script state (`docs/sim.md`, "Orders"); the program running is in the
@@ -360,6 +364,7 @@ impl Movement {
                 ecm_time: r.ecm_time,
                 cloaks: r.cloaks,
                 cloak_time: r.cloak_time,
+                drops: [r.mines, r.alarm_buoys, r.ecm_buoys, r.decoys],
                 ..guns
             },
             grid: match &r.parts {
@@ -439,6 +444,7 @@ impl StateHash for State {
                 h.bytes(&[g.energy, g.missiles, g.burst, g.fired]);
                 h.bytes(&[g.arms[0], g.arms[1], g.raised[0], g.raised[1]]);
                 h.bytes(&[g.ecm, g.ecm_time, g.cloaks, g.cloak_time]);
+                h.bytes(&g.drops);
                 g.cooldown.iter().for_each(|&c| h.u16(c));
                 h.u16(g.rounds);
                 h.u16(g.missile.map_or(0xffff, |t| t.0));
@@ -511,6 +517,10 @@ impl StateHash for State {
             } => {
                 h.u8(6);
                 h.bytes(&[frame, ticks, age, stage]);
+            }
+            State::Drop(d) => {
+                h.u8(7);
+                h.bytes(&[d.battery, d.ticks, d.level, d.charges, u8::from(d.alarm)]);
             }
             State::None => h.u8(2),
         }

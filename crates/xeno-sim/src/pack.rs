@@ -3,7 +3,7 @@
 //! every object in slot order, after `scen_pack_all_objects` (`1000:f0f4`) puts each
 //! robot's script pointer and target in their saved form; both path tables; and the
 //! game clock. [`World::save`] packs; [`unpack_made`] reads back the kinds made during
-//! play that the sim keeps (shots, explosions and sparkles) when a save is loaded.
+//! play that the sim keeps (shots, explosions, sparkles, mines and buoys) when a save is loaded.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -63,7 +63,7 @@ impl World {
     /// from zeros, its reference count 1 and the lowest pool index free in its pool.
     // shortcut: the reference counts are the loaded ones (stock files hold 0, 1 and
     // junk; the port reads none), not the live counts with the pack's one a target (T-154).
-    // shortcut: shots, explosions and sparkles made in play keep only what the sim keeps (their
+    // shortcut: shots, explosions, sparkles and drops made in play keep only what the sim keeps (their
     // other bytes zeros), until cross-loading in DOSBox (T-155) shows more is needed.
     pub fn save(&self, loaded: &Scenario, program_table: u16) -> Scenario {
         let w = self;
@@ -244,6 +244,11 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             r.put(0x18, &[*frame, *ticks, *age]);
             r.u16(0x1b, u16::from(*stage) * 2);
         }
+        State::Drop(d) => {
+            let alarm = u8::from(d.alarm) * flag::RELAY_LINKED;
+            r.u8(0x16, r.get(0x16) & !flag::RELAY_LINKED | alarm);
+            r.put(0x18, &[d.battery, d.ticks, d.level, d.charges]);
+        }
         State::Shot(s) => {
             for &(at, f) in layout(s.flight) {
                 match f {
@@ -319,6 +324,7 @@ fn robot(
     r.u8(0xdd, m.weapon);
     let g = &m.guns;
     r.put(0xde, &[g.ecm, g.ecm_time, g.cloaks, g.cloak_time]);
+    r.put(0xe2, &g.drops);
     // `1000:f656`: the target's pointer to its slot (the pack also counts a reference).
     r.u16(0xe6, slot(m.target));
     r.u16(0xe8, m.target_distance);
@@ -477,7 +483,7 @@ fn layout(flight: Flight) -> &'static [(usize, Field)] {
 }
 
 /// The objects of `scenario` made during play that the sim keeps, read back after
-/// [`World::from_scenario`]: shots (kinds 5 to 8), explosions and sparkles. A missile's damage is
+/// [`World::from_scenario`]: shots (kinds 5 to 8), explosions, sparkles, mines and buoys. A missile's damage is
 /// the kind's (`1000:e587`), not the object's.
 pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Tables) {
     for o in scenario.objects.iter().flatten() {
@@ -488,7 +494,15 @@ pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Table
         let at = |i: usize| b[i - Object::HEADER_SIZE];
         let word = |i: usize| u16::from_le_bytes([at(i), at(i + 1)]);
         let kind = u16::from(o.kind);
-        let state = if kind == tables.weapons.devices.sparkle {
+        let state = if tables.weapons.drops.kinds.contains(&kind) {
+            State::Drop(crate::drops::Drop {
+                battery: at(0x18),
+                ticks: at(0x19),
+                level: at(0x1a),
+                charges: at(0x1b),
+                alarm: o.flags & flag::RELAY_LINKED != 0,
+            })
+        } else if kind == tables.weapons.devices.sparkle {
             State::Sparkle {
                 frame: at(0x18),
                 ticks: at(0x19),

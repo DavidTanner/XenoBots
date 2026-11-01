@@ -7,6 +7,7 @@ pub mod base;
 pub mod clock;
 pub mod contact;
 pub mod damage;
+pub mod drops;
 pub mod editor;
 pub mod hash;
 pub mod input;
@@ -236,6 +237,7 @@ impl Sim {
             Pilot::Fire => weapons::trigger(world, id, tables),
             Pilot::Ecm => weapons::ecm(world, id, tables),
             Pilot::Cloak => weapons::cloak(world, id, tables),
+            Pilot::Drop(n) => drops::drop(world, id, n, tables, &mut self.random),
             Pilot::NextTarget => sense::next_target(world, id, tables, &mut events),
             Pilot::DropTarget => sense::drop_target(world, id, tables),
             Pilot::Lock(target) => sense::lock(world, id, target, tables, &mut events),
@@ -402,6 +404,10 @@ pub enum Pilot {
     /// the ECM (`weapons::ecm`) and the sparkle cloak (`weapons::cloak`).
     Ecm,
     Cloak,
+    /// Keys 1 to 4 (0 for key 1) on the scorpion and scout, and their consoles' drop
+    /// buttons (`xeno_formats::weapons::Drops::buttons`): a mine, an ECM buoy, an alarm buoy or a decoy
+    /// dropped (`drops::drop`).
+    Drop(u8),
     /// A left release on an object in the console's views (`1000:d8a7`): that object
     /// locked (`sense::lock`).
     Lock(EntityId),

@@ -724,7 +724,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             continue;
         };
         let (mut base, mut is_robot, mut gone, mut shot) = (false, false, false, false);
-        let mut relay = false;
+        let (mut relay, mut dropped) = (false, false);
         match &mut e.state {
             State::Robot(m) => {
                 let helm = match e.damage {
@@ -739,7 +739,11 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             State::Sparkle { .. } => gone = crate::weapons::tick_sparkle(e, tables),
             State::Shot(_) => shot = true,
             State::Relay(_) => relay = true,
+            State::Drop(_) => dropped = true,
             State::None => {}
+        }
+        if dropped {
+            gone = crate::drops::tick(world, id, tables, random, &mut events);
         }
         if relay {
             crate::relay::tick(world, id, tables);
