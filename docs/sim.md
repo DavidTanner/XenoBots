@@ -795,7 +795,10 @@ counts the times down; `sense`'s upkeep loses a lock on a robot with `Guns::ecm_
 running. `Guns` keeps +0xde to +0xe1 (loaded, hashed, saved); `State::Sparkle` keeps
 the sparkle's frame, ticks, age and stage (hashed, saved, read back from a save) and
 `weapons::tick_sparkle` runs it. Shortcut: the sparkle is removed at once, as the
-other kinds (T-054).
+other kinds (T-054). Part 2 (`t-136-app`): `xeno-app` maps F7 and F8 by their handlers
+(`d92d`, `d95e`) and runs them from the humanoid's and scout's cloak and ECM buttons on a
+release (the look flipped while held), draws the sparkle with its frame, and the
+consoles' cloak and ECM counts are the sim's. Left to check in DOSBox: T-191.
 
 ## Relay nets (T-113)
 

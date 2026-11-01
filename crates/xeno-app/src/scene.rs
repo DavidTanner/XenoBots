@@ -54,7 +54,7 @@ pub fn camera(world: &World, id: EntityId, view: &View3d, tables: &Tables) -> Op
 
 /// The frames the sim keeps, from the kind's frame bytes (`docs/render.md`, "Frame
 /// numbers"): the humanoid's arms and legs, the scorpion's and scout's legs, a base's
-/// look, an explosion's frame, the missile's spin (+0x18; the other shots' +0x18 is 0),
+/// look, an explosion's or the cloak's sparkle's frame, the missile's spin (+0x18; the other shots' +0x18 is 0),
 /// a relay's stage and colour (+0x18..=+0x1d); the others are 0 (the scorpion's tail
 /// and claws, T-151).
 fn frames(e: &Entity) -> Vec<u8> {
@@ -67,6 +67,7 @@ fn frames(e: &Entity) -> Vec<u8> {
         (ObjectKind::Scorpion | ObjectKind::Scout, State::Robot(m)) => [&[0][..], &m.legs].concat(),
         (_, State::Base { look, .. }) => vec![look],
         (_, State::Explosion { frame, .. }) => vec![frame],
+        (_, State::Sparkle { frame, .. }) => vec![frame],
         (_, State::Relay(r)) => r.frames.to_vec(),
         _ => Vec::new(),
     }

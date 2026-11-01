@@ -145,9 +145,10 @@ mod handler {
     /// cockpit keys"); the arrows (left, right, up, down) of each kind (humanoid `1000:acc0`,
     /// scorpion `9420`, scout `c5e3`), `.` (opcode 0x53's routine) and the scout's Q,
     /// W, E with the stance each sets, the scorpion's U, Space, the trigger
-    /// (`1000:d0da`), and A and R, the next target and none (`1000:d812`, `d7f8`;
-    /// `docs/sim.md`, "The cockpit keys").
-    pub const PILOT: [(u16, Pilot); 23] = [
+    /// (`1000:d0da`), A and R, the next target and none (`1000:d812`, `d7f8`;
+    /// `docs/sim.md`, "The cockpit keys"), and F7 and F8, the ECM and the cloak
+    /// (`d92d`, `d95e`; "The ECM and the cloak (T-136)").
+    pub const PILOT: [(u16, Pilot); 25] = [
         (0xd131, Pilot::Weapon(0)),
         (0xd142, Pilot::Weapon(1)),
         (0xb20c, Pilot::OtherWeapon),
@@ -171,19 +172,23 @@ mod handler {
         (0xd0da, Pilot::Fire),
         (0xd812, Pilot::NextTarget),
         (0xd7f8, Pilot::DropTarget),
+        (0xd92d, Pilot::Ecm),
+        (0xd95e, Pilot::Cloak),
     ];
 }
 
 /// The consoles' buttons whose mouse handlers the port runs: the humanoid's fire,
-/// weapon, pilot, program and lock buttons, then the scorpion's, its stop and deploy
-/// buttons and its relay panel (which only shows its frame XORed while held), then the
-/// scout's and its three stance buttons.
-const INSTRUMENTS: [u16; 21] = [
+/// weapon, pilot, program, lock, cloak and ECM buttons, then the scorpion's first five,
+/// its stop and deploy buttons and its relay panel (which only shows its frame XORed
+/// while held), then the scout's first five, its three stance buttons, cloak and ECM.
+const INSTRUMENTS: [u16; 25] = [
     crate::humancon::FIRE_TYPE,
     crate::humancon::WEAPON_TYPE,
     crate::humancon::PILOT_TYPE,
     crate::humancon::PROGRAM_TYPE,
     crate::humancon::LOCK_TYPE,
+    crate::humancon::CLOAK_TYPE,
+    crate::humancon::ECM_TYPE,
     crate::scorpcon::FIRE_TYPE,
     crate::scorpcon::WEAPON_TYPE,
     crate::scorpcon::PILOT_TYPE,
@@ -200,6 +205,8 @@ const INSTRUMENTS: [u16; 21] = [
     crate::scoutcon::STANCE_TYPES[0],
     crate::scoutcon::STANCE_TYPES[1],
     crate::scoutcon::STANCE_TYPES[2],
+    crate::scoutcon::CLOAK_TYPE,
+    crate::scoutcon::ECM_TYPE,
 ];
 const FIRE_TYPES: [u16; 3] = [
     crate::humancon::FIRE_TYPE,
@@ -212,7 +219,11 @@ const LOCK_TYPES: [u16; 3] = [
     crate::scoutcon::LOCK_TYPE,
 ];
 /// Buttons that flip the shared look on a press and back on a release.
-const SHARED_LOOK_TYPES: [u16; 5] = [
+const SHARED_LOOK_TYPES: [u16; 9] = [
+    crate::humancon::CLOAK_TYPE,
+    crate::humancon::ECM_TYPE,
+    crate::scoutcon::CLOAK_TYPE,
+    crate::scoutcon::ECM_TYPE,
     crate::scorpcon::STOP_TYPE,
     crate::scorpcon::DEPLOY_TYPE,
     crate::scoutcon::STANCE_TYPES[0],
@@ -1206,7 +1217,8 @@ impl Mission {
     /// `8b5f`, `8bc9`; `ba8c`, `bac1`), the lock button takes the next target (left) or
     /// drops it (right) and clears the look (`a3f1`, `8a26`, `be01`); the scorpion's stop
     /// asks for speed 0 and hands it to the pilot (`8e45`), its U deploys a relay
-    /// (`8d0b`, `9b01`); the scout's stance buttons ask for a stance.
+    /// (`8d0b`, `9b01`); the scout's stance buttons ask for a stance; the humanoid's and
+    /// scout's cloak and ECM buttons run F8 and F7 (`aa5e`, `aa94`; `be77`, `bec5`).
     fn instrument(&mut self, slot: u16, w: views::Widget, right: bool, programs: &Programs) {
         use crate::{humancon as h, scorpcon as s, scoutcon as c};
         match w.kind {
@@ -1233,6 +1245,8 @@ impl Mission {
                 self.change_orders(programs, |book| book.set_program_drives(slot, false));
             }
             s::DEPLOY_TYPE => self.pilot(slot, Pilot::Deploy),
+            h::CLOAK_TYPE | c::CLOAK_TYPE => self.pilot(slot, Pilot::Cloak),
+            h::ECM_TYPE | c::ECM_TYPE => self.pilot(slot, Pilot::Ecm),
             h::LOCK_TYPE | s::LOCK_TYPE | c::LOCK_TYPE => {
                 self.look = crate::console::Look::default();
                 let key = if right {
@@ -2178,9 +2192,9 @@ impl Mission {
         .or_else(|| {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
             let kinds: &[u16] = match view {
-                View::Humanoid => &INSTRUMENTS[..5],
-                View::Scorpion => &INSTRUMENTS[5..13],
-                View::Scout => &INSTRUMENTS[13..],
+                View::Humanoid => &INSTRUMENTS[..7],
+                View::Scorpion => &INSTRUMENTS[7..15],
+                View::Scout => &INSTRUMENTS[15..],
                 _ => &[],
             };
             tables
@@ -3199,13 +3213,11 @@ impl Mission {
         let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
             return None;
         };
-        // shortcut: the cloaks (+0xe0) and the ECM's charges (+0xde) are the scenario's
-        // as loaded (T-136); +0xee, the status page and a
-        // scorpion's +0xfa bit 7 are worked out from the passes since the load
+        // shortcut: +0xee, the status page and a scorpion's +0xfa bit 7 are worked out from the passes since the load
         // (`console::blink`, `console::page`, T-167).
         let loaded = self.loaded_robot(slot);
         let passes = world.ticks;
-        let (cloaks, ecm, blink, page) = loaded.map_or((0, 0, 0, 0), |r| {
+        let (blink, page) = loaded.map_or((0, 0), |r| {
             // The humanoid's three pages of +0x10a, the scout's four of +0x108.
             let (light, pages) = match &r.parts {
                 usg::Parts::Humanoid(p) => (p.light, 3),
@@ -3213,8 +3225,6 @@ impl Mission {
                 usg::Parts::Scorpion(_) => (0, 1),
             };
             (
-                r.cloaks,
-                r.ecm,
                 crate::console::blink(r.tick, r.blink, passes),
                 crate::console::page(r.tick, r.clock, light, passes, pages),
             )
@@ -3265,8 +3275,8 @@ impl Mission {
             power: c.power,
             helm: c.helm,
             systems: c.systems,
-            cloaks,
-            ecm,
+            cloaks: m.guns.cloaks,
+            ecm: m.guns.ecm,
             program_drives: self
                 .book()
                 .get(slot)
@@ -6080,6 +6090,15 @@ pub mod tests {
             assert_eq!(state(&m).stance_target, stance);
         }
         assert!(drives(&m), "a stance leaves the program driving");
+        // The cloak and ECM buttons: pressed while held; let go, F8 and F7 run.
+        for kind in [c::CLOAK_TYPE, c::ECM_TYPE] {
+            m.mouse_down(LEFT, centre(find(kind)), &assets);
+            assert!(m.look.pressed);
+            m.mouse_up(LEFT, centre(find(kind)), &assets);
+            assert!(!m.look.pressed);
+        }
+        let s = usg::status::CLOAKED | usg::status::ECM;
+        assert_eq!(state(&m).status & s, s);
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(c::LOCK_TYPE);
         m.mouse_down(RIGHT, centre(lock), &assets);
@@ -6219,6 +6238,17 @@ pub mod tests {
         assert!(!drives(&m));
         click(&mut m, find(h::PROGRAM_TYPE), RIGHT);
         assert!(drives(&m));
+        // The cloak and ECM buttons run F8 and F7 on the release: one cloak fewer.
+        let robot_state = |m: &Mission| match m.world().get(EntityId(robot)).unwrap().state {
+            State::Robot(r) => r,
+            _ => unreachable!(),
+        };
+        let cloaks = robot_state(&m).guns.cloaks;
+        click(&mut m, find(h::CLOAK_TYPE), LEFT);
+        click(&mut m, find(h::ECM_TYPE), LEFT);
+        let s = usg::status::CLOAKED | usg::status::ECM;
+        assert_eq!(robot_state(&m).status & s, s);
+        assert_eq!(robot_state(&m).guns.cloaks, cloaks - 1);
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(h::LOCK_TYPE);
         m.mouse_down(LEFT, centre(lock), &assets);
