@@ -245,6 +245,7 @@ fn main() -> ExitCode {
             let endings = intro::load_endings(&files)?;
             let map = maproom::load(&files)?;
             missions.editor_unlocked = map.editor;
+            missions.developer_unlocked = map.developer;
             if let Some(dir) = &cli.save_dir {
                 missions.save_dir = dir.clone();
                 login.save_dir = dir.clone();

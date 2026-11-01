@@ -242,14 +242,16 @@ pub fn roster_bytes(scenario: Option<&Scenario>) -> [(u8, u8); 240] {
     bytes
 }
 
-/// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre, and the
-/// editor's Ctrl+E (`DS:0x6ffa`): every alien robot, detected or not.
+/// What the map shows: the base's +0x32 bits, +0x36 zoom and +0x4f centre, the
+/// editor's Ctrl+E (`DS:0x6ffa`): every alien robot, detected or not, and the
+/// developer's Ctrl+Alt+S (`DS:0x62ec` bit 6): the shots.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MapState {
     pub overlays: u16,
     pub zoom: u8,
     pub centre: Position,
     pub reveal: bool,
+    pub shots: bool,
 }
 
 impl MapState {
@@ -262,6 +264,7 @@ impl MapState {
                 y: xeno_sim::Fixed(base.map_centre.y),
             },
             reveal: false,
+            shots: false,
         }
     }
 
@@ -358,6 +361,7 @@ pub fn console_map(
         zoom: map_zoom,
         centre: at,
         reveal: false,
+        shots: false,
     };
     (camera, map)
 }
@@ -627,8 +631,9 @@ pub fn draw_objects(
             }),
             // `1000:fa47`.
             16 => Node::Dot(OBSTACLE_DOT),
-            // Shots (5 to 8) only with the developer's Ctrl+Alt+S (`DS:0x62ec` bit
-            // 6, not modelled); 13 to 15 never.
+            // `1000:fa4d`: shots only with the developer's Ctrl+Alt+S.
+            5..=8 if map.shots => Node::Dot(MARK_DOT),
+            // 13 to 15 never.
             _ => continue,
         };
         match node {
@@ -823,6 +828,14 @@ pub(crate) mod tests {
                 figures: [Vec::new(), Vec::new(), Vec::new()],
                 flags: [b"A".to_vec(), b"A".to_vec()],
             },
+            // F1's box (2, 4, 8, 30) saying "A".
+            pause_box: xeno_formats::maproom::Rect {
+                top: 2,
+                left: 4,
+                bottom: 8,
+                right: 30,
+            },
+            pause_text: b"A".to_vec(),
             strings: b"\0A\0".to_vec(),
         }
     }
@@ -934,6 +947,12 @@ pub(crate) mod tests {
         put(
             7,
             entity(ObjectKind::Obstacle, h, 10, 5, State::default()),
+            (0, 0),
+        );
+        // A shot (kind 5), shown only with Ctrl+Alt+S.
+        put(
+            8,
+            entity(ObjectKind::Other(5), h, 16, 4, State::default()),
             (0, 0),
         );
         let hill = TerrainFeature {
@@ -1088,6 +1107,15 @@ pub(crate) mod tests {
             ..map
         };
         assert_eq!(draw_with(map, None).get(20, 10), Some(0x31));
+    }
+
+    #[test]
+    fn the_developer_s_switch_shows_the_shots() {
+        // On the base at (10, 10): the shot at (16, 4) is 6 columns right, 6 rows down.
+        let map = MapState::default();
+        assert_eq!(draw_with(map, None).get(26, 16), Some(MAP_BACKGROUND));
+        let map = MapState { shots: true, ..map };
+        assert_eq!(draw_with(map, None).get(26, 16), Some(MARK_DOT));
     }
 
     /// The colour of the synthetic sprite a handle names.

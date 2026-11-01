@@ -69,6 +69,10 @@ pub(crate) const REPAIR_STATES_AT: [usize; 3] = [0x5abe, 0x5ac5, 0x5acf];
 pub(crate) const MANUAL_AT: usize = 0x5ada;
 pub(crate) const SPEEDS_AT: usize = 0x5b2a;
 pub(crate) const KIND_LETTERS_AT: usize = 0x17dbe;
+/// F1's pause (`1000:cff3`, in the situation room and every console): `mov bx, rect`
+/// for its box, `mov si, text` (string segment) for what it says.
+pub(crate) const PAUSE_BOX_AT: usize = 0xcffd;
+pub(crate) const PAUSE_TEXT_AT: usize = 0xd03f;
 /// The most speeds read: the table rises by 0 or 1 a step to its end.
 const MAX_SPEEDS: usize = 0x100;
 
@@ -152,6 +156,9 @@ pub struct SitRoom {
     pub clock_fields: [usize; 4],
     pub detail: Detail,
     pub status: Status,
+    /// F1's pause box and its text.
+    pub pause_box: Rect,
+    pub pause_text: Vec<u8>,
     /// The string segment, from its start.
     pub strings: Vec<u8>,
 }
@@ -535,6 +542,8 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
             figures: [routine(0)?, routine(1)?, routine(2)?],
             flags: [text(FLAG_TEXTS_AT[0])?, text(FLAG_TEXTS_AT[1])?],
         },
+        pause_box: rect(image, at_ds(PAUSE_BOX_AT, &[0xbb])?)?,
+        pause_text: in_strings(PAUSE_TEXT_AT)?,
         strings: image
             .get(strings..(strings + STRINGS_BYTES).min(image.len()))
             .ok_or_else(|| invalid(strings, "no string segment"))?
@@ -702,6 +711,11 @@ pub(crate) mod tests {
         put(FLAG_TEXTS_AT[0], &op(&[0xbe], 0x8b0));
         put(FLAG_TEXTS_AT[1], &op(&[0xbe], 0x8b4));
         put(DS + 0x8b0, b"ok\0\0bad\0");
+        // F1's box (10, 20, 22, 60) saying "wait".
+        put(PAUSE_BOX_AT, &op(&[0xbb], 0x8c0));
+        put(DS + 0x8c0, &[10, 0, 20, 0, 22, 0, 60, 0]);
+        put(PAUSE_TEXT_AT, &op(&[0xbe], 0x90));
+        put(STRINGS + 0x90, b"wait\0");
         image
     }
 
@@ -823,6 +837,8 @@ pub(crate) mod tests {
             STATUS_RECORDS_AT,
             FIGURES_AT + 1,
             FLAG_TEXTS_AT[1],
+            PAUSE_BOX_AT,
+            PAUSE_TEXT_AT,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -855,6 +871,10 @@ pub(crate) mod tests {
         assert_eq!(room.time_of(14, 7)[2..7], *b"14:07");
         assert!(room.at_base.starts_with(b"UNIT IS AT BASE"));
         assert_eq!(room.status_icons[0], 0x430);
+        // F1's box: 12 rows of 43 pixels, with room for its text in font 0.
+        let b = room.pause_box;
+        assert_eq!((b.top, b.left, b.bottom, b.right), (64, 138, 76, 181));
+        assert!(!room.pause_text.is_empty());
         assert_eq!(
             room.kind_icons,
             [[0x480, 0x488, 0x490], [0x498, 0x4a0, 0x4a8]]

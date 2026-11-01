@@ -314,6 +314,8 @@ pub struct Screens {
     /// The log-in screen is fading in, with the colour records held
     /// (`ui_show_screen_fading_in`); the cursor starts blinking after.
     login_fading: bool,
+    /// The mission's F1 pause holds the colour records (`pal_hold_anims`).
+    pause_held: bool,
     /// Who logged in last.
     player: Option<Player>,
     /// The campaign shown when the map room comes before any log-in (`--screen`).
@@ -391,6 +393,7 @@ impl Screens {
             login,
             entry: NameEntry::default(),
             login_fading: false,
+            pause_held: false,
             player: None,
             guest,
             map_assets,
@@ -550,7 +553,11 @@ impl Screens {
     pub fn claims_escape(&self) -> bool {
         match self.screen {
             // An open file dialog takes ESC as cancel.
-            Mission(view) => self.mission.dialog_open() || self.mission_assets.claims_escape(view),
+            Mission(view) => {
+                self.mission.dialog_open()
+                    || self.mission.paused()
+                    || self.mission_assets.claims_escape(view)
+            }
             Training => self
                 .mission_assets
                 .training
@@ -645,7 +652,9 @@ impl Screens {
                     (InputEvent::KeyDown { code, .. }, Mission(_)) => {
                         let word = key_word(code, &self.keys);
                         let dialog = self.mission.dialog_open();
-                        if let (Some(action), false) = (self.screen.lookup(word), dialog) {
+                        // F1's pause takes every key, as a dialog does.
+                        let modal = dialog || self.mission.paused();
+                        if let (Some(action), false) = (self.screen.lookup(word), modal) {
                             self.act(action);
                         } else if let Some(request) = self.mission.key(word.0, &self.mission_assets)
                         {
@@ -750,6 +759,13 @@ impl Screens {
         }
         if self.screen == Login && self.next.is_none() {
             self.entry.draw(&self.login.font, fb);
+        }
+        if self.mission.paused() != self.pause_held {
+            self.pause_held = !self.pause_held;
+            match self.pause_held {
+                true => self.dac.hold_anims(),
+                false => self.dac.release_anims(),
+            }
         }
         if self.screen == Mission(View::SitRoom) && self.next.is_none() {
             self.mission.retrace();

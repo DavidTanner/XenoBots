@@ -692,11 +692,11 @@ arrows act the same, and the keyboard's repeat repeats them.
 | A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
 | C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4 (the dump) with a message (T-149) |
-| S | `ddb0` | | the same | +0xfa = 0 (not traced) |
+| S | `ddb0` | | the same | +0xfa = 0: the status panel turns its page at the next count (T-139, below) |
 | X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4): X adds the pan step of the zoom (`DS:0x70d1[+0xf1]`), Z takes it off, Y sets 0; each clears `TRACKING` (`docs/screens.md`, "The display's other modes (T-134)") |
-| F1 | `cff3` | the same | the same | A box over the view until a key (not traced) |
-| Ctrl+P | `d193` | the same | the same | With unlock word 8 (`key.md`): power (+0x4e) 100 and +0x4f, +0x50, +0x51 (the drive) 0xff |
-| Ctrl+Alt+S | `d177` | the same | the same | Flips `DS:0x62ec` bit 6 (a developer switch) |
+| F1 | `cff3` | the same | the same | The pause (also in the situation room, T-139, below) |
+| Ctrl+P | | `d193` | the same | With unlock word 8 (`key.md`): power (+0x4e) 100, the signal (+0x4f), battery (+0x50) and drive (+0x51) 0xff, a beep (T-139, below) |
+| Ctrl+Alt+S | `d177` | the same | the same | Flips `DS:0x62ec` bit 6: the shots on the maps (T-139, below) |
 
 The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
 Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).
@@ -740,8 +740,62 @@ room's F3 and recall button, for the selected unit); `motion::tick` gives a robo
 it the recall's program (`Tables::recall_program`) and its program takes over, before
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
 (T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). Keys 1 to 4
-are `Pilot::Drop` (T-137). The keys still to port are T-149 (the other relay keys) and
-T-139.
+are `Pilot::Drop` (T-137), Ctrl+P `Pilot::Charge` (T-139, below). The keys still to
+port are T-149 (the other relay keys) and S (T-167).
+
+## The developer and leftover keys (T-139)
+
+From a Ghidra pass over the four handlers, the beep they call and the routines that
+read what they change. F1 and Ctrl+Alt+S are also in the situation room's table
+(`DS:0x5b20`), with the same handlers; Ctrl+P is in the scorpion's and scout's tables
+only, and S in the humanoid's and scout's.
+
+- **F1, the pause** (`1000:cff3`): pushes the game clock (`DS:0x374`), holds the
+  colour records (`pal_hold_anims`, `1000:13f2`), beeps (below), then saves the pixels
+  under the box at `DS:0x6ff2` (top, left, bottom, right: 64, 138, 76, 181 in the stock
+  build; slots `0x50a`, `0x50e`), fills it with colour 0 (`0x51a`), frames it in 0x0f
+  (`0x52a`) and types a string from the string segment (`mov si` at `1000:d03f`) in
+  font 0, colour 0x0f, transparent (slot `0x3c2`) from (left + 4, top + 4). It empties
+  the event queue (slot `0x338`, `1fe6:398c`), then waits in slot `0x340`
+  (`1fe6:39b5`) for an event of mask 0x82a: a key press (0x800) or a mouse button
+  press. That event is used up. It then puts the pixels back (`0x512`), marks the
+  view for a redraw (`DS:0x6ff0` |= 0x22), releases the records (`1000:13fe`) and pops
+  the clock, so no game time passes. Nothing ticks while it waits.
+- **The beep** (`1000:0261`, far `1fe6:4329` → `1fe6:439a`): only while the game clock
+  is not 0, the PC speaker at PIT divisor 0x4b0 (1,193,182 / 1200, about 994 Hz) for 4
+  ticks of the clock, then 4 ticks of silence. F1 and Ctrl+P both call it.
+- **S** (`1000:ddb0`): +0xfa = 0, the same as a press on the status panel (`1000:dd7f`).
+  The tick's entry 4 steps the status page (humanoid +0x10a, scout +0x108) when
+  +0xfa's low five bits are 0, then steps +0xfa (T-130, T-132), so the page turns at
+  the next entry 4 (within 16 ticks) and then every 32 calls from there: S turns the
+  page now rather than up to 32 calls later. The only other `[DI + 0xfa]` accesses
+  are the humanoid's and scout's steps (`1000:b34a`, `cb22`), the scorpion's bit-7
+  flip (`9a45`) and a write of 3 in `ui_sitroom_set_view_mode` (`1000:678f`, on the
+  object it is given; not traced further).
+- **Ctrl+P** (`1000:d193`): with `DS:0x1598` = 0xba17 (unlock word 8, `key.md`) power
+  (+0x4e) 100, the signal (+0x4f), battery (+0x50) and drive (+0x51) 0xff, then the
+  beep; without it, nothing. Unlike the new robot's set-up (`1000:d17d`) it leaves
+  +0xfd bit 0 alone. The signal and drive are the relay net's (`relay::signal_step`,
+  "The relay's tick (T-148)"), which writes them again at its next step; the battery
+  is what firing draws on ("Nothing else recharges a robot").
+- **Ctrl+Alt+S** (`1000:d177`): `DS:0x62ec` XOR 0x40. Bit 6 is read only by the map's
+  shot routine (`1000:fa4d`, kinds 5 to 8; `docs/screens.md`, "The situation room's
+  main view (T-103)"): with it, each shot is a 0x0f pixel on the situation room's map and on a
+  console's map display; without it, none. No other code touches the byte. It is
+  never cleared, so it lasts the run.
+
+### The port (T-139)
+
+`Pilot::Charge` sets the four bytes (part of the state hash and saves); `xeno-app`
+sends it on Ctrl+P only with unlock word 8 from the user's `XENO.KEY`
+(`Assets::developer_unlocked`, the map room's check). F1 pauses the mission in the
+app: no ticks, the briefing stops typing, the colour records are held, the box and
+its text (`xeno_formats::sitroom::SitRoom::pause_box`, `pause_text`, read from the
+user's `xeno.exe`) are drawn over the view, and the next key or button press only
+ends it. Ctrl+Alt+S flips `MapState::shots`. Not ported: the beep (no PC speaker in
+`xeno-audio`; T-193), and S, whose +0xfa is worked out from the passes in the app
+until T-167 keeps it in the sim (S and the status panel's press then set it to 0).
+The shots flag is kept by the mission, not the run (a shortcut).
 
 ## The ECM and the cloak (T-136)
 
