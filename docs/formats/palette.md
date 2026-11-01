@@ -267,7 +267,7 @@ Contents are the user's to read, never committed; this is the shape only.
     `DS:0x31b8`, run on every widget of the set when the mission switches to another
     view's set, `1000:2690`) turns the same records off where they stand (slot
     `0x31a`) and switches the second display's record off (`1000:d9ef` with 0xff:
-    `0x31a` on `DS:0x70d0`, a T-134 matter); the next view's draw restarts the shared
+    `0x31a` on `DS:0x70d0`; the record by display mode, `docs/screens.md`, "The display's other modes (T-134)"); the next view's draw restarts the shared
     0x10 and 0x11 from their beginning. When the mission ends, `ui_map_room_run_mission`
     holds the records, turns every one off (slot `0x310`, its only caller) and fades
     out over 32 retraces, then releases them. The port (T-125):

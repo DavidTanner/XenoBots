@@ -53,6 +53,22 @@ pub(crate) const MESSAGE_HIGH: (usize, u8) = (0xd22c, 0xb0);
 pub(crate) const DISPLAY_VIEW_MODES: (usize, &[u8]) = (0xdbf2, &[0x8a, 0x87]);
 pub(crate) const DISPLAY_DEVICES: (usize, &[u8]) = (0xdb6e, &[0x8a, 0x87]);
 pub(crate) const DISPLAY_MAP_COLOURS: [usize; 3] = [0x9e14, 0x812d, 0xb5cc];
+/// The colour record by display mode (`mov al, [bx + table]` at `1000:d9d0`), the
+/// target distances that pick the tracking zoom (`cmp ax, [bx + table]` at
+/// `1000:da90`), the pan's step by zoom (`mov ax, [bx + table]` at `1000:db86`), and
+/// the zoom's names, the camera's and the map's (`mov si, [bx + table]` at
+/// `1000:9ebb`, `9edf`; DS offsets of NUL-terminated strings).
+pub(crate) const DISPLAY_RECORDS: (usize, &[u8]) = (0xd9d0, &[0x8a, 0x87]);
+pub(crate) const DISPLAY_RANGES: (usize, &[u8]) = (0xda90, &[0x3b, 0x87]);
+pub(crate) const DISPLAY_PAN_STEPS: (usize, &[u8]) = (0xdb86, &[0x8b, 0x87]);
+pub(crate) const DISPLAY_ZOOM_NAMES: [(usize, &[u8]); 2] =
+    [(0x9ebb, &[0x8b, 0xb7]), (0x9edf, &[0x8b, 0xb7])];
+/// Per robot kind, where the zoom's name goes in the camera and the map modes:
+/// `mov ax, y; mov bx, x` before the cursor call (the scout uses one for both).
+pub(crate) const DISPLAY_ZOOM_NAME_AT: [[usize; 2]; 3] =
+    [[0x9ea8, 0x9ecc], [0x8205, 0x8236], [0xb639, 0xb639]];
+/// The zoom steps, 0 to 4.
+pub const ZOOMS: usize = 5;
 const SET_MAP_CLEAR: [u8; 4] = [0xc6, 0x06, 0x57, 0x14];
 const SET_MAP_HILL: [u8; 4] = [0xc6, 0x06, 0x58, 0x14];
 /// The pointer's shapes over the views' regions (T-106; `docs/screens.md`, "Shape and
@@ -202,8 +218,9 @@ pub struct PointerShapes {
     pub console: [u8; 4],
 }
 
-/// A console's second display (`docs/screens.md`, "The second display (T-104)").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A console's second display (`docs/screens.md`, "The second display (T-104)",
+/// "The display's other modes (T-134)").
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecondDisplay {
     /// The view mode (`docs/render.md`, "The step lists") by display mode (+0xef, its
     /// bit 2 set while the mode's device is damaged).
@@ -212,6 +229,19 @@ pub struct SecondDisplay {
     pub devices: [u8; 4],
     /// By robot kind: the map's clear and hill colours.
     pub map_colours: [[u8; 2]; 3],
+    /// The colour-animation record each display mode starts (`1000:d9ca`).
+    pub records: [u8; 8],
+    /// While tracking, the zoom step is the first whose distance (8.8) is at or past
+    /// the target's (`1000:da8a`).
+    pub ranges: [u16; ZOOMS],
+    /// The X and Z keys' step of the pan, by zoom step.
+    pub pan_steps: [u16; ZOOMS],
+    /// The zoom's name by step, in the camera modes and in the map mode.
+    pub zoom_names: [Vec<u8>; ZOOMS],
+    pub map_zoom_names: [Vec<u8>; ZOOMS],
+    /// By robot kind: where the zoom's name goes (x, y) in the camera modes and in
+    /// the map mode.
+    pub zoom_name_at: [[(u16, u16); 2]; 3],
 }
 
 /// How a console's message panel looks (`docs/screens.md`, "The message panel
@@ -414,10 +444,38 @@ impl Exe<'_> {
                 _ => return Err(invalid(at, "not the second display's map colours")),
             }
         }
+        let words = |entry| -> Result<[u16; ZOOMS], FormatError> {
+            let mut out = [0; ZOOMS];
+            for (i, w) in out.iter_mut().enumerate() {
+                *w = self.table_word(entry, 2 * i)?;
+            }
+            Ok(out)
+        };
+        let names = |entry| -> Result<[Vec<u8>; ZOOMS], FormatError> {
+            let at = words(entry)?;
+            let mut out: [Vec<u8>; ZOOMS] = Default::default();
+            for (name, at) in out.iter_mut().zip(at) {
+                *name = string(self.image, self.ds + usize::from(at))?;
+            }
+            Ok(out)
+        };
+        let mut zoom_name_at = [[(0, 0); 2]; 3];
+        for (at, code) in zoom_name_at.iter_mut().zip(DISPLAY_ZOOM_NAME_AT) {
+            for (at, code) in at.iter_mut().zip(code) {
+                let y = operand(self.image, code, &[0xb8])?;
+                *at = (operand(self.image, code + 3, &[0xbb])?, y);
+            }
+        }
         Ok(SecondDisplay {
             view_modes: table(DISPLAY_VIEW_MODES, 8)?.try_into().expect("8 bytes"),
             devices: table(DISPLAY_DEVICES, 4)?.try_into().expect("4 bytes"),
             map_colours,
+            records: table(DISPLAY_RECORDS, 8)?.try_into().expect("8 bytes"),
+            ranges: words(DISPLAY_RANGES)?,
+            pan_steps: words(DISPLAY_PAN_STEPS)?,
+            zoom_names: names(DISPLAY_ZOOM_NAMES[0])?,
+            map_zoom_names: names(DISPLAY_ZOOM_NAMES[1])?,
+            zoom_name_at,
         })
     }
 
@@ -657,6 +715,11 @@ mod tests {
         assert!(corrupt(MESSAGE_COLOURS.0, 0x90).0);
         assert!(corrupt(DISPLAY_DEVICES.0, 0x90).0);
         assert!(corrupt(DISPLAY_MAP_COLOURS[2] + 5, 0x90).0);
+        for (at, _) in [DISPLAY_RECORDS, DISPLAY_RANGES, DISPLAY_PAN_STEPS] {
+            assert!(corrupt(at, 0x90).0, "{at:#x}");
+        }
+        assert!(corrupt(DISPLAY_ZOOM_NAMES[1].0, 0x90).0);
+        assert!(corrupt(DISPLAY_ZOOM_NAME_AT[2][0] + 3, 0x90).0);
         assert!(corrupt(MAIN_VIEW_SHAPES.0, 0x90).0);
         assert!(corrupt(CONSOLE_SHAPES[3], 0x90).0);
         for (at, _) in [
@@ -719,6 +782,18 @@ mod tests {
                 assert!(view.find(t).is_some(), "{kind:?} {t:#x}");
             }
         }
+        // T-134: the records of the four modes and the damaged ones, the tracking's
+        // last range never passed, the pan's step halving with each zoom step.
+        let d = &views.second_display;
+        assert_eq!(d.records[4..], [d.records[4]; 4]);
+        assert_eq!(d.ranges[4], 0xffff);
+        assert!(d.pan_steps.windows(2).all(|w| w[1] == w[0] / 2));
+        assert!(
+            d.zoom_names
+                .iter()
+                .chain(&d.map_zoom_names)
+                .all(|n| !n.is_empty())
+        );
         // The message panel: one of the four fonts (0, 2, 4, 6).
         assert!(views.message_panel.font <= 6 && views.message_panel.font.is_multiple_of(2));
         // Six buttons and three rows of left and right arrows.

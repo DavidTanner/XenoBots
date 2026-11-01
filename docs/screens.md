@@ -697,7 +697,7 @@ the same up itself, then calls through `DS:0x6722` by mode):
 otherwise, up to 4 or down to 0 (a value out of range steps on and wraps), set +0xf3 = 6
 and clear +0x17 bit 6. Each console's first widget group also holds the mode buttons
 (humanoid `0x8e`, `0x90`, `0x92`: sprite 0x4e0 and on, the next one for the current mode;
-a release sets the mode) and the pan buttons (`0x88`: held, +0x1b = 1), T-134.
+a release sets the mode) and the pan buttons (`0x88`: held, +0x1b = 1): below, "The display's other modes (T-134)".
 
 **Noise** (`1000:daa2`, after each frame): when the mode byte (`DS:0x70ac`, bit 2
 included) differs from the last (`DS:0x70ad`), it is kept, and event 28 plays if bit 2
@@ -777,6 +777,115 @@ retrace takes it back. The consoles' map now marks a goal object (sprite 0x1a0 o
 object, `1000:f914`) as well as a destination. Shortcuts: the press acts on the last
 frame drawn, not the next one; `7eac`'s refusal message and its Ctrl case are not
 ported (only the player's robots can be viewed).
+
+### The display's other modes (T-134)
+
+From a Ghidra pass over the three draw handlers, `1000:dbe8`, the view lists 8, 0xa
+and 0x18, slot `0x5f0` in `mgavideo.dvr`, the kinds' ticks and the display's keys
+and buttons. Tables below are read from the user's files at run time
+(`xeno_formats::views::SecondDisplay`, `xeno_formats::mgavideo::thermal`).
+
+**Thermal (mode 1, view mode 0xa).** The camera's frame as in mode 0 (the main view's
+render list again), then `1000:4164` (the probe's kept pixel put back, as the end step
+does) and `1000:3f3d`, which calls slot `0x5f0` (`mgavideo.dvr` 0x28f6): every byte of
+the view's buffer (descriptor `DS:0x1470`: `[0x147a] * [0x147c]` bytes, two at a time)
+becomes the byte at its value in a 256-byte table at offset 0x302 (the `mov bx` at
+0x290c) of the driver's first data block (descriptor `DS:0x61a`, copied by the init's
+first `mov ax, size` at load offset 0x0a). In the stock driver the table maps every
+colour into 32 colours, 16 to 47.
+
+**The missile camera (mode 3, view mode 8; the scorpion only).** List 8 builds its own
+render list (camera, build, ground, sky, draw, `4164`, the remap, static, end), so the
+missile's picture is remapped as thermal's is. The scorpion's draw handler sets the
+camera by mode (`DS:0x6722`: modes 0 to 2 `1000:dc0d`, `dbe8`'s own; 3 `8190`; 4 to 7
+`81d0`, only the clear colour 0x20). `8190` takes the object in the slot at +0x123 (its
+tail missile in flight, `1000:f691`): its x, y and z words (+4 to +0xe, with no eye
+height), its heading (+0x10), zoom 1, zoom shift 1, and its own node left out
+(`DS:0x145c`).
+- The launch (`1000:97b0`): the missile's slot to +0x123, the mode to +0xf0 (the one to
+  go back to), and mode 3 set through `99c7` (the scorpion's mode routine, the one V,
+  T and M use: +0xef, +0x117 = 0, widgets marked, +0xf3 = 6, `db5c`, sound event 10).
+- The weapon step lets a missile that is gone go (`973f`: +0x123 = 0xffff).
+- Every 16 ticks (the scorpion's tick table entry 0, `1000:998a`): `db5c`, +0xf3 down
+  by one, and when the mode is exactly 3 with +0x123 0xffff, +0x117 = 5. While +0x117
+  is not 0 the mode gets bit 2 (7: the damaged picture below, and the noise) and +0x117
+  goes down; when it reaches 0 the mode goes back to +0xf0 without bit 2 through `99c7`
+  (event 10 again). So the picture breaks up for five periods of 16 ticks once the
+  missile is gone (the first may be short), then the display goes back.
+- Mode 3's overlay (`1000:8253`): while +0xf3 is not 0 and `DS:0x62c6` bit 4 is set, a
+  string (`DS:0x65fc`) at (0x1c, 0x2d); then sprite 0x8d0 (`msprite3`'s) keyed and
+  centred on the buffer (slot `0x5e8` in the descriptor's clip rectangle,
+  `DS:0x1476`). Mode 7 has no overlay.
+
+**A damaged device (modes 4 to 7, view mode 0x18).** List 0x18 is one step,
+`1000:3c20`, then the end: the whole buffer is noise. With `N` the buffer's width
+times height, a mask is picked by the highest of `N`'s bits 15 down to 10 (0xb400,
+0x6000, 0x3500, 0x1b00, 0x0ca0, 0x0500; under 0x400, 0x0240). A register starts at the
+random word (`1000:0283`) reduced below the mask by subtracting it, with bit 0 set;
+the colour byte starts as its low byte. `N` times: the register shifts right with the
+mask XORed in when a 1 falls out, again while it is `N` or more; the colour byte
+becomes `((byte - 1) & 0xf) + DS:0x1456` (0x20 in every second display) and the pixel
+at the register gets it. Then pixel 0 gets 0x20. So the frame is colours 0x20 to 0x2f
+in an order the random word picks anew each frame. The humanoid's and the scorpion's
+overlays draw nothing in these modes; the scout's (one routine, below) still does.
+
+**The static step** (`1000:3c91`, in lists 4, 6, 8 and 0xa) would scatter
+`W * H * DS:0x1455 / 256` pixels of the same ramp with a left-shifting register, but
+nothing in this build sets `DS:0x1455` to anything but 0 (`1000:28c5` at the frame's
+start, `298f` at its end): it never draws.
+
+**The map's frame rate.** In the map mode `dbe8` (and the scorpion's handler) counts
+`DS:0x62ee` down and starts a frame only when it reaches 0, setting it to 1 again; the
+console openers set it to 1 (`1000:a0db`, `846e`, `bb98`) and nothing else writes it,
+so the map draws a frame every pass, like the camera.
+
+**Overlays** (drawn into the display's buffer after the frame, before the copy through
+the region, with the text state `DS:0x6a52` (scorpion `0x6564`, scout `0x6be0`) pointed
+at the buffer; T-104 read it as font 2, colour 0x0f). By mode: the humanoid's table
+`DS:0x6abf` (modes 0 and 1 `1000:9e79`, 2 `9ec5`, 3 to 7 nothing), the scorpion's
+`DS:0x6712` (0 and 1 `81d6`, 2 `8222`, 3 `8253`, 4 to 7 nothing); the scout runs
+`b5f6` in every mode, testing for mode 2 itself.
+- The target's name (the buffer `DS:0x18aa`), with a target (+0xe6), `TRACKING`
+  (+0x17 bit 6) and `DS:0x374` bit 5 (a blink), at (0x1f, 2) on the humanoid and
+  (0x21, 2) on the others; the scout's in every mode but 2.
+- The zoom's name while +0xf3 is not 0: in the camera modes the string at
+  `DS:0x70e7[+0xf1]`, in the map mode `DS:0x7105[+0xf2]`, at (x, y) (0x4c, 0x2c) and
+  (0x4a, 0x2c) on the humanoid, (0x58, 0x2d) and (0x52, 0x2d) on the scorpion, (0x52,
+  0x2d) for both on the scout (whose damaged map shows the camera's name).
+- +0xf3 is set to 6 by a mode key or routine and a zoom key, and counted down every 16
+  ticks at each kind's tick table entry 0 (`1000:b2c4`, `998a`, `cacd`): the name shows
+  for 81 to 96 ticks.
+
+**Tracking** (every tick, after `db5c`: humanoid `1000:b2d0`, scorpion `934b`, scout
+`c4c9`). With a target and `TRACKING` (set by every lock, `docs/sim.md`, "Sensing"):
+the zoom step +0xf1 becomes the first `i` with the target's distance (+0xe8, 8.8) at
+or under `DS:0x70c6[i]` (`1000:da8a`; the last is 0xffff), and the pan +0xf4 the
+target's bearing (+0xea) less the heading; a changed pan marks widgets. So the camera
+turns to the target and zooms in by its distance; the zoom keys, X, Y and Z clear
+`TRACKING`.
+
+**Pan** (`1000:db7e`, `db8f`): Z takes `DS:0x70d1[+0xf1]` off +0xf4, X adds it, Y sets
++0xf4 to 0; all three clear `TRACKING` and mark widgets. The humanoid's pan buttons
+(`0x88`, `0x8a`: sprites 0x4b0 and 0x4c0 plus the shared look, opaque at -1 and at (-1,
++1)) set +0x1b to 1 or 2 on a press, not in the map mode, and to 0 on a release or
+leave; each tick the robot runs the +0x1b routine (`DS:0x6aef`: 1 Z's, 2 X's, 3 Y's),
+so a held button pans every tick. `0x8c` (sprite 0x4d0 plus the look) zooms in on a
+left release and out on a right one (`da0e`, `da37`). The mode buttons `0x8e`, `0x90`,
+`0x92` draw 0x4e0, 0x4f0, 0x500 (the next sprite while +0xef is exactly their mode)
+opaque at (-1, +1); a press or release XORs their frame (`1000:dfd5`), a release sets
+the mode (`b3e9`). The scorpion's (types `0xc0` on, draw `1000:84ca` on) and the
+scout's (`0x10a` on, `b8b8` on) are not traced (T-188).
+
+**Colour records** (`1000:d9ca`, after each frame): the record `DS:0x70b6[+0xef]` (7,
+8, 9, 0xe for modes 0 to 3; 0xf for every damaged mode) replaces the one running
+(`DS:0x70d0`, 0xff for none): the old one turned off where it stands (`1000:14ac`),
+the new one started (`140b`), only when they differ. `d9d6` (modes with the map's
+device bit 0 tested instead) has no caller.
+
+**In the port** (T-134): `xeno-sim`'s `Pilot::Untrack` clears `TRACKING` for the zoom
+and pan keys. The display's state (+0xef to +0xf4, +0x117) stays in `xeno-app`'s
+`Display`, as T-104 left it, and is saved through the `.usg` robot fields; the
+tracking reads the sim's target, distance and bearing but writes only the display.
 
 ### The humanoid console's instruments (T-130)
 

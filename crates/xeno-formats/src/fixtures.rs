@@ -738,7 +738,7 @@ pub fn synthetic_font_block() -> Vec<u8> {
 /// and [`synthetic_font_block`] into data blocks, and sets up pointer shape 1 in
 /// colour 0x3c, with the instructions [`crate::mgavideo`] expects.
 pub fn synthetic_mgavideo() -> Vec<u8> {
-    use crate::mgavideo::{ANIMS, FONTS, POINTERS};
+    use crate::mgavideo::{ANIMS, FONTS, POINTERS, REMAP};
 
     let anims_at = 0x100;
     let pointers_at = 0x180;
@@ -752,7 +752,13 @@ pub fn synthetic_mgavideo() -> Vec<u8> {
     pointers.extend([0xff, 0x0f, 0xff, 0x00, 0xff, 0xff]);
     pointers.extend([0, 0, 1, 0, 0, 1]);
     let fonts = synthetic_font_block();
+    // The thermal remap's block: 0x10 bytes, then each colour turned to 255 less it.
+    let remap_at = 0x1000;
+    let remap: Vec<u8> = [vec![0; 0x10], (0..=255u8).rev().collect()].concat();
     let mut image = vec![0u8; 0x2970.max(fonts_at + fonts.len())];
+    image[remap_at..remap_at + remap.len()].copy_from_slice(&remap);
+    image[0x2908..0x290f].copy_from_slice(&[0x8e, 0x1e, 0x1a, 0x06, 0xbb, 0x10, 0]);
+    image[0x2911..0x2914].copy_from_slice(&[0x26, 0xad, 0xd7]);
     image[anims_at..anims_at + anims.len()].copy_from_slice(&anims);
     image[pointers_at..pointers_at + pointers.len()].copy_from_slice(&pointers);
     image[fonts_at..fonts_at + fonts.len()].copy_from_slice(&fonts);
@@ -760,6 +766,7 @@ pub fn synthetic_mgavideo() -> Vec<u8> {
         (ANIMS, anims.len(), anims_at),
         (POINTERS, pointers.len(), pointers_at),
         (FONTS, fonts.len(), fonts_at),
+        (REMAP, remap.len(), remap_at),
     ] {
         let at = block.at;
         let mut op = vec![0xb8];
@@ -1261,6 +1268,31 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     );
     put(DISPLAY_DEVICES.0, &op(DISPLAY_DEVICES.1, 0x678));
     put(ds + 0x678, &[0x08, 0x10, 0x20, 0]);
+    put(DISPLAY_RECORDS.0, &op(DISPLAY_RECORDS.1, 0x700));
+    put(ds + 0x700, &[3, 4, 5, 6, 7, 7, 7, 7]);
+    put(DISPLAY_RANGES.0, &op(DISPLAY_RANGES.1, 0x708));
+    put(ds + 0x708, &words(&[10, 20, 40, 80, 0xffff]));
+    put(DISPLAY_PAN_STEPS.0, &op(DISPLAY_PAN_STEPS.1, 0x712));
+    put(ds + 0x712, &words(&[160, 80, 40, 20, 10]));
+    for (entry, table, first) in [
+        (DISPLAY_ZOOM_NAMES[0], 0x71c, b'a'),
+        (DISPLAY_ZOOM_NAMES[1], 0x726, b'f'),
+    ] {
+        put(entry.0, &op(entry.1, table));
+        let names: Vec<u16> = (0..5)
+            .map(|i| 0x740 + 3 * (first - b'a' + i) as u16)
+            .collect();
+        put(ds + usize::from(table), &words(&names));
+        for (i, at) in names.into_iter().enumerate() {
+            put(ds + usize::from(at), &[first + i as u8, b'x', 0]);
+        }
+    }
+    for (kind, ats) in DISPLAY_ZOOM_NAME_AT.into_iter().enumerate() {
+        for (mode, at) in ats.into_iter().enumerate() {
+            let k = (kind * 4 + mode) as u16;
+            put(at, &[op(&[0xb8], 0x20 + k), op(&[0xbb], 0x40 + k)].concat());
+        }
+    }
     put(MAIN_VIEW_SHAPES.0, &op(MAIN_VIEW_SHAPES.1, 0x6e0));
     put(ds + 0x6e0, &words(&[0, 0, 3, 3, 0]));
     for (at, shape) in CONSOLE_SHAPES.into_iter().zip([3, 4, 6, 4]) {
