@@ -518,7 +518,7 @@ acts. The corner hot spot (`0x15a`) ends the mission too.
 Situation room keys (`DS:0x5b20`): Alt+Q ends the mission (ESC is listed but its
 handler only acts on Alt+Q); Space and J view the selected unit; Tab and Alt+Tab step
 the roster selection; O, S, M, R, C the main view's mode; F3 recalls the selected
-unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; below); = and - (and keypad + and -) zoom the map; B, G, I, N and U flip the map's overlays; 1 to 6 step the power rows (below, "The situation room's panels (T-127)"); F1 acts on the mission (not traced); Ctrl+Alt+P, S and F are developer keys.
+unit (`1000:675e`: +0x23 bit 3; `docs/sim.md`, "The cockpit keys"); F2 launches it from the base (`6704`; below); = and - (and keypad + and -) zoom the map; B, G, I, N and U flip the map's overlays; 1 to 6 step the power rows (below, "The situation room's panels (T-127)"); F1 pauses the mission (`1000:cff3`, as on the consoles: `docs/sim.md`, "The developer and leftover keys (T-139)"); Ctrl+Alt+P, S and F are developer keys.
 
 **Launching (T-135).** F2 (`1000:6704`) and a release on the launch button
 (`1000:5ba0`) do the same: take the selected unit (the base's +0x3c), and if there is
@@ -551,7 +551,8 @@ program, F4 the pilot and the next program (see "Orders");
 ESC and Alt+Q the situation room; Tab and Alt+Tab the next and previous unit; F1, F5
 to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys 1 to
 4 (mines and buoys), `=` and `-`, and per robot letters drive and fight (`docs/sim.md`,
-"The cockpit keys (T-105)"); Ctrl+P and Ctrl+Alt+S are developer keys.
+"The cockpit keys (T-105)"); F1 pauses, and Ctrl+P (scorpion and scout only) and
+Ctrl+Alt+S are developer keys (`docs/sim.md`, "The developer and leftover keys (T-139)").
 
 ### The message panel (T-104)
 
@@ -1771,7 +1772,9 @@ running mission with the scenario writer (`file_write_scenario`, `1000:efde`; la
 `usg.md`, "Writing"). So any player can save a mission as a `.usg`. The matching load
 (`ui_load_scenario_with_dialog`, `1000:eeec`: open dialog, then the chunk reader) is
 the map room's and the training menu's Alt+L (T-110, "The file dialogs"). The same table's
-Ctrl+Alt+S toggles bit 6 of `DS:0x62ec` and Ctrl+Alt+F toggles `DS:0x5ba0` (not traced).
+Ctrl+Alt+S toggles bit 6 of `DS:0x62ec` (the shots on the maps, T-139: `docs/sim.md`,
+"The developer and leftover keys (T-139)") and Ctrl+Alt+F toggles `DS:0x5ba0` (not
+traced).
 
 **The terrain editor** (`mapdvr.dvr`, `docs/formats/map.md`; T-109 from a Ghidra pass
 over the whole driver). `ui_run_map_editor` loads the driver into block `DS:0x150a`,

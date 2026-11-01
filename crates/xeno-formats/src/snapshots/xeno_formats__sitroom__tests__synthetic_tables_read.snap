@@ -455,5 +455,17 @@ SitRoom {
             ],
         ],
     },
+    pause_box: Rect {
+        top: 10,
+        left: 20,
+        bottom: 22,
+        right: 60,
+    },
+    pause_text: [
+        119,
+        97,
+        105,
+        116,
+    ],
     strings: [],
 }

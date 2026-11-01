@@ -78,6 +78,13 @@ mod handler {
     pub const PREVIOUS_SELECTED: u16 = 0x680c;
     /// Situation room: Ctrl+Alt+P, save the mission as a `.usg` (no unlock needed).
     pub const SAVE: u16 = 0xefd5;
+    /// Situation room and consoles: F1 pauses under a box until a key or button press
+    /// (`1000:cff3`); Ctrl+Alt+S flips the shots on the map (`DS:0x62ec` bit 6,
+    /// `1000:d177`); Ctrl+P (scorpion and scout), with unlock word 8, charges the viewed
+    /// robot (`1000:d193`).
+    pub const PAUSE: u16 = 0xcff3;
+    pub const SHOTS: u16 = 0xd177;
+    pub const CHARGE: u16 = 0xd193;
     /// Situation room, mode M only: = and keypad + zoom in, - and keypad - out; U, I,
     /// B, N and G flip the map's overlay bits 0 to 4.
     pub const ZOOM_IN: u16 = 0x5cc7;
@@ -392,6 +399,8 @@ pub struct Assets {
     pub editor: Option<editor::Editor>,
     /// Whether the user's `XENO.KEY` gives unlock word 9 (the editor's keys).
     pub editor_unlocked: bool,
+    /// Whether it gives unlock word 8 (the developer keys: Ctrl+P on a console).
+    pub developer_unlocked: bool,
     /// The terrain editor's keys (T-109), if the user's `mapdvr.dvr` has them where the
     /// port reads them; without them Ctrl+M does nothing, as when the original cannot
     /// load the driver.
@@ -523,6 +532,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         scenarios,
         editor,
         editor_unlocked: false,
+        developer_unlocked: false,
         map_driver: read("mapdvr.dvr")
             .and_then(|b| mapdvr::parse(&b).map_err(|e| format!("mapdvr.dvr: {e}")))
             .inspect_err(|e| log::warn!("no terrain editor: {e}"))
@@ -768,6 +778,11 @@ pub struct Mission {
     dialog: Option<(FileDialog, Purpose)>,
     /// The dialogs' name field, which each leaves for the next (none: the first's).
     dialog_name: Option<Vec<u8>>,
+    /// F1's pause: the sim stands still under the box until a key or button press.
+    paused: bool,
+    /// Ctrl+Alt+S: the maps show the shots (`DS:0x62ec` bit 6).
+    // shortcut: kept by the mission; the original's byte lasts the whole run.
+    shots: bool,
 }
 
 impl Mission {
@@ -859,6 +874,8 @@ impl Mission {
             terrain: None,
             dialog: None,
             dialog_name: None,
+            paused: false,
+            shots: false,
         };
         let first = mission.book().side(Side::Human).map(|(s, _)| s).next();
         mission.selected = first;
@@ -1143,6 +1160,9 @@ impl Mission {
     /// One retrace in the situation room: in the orders mode, one more byte of the
     /// briefing, until its end (one per pass of the original's mission loop).
     pub fn retrace(&mut self) {
+        if self.paused {
+            return;
+        }
         if let Some((dialog, _)) = &mut self.dialog {
             dialog.retrace();
         }
@@ -1328,7 +1348,10 @@ impl Mission {
             self.pilot(slot, Pilot::Fire);
         }
         // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
-        let (Run::Running(sim), None, None) = (&mut self.run, &self.terrain, &self.dialog) else {
+        // Nor does F1's (the game clock is put back after it).
+        let (Run::Running(sim), None, None, false) =
+            (&mut self.run, &self.terrain, &self.dialog, self.paused)
+        else {
             return None;
         };
         let (mut over, mut taken) = (None, false);
@@ -1526,6 +1549,9 @@ impl Mission {
 
     /// The key word `word` went down in the view shown.
     pub fn key(&mut self, word: u16, assets: &Assets) -> Option<Request> {
+        if self.unpause() {
+            return None;
+        }
         if let Some((dialog, _)) = &mut self.dialog {
             let outcome = dialog.key(crate::screens::KeyWord(word));
             self.close_dialog(outcome, assets);
@@ -1554,6 +1580,20 @@ impl Mission {
             .find_map(|&(w, h)| (w == word).then_some(h))?;
         let programs = &assets.programs;
         match (self.viewed, handler) {
+            (_, handler::PAUSE) => {
+                self.paused = true;
+                self.dirty = true;
+                None
+            }
+            (_, handler::SHOTS) => {
+                self.shots = !self.shots;
+                self.dirty = true;
+                None
+            }
+            (Viewed::Robot(slot), handler::CHARGE) if assets.developer_unlocked => {
+                self.pilot(slot, Pilot::Charge);
+                None
+            }
             (Viewed::Robot(_), handler::BASE) => Some(self.base()),
             (Viewed::Robot(slot), handler::TO_PILOT) => {
                 self.change_orders(programs, |book| book.set_program_drives(slot, false));
@@ -1886,6 +1926,7 @@ impl Mission {
     fn shown_map(&self) -> MapState {
         MapState {
             reveal: self.editor.reveal(),
+            shots: self.shots,
             ..self.map
         }
     }
@@ -2049,6 +2090,18 @@ impl Mission {
 
     pub fn dialog_open(&self) -> bool {
         self.dialog.is_some()
+    }
+
+    /// F1's pause is on.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// A key or button press ends F1's pause (slot `0x340`, mask 0x82a); true if it
+    /// did, and the press does nothing else.
+    fn unpause(&mut self) -> bool {
+        self.dirty |= self.paused;
+        std::mem::take(&mut self.paused)
     }
 
     /// A character typed, for an open file dialog's name field.
@@ -2231,7 +2284,7 @@ impl Mission {
 
     /// A mouse button went down at `at` (`None` off the picture).
     pub fn mouse_down(&mut self, button: MouseButton, at: Option<(u16, u16)>, assets: &Assets) {
-        if self.capture.is_some() || button == MouseButton::Middle {
+        if self.unpause() || self.capture.is_some() || button == MouseButton::Middle {
             return;
         }
         let Some(target) = at.and_then(|at| self.target(assets, at)) else {
@@ -2460,6 +2513,9 @@ impl Mission {
         self.draw_under_dialog(fb, assets);
         if let (Some((dialog, _)), Some(tables)) = (&self.dialog, &assets.file_dialogs) {
             dialog.draw(fb, tables, &assets.fonts, &assets.map_sprites);
+        }
+        if let (true, Some(room)) = (self.paused, &assets.sitroom) {
+            draw_pause(fb, room, assets.fonts.get(&PAUSE_FONT));
         }
     }
 
@@ -2743,7 +2799,7 @@ impl Mission {
                     return false;
                 };
                 let (camera, mut map) = mainview::console_map(e.position, d.map_zoom, view, motion);
-                map.reveal = self.shown_map().reveal;
+                (map.reveal, map.shots) = (self.shown_map().reveal, self.shots);
                 // No font: the zoom label is the situation room's.
                 let inputs = mainview::Inputs {
                     room,
@@ -3374,6 +3430,24 @@ fn frame_pixels(area: Rect) -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
+/// F1's box (`1000:cff3`): filled in 0, framed in 0x0f, and its text typed in font 0,
+/// colour 0x0f, transparent, 4 pixels in from its top-left corner.
+const PAUSE_FONT: u16 = 0;
+const PAUSE_FILL: u8 = 0;
+const PAUSE_COLOUR: u8 = 0x0f;
+const PAUSE_INSET: u16 = 4;
+
+fn draw_pause(fb: &mut Framebuffer, room: &SitRoom, font: Option<&Font>) {
+    let area = room.pause_box;
+    fill(fb, area, PAUSE_FILL);
+    frame(fb, area, PAUSE_COLOUR);
+    if let Some(font) = font {
+        let (x, y) = (area.left + PAUSE_INSET, area.top + PAUSE_INSET);
+        let mut cursor = TextCursor::at(x.into(), y.into(), PAUSE_COLOUR);
+        fb.draw_text(font, &mut cursor, &room.pause_text, TextMode::Transparent);
+    }
+}
+
 /// Slot `0x52a` (`gfx_frame_rect`): the rectangle's frame in `colour`.
 pub fn frame(fb: &mut Framebuffer, area: Rect, colour: u8) {
     for at in frame_pixels(area) {
@@ -3582,6 +3656,7 @@ pub mod tests {
                 .collect(),
             editor: None,
             editor_unlocked: false,
+            developer_unlocked: false,
             map_driver: None,
             save_dir: PathBuf::new(),
             view3d: None,
@@ -4758,6 +4833,62 @@ pub mod tests {
         assert_eq!(file_name(b"ABC     .USG"), "abc.usg");
     }
 
+    /// F1 pauses the mission under its box until the next key or press, Ctrl+Alt+S
+    /// flips the shots on the maps, and Ctrl+P charges the viewed robot only with
+    /// unlock word 8.
+    #[test]
+    fn the_developer_and_pause_keys() {
+        let mut assets = test_assets();
+        assets.sitroom = Some(crate::mainview::tests::room());
+        let (f1, shots, charge) = (0x3b, 0x301f, 0x1019);
+        for keys in [
+            &mut assets.views.situation.keys,
+            &mut assets.views.scorpion.keys,
+        ] {
+            keys.extend([
+                (f1, handler::PAUSE),
+                (shots, handler::SHOTS),
+                (charge, handler::CHARGE),
+            ]);
+        }
+        let mut m = mission(&assets);
+        let ticks = |m: &Mission| m.world().ticks;
+        assert_eq!(m.key(f1, &assets), None);
+        assert!(m.paused());
+        let before = ticks(&m);
+        assert_eq!(m.tick([]), None);
+        assert_eq!(ticks(&m), before, "the world stands still");
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        m.draw(&mut fb, &assets);
+        // The test box (2, 4, 8, 30): framed in 0x0f, filled in 0.
+        assert_eq!((fb.get(4, 2), fb.get(10, 7)), (Some(0x0f), Some(0x0f)));
+        assert_eq!(fb.get(29, 3), Some(0x0f));
+        // The next key only ends the pause; so does a press.
+        assert_eq!(m.key(shots, &assets), None);
+        assert!(!m.paused() && !m.shown_map().shots);
+        m.tick([]);
+        assert_ne!(ticks(&m), before);
+        m.key(f1, &assets);
+        m.mouse_down(LEFT, Some((5, 16)), &assets);
+        assert!(!m.paused());
+        m.key(shots, &assets);
+        assert!(m.shown_map().shots);
+        // Ctrl+P on the scorpion's console: nothing without the word, then a charge.
+        assert_eq!(m.view_robot(5), Some(View::Scorpion));
+        let energy = |m: &Mission| match m.world().get(EntityId(5)).map(|e| e.state) {
+            Some(State::Robot(r)) => r.guns.energy,
+            other => panic!("{other:?}"),
+        };
+        if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(5)).map(|e| &mut e.state) {
+            r.guns.energy = 1;
+        }
+        m.key(charge, &assets);
+        assert_eq!(energy(&m), 1, "locked");
+        assets.developer_unlocked = true;
+        m.key(charge, &assets);
+        assert_eq!(energy(&m), 0xff);
+    }
+
     #[test]
     fn orders_are_set_on_the_console_and_kept_across_views() {
         let mut assets = test_assets();
@@ -5074,6 +5205,44 @@ pub mod tests {
         let bar: Vec<u8> = (147..200).filter_map(|x| fb.get(x, 32)).collect();
         assert!(bar.contains(&6) && bar.contains(&0), "the title on its bar");
         assert_eq!(fb.get(10, 10), Some(0xff));
+    }
+
+    /// The user's key tables bind F1 and Ctrl+Alt+S in every view and Ctrl+P on the
+    /// scorpion's and scout's consoles (not the humanoid's) to the handlers the port runs; F1's box is drawn in its two colours
+    /// with its text inside.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_pause_and_developer_keys_are_bound() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let v = &assets.views;
+        let bound = |view: &xeno_formats::views::View, word, h| view.keys.contains(&(word, h));
+        for view in [&v.situation, &v.humanoid, &v.scorpion, &v.scout] {
+            assert!(bound(view, 0x3b, handler::PAUSE));
+            assert!(bound(view, 0x301f, handler::SHOTS));
+        }
+        for view in [&v.scorpion, &v.scout] {
+            assert!(bound(view, 0x1019, handler::CHARGE));
+        }
+        assert!(!v.humanoid.keys.iter().any(|&(_, h)| h == handler::CHARGE));
+        let mut m = Mission::empty();
+        m.paused = true;
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.clear(0x80);
+        m.draw(&mut fb, &assets);
+        let area = assets.sitroom.as_ref().unwrap().pause_box;
+        let inside: Vec<u8> = pixels(area).filter_map(|(x, y)| fb.get(x, y)).collect();
+        assert!(inside.iter().all(|&c| c == PAUSE_FILL || c == PAUSE_COLOUR));
+        let lit = inside.iter().filter(|&&c| c == PAUSE_COLOUR).count();
+        assert!(lit > frame_pixels(area).count(), "the text is drawn inside");
+        assert_eq!(fb.get(0, 0), Some(0x80));
     }
 
     /// Mode S draws each robot kind's picture, captions, name and figures from the

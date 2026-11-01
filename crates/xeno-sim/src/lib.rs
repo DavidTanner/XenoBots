@@ -248,6 +248,14 @@ impl Sim {
                     m.status &= !xeno_formats::usg::status::TRACKING;
                 }
             }
+            Pilot::Charge => {
+                if let Some(e) = world.get_mut(id)
+                    && let (Damage::Robot(c), State::Robot(m)) = (&mut e.damage, &mut e.state)
+                {
+                    c.power = 100;
+                    (m.signal, m.guns.energy, m.drive) = (0xff, 0xff, 0xff);
+                }
+            }
             _ => {}
         }
         // The rest act on the robot's own movement.
@@ -421,6 +429,10 @@ pub enum Pilot {
     /// no longer follows the target (`docs/screens.md`, "The display's other modes
     /// (T-134)").
     Untrack,
+    /// Ctrl+P (`1000:d193`), which the caller lets through only with unlock word 8
+    /// (`docs/formats/key.md`): power (+0x4e) 100, the signal (+0x4f), the battery
+    /// (+0x50) and the drive (+0x51) 0xff. The original then beeps (`1000:0261`).
+    Charge,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -611,7 +623,17 @@ mod tests {
         // The keys are part of the state, and nothing acts on a slot without a robot.
         let before = sim.state_hash();
         assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());
+        assert!(sim.pilot(EntityId(1), Pilot::Charge).is_empty());
         assert_eq!(sim.state_hash(), before);
+        // Ctrl+P charges the robot up, as part of the state.
+        assert!(sim.pilot(id, Pilot::Charge).is_empty());
+        let m = robot(&sim).0;
+        assert_eq!((m.signal, m.guns.energy, m.drive), (0xff, 0xff, 0xff));
+        assert!(matches!(
+            sim.world.get(id).map(|e| e.damage),
+            Some(Damage::Robot(c)) if c.power == 100
+        ));
+        assert_ne!(sim.state_hash(), before);
     }
 
     #[test]
