@@ -1126,8 +1126,10 @@ most every 4 ticks for the map); modes O, S and C draw on the screen.
 Texts go through slot `0x594` (transparent). The map's and mode R's labels set no
 colour: they use whatever the last text left in the text state (`DS:0x644` +0x16).
 
-**The map** (`1fe6:6c05`): view mode 0xc, or 0xe with the GRID overlay (+0x32 bit 4,
-step `1000:3760`, not traced; not drawn by the port yet); clear colour 0x43
+**The map** (`1fe6:6c05`): view mode 0xc, or 0xe with the GRID overlay (+0x32 bit 4:
+the grid step `1000:3760`, colour-0 dots on the relays' lattice, every point with x
+and y even and `x = y` mod 4, drawn after the clear and under everything else;
+`docs/render.md`, "The grid step (T-143)"); clear colour 0x43
 (`DS:0x1457`), hill colour 0x42 (`DS:0x1458`); zoom `1 << +0x36`; heading 0; the
 camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left press on the map
 off a unit sets it and moves the centre to the pointer, `1000:57d2`; every stock base
@@ -1830,8 +1832,9 @@ fit (from 0xc up to 0x100c). A circle is 12 bytes: x, y and radius, all 16.16; o
 imported from a hill gets its 8.8 radius shifted left 8.
 
 **The view** (`gfx_start_map_editor_frame`, `0x0164`, when the last frame is done:
-`DS:0x1450` = 0x7f): view mode **0xe**, the map with the grid step (`1000:3760`, not
-traced: T-143), not the 3D view; zoom and shift from `DS:0x130`, `0x131`; no static;
+`DS:0x1450` = 0x7f): view mode **0xe**, the map with the grid step (`1000:3760`:
+`docs/render.md`, "The grid step (T-143)"; colour-0 dots on the relays' lattice under
+the circles), not the 3D view; zoom and shift from `DS:0x130`, `0x131`; no static;
 the rectangle `DS:0x124`; no viewer (0xffff); heading 0; clear colour 0x1f
 (`DS:0x1457`); the camera's x and y from `DS:0xfa`, `0xfe` (z unchanged). The render
 list (`1000:44ed`): the driver's producers first (slot `0x1500`, `0x01c9`, through the
@@ -2229,8 +2232,8 @@ original.
   and centre saved in the player's base and is drawn each frame (not every 4 ticks);
   the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
   `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection bits are the
-  scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the grid and
-  path overlays are not drawn. The log is the sim's (`xeno_sim::log`, T-129). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
+  scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the path
+  overlay are not drawn; the GRID overlay draws the grid step (T-143). The log is the sim's (`xeno_sim::log`, T-129). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
   "The status view (T-126)" (since T-126, without its right end). Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
 - **Roster and controls** (`crates/xeno-app/src/mainview.rs`, T-103 part 2): as "The
@@ -2314,8 +2317,8 @@ original.
   views and a save, follows) and **Alt+Q** writes `BACKUP.MAP` to `--save-dir` and
   closes it. **Alt+L** loads a `.map` through the open dialog as the terrain (as
   Apply) and imports its circles; **Alt+S** writes the circles through SAVE GAME. The
-  status is logged at debug level. Not done: Shift+`*` (a screenshot), the grid
-  (T-143); the point under the
+  status is logged at debug level. The grid is drawn under the circles (T-143).
+  Not done: Shift+`*` (a screenshot); the point under the
   pointer is worked out from the camera now rather than the last frame's.
 - **The file dialogs** (T-110, `crates/xeno-app/src/dialog.rs`): drawn from the
   scripts, widgets and patterns read from the user's `xeno.exe`, over the screen, with

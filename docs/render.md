@@ -25,7 +25,7 @@ pointer probe (below) and moves on to the list for the **view mode**, the byte a
 | 6 | `DS:0x3928` | camera, reuse, ground, sky, draw, static, end | A console's second display, mode 0 |
 | 8 | `DS:0x3936` | camera, build, ground, sky, draw, `1000:4164`, the remap (`1000:3f3d`, slot `0x5f0`), static, end | The second display, mode 3 (the missile camera) |
 | 0xa | `DS:0x3948` | as 6, plus `4164` and the remap | The second display, mode 1 (thermal) |
-| 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps | The second display, mode 2; the situation room's map (T-103); 0xe the terrain editor (T-109) |
+| 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps; 0xe adds the grid (`1000:3760`, below) between the clear and the probe | The second display, mode 2; the situation room's map (T-103); 0xe the terrain editor (T-109) |
 | 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room (T-103) |
 | 0x18 | `DS:0x3988` | noise (`1000:3c20`), end | The second display's damaged modes 4 to 7 (`docs/screens.md`, "The display's other modes (T-134)") |
 | 0x1a | `DS:0x398c` | camera, clear, one node at a time, end | The review (below, "The review's view") |
@@ -322,6 +322,50 @@ by the 3D terrain node (`1000:3616`), the map routine of types 0xe and 0x10
 (`1000:39e9`, `39f7`) and `3ad4`, only sets the carry when the probe's pixel was drawn
 over (and sets it back), naming nothing. The maps' hill outlines (`1000:39fb`) do not
 probe at all.
+
+## The grid step (T-143)
+
+Mode 0xe's list (`DS:0x3964`) is the camera (`1000:299e`), the clear (`374e`), the
+**grid** (`1000:3760`), the probe's arm (`403d`), the nodes (`3877`) and the end
+(`2982`); mode 0xc's is the same without the grid. The situation room's map uses 0xe
+when the base's GRID overlay (+0x32 bit 4) is on, the terrain editor always.
+
+The grid (from the raw bytes; Ghidra's listing there is mis-decoded):
+
+1. When the buffer is the screen (`[DS:0x146e]` is `DS:0x632`), the pointer is hidden
+   around the rest (slots `0x149e`, `0x14a2`).
+2. The start point is the camera's (`DS:0x1462`, `0x1466`) whole x and y, each plus 1
+   with bit 0 cleared, then bit 1 cleared in both where they differ in it: the relays'
+   lattice, exactly as `1000:cca8` snaps a relay; fractions 0 (`DS:0x4cda`..`0x4ce1`).
+3. It is projected by `1000:3e6c` (the offset from the camera, then `1000:3eb9`):
+   column `C0`, row `R0`. Then the point **512 units** east (`+0x200` on the whole x)
+   is projected, and its column less `C0`, as an unsigned word, read as **8.8
+   pixels**, is the step: the pixels of two units, at least 0x80 (half a pixel). The
+   same step is used down the rows and along the columns. At the situation room's
+   zoom 6 the far point's column overflows (the float-to-integer's 0x6fff), so the
+   step there is short of two units' pixels (a consequence of the conversion, not
+   seen running).
+4. Positions are 24-bit 16.8 numbers, the whole part a word: the row starts at
+   `H/2 - R0`, the column at `W/2 + C0` (the buffer descriptor's +0xa, +0xc), each
+   stepped back while the whole part, unsigned, stays under the height or width,
+   counting the steps' parity.
+5. Then row by row down while the row is under the height (a row that starts out of
+   the buffer is skipped, but the walk still steps once), and along each row while
+   the column is under the width, it writes **colour 0** to every other lattice step,
+   the parity flipping on every step in both directions and starting so that the
+   start point itself is written. The written points are therefore every world point
+   with x and y even and `x = y` mod 4, the relays' lattice, whatever the camera.
+   Pixels go through the buffer's row table (`DS:0x69c`); nothing else is clipped.
+6. It adds 2 to the step pointer `DS:0x38ea`.
+
+The dots are drawn before the probe is armed and before the nodes, so the hills,
+circles and objects cover them and the probe never names one.
+
+In the port (`xeno-app`'s `mainview::draw_grid`): the step as traced, in 16-bit and
+24-bit wrapping arithmetic, the start point by `xeno_sim::net::lattice` and the
+projection by `Camera::map_offset`; the situation room's map runs it with the GRID
+overlay, the terrain editor always. Its constants (512 units, 0x80, colour 0) are
+code immediates and are kept in the port. Not compared with DOSBox yet (T-195).
 
 ## Projection
 

@@ -403,6 +403,61 @@ pub fn pointer_to_world(camera: &Camera, view: Rect, (px, py): (u16, u16)) -> Po
     }
 }
 
+/// The grid step of view mode 0xe (`1000:3760`, `docs/render.md`, "The grid step
+/// (T-143)"): colour-0 dots on the relays' lattice (x and y even, `x = y` mod 4),
+/// stepped in 8.8 pixels from the lattice point by the camera.
+pub fn draw_grid(buffer: &mut Framebuffer, camera: &Camera) {
+    const MASK: u32 = 0xff_ffff;
+    let size = buffer.surface();
+    let (w, h) = (size.width as u16, size.height as u16);
+    // The lattice point by the camera, as `1000:cca8` snaps a relay.
+    let (x, y) = xeno_sim::net::lattice(Position {
+        x: Fixed(camera.x),
+        y: Fixed(camera.y),
+    });
+    let (x, y) = (x as u16, y as u16);
+    let offset = |x: u16, y: u16| {
+        let raw = |v: u16, c: i32| ((u32::from(v) << 16) as i32).wrapping_sub(c);
+        camera.map_offset(raw(x, camera.x), raw(y, camera.y))
+    };
+    let (column, row) = offset(x, y);
+    // 512 units' columns read as 8.8 pixels: two units' step, at least half a pixel.
+    let step = (offset(x.wrapping_add(0x200), y).0 as u16)
+        .wrapping_sub(column as u16)
+        .max(0x80);
+    let step = u32::from(step);
+    // Back from the lattice point while in the buffer, counting the steps' parity.
+    let back = |start: u16, limit: u16| {
+        let (mut at, mut odd) = (u32::from(start) << 8, false);
+        loop {
+            let next = at.wrapping_sub(step) & MASK;
+            if next >> 8 >= u32::from(limit) {
+                return (at, odd);
+            }
+            (at, odd) = (next, !odd);
+        }
+    };
+    let (mut r, odd_row) = back((h / 2).wrapping_sub(row as u16), h);
+    let (c0, odd_column) = back((w / 2).wrapping_add(column as u16), w);
+    let mut skip_row = odd_row != odd_column;
+    let pixels = buffer.pixels_mut();
+    loop {
+        if r >> 8 < u32::from(h) {
+            let (mut c, mut skip) = (c0, skip_row);
+            while c >> 8 < u32::from(w) {
+                if !skip {
+                    pixels[(r >> 8) as usize * size.width + (c >> 8) as usize] = 0;
+                }
+                (c, skip) = ((c + step) & MASK, !skip);
+            }
+        }
+        (r, skip_row) = ((r + step) & MASK, !skip_row);
+        if r >> 8 >= u32::from(h) {
+            return;
+        }
+    }
+}
+
 /// Node type 0xc (`1000:38bc`): one pixel, if it is in the buffer.
 fn dot(buffer: &mut Framebuffer, (x, y): (i32, i32), colour: u8) {
     let size = buffer.surface();
@@ -513,8 +568,8 @@ impl Inputs<'_> {
     }
 }
 
-/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, the pointer probe armed at
-/// `probe`, then the hills, then [`draw_objects`]; the object under the probe.
+/// The map (view modes 0xc and 0xe, `1000:3877`): cleared, with the GRID overlay
+/// mode 0xe's [`draw_grid`], the pointer probe armed at `probe`, then the hills, then [`draw_objects`]; the object under the probe.
 /// `colours`: the clear and hill colours (`DS:0x1457`, `0x1458`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_map(
@@ -530,6 +585,9 @@ pub fn draw_map(
     probe: Option<(usize, usize)>,
 ) -> Option<u16> {
     buffer.clear(clear);
+    if map.overlays & Base::MAP_GRID != 0 {
+        draw_grid(buffer, camera);
+    }
     let mut probe = Probe::arm(buffer, probe);
     for f in terrain.iter().filter(|f| f.shape.first() == Some(&HILL_OP)) {
         octagon(
@@ -1068,6 +1126,45 @@ pub(crate) mod tests {
         let b = draw(Base::MAP_RELAYS, 0, None);
         assert_eq!(b.get(25, 7), Some(MAP_BACKGROUND));
         assert_eq!(draw(0, 0, None).get(10, 10), Some(MAP_BACKGROUND));
+    }
+
+    /// The grid's dots are the lattice points (x, y even, x = y mod 4) at their pixels:
+    /// at zoom 1, two pixels a unit, from the camera at (17, 17) the lattice point by
+    /// it is (18, 18), two pixels right and up of the middle.
+    #[test]
+    fn the_grid_dots_the_relays_lattice() {
+        let tables = crate::mission::tests::test_assets().motion;
+        let map = MapState {
+            overlays: Base::MAP_FREE,
+            zoom: 1,
+            centre: Position {
+                x: Fixed(17 << 16),
+                y: Fixed(17 << 16),
+            },
+            ..MapState::default()
+        };
+        let camera = camera(Position::default(), None, &map, &view(), &tables);
+        let mut b = Framebuffer::new(xeno_render::Size::new(40, 20));
+        b.clear(MAP_BACKGROUND);
+        draw_grid(&mut b, &camera);
+        assert_eq!(b.get(22, 8), Some(0));
+        let mut expected = Vec::new();
+        for x in (0..40).step_by(2) {
+            for y in (0..40).step_by(2).filter(|y| (x - y) % 4 == 0) {
+                let (c, r) = pixel(&camera, &b, x << 16, y << 16);
+                if (0..40).contains(&c) && (0..20).contains(&r) {
+                    expected.push((c as usize, r as usize));
+                }
+            }
+        }
+        expected.sort();
+        let mut dots: Vec<_> = (0..40)
+            .flat_map(|c| (0..20).map(move |r| (c, r)))
+            .filter(|&(c, r)| b.get(c, r) == Some(0))
+            .collect();
+        dots.sort();
+        assert_eq!(dots, expected);
+        assert_eq!(dots.len(), 25);
     }
 
     /// An alarm buoy's +0x16 bit 4 is the sim's, whatever the file held.

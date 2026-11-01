@@ -239,7 +239,7 @@ impl TerrainEditor {
         }
     }
 
-    /// The view: cleared, the circles (the selected one in its own colour), the drag's,
+    /// The view (mode 0xe): cleared, the grid, the circles (the selected one in its own colour), the drag's,
     /// the origin's sprite, then the mission's objects as the situation room's map
     /// shows them, with no zoom label.
     #[allow(clippy::too_many_arguments)]
@@ -254,6 +254,7 @@ impl TerrainEditor {
         inputs: &Inputs,
     ) {
         buffer.clear(CLEAR_COLOUR);
+        mainview::draw_grid(buffer, camera);
         for (i, c) in self.circles.iter().enumerate() {
             let colour = if i == self.selected {
                 SELECTED_COLOUR
