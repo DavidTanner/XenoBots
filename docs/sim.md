@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-138, T-140, T-148, T-177)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-148, T-177)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -688,7 +688,7 @@ arrows act the same, and the keyboard's repeat repeats them.
 | Space | `d0da`: fire, by kind through `cs:0xd0e3` (`b242`, `98f1`, `ca46`) | | | T-114 |
 | F7 | `d92d` (humanoid, scout) | | | The ECM (not a missile): "The ECM and the cloak (T-136)" |
 | F8 | `d95e` (humanoid, scout) | | | The sparkle cloak: "The ECM and the cloak (T-136)" |
-| 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine or buoy: with one left (+0xe2, +0xe4, +0xe3, +0xe5), an object of kind 9, 12, 11 or 10 is made (`1000:f4b1`) and set up (`e5ab`, `e63d`, `e602`, `e5e8`); else a message |
+| 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine, ECM buoy, alarm buoy or decoy: "Mines and buoys (T-137)" |
 | A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
 | C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4 (the dump) with a message (T-149) |
@@ -739,8 +739,9 @@ so the empty one is never posted. `Sim::recall` sets +0x23 bit 3 (the situation
 room's F3 and recall button, for the selected unit); `motion::tick` gives a robot with
 it the recall's program (`Tables::recall_program`) and its program takes over, before
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
-(T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). The keys
-still to port are T-149 (the other relay keys), T-137 and T-139.
+(T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). Keys 1 to 4
+are `Pilot::Drop` (T-137). The keys still to port are T-149 (the other relay keys) and
+T-139.
 
 ## The ECM and the cloak (T-136)
 
@@ -799,6 +800,92 @@ other kinds (T-054). Part 2 (`t-136-app`): `xeno-app` maps F7 and F8 by their ha
 (`d92d`, `d95e`) and runs them from the humanoid's and scout's cloak and ECM buttons on a
 release (the look flipped while held), draws the sparkle with its frame, and the
 consoles' cloak and ECM counts are the sim's. Left to check in DOSBox: T-191.
+
+## Mines and buoys (T-137)
+
+Traced with Ghidra. Keys 1 to 4 (`1000:d5e7`, `d609`, `d62b`, `d64d`) are in the
+scorpion's and scout's key tables; their consoles' four drop buttons (scorpion `0xd4`,
+`1000:8b06`; scout `0x12e`, `b88d`) run `1000:d5d5` with the button's number on a
+release, which calls through the word table at `CS:0xd5df`: buttons 0 to 3 run keys 1,
+4, 3 and 2. The numbers and messages below are read from the user's `xeno.exe`
+(`xeno_formats::weapons::Drops`); the messages are string-segment offsets.
+
+**The keys.** Each tests one count of the robot and nothing else (no kind, energy,
+damage or field check; the humanoid has none of any, so its keys only say so):
+
+| Key | Count | Kind made | Set-up | Tick |
+|---|---|---|---|---|
+| 1 | +0xe2 mines | 9, a proximity mine | `e5ab` | `e5b5` |
+| 2 | +0xe4 ECM buoys | 12, an ECM buoy | `e63d` | `e64b` |
+| 3 | +0xe3 alarm buoys | 11, an alarm buoy | `e602` | `e60c` |
+| 4 | +0xe5 EMI decoys | 10, a decoy | `e5e8` | none (`e5fd` is a `ret`) |
+
+With the count at 0, the key's "none left" message goes to the robot's panel
+(`1000:d53f`). Otherwise an object is allocated (`sim_alloc_object_slot`, `1000:f4b1`,
+the small pool); if none is free, keys 2 to 4 post the same "none left" message and the
+mine's key says nothing; either way the count stays. Else the kind's set-up runs, which
+posts its "dropped" message to the panel, and the count goes down by one. No sound.
+
+**The set-up** (`1000:e801`, shared): x is the robot's plus a random word (`1000:0283`)
+shifted right by 2 as a signed number (so within 1/8 of a unit), then y the same with
+a second word; z (32-bit) the robot's; the side bit (+0x16 bit 3) the robot's, and no
+other flag (not `IN_FIELD`, `TARGETABLE`, `SCANNED` or `UNIT`: shots, blasts, scanners
+and locks never see them); +0x18 bit 0 when the robot is on its battery (+0xfd bit 0;
+nothing reads it). The allocation cleared the rest: heading, radius and model height
+0. Then by kind: the ECM buoy's +0x1b = 10 (its charges); the decoy's word +0x19 the
+byte `DS:0xe70c[dropper's kind]`, the dropper's model (humanoid 0, scorpion 2, scout
+4).
+
+**The search** (`1000:e84f`, the range in `AX` as 8.8): the 240 slots in order, the
+first object with `UNIT` (+0x16 bit 5: robots) of the other side within the range by
+`1000:08ec` (under 256 units, the middle word at most the range). It does not look at
+`GONE`, `CLOAKED` or `IN_FIELD`: a cloaked robot, or one in its base, sets them off.
+
+**The ticks** (every tick, from `DS:0xe6e8` by kind). Each counts +0x19 (a byte) up and
+acts only when it wraps to 0, every 256 ticks:
+
+- **Mine** (9): with an enemy within 0x3c, the alert (below) that a mine went off, an
+  explosion at the mine (`sim_spawn_explosion`, its own template), sound event 4 for
+  everyone (`snd_play_sound_effect`), a blast of 50 points in radius 100 at the mine's
+  x, y and z (`sim_damage_objects_in_radius`, `1000:e8eb`, as the tail missile's: every
+  object in the field of either side, the dropper's too), and the mine is removed.
+- **Alarm buoy** (11): +0x1a halves; +0x16 bit 4 is set while it is not 0, cleared at 0
+  (the map shows the buoy in colour 0xff instead of 0x0f, `docs/screens.md`). Then with
+  an enemy within 0x96 and +0x1a at 0: +0x1a = 0x10 and the alert that the alarm buoy was
+  triggered. So an enemy that stays in range is reported every five looks (1,280
+  ticks), and bit 4 shows from the look after an alert until +0x1a halves to 0.
+- **ECM buoy** (12): +0x1a halves (no flag). With an enemy within 0x96 and +0x1a at 0:
+  +0x1a = 0x40, the alert that the ECM buoy was triggered, and one charge (+0x1b)
+  fewer; at 0 the buoy is removed (`1000:f656`, `f5cd`). So an enemy in range is
+  reported every seven looks (1,792 ticks), ten times.
+- **Decoy** (10): no tick.
+
+**The alerts** go through `1000:d53b`, which is `1000:65ae`: a line in the log of the
+base of the object's side (the dropper's), signed with the fixed alert name
+(`1fe6:7f38` with `DI` = 0xffff, `1fe6:7fbc`; `xeno_formats::messages::Messages::alert`)
+instead of the sender's. Nothing is sent to the robots' panels.
+
+**What they do to the enemy.** The mine's blast is the only effect on another object.
+No code was found that reads a buoy's +0x1a or looks for kinds 11 and 12 (a byte search
+of the image for compares with 0xc and for `mov ax, 0xc` before a call finds only key
+2): a triggered ECM buoy does nothing to the enemy beyond its alert, and the alarm
+buoy's level only picks its colour on the map. The decoy's model is read back only by
+the map's routine for kind 10 (`1000:fa70`: `1000:e5fe` puts +0x19 in `DX`, then the
+robots' map routine `f976` draws it as a robot of the dropper's kind, with the robots'
+checks: an alien one only once `SPOTTED`). In the 3D view kinds 9 to 12 make no node
+(`docs/render.md`). Nothing marks a decoy `SCANNED`, `TARGETABLE` or `UNIT`, so the
+other side's scans, locks and scripts never see it; it fools only the map.
+
+### The port (T-137)
+
+`Pilot::Drop(n)` (n 0 to 3 for keys 1 to 4) runs `drops::drop`; `drops::tick` runs the
+three ticks from `motion::tick`; the alerts are `log::alert`. `Guns::drops` keeps +0xe2
+to +0xe5 (loaded, hashed, saved) and `State::Drop` the object's +0x18 to +0x1b and the
+alarm's +0x16 bit 4 (hashed, saved, read back from a save). The search walks the world
+in slot order for any robot of the other side. Removal is at once, as the other kinds
+(T-054). Part 2 (`t-137-app`): `xeno-app` maps keys 1 to 4 and both consoles' drop
+buttons, draws the decoy on the map with its dropper's model and the alarm's colour
+from the sim, and the consoles' counts are the sim's. Left to check in DOSBox: T-192.
 
 ## Relay nets (T-113)
 

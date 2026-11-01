@@ -641,12 +641,13 @@ time):
   power always, a bit only when it is set (`xeno_formats::damage::Part`).
 - The robots' own panel messages already ported: the lock's (`sense`), the weapons'
   (`weapons`), the relays' (`net`) and the weapon selection's (`motion`).
-- Not ported (T-186), where the port has no such routine yet: the alert name's three
-  (`1000:e5c7`, `e639`, `e66b`: a mine detonated, alarm and ECM buoys triggered by an
-  enemy), the field repair's (`1000:df79`), the cargo's (`8d8c`, `9ac7`, `9ad3`,
-  `9ae7`, `9b28`, `9b82`), the decoys', mines' and buoys' (`d605` to `d66b`, `e5b1` to
-  `e647`), the ECM's and cloak's (`d94c` to `d999`), the jump's (`7ee3`) and the
-  console's status lines (`9177` to `9268`).
+- The alert name's three (`1000:e5c7`, `e639`, `e66b`: a mine went off, alarm and ECM
+  buoys triggered by an enemy; `log::alert`) and the drops' own (`d605` to `d66b`,
+  `e5b1` to `e647`), ported with T-137 (`docs/sim.md`, "Mines and buoys (T-137)"); the
+  ECM's and cloak's with T-136.
+- Not ported (T-186), where the port has no such routine yet: the field repair's
+  (`1000:df79`), the cargo's (`8d8c`, `9ac7`, `9ad3`, `9ae7`, `9b28`, `9b82`), the
+  jump's (`7ee3`) and the console's status lines (`9177` to `9268`).
 
 **In the port**: `xeno_formats::messages` reads the names, letters, the base's two
 texts, the interval and the header's bytes (and writes the header into the string
@@ -1157,7 +1158,7 @@ The nodes, in order:
 
 | Kind | Routine | Shown |
 |---|---|---|
-| Robots 0 to 2 (10 after `1000:e5fe`) | `1000:f976` | Not alien and undetected (+0x17 bit 2, unless the editor's Ctrl+E), not +0x17 bit 0, and only with overlay bit 0. Without bit 1 a pixel in the model's colour (`DS:0xe86c`: 0x30, 0x0e, 0x0d); with it a sprite, the eight headings a handle step apart from `DS:0xe866` (zoom factor under 8: 0xc0, 0x100, 0x140) or `DS:0xe860` (0, 0x40, 0x80), octant `(heading + 0x1000) >> 13`, with a 0xfd pixel for an alien |
+| Robots 0 to 2, and decoys (10, `1000:fa70`: the dropper's model from +0x19 through `1000:e5fe`) | `1000:f976` | Not alien and undetected (+0x17 bit 2, unless the editor's Ctrl+E), not +0x17 bit 0, and only with overlay bit 0. Without bit 1 a pixel in the model's colour (`DS:0xe86c`: 0x30, 0x0e, 0x0d); with it a sprite, the eight headings a handle step apart from `DS:0xe866` (zoom factor under 8: 0xc0, 0x100, 0x140) or `DS:0xe860` (0, 0x40, 0x80), octant `(heading + 0x1000) >> 13`, with a 0xfd pixel for an alien |
 | Base 3 | `f9e5` | Always: sprite 0x1b8; with bit 1, 0x1a8 (human) or 0x1b0 (alien) |
 | Relay 4 | `fa04` | With overlay bit 3: a pixel 0xfe (0xfd alien), 7 if not linked (+0x16 bit 4); with bit 1 sprite 0x188 (0x190 alien), 0x180 if not linked |
 | Shots 5 to 8 | `fa4d` | Only with the developer's Ctrl+Alt+S (`DS:0x62ec` bit 6): a 0x0f pixel |

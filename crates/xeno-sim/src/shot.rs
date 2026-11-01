@@ -367,7 +367,7 @@ fn approx_distance3(a: Position, az: i32, b: Position, bz: i32) -> u32 {
 /// A blast of `points` in `radius` (8.8) at `at`, height `z`
 /// (`sim_damage_objects_in_radius`, `1000:e8eb`): every object in the field within the
 /// radius takes the points, halved for each step out from half the radius.
-fn blast(
+pub(crate) fn blast(
     world: &mut World,
     at: Position,
     z: i32,

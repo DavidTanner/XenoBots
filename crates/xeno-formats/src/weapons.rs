@@ -38,7 +38,7 @@ pub(crate) struct GunAt {
 }
 
 const ENERGY: &[u8] = &[0xb0];
-const MOV_AX: &[u8] = &[0xb8];
+pub(crate) const MOV_AX: &[u8] = &[0xb8];
 /// The guns in [`Weapons::guns`]' order: the humanoid's cannon (`1000:b0f6`) and
 /// missile (`b16e`), the scorpion's cannon (`982d`) and tail missile (`978d`), the
 /// scout's plasma gun (`c8ff`) and cannon (`c990`).
@@ -134,6 +134,35 @@ pub(crate) const DEVICES: [Site; 18] = [
 /// `mov si, message` when F8 finds no cloak left (`1000:d98f`).
 pub(crate) const NO_CLOAK_AT: Site = (0xd98f, &[0xbe], true);
 
+/// Keys 1 to 4 (`1000:d5e7`, `d609`, `d62b`, `d64d`): each starts `cmp byte [di +
+/// count], 0`; 8 bytes on, `mov ax, kind`; 0x1b on, `mov si, message` (none left).
+pub(crate) const DROP_KEYS: [usize; 4] = [0xd5e7, 0xd609, 0xd62b, 0xd64d];
+/// `mov si, message` in each key's set-up (`1000:e5ab`, `e63d`, `e602`, `e5e8`): dropped.
+pub(crate) const DROPPED_AT: [usize; 4] = [0xe5ae, 0xe644, 0xe605, 0xe5f6];
+/// `call cs:[bx + table]` in `1000:d5d5`: the drop buttons' key routines.
+pub(crate) const DROP_BUTTONS_AT: (usize, &[u8]) = (0xd5d9, &[0x2e, 0xff, 0x97]);
+/// The mine's tick (`1000:e5b5`): its range, alert, explosion, sound, points, radius.
+pub(crate) const MINE: [Site; 3] = [
+    (0xe5bb, MOV_AX, true),
+    (0xe5d6, &[0xb0], false),
+    (0xe5da, &[0xbb], true),
+];
+pub(crate) const MINE_ALERT_AT: usize = 0xe5c4;
+pub(crate) const MINE_EXPLOSION_AT: usize = 0xe5ca;
+pub(crate) const MINE_SOUND_AT: usize = 0xe5d0;
+/// The buoys' ticks: the alarm's (`1000:e60c`) range and level, the ECM's (`e64b`)
+/// charges (its set-up), range and level; then their alerts.
+pub(crate) const BUOYS: [Site; 5] = [
+    (0xe623, MOV_AX, true),
+    (0xe632, &[0xc6, 0x45, 0x1a], false),
+    (0xe640, &[0xc6, 0x44, 0x1b], false),
+    (0xe654, MOV_AX, true),
+    (0xe664, &[0xc6, 0x45, 0x1a], false),
+];
+pub(crate) const BUOY_ALERTS_AT: [usize; 2] = [0xe636, 0xe668];
+/// `mov dl, [bx + table]` in the decoy's set-up (`1000:e5ed`): the models by kind.
+pub(crate) const DECOY_MODELS_AT: (usize, &[u8]) = (0xe5ed, &[0x8a, 0x97]);
+
 /// The shell's set-up (`1000:e235`) and tick (`e2c8`), in [`Shell`]'s order.
 pub(crate) const SHELL: [Site; 9] = [
     (0xe238, &[0xc7, 0x44, 0x20], true),
@@ -222,6 +251,40 @@ pub struct Weapons {
     pub hits: [Hit; KINDS],
     pub heights: [u16; KINDS],
     pub devices: Devices,
+    pub drops: Drops,
+}
+
+/// Keys 1 to 4: the mines and buoys the scorpion and scout drop, and their ticks
+/// (`docs/sim.md`, "Mines and buoys (T-137)"). Each array is by key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drops {
+    /// The count each key takes one of (an offset in the robot, +0xe2 to +0xe5), the
+    /// kind it makes, and the messages: none left, dropped.
+    pub counts: [u8; 4],
+    pub kinds: [u16; 4],
+    pub none_left: [u16; 4],
+    pub dropped: [u16; 4],
+    /// The key (0 for key 1) each of a console's four drop buttons runs.
+    pub buttons: [u8; 4],
+    /// The mine: the range (8.8) an enemy sets it off in, its blast's points and
+    /// radius, its explosion, the sound for everyone, and its alert.
+    pub mine_range: u16,
+    pub mine_points: u8,
+    pub mine_radius: u16,
+    pub mine_explosion: Explosion,
+    pub mine_sound: u8,
+    pub mine_alert: u16,
+    /// The alarm buoy's range, the level (+0x1a) an alert sets, and its alert.
+    pub alarm_range: u16,
+    pub alarm_level: u8,
+    pub alarm_alert: u16,
+    /// The ECM buoy's charges, range, level and alert.
+    pub ecm_charges: u8,
+    pub ecm_range: u16,
+    pub ecm_level: u8,
+    pub ecm_alert: u16,
+    /// The models by kind (`DS:0xe70c`): a decoy keeps its dropper's.
+    pub models: [u8; KINDS],
 }
 
 /// The ECM (F7), the sparkle cloak (F8) and the sparkle they make (kind 14;
@@ -553,6 +616,57 @@ fn devices(image: &[u8]) -> Result<Devices, FormatError> {
     })
 }
 
+fn drops(image: &[u8], ds: usize) -> Result<Drops, FormatError> {
+    let si = |at: usize| operand(image, at, &[0xbe]);
+    let (mut counts, mut kinds, mut none_left, mut dropped) = ([0; 4], [0; 4], [0; 4], [0; 4]);
+    for (k, &at) in DROP_KEYS.iter().enumerate() {
+        counts[k] = match image.get(at..at + 5) {
+            Some(&[0x80, 0xbd, c @ 0xe2..=0xe5, 0, 0]) => c,
+            _ => return Err(invalid(at, "not a drop key")),
+        };
+        kinds[k] = operand(image, at + 8, MOV_AX)?;
+        none_left[k] = si(at + 0x1b)?;
+        dropped[k] = si(DROPPED_AT[k])?;
+    }
+    let table = usize::from(operand(image, DROP_BUTTONS_AT.0, DROP_BUTTONS_AT.1)?);
+    let mut buttons = [0; 4];
+    for (n, b) in buttons.iter_mut().enumerate() {
+        let to = usize::from(word(image, table + 2 * n)?);
+        *b = DROP_KEYS
+            .iter()
+            .position(|&k| k == to)
+            .ok_or_else(|| invalid(table + 2 * n, "not a drop key"))? as u8;
+    }
+    let [mine_range, mine_points, mine_radius] = values(image, &MINE)?;
+    let [alarm_range, alarm_level, ecm_charges, ecm_range, ecm_level] = values(image, &BUOYS)?;
+    let at = ds + usize::from(operand(image, DECOY_MODELS_AT.0, DECOY_MODELS_AT.1)?);
+    let models = image
+        .get(at..at + KINDS)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| invalid(at, "past the end"))?;
+    Ok(Drops {
+        counts,
+        kinds,
+        none_left,
+        dropped,
+        buttons,
+        mine_range,
+        mine_points: mine_points as u8,
+        mine_radius,
+        mine_explosion: explosion(image, ds, MINE_EXPLOSION_AT)?,
+        mine_sound: sound(image, MINE_SOUND_AT)?.0,
+        mine_alert: si(MINE_ALERT_AT)?,
+        alarm_range,
+        alarm_level: alarm_level as u8,
+        alarm_alert: si(BUOY_ALERTS_AT[0])?,
+        ecm_charges: ecm_charges as u8,
+        ecm_range,
+        ecm_level: ecm_level as u8,
+        ecm_alert: si(BUOY_ALERTS_AT[1])?,
+        models,
+    })
+}
+
 /// Reads the tables from a load image whose data segment starts at `ds`.
 pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
     let (steps, reload_step) = steps(image, ds)?;
@@ -661,6 +775,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
         hits: by_kind(image, ds, HITS_AT, |r| hit(image, usize::from(r)))?,
         heights: by_kind(image, ds, HEIGHTS_AT, Ok)?,
         devices: devices(image)?,
+        drops: drops(image, ds)?,
     })
 }
 
@@ -698,6 +813,12 @@ mod tests {
             (w.hits[3], w.heights[0], w.heights[3]),
             (Hit::Always, 10, 20)
         );
+        let p = w.drops;
+        assert_eq!((p.kinds, p.buttons), ([9, 12, 11, 10], [0, 3, 2, 1]));
+        assert_eq!(
+            (p.mine_sound, p.models[2], p.mine_explosion.first),
+            (6, 5, 0x13)
+        );
         insta::assert_debug_snapshot!(w);
     }
 
@@ -723,6 +844,11 @@ mod tests {
             DEVICES[1].0 + 2,
             DEVICES[13].0,
             NO_CLOAK_AT.0,
+            DROP_KEYS[2] + 3,
+            DROPPED_AT[3],
+            MINE[2].0,
+            BUOYS[4].0 + 1,
+            0x8144,
         ] {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -791,5 +917,23 @@ mod tests {
         let d = w.devices;
         assert_eq!((d.sparkle, d.no_power), (14, m.no_power));
         assert!(d.grown < d.shrinking && d.shrinking < d.life && d.ecm_time < d.cloak_time);
+        let p = w.drops;
+        assert_eq!(
+            (p.counts, p.kinds),
+            ([0xe2, 0xe4, 0xe3, 0xe5], [9, 12, 11, 10])
+        );
+        assert_eq!(p.buttons, [0, 3, 2, 1]);
+        for at in p.none_left.iter().chain(&p.dropped) {
+            assert!(motion.strings.byte(*at) != 0, "{at:#x}");
+        }
+        for at in [p.mine_alert, p.alarm_alert, p.ecm_alert] {
+            assert!(motion.strings.byte(at) != 0, "{at:#x}");
+        }
+        let e = p.mine_explosion;
+        assert!(e.first < e.last && e.ticks > 0 && p.mine_sound < 29);
+        assert!(p.mine_range < p.alarm_range && p.alarm_range == p.ecm_range);
+        assert!(p.ecm_charges > 0 && p.alarm_level > 0 && p.ecm_level > 0);
+        // The robots' models: a decoy dropped by a scorpion or scout keeps theirs.
+        assert!(p.models[1] != p.models[2]);
     }
 }

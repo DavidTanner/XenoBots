@@ -9,8 +9,8 @@ use crate::farewell::operand;
 use crate::maproom::invalid;
 
 /// `1fe6:7f38`'s fixed names, each three `mov word [0x1bfe + 2n], imm`: a base's, a
-/// relay's and kind 0xa's.
-pub(crate) const NAMES_AT: [usize; 3] = [0x17dd1, 0x17e03, 0x17dea];
+/// relay's, kind 0xa's and the alert's (`DI` = 0xffff, through `1000:65ae`).
+pub(crate) const NAMES_AT: [usize; 4] = [0x17dd1, 0x17e03, 0x17dea, 0x17e1c];
 const NAME_OPS: [&[u8]; 3] = [
     &[0xc7, 0x06, 0xfe, 0x1b],
     &[0xc7, 0x06, 0x00, 0x1c],
@@ -33,10 +33,12 @@ pub(crate) const HEADER_AT: usize = 0xd5a9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Messages {
-    /// The names a base, a relay and an object of kind 0xa sign with.
+    /// The names a base, a relay and an object of kind 0xa sign with, and the alerts
+    /// (a mine's, a buoy's).
     pub base: [u8; 6],
     pub relay: [u8; 6],
     pub other: [u8; 6],
+    pub alert: [u8; 6],
     /// A robot's name's letters, by kind (humanoid, scorpion, scout).
     pub letters: [[u8; 2]; 3],
     /// The texts (string-segment offsets) a destroyed base sends the other side and a
@@ -86,6 +88,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Messages, FormatError> {
         base: name(NAMES_AT[0])?,
         relay: name(NAMES_AT[1])?,
         other: name(NAMES_AT[2])?,
+        alert: name(NAMES_AT[3])?,
         letters: [pair(0)?, pair(1)?, pair(2)?],
         destroyed: operand(image, DESTROYED_AT, &[0xbe])?,
         attacked: operand(image, ATTACKED_AT, &[0xbe])?,
@@ -125,8 +128,8 @@ mod tests {
         crate::fixtures::synthetic_messages(&mut image, DS);
         let m = read_image(&image, DS).unwrap();
         assert_eq!(
-            (m.base, m.relay, m.other),
-            (*b"BB    ", *b"RR    ", *b"??    ")
+            (m.base, m.relay, m.other, m.alert),
+            (*b"BB    ", *b"RR    ", *b"??    ", *b"AA    ")
         );
         assert_eq!(m.letters, [*b"HU", *b"SC", *b"ST"]);
         assert_eq!((m.destroyed, m.attacked, m.interval), (0x30, 0x40, 0x1e0));
@@ -156,6 +159,10 @@ mod tests {
         assert_eq!((m.header, m.name_length), (0x1714, 6));
         // Bit 7 set: drawn in the high colour.
         assert!(m.header_bytes.iter().all(|b| b & 0x80 != 0));
-        assert!([m.base, m.relay, m.other].iter().all(|n| n.is_ascii()));
+        assert!(
+            [m.base, m.relay, m.other, m.alert]
+                .iter()
+                .all(|n| n.is_ascii())
+        );
     }
 }

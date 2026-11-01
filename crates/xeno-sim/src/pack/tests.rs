@@ -72,7 +72,7 @@ fn shot(flight: Flight, n: u16) -> Shot {
 }
 
 /// A mission run a while, with a relay deployed, a target locked, a robot recalled,
-/// one of each shot, an explosion and a sparkle in flight and the ECM and cloak on: everything the sim keeps comes back
+/// one of each shot, an explosion, a sparkle and an alarm buoy in flight and the ECM and cloak on: everything the sim keeps comes back
 /// from the save, but what the original's loader also resets (the scripts restart
 /// with the program given, the targets are dropped, and the counts carried from
 /// mission to mission start over).
@@ -118,6 +118,22 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         age: 9,
         stage: 1,
     };
+    // The scorpion drops an alarm buoy, its alarm showing part way through a look.
+    movement(&mut sim.world, scorpion).unwrap().guns.drops = [0, 2, 0, 0];
+    sim.pilot(scorpion, Pilot::Drop(2));
+    let buoy = sim
+        .world
+        .iter()
+        .find(|(_, e)| matches!(e.state, State::Drop(_)))
+        .map(|(id, _)| id)
+        .unwrap();
+    sim.world.get_mut(buoy).unwrap().state = State::Drop(crate::drops::Drop {
+        battery: 1,
+        ticks: 0x41,
+        level: 8,
+        charges: 0,
+        alarm: true,
+    });
     // Heights the file did not hold.
     let scout = sim.world.get_mut(EntityId(7)).unwrap();
     (scout.z, scout.model_height) = (Fixed(0x3_0042), 0x0cb0);
@@ -163,7 +179,7 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
     assert_eq!(again.world, as_loaded(&sim.world, &again.world));
     assert_eq!(
         again.world.len(),
-        scenario.objects.as_ref().unwrap().len() + 7
+        scenario.objects.as_ref().unwrap().len() + 8
     );
 
     // The saved forms: the script from the program table, the target as its slot.

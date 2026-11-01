@@ -318,7 +318,7 @@ The flags at +0x16 (`usg::flag`):
 | 1 (0x02) | `TARGETABLE` | A robot may take the object as its target. Robots, bases, relays |
 | 2 (0x04) | `SCANNED` | The scanners list it. Robots and bases |
 | 3 (0x08) | `ALIEN` | The side: the editor writes 0 for human, 8 for alien |
-| 4 (0x10) | `RELAY_LINKED` | Relays: picks the relay's colour in the 3D view; a base's network check looks for it. The name is a guess |
+| 4 (0x10) | `RELAY_LINKED` | Relays: picks the relay's colour in the 3D view; a base's network check looks for it. The name is a guess. An alarm buoy (kind 11) sets it while its alarm shows (T-137) |
 | 5 (0x20) | `UNIT` | A robot: registered in its side's unit list at load. Set on every stock robot and on nothing else |
 | 6 (0x40) | `IN_FIELD` | Shots and contact checks only see objects with it. A robot loses it inside its base and gets it back when launched. Robots, bases, obstacles and set-up relays |
 | 7 (0x80) | | Not seen used |
@@ -377,7 +377,7 @@ gives the values called "when made". Up to +0xfd the kinds share a layout:
 | 0xdd | 1 | `weapon` | The weapon selected, 0 or 1 (script opcodes 0x7b, 0x7c; F5, F6; T-054); a scorpion's 1 is its tail missile |
 | 0xde, 0xdf | 1, 1 | `ecm`, `ecm_time` | ECM charges (0xff when made) and the weapon steps it stays on: F7 (`1000:d92e`) takes one and the energy, sets 20 and `ECM`; each weapon step (about every 8 ticks) counts it down and clears `ECM` at 0 (humanoid `1000:b08a`, scorpion `972e`, scout `c8ab`) |
 | 0xe0, 0xe1 | 1, 1 | `cloaks`, `cloak_time` | Sparkle cloaks (humanoid 10, scout 4 when made; scorpions none) and the weapon steps one lasts: F8 (`1000:d95e`) takes one and the energy (whether or not there is enough), sets 120 and `CLOAKED`, and makes the sparkle (kind 14); counted down as `ecm_time`, but not by the scorpion's step (`docs/sim.md`, "The ECM and the cloak (T-136)") |
-| 0xe2..0xe5 | 1 each | `mines`, `alarm_buoys`, `ecm_buoys`, `decoys` | What keys 1 to 4 drop (`1000:d5e7`..`d64d`): proximity mines (kind 9), alarm buoys (11), ECM buoys (12) and EMI decoys (10) left. Scorpion 20, 8, 8, 4; scout 6, 2, 2, 6; humanoid none |
+| 0xe2..0xe5 | 1 each | `mines`, `alarm_buoys`, `ecm_buoys`, `decoys` | What keys 1, 3, 2 and 4 drop (`1000:d5e7`, `d62b`, `d609`, `d64d`): proximity mines (kind 9), alarm buoys (11), ECM buoys (12) and EMI decoys (10) left. Scorpion 20, 8, 8, 4; scout 6, 2, 2, 6; humanoid none (`docs/sim.md`, "Mines and buoys (T-137)") |
 | 0xe6 | 2 | `target` | The robot's target: an object pointer in memory (0 none; the scripts test it), its slot in a file (0xffff: none). The loader clears it. Set by a lock (`1000:d8af`), dropped by the upkeep (T-112) |
 | 0xe8 | 2 | `target_distance` | The target's true distance (`1000:0942`, a square root) as 8.8 (the middle word of the 16.16), worked out every 16 ticks while the lock holds (`1000:d6e6`, from the kind's tick table through `1000:d66f` with the kind's arc and range) and at the lock |
 | 0xea | 2 | `target_bearing` | The bearing to the target (`1000:0545`, the fine bearing) |
@@ -496,16 +496,17 @@ hold them; `usg::Body::Other` keeps their bytes. Each kind's set-up routine is i
 | 6 | A shell (the scorpion's cannon, the scout's) | `1000:e235`, `e2c8` | +0x18 the speed (0x900); +0x1a, +0x1c its velocity; +0x1e the vertical speed (0x80 with a target, else random to 0x7f; less 3 a step); +0x20 steps before it can hit (15); +0x22 the damage (a 1-point shell explodes silently). It moves two steps a tick; the heading is the lead's, spread at random (`docs/sim.md`, "Weapons and shots") |
 | 7 | A homing shot (the humanoid's first weapon, the scout's plasma) | `1000:e34a`, `e3ca` | +0x19 the target; +0x1b the speed (0x400); +0x1d the climb; +0x1f..+0x23 the velocity (none until its first turn); +0x25 ticks before it can hit (10); +0x27 its age (freed at 300); +0x29 the damage. It turns to its target by at most 0x2d8 every 8 ticks |
 | 8 | The humanoid's missile (its second weapon) | `1000:e48a`, `e537` | +0x18 a spinning frame (0 to 3); +0x1b the speed (0x300); +0x1d..+0x21 the velocity, aimed with a lead (`1000:4549`) and a climb to the target (`1000:e98d`); +0x23 ticks before it can hit (10); +0x25 ticks it lives (0x3c0). Damage 8 (`1000:e587`) |
-| 9 | A proximity mine | `1000:e5ab`, `e5b5` | +0x19 counts ticks; every 256 it looks for an enemy within 0x3c (`1000:e84f`): a blast of 50 points in radius 100 |
-| 10 | An EMI decoy | `1000:e5e8`, none | +0x19 a word from `DS:0xe70c` by the dropping robot's kind, read back by `1000:e5fe` (not traced) |
-| 11 | An alarm buoy | `1000:e602`, `e60c` | +0x19 counts ticks; every 256 +0x1a halves (flag bit 4 while it is not 0, the alarm showing) and an enemy within 0x96 sets it to 0x10 with a message |
-| 12 | An ECM buoy | `1000:e63d`, `e64b` | As the alarm buoy, with +0x1a set to 0x40, and +0x1b its charges (10): one is spent each time; at 0 it is removed. What it does to the enemy is not traced (T-137) |
+| 9 | A proximity mine | `1000:e5ab`, `e5b5` | +0x18 bit 0 the dropper was on its battery (all four kinds); +0x19 counts ticks; every 256 it looks for an enemy robot within 0x3c (`1000:e84f`): an alert, an explosion, a blast of 50 points in radius 100, removed (`docs/sim.md`, "Mines and buoys (T-137)") |
+| 10 | An EMI decoy | `1000:e5e8`, none | +0x19 a word: the dropper's model (`DS:0xe70c` by its kind), read back by the map's routine (`1000:e5fe`, `fa70`), which draws the decoy as a robot of that kind |
+| 11 | An alarm buoy | `1000:e602`, `e60c` | +0x19 counts ticks; every 256 +0x1a halves (flag bit 4 while it is not 0, the alarm showing on the map) and an enemy within 0x96, with +0x1a at 0, sets it to 0x10 with an alert |
+| 12 | An ECM buoy | `1000:e63d`, `e64b` | As the alarm buoy without the flag, with +0x1a set to 0x40, and +0x1b its charges (10): one is spent each alert; at 0 it is removed. Nothing else found acts on the enemy (T-137) |
 | 13 | An explosion | `1000:e79a`, `e7e3` | `docs/sim.md`, "Damage": +0x18 the frame, +0x1a the last, +0x1b ticks a frame, +0x1c the countdown |
 | 14 | The sparkle (a cloak, F8) | `1000:dfff`, `e03b` | At the robot's x, y and z, heading 0x10, radius 0x2000. +0x18 the frame (0 to 7, one every 8 ticks of +0x19); +0x1a its age in frames: at 40 and 80 +0x1b (a word) steps to the next of the routines at `CS:0xe073`: the first grows the heading and radius (6 and 0xcc a frame), the second holds, the third shrinks them; removed at 120 (960 ticks; `docs/sim.md`, "The ECM and the cloak (T-136)") |
 | 15 | Removed | none, `f5c1` | Removal (`1000:f5a4`) turns an object into kind 15 with +0x17 = 2; its tick counts +0x17 down and frees the slot at 0 |
 
-Every drop (9 to 12, `1000:e801`) is put at the robot's position with a small random
-offset, takes its side, and sets +0x18 bit 0 when the robot was on its battery.
+Every drop (9 to 12, `1000:e801`) is put at the robot's position with a random offset
+of up to 1/8 of a unit on each axis, at its z, takes its side bit and no other flag,
+and sets +0x18 bit 0 when the robot was on its battery.
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
 sit on whole-number positions in chains near their own side's base.

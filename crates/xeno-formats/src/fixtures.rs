@@ -1903,6 +1903,49 @@ pub fn synthetic_weapons(image: &mut [u8], ds: usize) {
     {
         put(s.0, &site(s, v));
     }
+    // Keys 1 to 4 (kinds 9, 12, 11, 10) and their objects, made-up numbers and messages.
+    for (k, (&at, (count, kind))) in DROP_KEYS
+        .iter()
+        .zip([(0xe2, 9), (0xe4, 12), (0xe3, 11), (0xe5, 10)])
+        .enumerate()
+    {
+        put(at, &[0x80, 0xbd, count, 0, 0]);
+        put(at + 8, &site((0, MOV_AX, true), kind));
+        put(at + 0x1b, &site((0, &[0xbe], true), 0x80 + k as u16));
+        put(DROPPED_AT[k], &site((0, &[0xbe], true), 0x88 + k as u16));
+    }
+    put(
+        DROP_BUTTONS_AT.0,
+        &site((0, DROP_BUTTONS_AT.1, true), 0x8140),
+    );
+    for (n, k) in [0, 3, 2, 1].into_iter().enumerate() {
+        put(0x8140 + 2 * n, &(DROP_KEYS[k] as u16).to_le_bytes());
+    }
+    for (&s, v) in MINE.iter().zip([0x40, 40, 0x50]) {
+        put(s.0, &site(s, v));
+    }
+    for (&s, v) in BUOYS.iter().zip([0x90, 0x20, 6, 0xa0, 0x30]) {
+        put(s.0, &site(s, v));
+    }
+    for (at, v) in [MINE_ALERT_AT, BUOY_ALERTS_AT[0], BUOY_ALERTS_AT[1]]
+        .into_iter()
+        .zip(0x90..)
+    {
+        put(at, &site((0, &[0xbe], true), v));
+    }
+    put(MINE_EXPLOSION_AT, &site((0, MOV_AX, true), 0x9d20));
+    put(ds + 0x9d20, &[0x13, 0x1d, 2, 0, 0]);
+    sound(&mut put, MINE_SOUND_AT, 6, true);
+    put(
+        DECOY_MODELS_AT.0,
+        &site((0, DECOY_MODELS_AT.1, true), 0x9d00),
+    );
+    put(
+        ds + 0x9d00,
+        &[
+            1, 3, 5, 0x11, 9, 7, 0xb, 0xf, 0xd, 3, 5, 7, 9, 0xb, 0x13, 1, 0x15,
+        ],
+    );
 }
 
 /// [`synthetic_weapons`]' tables, read.
@@ -2346,7 +2389,7 @@ pub fn synthetic_base_tables() -> crate::base::Bases {
     crate::base::read_image(&image, 0x1_0000).expect("synthetic base tables")
 }
 
-/// Writes made-up message tables (`crate::messages`): the names `BB`, `RR` and `??`
+/// Writes made-up message tables (`crate::messages`): the names `BB`, `RR`, `??` and `AA`
 /// padded with spaces, the letters `HU`, `SC`, `ST` at `DS:0x9e00`, the base's texts
 /// 0x30 (destroyed) and 0x40 (attacked) 0x1e0 counts apart, and the header at 0x50
 /// bracketed by 0xad and 0xba around six bytes.
@@ -2354,7 +2397,10 @@ pub fn synthetic_messages(image: &mut [u8], ds: usize) {
     use crate::messages::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    for (at, name) in NAMES_AT.into_iter().zip([b"BB    ", b"RR    ", b"??    "]) {
+    for (at, name) in NAMES_AT
+        .into_iter()
+        .zip([b"BB    ", b"RR    ", b"??    ", b"AA    "])
+    {
         for i in 0..3 {
             let word = u16::from_le_bytes([name[2 * i], name[2 * i + 1]]);
             let [lo, hi] = (0x1bfe + 2 * i as u16).to_le_bytes();

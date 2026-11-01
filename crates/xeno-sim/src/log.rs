@@ -39,6 +39,19 @@ pub fn name(world: &World, id: EntityId, tables: &Tables) -> [u8; 6] {
 // shortcut: the original also asks the situation room to redraw its log, its C button
 // and the status view (+0xe3, +0xfd, +0xc6); the port draws them every frame.
 pub fn write(world: &mut World, id: EntityId, side: Side, text: u16, tables: &Tables) {
+    let name = name(world, id, tables);
+    write_as(world, name, side, text);
+}
+
+/// `1000:65ae` (through `d53b`): `id` writes `text` into its side's base's log, signed
+/// with the alert name instead of its own.
+pub fn alert(world: &mut World, id: EntityId, text: u16, tables: &Tables) {
+    if let Some(side) = world.get(id).map(|e| e.side) {
+        write_as(world, tables.messages.alert, side, text);
+    }
+}
+
+fn write_as(world: &mut World, name: [u8; 6], side: Side, text: u16) {
     let mut line = Message {
         hour: world.clock.hour,
         minute: world.clock.minute,
@@ -47,7 +60,7 @@ pub fn write(world: &mut World, id: EntityId, side: Side, text: u16, tables: &Ta
         text,
         ..Message::default()
     };
-    line.name[..6].copy_from_slice(&name(world, id, tables));
+    line.name[..6].copy_from_slice(&name);
     let Some(State::Base { depot, .. }) = world
         .base(side)
         .and_then(|b| world.get_mut(b))
