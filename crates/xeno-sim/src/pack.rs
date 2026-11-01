@@ -7,13 +7,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, flag};
+use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario};
 
 use crate::motion::Tables;
 use crate::orders::RobotKind;
 use crate::shot::{Flight, HOMING, MISSILE, SHELL, Shot, TAIL};
 use crate::terrain::PathTable;
-use crate::world::{Damage, Entity, EntityId, Movement, State, World, side_code};
+use crate::world::{Damage, Entity, EntityId, Movement, State, World};
 
 /// A saved script pointer's mark (`1000:4826`): its offset from the program table with
 /// the top bits 0xa0, which the loader takes as "restore, then restart".
@@ -36,9 +36,6 @@ impl Record {
     }
     fn i32(&mut self, at: usize, v: i32) {
         self.put(at, &v.to_le_bytes());
-    }
-    fn get(&self, at: usize) -> u8 {
-        self.0[6 + at]
     }
 }
 
@@ -165,8 +162,7 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
     r.u16(0x10, e.heading);
     r.u16(0x12, e.model_height);
     r.u16(0x14, e.radius);
-    let side = side_code(e.side) * flag::ALIEN;
-    r.u8(0x16, (r.get(0x16) & !flag::ALIEN) | side);
+    r.put(0x16, &[e.flags, e.status]);
     match e.damage {
         Damage::Robot(c) => {
             for (at, v) in [
@@ -180,13 +176,6 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             ] {
                 r.u8(at, v);
             }
-            // The take-in and the launch move `IN_FIELD` with `IN_BASE` (T-115).
-            let field = if c.equipment & usg::Robot::IN_BASE == 0 {
-                flag::IN_FIELD
-            } else {
-                0
-            };
-            r.u8(0x16, (r.get(0x16) & !flag::IN_FIELD) | field);
         }
         Damage::Taken(n) if e.kind == ObjectKind::Base => r.u16(0x2e, n),
         Damage::Taken(n) => r.u8(0x33, n as u8),
@@ -198,16 +187,11 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             tick,
             kills,
             losses,
-            destroyed,
             end_step,
             look,
             counts,
             depot: d,
         } => {
-            r.u8(
-                0x16,
-                r.get(0x16) & !flag::GONE | (u8::from(*destroyed) * flag::GONE),
-            );
             r.put(0x18, &[*look, d.relay_clock]);
             r.u16(0x1a, slot(d.repairing));
             r.u16(0x1c, d.repair_clock);
@@ -245,8 +229,6 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             r.u16(0x1b, u16::from(*stage) * 2);
         }
         State::Drop(d) => {
-            let alarm = u8::from(d.alarm) * flag::RELAY_LINKED;
-            r.u8(0x16, r.get(0x16) & !flag::RELAY_LINKED | alarm);
             r.put(0x18, &[d.battery, d.ticks, d.level, d.charges]);
         }
         State::Shot(s) => {
@@ -258,9 +240,6 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
             }
         }
         State::Relay(s) => {
-            // `TARGETABLE` from the set-up (`1000:cc2a`); nothing clears it.
-            let kept = r.get(0x16) & !crate::relay::FLAGS;
-            r.u8(0x16, kept | s.flags | flag::TARGETABLE);
             r.put(0x18, &s.frames);
             r.put(0x1e, &[s.clock, s.state, s.stage, s.power, s.power_side]);
             for (n, &l) in s.links.iter().enumerate() {
@@ -280,7 +259,6 @@ fn robot(
     m: &Movement,
     program_table: u16,
 ) {
-    r.u8(0x17, m.status);
     r.u8(0x1a, m.tick);
     r.u16(0x1c, m.eye_height);
     r.u16(0x1e, m.velocity.0 as u16);
@@ -500,7 +478,6 @@ pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Table
                 ticks: at(0x19),
                 level: at(0x1a),
                 charges: at(0x1b),
-                alarm: o.flags & flag::RELAY_LINKED != 0,
             })
         } else if kind == tables.weapons.devices.sparkle {
             State::Sparkle {

@@ -95,6 +95,8 @@ impl Sim {
                         heading: 0,
                         radius: OBSTACLE_RADIUS,
                         damage: Damage::None,
+                        flags: flag::IN_FIELD,
+                        status: 0,
                         state: State::None,
                     },
                 );
@@ -240,6 +242,8 @@ impl Sim {
                 heading,
                 radius: o.radius,
                 damage: Damage::of(&o),
+                flags: o.flags,
+                status: o.status,
                 state: State::of(&o),
             },
         );

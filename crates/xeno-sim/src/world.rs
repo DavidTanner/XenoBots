@@ -61,6 +61,13 @@ pub struct Entity {
     /// +0x14: 8.8 fixed point.
     pub radius: u16,
     pub damage: Damage,
+    /// +0x16: the flag bits (`usg::flag`), loaded with the object and kept for every
+    /// kind; the `ALIEN` bit follows [`Entity::side`] (`docs/sim.md`, "The flags and
+    /// status bytes (T-147)").
+    pub flags: u8,
+    /// +0x17: the status bits (`usg::status`): cloak, ECM, spotted, tracking and a
+    /// robot's count to its next scan.
+    pub status: u8,
     /// What moves it: a robot's [`Movement`], a base's tick.
     pub state: State,
 }
@@ -72,7 +79,7 @@ pub struct Entity {
 pub enum State {
     Robot(Movement),
     /// A base: +0x41, its tick count; +0x2c and +0x2b, the enemy robots it has
-    /// destroyed and its own side's lost; +0x16 bit 0, destroyed; +0x30, the step of
+    /// destroyed and its own side's lost (destroyed is +0x16's `GONE`); +0x30, the step of
     /// its end script once destroyed (`docs/sim.md`, "The mission's end"); +0x18, its
     /// look in the 3D view, the frame of its model (`docs/render.md`); +0x21..=+0x27,
     /// the count its tick makes (`docs/sim.md`, "The bases' phases").
@@ -80,7 +87,6 @@ pub enum State {
         tick: u8,
         kills: u8,
         losses: u8,
-        destroyed: bool,
         end_step: u16,
         look: u8,
         counts: [u8; 7],
@@ -200,9 +206,6 @@ pub struct Movement {
     /// scout's +0xff, +0x100, +0x103 and +0x104 (+0x101 and +0x102 as loaded).
     pub stride: u8,
     pub legs: [u8; 6],
-    /// +0x17: the status bits (`usg::status`): cloak, ECM, spotted, tracking and the
-    /// count to the next scan.
-    pub status: u8,
     /// +0xf7: the enemy units the last scan found (`docs/sim.md`, "Sensing").
     pub contacts: u8,
     /// +0xfb: contact checks to skip after a bump (`crate::contact`).
@@ -284,7 +287,7 @@ impl Movement {
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
-    fn of(r: &usg::Robot, status: u8) -> Movement {
+    fn of(r: &usg::Robot) -> Movement {
         use usg::Parts;
         let slot = |s: u16| (s != 0xffff).then_some(EntityId(s));
         let guns = match &r.parts {
@@ -351,7 +354,6 @@ impl Movement {
             relays,
             stride,
             legs,
-            status,
             contacts: r.contacts,
             bump_wait: r.bump_wait,
             target: None,
@@ -391,18 +393,17 @@ impl State {
     /// The movement state `object`'s layout records.
     pub fn of(object: &Object) -> State {
         match &object.body {
-            Body::Robot(r) => State::Robot(Movement::of(r, object.status)),
+            Body::Robot(r) => State::Robot(Movement::of(r)),
             Body::Base(b) => State::Base {
                 tick: b.tick,
                 kills: b.kills,
                 losses: b.losses,
-                destroyed: object.flags & usg::flag::GONE != 0,
                 end_step: b.end_step,
                 look: b.look,
                 counts: b.counts,
                 depot: Depot::of(b),
             },
-            Body::Relay(r) => State::Relay(crate::relay::Relay::of(r, object.flags)),
+            Body::Relay(r) => State::Relay(crate::relay::Relay::of(r)),
             Body::Other(_) => State::None,
         }
     }
@@ -429,7 +430,7 @@ impl StateHash for State {
                 h.u8(m.relays);
                 h.u8(m.stride);
                 h.bytes(&m.legs);
-                h.bytes(&[m.status, m.contacts, m.locked_on, m.bump_wait]);
+                h.bytes(&[m.contacts, m.locked_on, m.bump_wait]);
                 h.u16(m.target.map_or(0xffff, |t| t.0));
                 h.u16(m.target_distance);
                 h.u16(m.target_bearing);
@@ -464,14 +465,13 @@ impl StateHash for State {
                 tick,
                 kills,
                 losses,
-                destroyed,
                 end_step,
                 look,
                 counts,
                 depot: d,
             } => {
                 h.u8(1);
-                h.bytes(&[tick, kills, losses, u8::from(destroyed), look]);
+                h.bytes(&[tick, kills, losses, look]);
                 h.u16(end_step);
                 h.bytes(&counts);
                 h.bytes(&[d.relays, d.relay_clock, d.slider]);
@@ -520,7 +520,7 @@ impl StateHash for State {
             }
             State::Drop(d) => {
                 h.u8(7);
-                h.bytes(&[d.battery, d.ticks, d.level, d.charges, u8::from(d.alarm)]);
+                h.bytes(&[d.battery, d.ticks, d.level, d.charges]);
             }
             State::None => h.u8(2),
         }
@@ -721,6 +721,8 @@ impl World {
                     heading: o.heading,
                     radius: o.radius,
                     damage: Damage::of(o),
+                    flags: o.flags,
+                    status: o.status,
                     state: State::of(o),
                 };
                 (EntityId(o.slot), entity)
@@ -868,6 +870,7 @@ impl StateHash for World {
             h.u16(e.model_height);
             h.u16(e.heading);
             h.u16(e.radius);
+            h.bytes(&[e.flags, e.status]);
             e.damage.state_hash(h);
             e.state.state_hash(h);
         }
@@ -913,6 +916,8 @@ mod tests {
             heading: 0,
             radius: 0xa00,
             damage: Damage::None,
+            flags: 0,
+            status: 0,
             state: State::None,
         }
     }
@@ -1075,6 +1080,14 @@ mod tests {
             // No stock scenario starts with a unit in its base (T-135).
             let in_base = |(_, e): (EntityId, &Entity)| crate::base::in_base(&e.damage);
             assert!(!world.iter().any(in_base), "{name}: a unit in the base");
+            // Every object's +0x16 and +0x17 load unchanged, and save back so (T-147).
+            let saved = world.save(&scenario, 0);
+            for (o, back) in objects.iter().zip(saved.objects.iter().flatten()) {
+                let e = world.get(EntityId(o.slot)).unwrap();
+                assert_eq!((e.flags, e.status), (o.flags, o.status), "{name}");
+                assert_eq!((back.flags, back.status), (o.flags, o.status), "{name}");
+                assert_eq!(e.flags & usg::flag::ALIEN != 0, e.side == Side::Alien);
+            }
             let (mut units, mut big, mut small) = (0, 0, 0);
             for side in [Side::Human, Side::Alien] {
                 // The parser's own count of each kind on this side.

@@ -290,13 +290,12 @@ pub fn flags(scenario: Option<&Scenario>, world: &World) -> Flags {
         let Some(f) = flags.get_mut(usize::from(id.0)) else {
             continue;
         };
-        match e.state {
-            State::Relay(r) => f.0 = f.0 & !xeno_sim::relay::FLAGS | r.flags,
-            State::Drop(d) => {
-                f.0 = f.0 & !flag::RELAY_LINKED | (u8::from(d.alarm) * flag::RELAY_LINKED);
-            }
-            _ => {}
-        }
+        let sims = match e.state {
+            State::Relay(_) => xeno_sim::relay::FLAGS,
+            State::Drop(_) => flag::RELAY_LINKED,
+            _ => 0,
+        };
+        f.0 = f.0 & !sims | e.flags & sims;
     }
     flags
 }
@@ -951,6 +950,8 @@ pub(crate) mod tests {
             heading: 0x2000,
             radius: 0x0a00,
             damage: Damage::None,
+            flags: 0,
+            status: 0,
             state,
         }
     }
@@ -1171,7 +1172,7 @@ pub(crate) mod tests {
     #[test]
     fn an_alarm_buoy_s_alarm_is_the_sim_s() {
         let mut world = World::default();
-        let buoy = |alarm| Entity {
+        let buoy = |alarm: bool| Entity {
             kind: ObjectKind::Other(11),
             side: Side::Human,
             position: Position::default(),
@@ -1180,10 +1181,9 @@ pub(crate) mod tests {
             heading: 0,
             radius: 0,
             damage: Damage::None,
-            state: State::Drop(xeno_sim::drops::Drop {
-                alarm,
-                ..Default::default()
-            }),
+            flags: u8::from(alarm) * flag::RELAY_LINKED,
+            status: 0,
+            state: State::Drop(xeno_sim::drops::Drop::default()),
         };
         world.insert(EntityId(3), buoy(true));
         world.insert(EntityId(5), buoy(false));

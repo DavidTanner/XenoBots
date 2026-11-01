@@ -35,8 +35,6 @@ pub struct Relay {
     pub power_side: u8,
     /// +0x23 + 4n: each quarter turn's link (`usg::Link::state`).
     pub links: [u8; 4],
-    /// +0x16's `IN_FIELD` and `RELAY_LINKED` (the side is the entity's).
-    pub flags: u8,
 }
 
 pub const FOLDED: u8 = usg::Relay::FOLDED;
@@ -47,8 +45,8 @@ pub const FOLDING: u8 = usg::Relay::FOLDING;
 pub const FLAGS: u8 = flag::IN_FIELD | flag::RELAY_LINKED;
 
 impl Relay {
-    /// The state a file's relay records, with its `flags` (+0x16).
-    pub fn of(r: &usg::Relay, flags: u8) -> Relay {
+    /// The state a file's relay records.
+    pub fn of(r: &usg::Relay) -> Relay {
         Relay {
             frames: r.frames,
             clock: r.clock,
@@ -57,7 +55,6 @@ impl Relay {
             power: r.power,
             power_side: r.power_side,
             links: r.links.map(|l| l.state),
-            flags: flags & FLAGS,
         }
     }
 
@@ -68,17 +65,17 @@ impl Relay {
             clock,
             ..Relay::default()
         };
-        let height = r.look(Side::Human, tables);
+        let height = r.look(0, Side::Human, tables);
         (r, height)
     }
 
-    /// The look (`1000:ccf0`): the colour by the net's power and the side, the frames
-    /// by stage, and the model height (+0x12) returned.
+    /// The look (`1000:ccf0`): the colour by `RELAY_LINKED` in `flags` (+0x16) and the
+    /// side, the frames by stage, and the model height (+0x12) returned.
     // shortcut: past stage 3 the original reads the bytes after the tables; the port
     // takes frame and height 0. No relay reaches it.
-    pub fn look(&mut self, side: Side, tables: &Tables) -> u16 {
+    pub fn look(&mut self, flags: u8, side: Side, tables: &Tables) -> u16 {
         let t = &tables.relays;
-        self.frames[5] = match (self.flags & flag::RELAY_LINKED != 0, side) {
+        self.frames[5] = match (flags & flag::RELAY_LINKED != 0, side) {
             (false, _) => t.colours[0],
             (true, Side::Human) => t.colours[1],
             (true, Side::Alien) => t.colours[2],
@@ -98,7 +95,6 @@ impl Relay {
             self.power_side,
         ]);
         h.bytes(&self.links);
-        h.u8(self.flags);
     }
 }
 
@@ -202,21 +198,23 @@ fn links(world: &World, id: EntityId, r: &mut Relay, side: Side, tables: &Tables
 /// Relay `id`'s tick (`sim_tick_relay`).
 pub fn tick(world: &mut World, id: EntityId, tables: &Tables) {
     let t = &tables.relays;
-    let Some((State::Relay(mut r), mut side)) = world.get(id).map(|e| (e.state, e.side)) else {
+    let Some((State::Relay(mut r), mut side, mut flags)) =
+        world.get(id).map(|e| (e.state, e.side, e.flags))
+    else {
         return;
     };
     r.clock = r.clock.wrapping_add(1);
     if r.clock & t.state_mask == 0 {
         match r.state {
             FOLDED => {
-                r.flags &= !FLAGS;
+                flags &= !FLAGS;
                 r.stage = 0;
                 if !folder_near(world, id, tables) {
                     r.state = RISING;
                 }
             }
             RISING => {
-                r.flags &= !flag::RELAY_LINKED;
+                flags &= !flag::RELAY_LINKED;
                 r.stage = r.stage.wrapping_add(1);
                 if r.stage == t.top {
                     r.state = UP;
@@ -226,16 +224,16 @@ pub fn tick(world: &mut World, id: EntityId, tables: &Tables) {
                 if r.clock == 0 {
                     side = links(world, id, &mut r, side, tables);
                 }
-                r.flags = r.flags & !flag::RELAY_LINKED | flag::IN_FIELD;
+                flags = flags & !flag::RELAY_LINKED | flag::IN_FIELD;
                 if r.power != 0 {
-                    r.flags |= flag::RELAY_LINKED;
+                    flags |= flag::RELAY_LINKED;
                 }
                 if folder_near(world, id, tables) {
                     r.state = FOLDING;
                 }
             }
             FOLDING => {
-                r.flags &= !flag::RELAY_LINKED;
+                flags &= !flag::RELAY_LINKED;
                 r.stage = r.stage.wrapping_sub(1);
                 if r.stage == 0 {
                     r.state = FOLDED;
@@ -250,17 +248,19 @@ pub fn tick(world: &mut World, id: EntityId, tables: &Tables) {
     let Some(e) = world.get_mut(id) else {
         return;
     };
+    // `1000:ce40`, `ce48`: the side bit follows the power's side.
     e.side = side;
+    e.flags = flags & !flag::ALIEN | (crate::world::side_code(side) * flag::ALIEN);
     if r.clock & t.state_mask == 0 {
-        e.model_height = r.look(side, tables);
+        e.model_height = r.look(e.flags, side, tables);
     }
     e.state = State::Relay(r);
 }
 
 /// The signal robot `id` takes from the net (`2000:7d16`): 0xff within the full reach
 /// of a linked relay or base of its side, else falling with the distance of the last
-/// in slot order under the reach of none, else 0.
-// The sim keeps no base's flags: nothing in play links a base and no stock base is.
+/// in slot order under the reach of none, else 0. Bases are looked at too, but
+/// nothing sets a base's `RELAY_LINKED`.
 pub fn signal(world: &World, id: EntityId, tables: &Tables) -> u8 {
     let t = &tables.relays;
     let Some(me) = world.get(id) else {
@@ -268,7 +268,8 @@ pub fn signal(world: &World, id: EntityId, tables: &Tables) -> u8 {
     };
     let mut last = 0xffff;
     for (_, e) in world.iter() {
-        let linked = matches!(e.state, State::Relay(r) if r.flags & flag::RELAY_LINKED != 0);
+        let linked = matches!(e.kind, ObjectKind::Relay | ObjectKind::Base)
+            && e.flags & flag::RELAY_LINKED != 0;
         if e.side != me.side || !linked {
             continue;
         }

@@ -2,7 +2,12 @@ use super::*;
 use crate::motion::synthetic_tables;
 use crate::motion::tests::robot;
 use crate::world::{Components, Damage, Fixed, Movement, State};
-use xeno_formats::usg::{ObjectKind, Side};
+use xeno_formats::usg::{ObjectKind, Side, flag};
+
+/// Object `id`'s +0x17.
+fn st(world: &World, id: u16) -> u8 {
+    world.get(EntityId(id)).unwrap().status
+}
 
 fn m(world: &World, id: u16) -> Movement {
     match world.get(EntityId(id)).unwrap().state {
@@ -41,7 +46,7 @@ fn the_scan_spots_enemy_units_in_range_every_sixteenth_count() {
     for _ in 0..15 {
         step_at(&mut world, 0x1e);
     }
-    assert_eq!(m(&world, 1).status & status::SCAN_COUNT, status::SCAN_COUNT);
+    assert_eq!(st(&world, 1) & status::SCAN_COUNT, status::SCAN_COUNT);
     assert_eq!(m(&world, 1).contacts, 0);
     // Other entries, and +0x1a with its top bits set, do not count.
     step_at(&mut world, 0x1c);
@@ -50,19 +55,19 @@ fn the_scan_spots_enemy_units_in_range_every_sixteenth_count() {
     // The sixteenth scans: the near alien is spotted and counted, event 1 posted.
     step_at(&mut world, 0x1e);
     let scanner = m(&world, 1);
-    assert_eq!(scanner.status & status::SCAN_COUNT, 0);
+    assert_eq!(st(&world, 1) & status::SCAN_COUNT, 0);
     assert_eq!(scanner.contacts, 1);
     assert_eq!(scanner.script.events, 1 << EVENT_CONTACTS);
-    assert_ne!(m(&world, 2).status & status::SPOTTED, 0);
-    assert_eq!(m(&world, 3).status & status::SPOTTED, 0, "out of range");
-    assert_eq!(m(&world, 4).status & status::SPOTTED, 0, "its own side");
+    assert_ne!(st(&world, 2) & status::SPOTTED, 0);
+    assert_eq!(st(&world, 3) & status::SPOTTED, 0, "out of range");
+    assert_eq!(st(&world, 4) & status::SPOTTED, 0, "its own side");
 }
 
 #[test]
 fn the_contacts_post_events_only_when_they_appear_or_go() {
     let mut world = world();
     let scan = |world: &mut World| {
-        movement(world, EntityId(1)).unwrap().status |= status::SCAN_COUNT;
+        world.get_mut(EntityId(1)).unwrap().status |= status::SCAN_COUNT;
         step_at(world, 0x1e);
     };
     scan(&mut world);
@@ -79,7 +84,7 @@ fn the_contacts_post_events_only_when_they_appear_or_go() {
     assert_eq!(m(&world, 1).contacts, 0);
     assert_eq!(m(&world, 1).script.events, 1 << EVENT_CLEAR);
     // Spotted stays.
-    assert_ne!(m(&world, 2).status & status::SPOTTED, 0);
+    assert_ne!(st(&world, 2) & status::SPOTTED, 0);
 }
 
 #[test]
@@ -110,14 +115,14 @@ fn looking_locks_the_nearest_enemy_in_the_locking_range() {
     let text = t.sensing.messages;
     // A cloaked alien nearer than the scout at 3 units is skipped.
     world.insert(EntityId(5), robot(ObjectKind::Scout, Side::Alien, 101, 101));
-    movement(&mut world, EntityId(5)).unwrap().status |= status::CLOAKED;
+    world.get_mut(EntityId(5)).unwrap().status |= status::CLOAKED;
     let mut events = Vec::new();
     assert!(look(&mut world, EntityId(1), &t, &mut events));
     let me = m(&world, 1);
     assert_eq!(me.target, Some(EntityId(2)));
     assert_eq!(me.target_distance, 0x300, "the true distance, 8.8");
-    assert_ne!(me.status & status::TRACKING, 0);
-    assert_ne!(m(&world, 2).status & status::SPOTTED, 0);
+    assert_ne!(st(&world, 1) & status::TRACKING, 0);
+    assert_ne!(st(&world, 2) & status::SPOTTED, 0);
     assert_eq!(me.panel.queue[0], text.locked);
     assert_eq!(
         events,
@@ -172,12 +177,35 @@ fn a_lock_is_refused_damaged_out_of_range_or_on_itself() {
     assert_eq!(m(&world, 1).panel.queue[0], text.targeting_damaged);
     // A cloaked robot cannot be locked, silently.
     let mut world = self::world();
-    movement(&mut world, EntityId(2)).unwrap().status |= status::CLOAKED;
+    world.get_mut(EntityId(2)).unwrap().status |= status::CLOAKED;
     lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
     assert_eq!(
         (m(&world, 1).target, m(&world, 1).panel.queue[0]),
         (None, 0)
     );
+}
+
+/// `1000:d8e7`: a lock marks whatever it takes spotted, a base too; the scan marks
+/// only units (+0x16 `UNIT`).
+#[test]
+fn a_locked_base_is_spotted_but_the_scan_spots_only_units() {
+    let t = synthetic_tables();
+    let mut world = world();
+    world.insert(
+        EntityId(6),
+        crate::motion::tests::base(Side::Alien, 102, 100, 0),
+    );
+    world.get_mut(EntityId(1)).unwrap().status |= status::SCAN_COUNT;
+    step_at(&mut world, 0x1e);
+    assert_eq!(m(&world, 1).contacts, 1, "the scout only");
+    assert_eq!(st(&world, 6) & status::SPOTTED, 0);
+    lock(&mut world, EntityId(1), EntityId(6), &t, &mut Vec::new());
+    assert_eq!(m(&world, 1).target, Some(EntityId(6)));
+    assert_ne!(st(&world, 6) & status::SPOTTED, 0);
+    // A unit without `TARGETABLE` cannot be locked, whatever its kind.
+    world.get_mut(EntityId(2)).unwrap().flags &= !xeno_formats::usg::flag::TARGETABLE;
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    assert_eq!(m(&world, 1).target, Some(EntityId(6)));
 }
 
 #[test]
@@ -187,7 +215,7 @@ fn a_takes_the_next_enemy_round_the_table_and_r_drops_it() {
     let mut world = world();
     // A cloaked alien at slot 5 is passed over, as is the far one past slot 3.
     world.insert(EntityId(5), robot(ObjectKind::Scout, Side::Alien, 101, 101));
-    movement(&mut world, EntityId(5)).unwrap().status |= status::CLOAKED;
+    world.get_mut(EntityId(5)).unwrap().status |= status::CLOAKED;
     world.insert(EntityId(7), robot(ObjectKind::Scout, Side::Alien, 109, 100));
     let a = |world: &mut World| {
         next_target(world, EntityId(1), &t, &mut Vec::new());
@@ -293,7 +321,7 @@ fn a_target_s_running_ecm_loses_the_lock() {
     let mut world = world();
     lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
     // The time running loses it, not the status bit.
-    movement(&mut world, EntityId(2)).unwrap().status |= xeno_formats::usg::status::ECM;
+    world.get_mut(EntityId(2)).unwrap().status |= xeno_formats::usg::status::ECM;
     step_at(&mut world, 10);
     assert_eq!(m(&world, 1).target, Some(EntityId(2)));
     movement(&mut world, EntityId(2)).unwrap().guns.ecm_time = 1;
@@ -426,6 +454,49 @@ fn real_assets_a_steps_through_the_stock_enemies_and_r_drops() {
         me.panel.queue[..3],
         [text.locked, text.relocked, text.dropped]
     );
+}
+
+/// scen00a's first alien robot moved 3 units east of its first human humanoid: within
+/// 16 scans the humanoid's scan marks it spotted in its +0x17 (T-147), as the map
+/// shows it; no alien robot is spotted at the start.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_stock_scan_spots_an_alien_robot_in_play() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(1), tables);
+    let spotted = |sim: &crate::Sim, id: EntityId| {
+        let e = sim.world.get(id).unwrap();
+        e.flags & flag::UNIT != 0 && e.status & status::SPOTTED != 0
+    };
+    let world = &mut sim.world;
+    let human = *world
+        .units(Side::Human)
+        .iter()
+        .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
+        .unwrap();
+    let alien = world.units(Side::Alien)[0];
+    let aliens = world.units(Side::Alien).to_vec();
+    assert!(!aliens.iter().any(|&id| spotted(&sim, id)));
+    let at = sim.world.get(human).unwrap().position;
+    sim.world.get_mut(alien).unwrap().position = Position {
+        x: Fixed(at.x.0 + 3 * 0x10000),
+        y: at.y,
+    };
+    // A scan every 16 passes through the scan's entry, one every 32 ticks.
+    let found = (0..16 * 32 + 32).find(|_| {
+        _ = sim.tick(&[]);
+        spotted(&sim, alien)
+    });
+    assert!(found.is_some(), "not spotted");
 }
 
 fn raw(x: i32, y: i32) -> Position {

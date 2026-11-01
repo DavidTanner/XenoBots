@@ -5,12 +5,11 @@
 //! the user's `xeno.exe` (`xeno_formats::weapons`, in [`Tables::weapons`]).
 
 use xeno_formats::damage::Explosion;
-use xeno_formats::usg::{ObjectKind, flag};
+use xeno_formats::usg::{ObjectKind, Side, flag};
 use xeno_formats::weapons::{Gun, Hit};
 
 use crate::damage::{alloc_small, spawn_explosion};
 use crate::motion::{Event, Tables, component, velocity};
-use crate::orders::RobotKind;
 use crate::random::Random;
 use crate::script::{angle, bearing};
 use crate::terrain::approx_distance;
@@ -64,18 +63,11 @@ fn kind_number(kind: ObjectKind) -> usize {
     usize::from(u16::from(kind))
 }
 
-/// An object shots and blasts see (+0x16 bit 6, `IN_FIELD`): a robot unless it is in
-/// its base (the take-in and launch move both bits together, T-115), a relay once up
-/// (`crate::relay`).
-// shortcut: bases and obstacles by kind, as the port keeps no flags for them (T-147).
+/// An object shots and blasts see (+0x16 bit 6, `IN_FIELD`, `1000:e8c0`, `e90a`): a
+/// robot out of its base (the take-in clears it, the launch sets it), a base, an
+/// obstacle, a relay once up (`crate::relay`).
 pub(crate) fn in_field(e: &Entity) -> bool {
-    match e.state {
-        State::Relay(r) => r.flags & flag::IN_FIELD != 0,
-        _ => {
-            (RobotKind::of(e.kind).is_some() && !crate::base::in_base(&e.damage))
-                || matches!(e.kind, ObjectKind::Base | ObjectKind::Obstacle)
-        }
-    }
+    e.flags & flag::IN_FIELD != 0
 }
 
 /// The velocity for `heading`, `climb` and `speed` (`1000:045d`): x, y, z.
@@ -191,7 +183,7 @@ pub fn fire(
         return None;
     };
     let w = &tables.weapons;
-    let (kind, side, heading) = (me.kind, me.side, me.heading);
+    let (kind, heading) = (me.kind, me.heading);
     let mut at = me.position;
     if let Some(offsets) = &gun.offsets {
         let (dx, dy) = muzzle(offsets, heading);
@@ -288,13 +280,16 @@ pub fn fire(
         slot,
         Entity {
             kind: gun.kind.into(),
-            side,
+            side: Side::Human,
             position: at,
             z: Fixed(z),
             model_height: 0,
             heading: shot_heading,
             radius: 0,
             damage: Damage::None,
+            // `1000:f4b1` clears the flags and no shot's set-up sets any: no side bit.
+            flags: 0,
+            status: 0,
             state: State::Shot(shot),
         },
     );

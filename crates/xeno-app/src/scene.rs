@@ -299,6 +299,8 @@ mod tests {
             heading: 0x1234,
             radius: 0x0a00,
             damage: Damage::None,
+            flags: 0,
+            status: 0,
             state,
         }
     }
@@ -383,7 +385,6 @@ mod tests {
             tick: 0,
             kills: 0,
             losses: 0,
-            destroyed: false,
             end_step: 0,
             look: 2,
             counts: [0; 7],

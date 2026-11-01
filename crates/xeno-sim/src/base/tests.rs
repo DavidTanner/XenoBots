@@ -4,6 +4,11 @@ use crate::motion::tests::{base, robot};
 use crate::orders::{Orders, Robot};
 use crate::world::{Components, Depot, Movement, Position};
 
+/// Object `id`'s +0x16 `IN_FIELD`.
+fn field(world: &World, id: u16) -> u8 {
+    world.get(EntityId(id)).unwrap().flags & flag::IN_FIELD
+}
+
 /// A robot's components, the battery bit (the signal step's, off the net) aside.
 fn parts(world: &World, id: u16) -> Components {
     match world.get(EntityId(id)).unwrap().damage {
@@ -116,6 +121,9 @@ fn the_first_robot_in_reach_is_taken_in() {
     );
     assert_eq!(movement(&world, 2).target_speed, 0);
     assert!(!world.orders.get(2).unwrap().orders.program_drives);
+    // `1000:645c`: out of the field; the others stay in it.
+    assert_eq!(field(&world, 2), 0);
+    assert_eq!(field(&world, 3), flag::IN_FIELD);
     // Out of reach the bit is cleared; past 256 units it is not looked at.
     assert_eq!(parts(&world, 1).equipment, 0);
     assert_eq!(parts(&world, 4).equipment, Bits::ENTERING_BASE);
@@ -318,6 +326,7 @@ fn the_alien_base_launches_whole_robots_in_it() {
     for slot in [1, 2, 3] {
         let mut r = robot(ObjectKind::Humanoid, Side::Alien, 0, 0);
         r.position.x.0 ^= i32::MIN;
+        r.flags &= !flag::IN_FIELD;
         if let (State::Robot(m), Damage::Robot(c)) = (&mut r.state, &mut r.damage) {
             (m.path, m.mode, m.speed, m.contacts) = (0x83, 0x08, 30, 2);
             c.equipment = Bits::ENTERING_BASE | Bits::IN_BASE;
@@ -344,6 +353,8 @@ fn the_alien_base_launches_whole_robots_in_it() {
     let e = world.get(EntityId(1)).unwrap();
     assert_eq!(e.position, world.get(EntityId(0)).unwrap().position);
     assert_eq!(parts(&world, 1).equipment, Bits::ENTERING_BASE);
+    // `1000:673d`: back in the field; the one left in stays out.
+    assert_eq!((field(&world, 1), field(&world, 2)), (flag::IN_FIELD, 0));
     let m = movement(&world, 1);
     assert_eq!((m.path, m.mode, m.speed, m.contacts), (0x03, 0, 0, 0));
     let orders = world.orders.get(1).unwrap().orders;

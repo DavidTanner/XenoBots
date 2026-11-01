@@ -5,7 +5,7 @@
 use xeno_formats::base::{
     Bases, COUNT_PHASE, LAUNCH_PHASE, RELAY_PHASE, REPAIR_PHASE, TAKE_IN_PHASE,
 };
-use xeno_formats::usg::{ObjectKind, Robot as Bits, Side};
+use xeno_formats::usg::{ObjectKind, Robot as Bits, Side, flag};
 
 use crate::motion::{Event, Tables};
 use crate::orders::RobotKind;
@@ -29,14 +29,11 @@ pub(crate) fn tick(
     let Some(e) = world.get_mut(id) else {
         return;
     };
-    let State::Base {
-        tick, destroyed, ..
-    } = &mut e.state
-    else {
+    let State::Base { tick, .. } = &mut e.state else {
         return;
     };
     *tick = tick.wrapping_add(1);
-    let (tick, destroyed, side) = (*tick, *destroyed, e.side);
+    let (tick, destroyed, side) = (*tick, e.flags & flag::GONE != 0, e.side);
     let b = &tables.bases;
     match tick & 0xf {
         PATH_PHASE if side == Side::Alien => {
@@ -215,6 +212,8 @@ pub fn launch(
     };
     (e.position, e.z) = (at, Fixed(0));
     c.equipment &= !Bits::IN_BASE;
+    // `1000:673d`: back in the field.
+    e.flags |= flag::IN_FIELD;
     // `mov byte [di + 0x24], 100`, checked by the reader.
     c.helm = 100;
     m.path &= !Movement::ON_PATH;
@@ -341,6 +340,8 @@ fn enter(world: &mut World, r: EntityId, events: &mut Vec<Event>) {
         return;
     }
     c.equipment |= Bits::ENTERING_BASE | Bits::IN_BASE;
+    // `1000:645c`: out of the field.
+    e.flags &= !flag::IN_FIELD;
     let flip = |f: &mut Fixed| f.0 ^= i32::MIN;
     flip(&mut e.position.x);
     flip(&mut e.position.y);

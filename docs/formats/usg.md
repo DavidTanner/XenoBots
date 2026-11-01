@@ -310,17 +310,19 @@ bytes, and `Body` the rest by kind (`Robot`, with the kind's `Parts` from +0xfe,
 | 0x16 | 1 | `flags` | Bits below |
 | 0x17 | 1 | `status` | State bits below (T-107) |
 
-The flags at +0x16 (`usg::flag`):
+The flags at +0x16 (`usg::flag`). Who sets, clears and reads each bit, in both
+bytes, is in `docs/sim.md`, "The flags and status bytes (T-147)"; stock files hold
+0x46 or 0x4e for bases, 0x66 or 0x6e for robots, 0x52 or 0x5a for relays.
 
 | Bit | Name | Meaning |
 |---|---|---|
-| 0 (0x01) | `GONE` | Destroyed or removed. Clear in every stock object |
+| 0 (0x01) | `GONE` | Destroyed (a base at 300 points) or removed. Clear in every stock object |
 | 1 (0x02) | `TARGETABLE` | A robot may take the object as its target. Robots, bases, relays |
 | 2 (0x04) | `SCANNED` | The scanners list it. Robots and bases |
 | 3 (0x08) | `ALIEN` | The side: the editor writes 0 for human, 8 for alien |
-| 4 (0x10) | `RELAY_LINKED` | Relays: picks the relay's colour in the 3D view; a base's network check looks for it. The name is a guess. An alarm buoy (kind 11) sets it while its alarm shows (T-137) |
-| 5 (0x20) | `UNIT` | A robot: registered in its side's unit list at load. Set on every stock robot and on nothing else |
-| 6 (0x40) | `IN_FIELD` | Shots and contact checks only see objects with it. A robot loses it inside its base and gets it back when launched. Robots, bases, obstacles and set-up relays |
+| 4 (0x10) | `RELAY_LINKED` | Relays: set while up and powered; picks the relay's colour in the 3D view and on the map, and the robots' signal comes only from relays (or bases) with it, though nothing sets a base's. An alarm buoy (kind 11) sets it while its alarm shows (T-137) |
+| 5 (0x20) | `UNIT` | A robot: registered in its side's unit list at load, counted by the scan, warned by a lock. Set on every stock and made robot and on nothing else |
+| 6 (0x40) | `IN_FIELD` | Shots, blasts and contact checks only see objects with it. A robot loses it when taken into its base and gets it back when launched; a relay has it while up. Robots, bases, obstacles and relays |
 | 7 (0x80) | | Not seen used |
 
 The status bits at +0x17 (`usg::status`, T-107):
@@ -329,7 +331,7 @@ The status bits at +0x17 (`usg::status`, T-107):
 |---|---|---|
 | 0 (0x01) | `CLOAKED` | A robot's sparkle cloak (F8, `1000:d95e`) is on while +0xe1 counts down: the scanners, the map (`1000:f989`), the A key and target locks (`1000:d8cc`) skip it. A removed object (kind 15) instead counts its last ticks here: removal sets the byte to 2 and the kind's tick (`1000:f5c1`) frees the slot at 0 |
 | 1 (0x02) | `ECM` | A robot's ECM (F7, `1000:d92e`) is on while +0xdf counts down: a lock on it is lost (`1000:d6a6`) |
-| 2 (0x04) | `SPOTTED` | The other side has seen it: set on enemy units within a robot's scanning range at each scan (`1000:dcba`) and on an object a robot locks (`1000:d8e7`). The map shows an object of the other side only with it (`1000:f983`, unless the developer flag `DS:0x6ffa`). Nothing found clears it |
+| 2 (0x04) | `SPOTTED` | The other side has seen it: set on enemy units within a robot's scanning range at each scan (`1000:dcba`) and on any object a robot locks, a base or relay too (`1000:d8e7`). The map shows an object of the other side only with it (`1000:f983`, unless the developer flag `DS:0x6ffa`). Nothing clears it |
 | 3, 4, 5, 7 (0xb8) | `SCAN_COUNT` | A robot's count to its next scan, a 4-bit counter with bit 7 lowest, then 5, 4, 3, stepped when the kind's tick table reaches `1000:dcba` (and +0x1a's top three bits are 0); when it comes round to 0 the robot scans: every unit of the other side within the kind's range (`DS:0x707f`) gets `SPOTTED`, and their number goes to +0xf7 |
 | 6 (0x40) | `TRACKING` | The robot's camera follows its target: set by a lock (`1000:d8b6`), cleared by the console's pan keys (X, Y, Z) and `1000:da32`; while set the humanoid's tick points the pan (+0xf4) at the target (`1000:b2d0`) |
 
@@ -506,7 +508,9 @@ hold them; `usg::Body::Other` keeps their bytes. Each kind's set-up routine is i
 
 Every drop (9 to 12, `1000:e801`) is put at the robot's position with a random offset
 of up to 1/8 of a unit on each axis, at its z, takes its side bit and no other flag,
-and sets +0x18 bit 0 when the robot was on its battery.
+and sets +0x18 bit 0 when the robot was on its battery. The other kinds made in play
+(shots, explosions, the sparkle) keep +0x16 and +0x17 at the maker's 0 (`1000:f4b1`):
+no side bit (T-147).
 
 Every stock file has exactly one base per side, which supports the side bit. Relays
 sit on whole-number positions in chains near their own side's base.

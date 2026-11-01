@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-146, T-148, T-177)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-146, T-147, T-148, T-177)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -643,10 +643,9 @@ and steers for enemies and fires at bases.
 
 `xeno_sim::sense::step` runs after each robot's move, its panel's typing and before
 its walk, at the entries of its kind's tick table that `Motion::sensing` names.
-`Movement` keeps +0x17 (`status`) and +0xf7 (`contacts`), loaded from the file and
-hashed. Part 1 (`t-112`): the scan, with its events 1 and 2. A unit is a robot by
-kind: every stock robot has +0x16 bit 5 and nothing else does, and the port keeps
-no flags byte.
+`Movement` keeps +0xf7 (`contacts`), loaded from the file and hashed; +0x16 and +0x17
+are every object's since T-147 ("The flags and status bytes"). Part 1 (`t-112`): the
+scan, with its events 1 and 2.
 
 Part 2 (`t-112-target`): the lock (`sense::lock`), its upkeep and the warning at
 their tick-table entries, looking for enemies (0x71, `sense::look`) and steering for
@@ -1015,8 +1014,8 @@ other side's scans, locks and scripts never see it; it fools only the map.
 
 `Pilot::Drop(n)` (n 0 to 3 for keys 1 to 4) runs `drops::drop`; `drops::tick` runs the
 three ticks from `motion::tick`; the alerts are `log::alert`. `Guns::drops` keeps +0xe2
-to +0xe5 (loaded, hashed, saved) and `State::Drop` the object's +0x18 to +0x1b and the
-alarm's +0x16 bit 4 (hashed, saved, read back from a save). The search walks the world
+to +0xe5 (loaded, hashed, saved) and `State::Drop` the object's +0x18 to +0x1b (hashed,
+saved, read back from a save); the alarm's +0x16 bit 4 is the entity's (T-147). The search walks the world
 in slot order for any robot of the other side. Removal is at once, as the other kinds
 (T-054). Part 2 (`t-137-app`): `xeno-app` maps keys 1 to 4 and both consoles' drop
 buttons, draws the decoy on the map with its dropper's model and the alarm's colour
@@ -1234,8 +1233,8 @@ Part 1 (`t-148`): `xeno_formats::relay` reads the state mask, colours, looks, he
 top stage, the fold's kind and reach, the links' reach, the signal's reaches, the
 battery level, the drive masks, the recharge mask and each kind's signal entry, after
 checking every routine above. `xeno_sim::relay` keeps a relay's state
-(`State::Relay`: frames, clock, state, stage, power, side, links and its
-`IN_FIELD`/`RELAY_LINKED` flags), loaded from the file, hashed and packed into saves (a
+(`State::Relay`: frames, clock, state, stage, power, side and links; its
+`IN_FIELD`/`RELAY_LINKED` flags are the entity's since T-147), loaded from the file, hashed and packed into saves (a
 relay made in play gets the set-up's `TARGETABLE` and link words), and runs the tick:
 the states, the nearest scorpion, the look and the model height. A relay a scorpion lays
 is made with its clock, look and height (`net::make`); shots see a relay only while it
@@ -1610,7 +1609,7 @@ shot kinds (`shot::fire` with a gun, `State::Shot` ticked by `motion::tick` in s
 order), the lead, the hit search and the blast through `damage::hit`, and the
 explosions from their templates. A shot is freed after the damage it does, so an
 explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
-each named in the code: in the field by kind (T-147); (until T-146, the coarse bearing for
+each named in the code: (until T-147, in the field by kind); (until T-146, the coarse bearing for
 the lead and an exact level distance for the missile); a gone target is an empty slot or one a shot or explosion took; removal
 frees the slot at once.
 
@@ -1849,7 +1848,8 @@ the base's tick: the count of +0x41 and the path (2), count (5), take-in (9) and
 the hash changes). A robot taken in gets bits 1 and 2 in `Components::equipment`, its
 position flipped as the original's, speed 0 asked for and its pilot driving, and
 `motion::Event::TakenIn`; `xeno-tool simulate` prints "N taken in". Shots and blasts
-skip a robot in its base, as `IN_FIELD` is cleared and set with bit 2. Phases 0, 1, 4
+skip a robot in its base, as `IN_FIELD` is cleared and set with bit 2 (on the entity
+since T-147). Phases 0, 1, 4
 and 6 are display only and not ported. `base`'s `real_assets_a_recalled_robot_is_taken_in`:
 scen00a's slot 2, recalled, drives home and is taken in (tick 3234 with seed 1).
 
@@ -1962,6 +1962,73 @@ eye height. `real_assets_stock_robots_bob_as_they_walk`: four stock scenarios' r
 driven for two minutes, stand at z 0 and bob by their steps. The state hash changes
 again (every humanoid's height moves with its step; a still one settles to step 0's).
 
+## The flags and status bytes (T-147)
+
+A T-090 pass over segment 1000 (and the far routines in 2000) found every instruction
+on an object's +0x16 or +0x17: byte tests, ORs, ANDs, XORs and moves through SI, DI
+and BX, by a byte search as well as Ghidra's listing (several routines are not
+disassembled in the project), and the words at +0x16 (none: the only `mov [reg+0x16]`
+words are in drawing code on other structures). The object maker (`1000:f4b1`) clears
+every byte from +4, so a new object starts with both bytes 0; each maker then sets what
+its kind needs. Nothing else writes the bytes, apart from the loader and the editor's
+copy (`1000:f565`), which copy whole objects.
+
+**+0x16, the flags.**
+
+| Bit | Set by | Cleared by | Read by |
+|---|---|---|---|
+| 0 `GONE` | a base's damage reaching 300 (`1000:62ca`); freeing a slot (`1000:f5dc`) and removal to kind 15 (`f5b7`) | robots' tick-table entry 13 (12 for the scout) at `1000:dc8a` clears it if set; nothing sets it on a live robot, so it does nothing | the base's damage (`62b8`, none once set), the mission's end (`68c1`), the lock's upkeep on its target (`d685`: the target destroyed), the scorpion's missile check (`974f`) |
+| 1 `TARGETABLE` | a made robot (`1000:f812`), a base (`sim_init_base`, `6237`: 0x46), a relay's set-up (`cc33`) | nothing | the lock (`d8c6`) |
+| 2 `SCANNED` | made robots and bases (as bit 1) | nothing | the nearest-enemy searches (`1000:d797`, far `2000:8005`), the A key (`d85b`) |
+| 3 `ALIEN` | the editor's new robot (`7e9f`, the side byte), the new scenario's alien base (`7c0d`), a drop takes its maker's (`e83f`), a relay follows its power's side (`ce40`, `ce48`); `sim_damage_base` flips it around a message to the other side (`62d3`, `62da`) | as set | every side check (dozens: scans, searches, contact, unit lists, kills, paths, the map) |
+| 4 `RELAY_LINKED` | an up relay with power (`cd61`); an alarm buoy while its level is not 0 (`e61f`) | a relay's states (`cd25`, `cd3d`, `cd57`, `cd75`); the alarm buoy's look (`e615`) | the signal (`2000:7d16`: relays and bases of the side; nothing sets a base's), the relay's look (`ccf2`), the map's colours (`fa1e`, `fa38`, `fa5e`) |
+| 5 `UNIT` | made robots (`f812`) | nothing | the loader (`7c6b`, `7c84`: the unit list and the program), the scan (`dd1c`), the lock's upkeep (`d6a0`: the warning and the ECM apply to units), the lead (`4551`: a unit's velocity is led), the mines' and buoys' search (`1000:e84f`, at `e875`), and `57aa` on the object at `DS:0x594a` (not traced) |
+| 6 `IN_FIELD` | made robots (`f812`), bases (`6237`), the editor's obstacle (`e9c8`), an up relay (`cd53`), a launch (`673d`) | the take-in (`645c`), a folded relay (`cd25`) | the contact check (`d4a0`), the hit search (`e8c0`), the blast (`e90a`) |
+| 7 | nothing | | nothing |
+
+Shots (kinds 5 to 8), explosions (13) and the sparkle (14) keep the maker's zeros: no
+side bit, not in the field, so nothing of theirs is seen by shots, scans or the map's
+side checks. Drops (9 to 12) have the side bit alone (`1000:e801`). A relay laid in play
+has `TARGETABLE` alone until it rises.
+
+**+0x17, the status.**
+
+| Bit | Set by | Cleared by | Read by |
+|---|---|---|---|
+| 0 `CLOAKED` | F8 (`1000:d975`) | the humanoid's and scout's weapon steps when the cloak's time runs out (`b0a8`, `c8c9`) | the searches (`d79d`), the A key (`d861`), the lock (`d8cc`), the map (`f989`) |
+| 1 `ECM` | F7 (`d945`) | the weapon steps at the ECM's end (`b097`, `973b`, `c8b8`) | nothing: the upkeep reads the time (+0xdf) instead |
+| 2 `SPOTTED` | the scan on units of the other side in range (`dd47`), the lock on its target, whatever it is (`d8e7`) | nothing | the map (`f983`) |
+| 3, 4, 5, 7 `SCAN_COUNT` | the scan's count (`dcc0` to `dce2`) | the same | the same |
+| 6 `TRACKING` | the lock (`d8b6`) | the consoles' pan keys and buttons (humanoid `b384`, `b396`, `b3af`, `b3c8`; scorpion `9bd7`, `9be9`, `9c02`, `9c1b`; scout `cb5c`, `cb6e`, `cb87`, `cba0`) and the second display's zoom (`da5b`) | the camera's pan in each kind's tick (`9352`, `b2d7`, `c4d0`); `9e80`, `81dd` and `b604` (with the target, on the clock's bit 5: a blink, not traced) |
+
+Removal (`1000:f5a4`) sets a kind-15 object's +0x17 to 2 and its tick (`f5c1`) counts
+it down to free the slot.
+
+### The port (T-147)
+
+`Entity` keeps both bytes, `flags` and `status`, for every object: loaded from the file
+(`World::from_scenario`), hashed, and written whole into a save (`pack`, which no
+longer patches single bits). They replace the copies the sim kept before:
+`Movement::status` (robots only), `State::Base`'s `destroyed` (now `GONE`), the relay's
+`IN_FIELD`/`RELAY_LINKED` (`Relay::flags`) and the alarm buoy's bit 4 (`Drop::alarm`).
+`Entity::side` stays as the side's convenient form; the relay's tick sets `ALIEN` with
+it. The readers read the bits where the original does: the scan counts units by `UNIT`
+and spots them, the searches and the A key take `SCANNED`, the lock `TARGETABLE` and
+marks its target `SPOTTED` (a base too), the upkeep drops a target that is `GONE` (or
+no longer `TARGETABLE`, its slot freed and taken), shots, blasts and contacts see
+`IN_FIELD`, which the take-in clears and the launch sets, the mines' and buoys' search
+looks for `UNIT`, the signal for linked relays and bases. The makers set the
+original's bytes: shots, explosions and sparkles 0 (and the port's side human, as the
+file would say), drops the side bit, a laid relay `TARGETABLE`, the editor's obstacle
+`IN_FIELD`, robots from their record. Not ported: entry 13's clear of `GONE` on a robot
+(nothing sets it). The state hash changes (each object's two bytes; the robot's, base's,
+relay's and drop's copies are gone). Tests: `weapons`'
+`objects_made_in_play_carry_the_original_s_flags`, `sense`'s
+`a_locked_base_is_spotted_but_the_scan_spots_only_units`, the take-in's and launch's
+`IN_FIELD` in `base`'s tests, the save round trip (a status byte on each shot), and
+`real_assets_every_scenario_loads_with_its_units` (every stock object's bytes load and
+save unchanged) and `real_assets_a_stock_scan_spots_an_alien_robot_in_play`.
+
 ## Loading a scenario
 
 `World::from_scenario(&usg::Scenario)` (T-051, T-058) copies each `DCBS` object
@@ -2036,8 +2103,8 @@ over it: `SHDR`'s hour to sixtieths from `World::clock` (the day and month stay
 of the same slot and kind (bytes the sim does not keep stay as loaded), and both path
 tables (count, missions, weights and points; the editor's mix, the counts of robots on
 a path and leftover points stay). Robots get their movement, orders, script (packed as
-above), panel, guns and kind's parts; `IN_FIELD` follows `IN_BASE`; bases their tick,
-counts, kills, losses, depot, damage and `GONE`; relays their damage; shots and
+above), panel, guns and kind's parts; every object its +0x16 and +0x17 (T-147); bases
+their tick, counts, kills, losses, depot and damage; relays their damage; shots and
 explosions their fields by kind (`usg.md`, "Kinds made during play"). An object made in
 play starts from zeros, a reference count of 1 and the lowest index free in its pool.
 `Sim::load` reads shots and explosions back (`pack::unpack_made`; a missile's damage is

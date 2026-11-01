@@ -73,6 +73,8 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
                 systems: 0,
                 total: 0,
             }),
+            flags: 0x66 | xeno_formats::usg::flag::ALIEN,
+            status: 0,
             state: State::Robot(m),
         },
     );
@@ -87,11 +89,12 @@ fn setup(bytes: &[u8]) -> (World, Tables) {
             heading: 0,
             radius: 0x2300,
             damage: Damage::Taken(0),
+            flags: 0x46 | xeno_formats::usg::flag::ALIEN,
+            status: 0,
             state: State::Base {
                 tick: 0,
                 kills: 0,
                 losses: 0,
-                destroyed: false,
                 end_step: 0,
                 look: 0,
                 counts: [0; 7],

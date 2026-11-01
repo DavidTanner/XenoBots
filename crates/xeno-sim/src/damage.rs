@@ -63,11 +63,15 @@ pub fn hit(
                 only_for: Some(id),
             });
         }
-        (_, Damage::Taken(taken), State::Base { destroyed, .. }) => {
-            if !*destroyed {
+        (_, Damage::Taken(taken), State::Base { .. }) => {
+            // `sim_damage_base` (`1000:62b7`): none once `GONE`, which 300 sets.
+            if e.flags & usg::flag::GONE == 0 {
                 *taken = taken.wrapping_add(points.into());
-                *destroyed = *taken >= d.base_destroyed;
-                let (side, destroyed) = (e.side, *destroyed);
+                let destroyed = *taken >= d.base_destroyed;
+                if destroyed {
+                    e.flags |= usg::flag::GONE;
+                }
+                let side = e.side;
                 let m = &tables.messages;
                 if destroyed {
                     // Sent as from the other side's base (its side bit flipped).
@@ -229,6 +233,9 @@ pub(crate) fn spawn_explosion(
         heading: template.heading,
         radius: 0x800,
         damage: Damage::None,
+        // `1000:f4b1` clears the flags, and the explosion's set-up sets none.
+        flags: 0,
+        status: 0,
         state: State::Explosion {
             frame: template.first,
             last: template.last,

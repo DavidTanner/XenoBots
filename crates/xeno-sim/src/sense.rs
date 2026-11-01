@@ -5,7 +5,7 @@
 //! tick-table entries and the lock's messages are read from the user's `xeno.exe`
 //! (`xeno_formats::sensing`, in [`Tables::sensing`]).
 
-use xeno_formats::usg::{Object, ObjectKind, status};
+use xeno_formats::usg::{Object, flag, status};
 
 use crate::motion::{Event, Tables, movement, robot};
 use crate::orders::RobotKind;
@@ -27,22 +27,8 @@ const IN_ARC: u8 = 0x04;
 /// +0xf6 bit 5: a lock warning.
 const WARNING: u8 = 0x20;
 
-/// +0x16 bit 2 (`SCANNED`, robots and bases) and bit 1 (`TARGETABLE`, relays too), by
-/// kind: every stock object has them so, and the port keeps no flags byte.
-fn scanned(kind: ObjectKind) -> bool {
-    RobotKind::of(kind).is_some() || kind == ObjectKind::Base
-}
-
-fn targetable(kind: ObjectKind) -> bool {
-    scanned(kind) || kind == ObjectKind::Relay
-}
-
-/// +0x17: only robots keep it.
-fn status_of(e: &Entity) -> u8 {
-    match e.state {
-        State::Robot(m) => m.status,
-        _ => 0,
-    }
+fn cloaked(e: &Entity) -> bool {
+    e.status & status::CLOAKED != 0
 }
 
 fn parts(world: &mut World, id: EntityId) -> Option<&mut Components> {
@@ -124,29 +110,32 @@ fn scan(world: &mut World, id: EntityId, range: u16) {
     let Some(at) = world.get(id).map(|e| (e.side, e.position)) else {
         return;
     };
-    let Some(m) = movement(world, id) else {
+    let Some(e) = world.get_mut(id) else {
+        return;
+    };
+    let State::Robot(m) = &e.state else {
         return;
     };
     if m.tick & 0xe0 != 0 {
         return;
     }
     for bit in [0x80, 0x20, 0x10, 0x08] {
-        m.status ^= bit;
-        if m.status & bit != 0 {
+        e.status ^= bit;
+        if e.status & bit != 0 {
             return;
         }
     }
-    // The units: the robots (+0x16 bit 5, set on every robot and nothing else).
+    // The units (+0x16 `UNIT`) of the other side.
     let found: Vec<EntityId> = world
         .iter()
         .filter(|(_, e)| {
-            RobotKind::of(e.kind).is_some() && e.side != at.0 && within(at.1, e.position, range)
+            e.flags & flag::UNIT != 0 && e.side != at.0 && within(at.1, e.position, range)
         })
         .map(|(id, _)| id)
         .collect();
     for &f in &found {
-        if let Some(m) = movement(world, f) {
-            m.status |= status::SPOTTED;
+        if let Some(e) = world.get_mut(f) {
+            e.status |= status::SPOTTED;
         }
     }
     let Some(m) = movement(world, id) else {
@@ -168,8 +157,8 @@ fn nearest(world: &World, id: EntityId, range: u16, looking: bool) -> Option<Ent
     let me = world.get(id)?;
     let mut best = (0xffff, None);
     for (o, e) in world.iter() {
-        let skip = looking && (o == id || status_of(e) & status::CLOAKED != 0);
-        if skip || !scanned(e.kind) || e.side == me.side {
+        let skip = looking && (o == id || cloaked(e));
+        if skip || e.flags & flag::SCANNED == 0 || e.side == me.side {
             continue;
         }
         let d = approx_distance(me.position, e.position).0 as u32;
@@ -242,8 +231,8 @@ pub fn lock(
     if parts(world, id).is_some_and(|c| c.targeting & TARGETING_DAMAGED != 0) {
         return say(world, id, text.targeting_damaged);
     }
-    if let Some(m) = movement(world, id) {
-        m.status |= status::TRACKING;
+    if let Some(e) = world.get_mut(id) {
+        e.status |= status::TRACKING;
     }
     if target == id || m.target == Some(target) {
         let text = if target == id {
@@ -256,7 +245,7 @@ pub fn lock(
     let (Some(t), Some(me)) = (world.get(target), world.get(id)) else {
         return;
     };
-    if !targetable(t.kind) || status_of(t) & status::CLOAKED != 0 {
+    if t.flags & flag::TARGETABLE == 0 || cloaked(t) {
         return;
     }
     if lock_distance(me.position, t.position) >= tables.sensing.lock_range[k.index()] {
@@ -266,9 +255,8 @@ pub fn lock(
         say(world, id, text.friendly);
     }
     update(world, id, target, world.lock_window, tables);
-    // shortcut: only robots keep +0x17, so a locked base is not marked spotted; only
-    // the map reads it (T-103).
-    if let Some(t) = movement(world, target) {
+    // `1000:d8e7`: whatever is locked, a base or relay too.
+    if let Some(t) = world.get_mut(target) {
         t.status |= status::SPOTTED;
     }
     let Some(m) = movement(world, id) else {
@@ -308,8 +296,8 @@ pub fn next_target(world: &mut World, id: EntityId, tables: &Tables, events: &mu
         next += 1;
         // The original also skips the robot itself, which the side check does here.
         let found = world.get(o).is_some_and(|e| {
-            scanned(e.kind)
-                && status_of(e) & status::CLOAKED == 0
+            e.flags & flag::SCANNED != 0
+                && !cloaked(e)
                 && e.side != side
                 && within(at, e.position, range)
         });
@@ -376,19 +364,13 @@ fn keep_lock(world: &mut World, id: EntityId, window: (u16, u16), tables: &Table
         }
         return;
     };
+    // `1000:d685`: the target's `GONE`.
     // shortcut: the port frees a destroyed robot's slot at once (T-054), so an empty
-    // slot, or one another kind took, is the target gone; the original keeps the slot
-    // while robots reference it.
-    let gone = world.get(target).is_none_or(|t| {
-        !targetable(t.kind)
-            || matches!(
-                t.state,
-                State::Base {
-                    destroyed: true,
-                    ..
-                }
-            )
-    });
+    // slot, or one an object that is not targetable took, is the target gone too; the
+    // original keeps the slot while robots reference it.
+    let gone = world
+        .get(target)
+        .is_none_or(|t| t.flags & (flag::GONE | flag::TARGETABLE) != flag::TARGETABLE);
     let range = RobotKind::of(kind).map_or(0, |k| tables.sensing.lock_range[k.index()]);
     let damaged = parts(world, id).is_some_and(|c| c.targeting & TARGETING_DAMAGED != 0);
     // `1000:d6a6`: a robot target's ECM running (+0xdf, not the status bit) loses it.

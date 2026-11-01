@@ -85,6 +85,8 @@ fn entities() -> impl Strategy<Value = Vec<(u16, Entity)>> {
                         heading,
                         radius: 0xa00,
                         damage: Damage::Taken(taken),
+                        flags: 0,
+                        status: 0,
                         state: State::None,
                     },
                 )
