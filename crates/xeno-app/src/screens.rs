@@ -22,8 +22,8 @@
 //! binds it. Everything here is plain data stepped once per retrace with that
 //! retrace's input, so it is tested without a window and replays from an `InputLog`.
 
-use xeno_formats::mal;
 use xeno_formats::mgavideo::Pointer;
+use xeno_formats::{mal, usg};
 use xeno_render::{ColourAnims, DAC_BYTES, Dac, Fade, Framebuffer, Rect};
 use xeno_sim::Random;
 
@@ -111,6 +111,11 @@ const ESC: KeyWord = key(0x01);
 const ENTER: KeyWord = key(0x1c);
 const SPACE: KeyWord = key(0x39);
 const ALT_Q: KeyWord = KeyWord(ALT | 0x10);
+/// The map room's and training menu's key widgets `0x14c` (`1000:f3ef`) and `0x14e`
+/// (`1000:f405`) compare the key word with these: load and save a scenario through
+/// the file dialogs, with no unlock word.
+const ALT_L: KeyWord = KeyWord(ALT | 0x26);
+const ALT_S: KeyWord = KeyWord(ALT | 0x1f);
 
 use Action::*;
 use Screen::*;
@@ -551,13 +556,12 @@ impl Screens {
 
     /// Whether the screen shown uses ESC: its key table binds it.
     pub fn claims_escape(&self) -> bool {
+        // An open file dialog takes ESC as cancel.
+        if self.mission.dialog_open() {
+            return true;
+        }
         match self.screen {
-            // An open file dialog takes ESC as cancel.
-            Mission(view) => {
-                self.mission.dialog_open()
-                    || self.mission.paused()
-                    || self.mission_assets.claims_escape(view)
-            }
+            Mission(view) => self.mission.paused() || self.mission_assets.claims_escape(view),
             Training => self
                 .mission_assets
                 .training
@@ -618,6 +622,19 @@ impl Screens {
         for &event in &events {
             if self.next.is_none() && self.loading.is_none() && !self.quit {
                 match (*event, self.screen) {
+                    (event, MapRoom | Training) if self.mission.dialog_open() => {
+                        self.front_dialog_event(event, fb);
+                    }
+                    (InputEvent::KeyDown { code, .. }, MapRoom | Training)
+                        if matches!(key_word(code, &self.keys), ALT_L | ALT_S) =>
+                    {
+                        let save = key_word(code, &self.keys) == ALT_S;
+                        if self.mission.open_file_dialog(save, &self.mission_assets) {
+                            self.set_shape(mission::DIALOG_SHAPE);
+                        } else {
+                            log::info!("{:?}: no file dialogs from xeno.exe", self.screen);
+                        }
+                    }
                     (InputEvent::Text(c), Login) => self.entry.typed(c),
                     (InputEvent::Text(c), Mission(_)) => self.mission.typed(c),
                     (InputEvent::KeyDown { code, .. }, Login) => {
@@ -760,6 +777,12 @@ impl Screens {
         if self.screen == Login && self.next.is_none() {
             self.entry.draw(&self.login.font, fb);
         }
+        if matches!(self.screen, MapRoom | Training) && self.mission.dialog_open() {
+            self.mission.dialog_retrace();
+            if self.mission.take_dirty() {
+                self.mission.draw_dialog(fb, &self.mission_assets);
+            }
+        }
         if self.mission.paused() != self.pause_held {
             self.pause_held = !self.pause_held;
             match self.pause_held {
@@ -842,6 +865,72 @@ impl Screens {
                 self.enter(next, fb);
             }
         }
+    }
+
+    /// An event while a file dialog is open over the map room or the training menu.
+    /// When it closes, the screen is drawn again (the original reopens its widget set)
+    /// and Alt+L's file is loaded.
+    fn front_dialog_event(&mut self, event: InputEvent, fb: &mut Framebuffer) {
+        let (assets, at) = (&self.mission_assets, self.mouse.position);
+        match event {
+            InputEvent::Text(c) => self.mission.typed(c),
+            InputEvent::KeyDown { code, .. } => {
+                _ = self.mission.key(key_word(code, &self.keys).0, assets);
+            }
+            InputEvent::MouseDown { button } => {
+                _ = self.mission.dialog_mouse(button, true, at, assets)
+            }
+            InputEvent::MouseUp { button } => {
+                _ = self.mission.dialog_mouse(button, false, at, assets)
+            }
+            InputEvent::MouseMove { x, y } => self.mission.hover((x, y), assets),
+            _ => {}
+        }
+        if self.mission.dialog_open() {
+            return;
+        }
+        // shortcut: Alt+S's event-queue flush after the write (`1fe6:398c`) is not
+        // ported; the port's write takes no time for events to pile up in.
+        if let Some(path) = self.mission.take_load() {
+            self.load_scenario(&path);
+        }
+        self.set_shape(ARROW);
+        match self.screen {
+            MapRoom => self.map.redraw(),
+            _ => {
+                if let Some((_, p)) = self.pictures.iter().find(|(n, _)| *n == "trainmen.m@l") {
+                    fb.pixels_mut()[..p.pixels.len()].copy_from_slice(&p.pixels);
+                }
+                self.training_press = None;
+            }
+        }
+    }
+
+    /// Alt+L's file (`scen_read_chunks` with `AL` 0): a scenario or a save, loaded as
+    /// the mission in memory with its `SDEF` skipped, so the campaign (selection,
+    /// loaded record, progress, score, calendar) is untouched. Playing the selection
+    /// resumes it only if the selection is the loaded record. A file that does not
+    /// read changes nothing and beeps.
+    fn load_scenario(&mut self, path: &std::path::Path) {
+        let scenario = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| usg::parse(&bytes).map_err(|e| e.to_string()));
+        let scenario = match scenario {
+            Ok(scenario) => scenario,
+            // shortcut: the beep (`1000:0261`) is silent until T-193.
+            Err(e) => return log::warn!("{:?}: cannot load {}: {e}", self.screen, path.display()),
+        };
+        let file = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into());
+        log::info!("{:?}: {file} loaded", self.screen);
+        let campaign = campaign_mut(&mut self.player, &mut self.guest);
+        let motion = &self.mission_assets.motion;
+        let mut next = MissionState::new(file, &scenario, campaign.take_random(), motion);
+        // The reader puts the campaign's calendar back after the file's clock.
+        next.set_date(campaign.day, campaign.month);
+        next.park(campaign);
+        self.mission.replace_with(next);
     }
 
     /// A training menu action (`ui_run_training_mission`): load the mission's file and
@@ -1583,6 +1672,108 @@ pub(crate) mod tests {
         assert_eq!(scenario.objects, world.objects);
         assert_eq!(save::write(c, selection, &scenario).unwrap(), bytes);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Presses `keys` (Alt first when `alt`), or types `text`, in one retrace each.
+    fn file_keys(screens: &mut Screens, fb: &mut Framebuffer, alt: bool, keys: &[u16]) {
+        for &k in keys {
+            let events = match alt {
+                true => vec![down(0x38), down(k), up(k), up(0x38)],
+                false => vec![down(k), up(k)],
+            };
+            screens.retrace(&events, fb);
+        }
+    }
+
+    /// Names a file in the open dialog and accepts it.
+    fn choose(screens: &mut Screens, fb: &mut Framebuffer, name: &str) {
+        file_keys(screens, fb, false, &[0x0e; 12]);
+        let typed: Vec<InputEvent> = name.chars().map(InputEvent::Text).collect();
+        screens.retrace(&typed, fb);
+        file_keys(screens, fb, false, &[0x1c]);
+        assert!(!screens.mission.dialog_open());
+    }
+
+    /// The map room's Alt+S writes the mission in memory through the save dialog (no
+    /// `SDEF`); Alt+L loads a file as that mission and leaves the campaign and its
+    /// calendar alone, so playing the selection, which is the loaded record, resumes
+    /// the file loaded; a file that does not load changes nothing.
+    #[test]
+    fn alt_s_and_alt_l_save_and_load_the_scenario_in_the_map_room() {
+        let dir = std::env::temp_dir().join(format!("xeno-alt-l-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("B.USG"), xeno_formats::fixtures::synthetic_usg()).unwrap();
+        let (mut screens, _) = run(&presses(&[0x1c, 0x0f, 0x19]), Login, 300);
+        screens.mission_assets.file_dialogs = Some(crate::dialog::test_tables());
+        screens.mission_assets.save_dir = dir.clone();
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        screens.act(Go(MapRoom));
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        assert_eq!(screens.campaign().loaded, Some(0));
+        let campaign = |s: &Screens| {
+            let c = s.campaign();
+            (
+                c.table.clone(),
+                c.loaded,
+                c.progress,
+                c.score,
+                c.result,
+                c.day,
+                c.month,
+            )
+        };
+        let before = campaign(&screens);
+
+        file_keys(&mut screens, &mut fb, true, &[0x1f]);
+        assert!(screens.mission.dialog_open() && screens.claims_escape());
+        assert_eq!(screens.pointer.shape(), mission::DIALOG_SHAPE);
+        choose(&mut screens, &mut fb, "a.usg");
+        assert_eq!(screens.pointer.shape(), ARROW);
+        let a = usg::parse(&std::fs::read(dir.join("A.USG")).unwrap()).unwrap();
+        assert_eq!(a.save, None);
+        let saved = screens.mission().saved(&screens.mission_assets).unwrap();
+        assert_eq!(a.objects, saved.objects);
+
+        file_keys(&mut screens, &mut fb, true, &[0x26]);
+        choose(&mut screens, &mut fb, "b.usg");
+        assert_eq!(screens.mission().file, "B.USG");
+        assert_eq!(campaign(&screens), before, "the campaign is untouched");
+        let clock = screens.mission().world().clock;
+        assert_eq!((clock.day, clock.month), (before.5, before.6));
+
+        // Saved, then loaded back.
+        file_keys(&mut screens, &mut fb, true, &[0x26]);
+        choose(&mut screens, &mut fb, "a.usg");
+        let back = screens.mission().saved(&screens.mission_assets).unwrap();
+        assert_eq!(back.objects, a.objects);
+        file_keys(&mut screens, &mut fb, true, &[0x26]);
+        choose(&mut screens, &mut fb, "none.usg");
+        assert_eq!(
+            screens.mission().file,
+            "A.USG",
+            "a failed load changes nothing"
+        );
+
+        // P plays the selection; it is the loaded record, so the file loaded resumes.
+        file_keys(&mut screens, &mut fb, false, &[0x19]);
+        assert_eq!(screens.mission().file, "A.USG");
+        assert!(screens.mission().is_running());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The training menu has the same keys; ESC cancels and the menu is drawn again.
+    #[test]
+    fn alt_l_opens_the_dialog_on_the_training_menu() {
+        let mut screens = new(Training);
+        screens.mission_assets.file_dialogs = Some(crate::dialog::test_tables());
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        (0..40).for_each(|_| screens.retrace(&[], &mut fb));
+        file_keys(&mut screens, &mut fb, true, &[0x26]);
+        assert!(screens.mission.dialog_open() && screens.claims_escape());
+        file_keys(&mut screens, &mut fb, false, &[0x01]);
+        assert!(!screens.mission.dialog_open());
+        assert_eq!(screens.screen(), Training);
+        assert!(fb.pixels().iter().all(|&p| p == 3), "TRAINMEN drawn again");
     }
 
     /// A mission left with no result is saved as it stands (T-116): the log-in loads
@@ -2382,6 +2573,42 @@ pub(crate) mod tests {
                     .is_some()
             );
         }
+    }
+
+    /// With the user's files: a training mission played, then in the map room Alt+S
+    /// saves it through the save dialog (drawn over the map room) into a temporary
+    /// directory, and Alt+L loads it back.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_alt_s_and_alt_l_in_the_map_room() {
+        let Some(mut screens) = real_screens(Training) else {
+            return;
+        };
+        let dir = screens.login.save_dir.join("alt-l");
+        std::fs::create_dir_all(&dir).unwrap();
+        screens.mission_assets.save_dir = dir.clone();
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        file_keys(&mut screens, &mut fb, false, &[0x23]);
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        assert!(screens.mission().file.ends_with("train.usg"));
+        screens.act(Go(MapRoom));
+        (0..100).for_each(|_| screens.retrace(&[], &mut fb));
+        assert_eq!(screens.screen(), MapRoom);
+        let map = fb.pixels().to_vec();
+        file_keys(&mut screens, &mut fb, true, &[0x1f]);
+        assert!(screens.mission.dialog_open());
+        assert_ne!(fb.pixels(), &map[..], "the dialog is drawn");
+        choose(&mut screens, &mut fb, "t.usg");
+        let bytes = std::fs::read(dir.join("T.USG")).unwrap();
+        file_keys(&mut screens, &mut fb, true, &[0x26]);
+        choose(&mut screens, &mut fb, "t.usg");
+        assert_eq!(screens.mission().file, "T.USG");
+        assert_eq!(
+            screens.mission().scenario(),
+            Some(&usg::parse(&bytes).unwrap())
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Opens each console of the first training mission with a robot of its kind: the

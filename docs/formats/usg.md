@@ -678,7 +678,9 @@ yet writes no save.
 
 **Reading.** At log-in `ui_login_and_load_save_game` (`1000:70ec`) calls the chunk
 reader (`scen_read_chunks`, `1000:eefc`) on the name with `AL` = 0xff, which it keeps
-at `DS:0x7ea1` (the map room's play and the training menu pass 0). If that fails (no
+at `DS:0x7ea1` (the map room's play, the training menu and the map room's and
+training menu's Alt+L pass 0, so a save loaded through Alt+L is only its scenario;
+`docs/screens.md`, "Alt+L and Alt+S in the map room and the training menu (T-144)"). If that fails (no
 file, or no `SHDR` first) a new campaign starts from `scendef.bin`; otherwise the game
 counts as loaded and the campaign check runs (`scen_update_campaign_progress`,
 `docs/screens.md`, "Campaign rules"). With the flag 0 `SDEF`'s handler returns carry and
