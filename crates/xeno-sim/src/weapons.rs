@@ -6,13 +6,13 @@
 //! [`crate::shot`].
 
 use xeno_formats::motion::Walk;
-use xeno_formats::usg::ObjectKind;
+use xeno_formats::usg::{ObjectKind, status};
 use xeno_formats::weapons::Gun;
 
 use crate::motion::{Event, Tables};
 use crate::orders::RobotKind;
 use crate::random::Random;
-use crate::world::{Components, Damage, EntityId, Movement, State, World};
+use crate::world::{Components, Damage, Entity, EntityId, Movement, State, World};
 
 /// +0xdc: the fire request, and the humanoid's weapons ready (bit 5 the first).
 const REQUEST: u8 = 0x80;
@@ -85,6 +85,109 @@ fn energy(m: &mut Movement, c: &Components, amount: u8) -> bool {
     }
 }
 
+/// F7 (`1000:d92e`): with a charge left and the energy, one fewer, the ECM on for
+/// [`Devices::ecm_time`](xeno_formats::weapons::Devices) steps (locks on the robot are
+/// lost meanwhile, `crate::sense`); a message either way. No kind or damage is checked.
+pub fn ecm(world: &mut World, id: EntityId, tables: &Tables) {
+    let d = tables.weapons.devices;
+    let Some((m, c)) = robot_parts(world, id) else {
+        return;
+    };
+    let text = if m.guns.ecm == 0 {
+        d.no_ecm
+    } else if !energy(m, c, d.ecm_energy) {
+        d.no_power
+    } else {
+        m.guns.ecm -= 1;
+        m.guns.ecm_time = d.ecm_time;
+        m.status |= status::ECM;
+        d.ecm_on
+    };
+    crate::log::say(world, id, text, tables);
+}
+
+/// F8 (`1000:d95e`): with a cloak left, one fewer and the energy taken (short or not:
+/// the check's answer is ignored), cloaked for [`Devices::cloak_time`] steps, and the
+/// sparkle made where the robot stands if a slot is free; a message either way.
+///
+/// [`Devices::cloak_time`]: xeno_formats::weapons::Devices
+pub fn cloak(world: &mut World, id: EntityId, tables: &Tables) {
+    let d = tables.weapons.devices;
+    let Some((m, c)) = robot_parts(world, id) else {
+        return;
+    };
+    if m.guns.cloaks == 0 {
+        crate::log::say(world, id, d.no_cloak, tables);
+        return;
+    }
+    energy(m, c, d.cloak_energy);
+    m.guns.cloaks -= 1;
+    m.guns.cloak_time = d.cloak_time;
+    m.status |= status::CLOAKED;
+    if let (Some(slot), Some(e)) = (crate::damage::alloc_small(world), world.get(id)) {
+        // `1000:dfff`: the robot's x, y and z, the first heading and radius.
+        let sparkle = Entity {
+            kind: d.sparkle.into(),
+            side: e.side,
+            position: e.position,
+            z: e.z,
+            model_height: 0,
+            heading: d.heading,
+            radius: d.radius,
+            damage: Damage::None,
+            state: State::Sparkle {
+                frame: 0,
+                ticks: 0,
+                age: 0,
+                stage: 0,
+            },
+        };
+        world.insert(slot, sparkle);
+    }
+    crate::log::say(world, id, d.cloak_on, tables);
+}
+
+/// The sparkle's tick (`1000:e03b`): every [`Devices::frame_ticks`]` + 1` ticks the next
+/// frame and one more of its age, its stage moving on at `grown` and `shrinking`; then
+/// the stage's step (grow, nothing, shrink) on its heading and radius. Returns whether
+/// it is gone (its age at `life`).
+///
+/// [`Devices::frame_ticks`]: xeno_formats::weapons::Devices
+pub fn tick_sparkle(e: &mut Entity, tables: &Tables) -> bool {
+    let d = tables.weapons.devices;
+    let State::Sparkle {
+        frame,
+        ticks,
+        age,
+        stage,
+    } = &mut e.state
+    else {
+        return false;
+    };
+    *ticks = ticks.wrapping_add(1);
+    if *ticks & d.frame_ticks != 0 {
+        return false;
+    }
+    *frame = frame.wrapping_add(1) & d.frames;
+    *age = age.wrapping_add(1);
+    if *age == d.grown || *age == d.shrinking {
+        *stage += 1;
+    }
+    let step = u16::from(d.heading_step);
+    match *stage {
+        0 => {
+            e.heading = e.heading.wrapping_add(step);
+            e.radius = e.radius.wrapping_add(d.radius_step);
+        }
+        2 => {
+            e.heading = e.heading.wrapping_sub(step);
+            e.radius = e.radius.wrapping_sub(d.radius_step);
+        }
+        _ => {}
+    }
+    *age >= d.life
+}
+
 fn count_down(n: &mut u16) {
     *n = n.saturating_sub(1);
 }
@@ -144,8 +247,21 @@ pub fn step(
     let Some((m, c)) = robot_parts(world, id) else {
         return;
     };
-    // shortcut: the ECM's and cloak's times (+0xdf, +0xe1) the steps also count down
-    // are T-136's; no stock robot has them running.
+    // Each step first counts the ECM down (and the cloak, but for the scorpion's),
+    // clearing its status bit at 0.
+    let g = &mut m.guns;
+    if g.ecm_time != 0 {
+        g.ecm_time -= 1;
+        if g.ecm_time == 0 {
+            m.status &= !status::ECM;
+        }
+    }
+    if kind != ObjectKind::Scorpion && g.cloak_time != 0 {
+        g.cloak_time -= 1;
+        if g.cloak_time == 0 {
+            m.status &= !status::CLOAKED;
+        }
+    }
     if kind == ObjectKind::Scorpion {
         if m.guns.burst != 0 {
             m.guns.burst -= 1;

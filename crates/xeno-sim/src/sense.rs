@@ -376,9 +376,9 @@ fn keep_lock(world: &mut World, id: EntityId, window: (u16, u16), tables: &Table
     });
     let range = RobotKind::of(kind).map_or(0, |k| tables.sensing.lock_range[k.index()]);
     let damaged = parts(world, id).is_some_and(|c| c.targeting & TARGETING_DAMAGED != 0);
-    // shortcut: a robot target's ECM (+0xdf running) also breaks the lock; the port has
-    // no ECM until T-136.
-    let lost = damaged || m.target_distance > range;
+    // `1000:d6a6`: a robot target's ECM running (+0xdf, not the status bit) loses it.
+    let ecm = matches!(world.get(target).map(|t| &t.state), Some(State::Robot(t)) if t.guns.ecm_time != 0);
+    let lost = damaged || m.target_distance > range || ecm;
     if gone || lost {
         if let Some(m) = movement(world, id) {
             m.target = None;

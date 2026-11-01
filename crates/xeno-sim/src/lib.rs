@@ -234,6 +234,8 @@ impl Sim {
                 net::deploy(world, id, tables, &mut self.random, &mut events);
             }
             Pilot::Fire => weapons::trigger(world, id, tables),
+            Pilot::Ecm => weapons::ecm(world, id, tables),
+            Pilot::Cloak => weapons::cloak(world, id, tables),
             Pilot::NextTarget => sense::next_target(world, id, tables, &mut events),
             Pilot::DropTarget => sense::drop_target(world, id, tables),
             Pilot::Lock(target) => sense::lock(world, id, target, tables, &mut events),
@@ -396,6 +398,10 @@ pub enum Pilot {
     /// dropped (`sense::drop_target`). Neither takes the pilot's seat.
     NextTarget,
     DropTarget,
+    /// F7 and F8 on the humanoid and scout (and their consoles' ECM and cloak buttons):
+    /// the ECM (`weapons::ecm`) and the sparkle cloak (`weapons::cloak`).
+    Ecm,
+    Cloak,
     /// A left release on an object in the console's views (`1000:d8a7`): that object
     /// locked (`sense::lock`).
     Lock(EntityId),
