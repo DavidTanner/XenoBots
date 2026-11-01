@@ -37,9 +37,10 @@ const RELAY_UNLINKED_DOT: u8 = 7;
 const ALIEN_DOT: u8 = 0xfd;
 pub const OBSTACLE_DOT: u8 = 1;
 const MARK_DOT: u8 = 0x0f;
-/// `+0x17` bits: bit 0 hides a robot from the map; bit 2, an alien one is detected.
-const HIDDEN: u8 = 0x01;
-const DETECTED: u8 = 0x04;
+/// `+0x17` bits: a cloaked robot is hidden from the map; an alien one shows once
+/// spotted.
+const HIDDEN: u8 = xeno_formats::usg::status::CLOAKED;
+const DETECTED: u8 = xeno_formats::usg::status::SPOTTED;
 /// A robot's `+0xfd` bit 2: in its base.
 const IN_BASE: u8 = 0x04;
 /// Sprites of zoom factors from this up are the large ones.
@@ -271,33 +272,6 @@ impl MapState {
     fn factor(&self) -> u8 {
         1u8.checked_shl(self.zoom.into()).unwrap_or(0)
     }
-}
-
-/// The objects' +0x16 and +0x17 by slot.
-pub type Flags = [(u8, u8); 240];
-
-/// A relay's +0x16 bits 4 and 6 and an alarm buoy's bit 4 are the sim's.
-/// shortcut: the sim keeps no detection bits (+0x17) and no other object's +0x16, so
-/// those are the scenario's as loaded until it does.
-pub fn flags(scenario: Option<&Scenario>, world: &World) -> Flags {
-    let mut flags = [(0, 0); 240];
-    for o in scenario.iter().flat_map(|s| s.objects.iter().flatten()) {
-        if let Some(f) = flags.get_mut(usize::from(o.slot)) {
-            *f = (o.flags, o.status);
-        }
-    }
-    for (id, e) in world.iter() {
-        let Some(f) = flags.get_mut(usize::from(id.0)) else {
-            continue;
-        };
-        let sims = match e.state {
-            State::Relay(_) => xeno_sim::relay::FLAGS,
-            State::Drop(_) => flag::RELAY_LINKED,
-            _ => 0,
-        };
-        f.0 = f.0 & !sims | e.flags & sims;
-    }
-    flags
 }
 
 /// Whether robot `e` is in its base (+0xfd bit 2).
@@ -577,7 +551,6 @@ pub fn draw_map(
     camera: &Camera,
     map: &MapState,
     terrain: &[TerrainFeature],
-    flags: &Flags,
     selected: Option<&Entity>,
     inputs: &Inputs,
     [clear, hill_colour]: [u8; 2],
@@ -597,9 +570,7 @@ pub fn draw_map(
             hill_colour,
         );
     }
-    draw_objects(
-        buffer, world, camera, map, flags, selected, inputs, &mut probe,
-    );
+    draw_objects(buffer, world, camera, map, selected, inputs, &mut probe);
     probe.under
 }
 
@@ -612,7 +583,6 @@ pub fn draw_objects(
     world: &World,
     camera: &Camera,
     map: &MapState,
-    flags: &Flags,
     selected: Option<&Entity>,
     inputs: &Inputs,
     probe: &mut Probe,
@@ -633,7 +603,8 @@ pub fn draw_objects(
     }
     let sprites = map.overlays & Base::MAP_SPRITES != 0;
     for (id, e) in world.iter() {
-        let (f16, f17) = flags[usize::from(id.0) % flags.len()];
+        // The sim's +0x16 and +0x17 (T-147).
+        let (f16, f17) = (e.flags, e.status);
         let side = usize::from(e.side == Side::Alien);
         let at = pixel(camera, buffer, e.position.x.0, e.position.y.0);
         let kind = u16::from(e.kind);
@@ -960,7 +931,7 @@ pub(crate) mod tests {
     /// (alien, not detected); relays at (0, 10) (not linked) and (2, 10) (alien,
     /// linked); an obstacle at (10, 5); a hill of radius 3 at (10, 16). The humanoid
     /// heads for (20, 12), the scout for the obstacle as its goal object.
-    fn world() -> (World, Flags, Vec<TerrainFeature>) {
+    fn world() -> (World, Vec<TerrainFeature>) {
         let robot = State::Robot(Movement {
             goal: 2,
             destination: Position {
@@ -970,10 +941,9 @@ pub(crate) mod tests {
             ..Movement::default()
         });
         let mut world = World::default();
-        let mut flags = [(0, 0); 240];
-        let mut put = |slot: u16, e: Entity, f| {
+        let mut put = |slot: u16, mut e: Entity, (f16, f17)| {
+            (e.flags, e.status) = (f16, f17);
             world.insert(EntityId(slot), e);
-            flags[usize::from(slot)] = f;
         };
         let (h, a) = (Side::Human, Side::Alien);
         put(
@@ -1026,7 +996,7 @@ pub(crate) mod tests {
             height: 0,
             shape: vec![HILL_OP, 0],
         };
-        (world, flags, vec![hill])
+        (world, vec![hill])
     }
 
     fn draw(overlays: u16, zoom: u8, selected: Option<u16>) -> Framebuffer {
@@ -1049,7 +1019,7 @@ pub(crate) mod tests {
         selected: Option<u16>,
         probe: Option<(usize, usize)>,
     ) -> (Framebuffer, Option<u16>) {
-        let (world, flags, terrain) = world();
+        let (world, terrain) = world();
         let tables = crate::mission::tests::test_assets().motion;
         let (room, view, sprites) = (room(), view(), sprites());
         let selected = selected.and_then(|s| world.get(EntityId(s)));
@@ -1068,7 +1038,6 @@ pub(crate) mod tests {
             &camera,
             &map,
             &terrain,
-            &flags,
             selected,
             &inputs,
             [MAP_BACKGROUND, MAP_HILL],
@@ -1166,29 +1135,6 @@ pub(crate) mod tests {
         dots.sort();
         assert_eq!(dots, expected);
         assert_eq!(dots.len(), 25);
-    }
-
-    /// An alarm buoy's +0x16 bit 4 is the sim's, whatever the file held.
-    #[test]
-    fn an_alarm_buoy_s_alarm_is_the_sim_s() {
-        let mut world = World::default();
-        let buoy = |alarm: bool| Entity {
-            kind: ObjectKind::Other(11),
-            side: Side::Human,
-            position: Position::default(),
-            z: Fixed(0),
-            model_height: 0,
-            heading: 0,
-            radius: 0,
-            damage: Damage::None,
-            flags: u8::from(alarm) * flag::RELAY_LINKED,
-            status: 0,
-            state: State::Drop(xeno_sim::drops::Drop::default()),
-        };
-        world.insert(EntityId(3), buoy(true));
-        world.insert(EntityId(5), buoy(false));
-        let f = flags(None, &world);
-        assert_eq!((f[3].0, f[5].0), (flag::RELAY_LINKED, 0));
     }
 
     /// The editor's Ctrl+E shows the undetected alien robot, at (0, 0) here.

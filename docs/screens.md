@@ -2322,10 +2322,12 @@ original.
   `xeno_formats::sitroom` reads and `msprite0`. The map starts with the overlays, zoom
   and centre saved in the player's base and is drawn each frame (not every 4 ticks);
   the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
-  `shortcut:` in the code: the labels' colour (0x0f, a guess), the detection bits are the
-  scenario's as loaded (a relay's link and field bits are the sim's since T-148), a target object's marker and the path
+  `shortcut:` in the code: the labels' colour (0x0f, a guess), a target object's marker and the path
   overlay are not drawn; the GRID overlay draws the grid step (T-143). The log is the sim's (`xeno_sim::log`, T-129). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in
-  "The status view (T-126)" (since T-126, without its right end). Mode R uses the
+  "The status view (T-126)" (since T-126, without its right end). Every map (the
+  situation room's, the consoles', the editor's) reads each object's +0x16 and +0x17
+  from the sim (T-147), so an alien robot shows once a scan or a lock spots it in play,
+  and a cloaked robot is hidden. Mode R uses the
   console's 3D view with zoom 1 and no pan, and ignores a damaged camera (mode 0x18).
 - **Roster and controls** (`crates/xeno-app/src/mainview.rs`, T-103 part 2): as "The
   roster, map controls and mode buttons (T-103)" above, from `xeno_formats::sitroom`
