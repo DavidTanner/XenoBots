@@ -238,6 +238,35 @@ pub fn thermal(image: &[u8]) -> Result<Vec<u8>, FormatError> {
         .ok_or_else(|| invalid(REMAP_AT, "the remap table is past its block"))
 }
 
+/// The file id whose name the scenario editor's Ctrl+Alt+B starts the sky's from
+/// (`scen_set_sky_name`, `1000:2822`: `mov ax, 0x34`).
+pub const SKY_FILE: u16 = 0x34;
+/// The name builder (slot `0x480`, `file_build_name_from_id`): `mov ds, [0x61a]` then
+/// `mov si, [bx + 0]`, the name's offset from the first block's word at the id.
+const NAME_BUILDER: (usize, [u8; 8]) = (0x1b4, [0x8e, 0x1e, 0x1a, 0x06, 0x8b, 0xb7, 0, 0]);
+
+/// The name slot `0x480` gives for file `id` (an 8.3 name padded with spaces), with its
+/// NUL, from the bytes of `mgavideo.dvr`.
+pub fn file_name(bytes: &[u8], id: u16) -> Result<Vec<u8>, FormatError> {
+    let image = vgaintro::load_image(bytes)?;
+    let (at, code) = NAME_BUILDER;
+    if image.get(at..at + code.len()) != Some(&code[..]) {
+        return Err(invalid(at, "not the file-id name builder"));
+    }
+    let block = data_block(image, REMAP)?;
+    let id = usize::from(id);
+    let start = block
+        .get(id..id + 2)
+        .map(|w| usize::from(u16::from_le_bytes([w[0], w[1]])))
+        .ok_or_else(|| invalid(at, "the file id is past the name table"))?;
+    let name = block.get(start..).unwrap_or_default();
+    let end = name
+        .iter()
+        .position(|&b| b == 0)
+        .ok_or_else(|| invalid(at, "the file name has no end"))?;
+    Ok(name[..=end].to_vec())
+}
+
 /// Reads the colour-animation list and the fonts from the bytes of `mgavideo.dvr`.
 pub fn parse(bytes: &[u8]) -> Result<Mgavideo, FormatError> {
     let image = vgaintro::load_image(bytes)?;
@@ -328,6 +357,19 @@ mod tests {
     }
 
     #[test]
+    fn a_synthetic_file_name_reads() {
+        let mut file = synthetic_mgavideo();
+        // The remap's block starts at image 0x1000: a name at its offset 2.
+        let block = 0x20 + 0x1000;
+        file[block + 2..block + 15].copy_from_slice(b"QQQQ    .ZZZ\0");
+        file[block + usize::from(SKY_FILE)..][..2].copy_from_slice(&[2, 0]);
+        assert!(file_name(&file, SKY_FILE).is_err(), "no name builder");
+        file[0x20 + NAME_BUILDER.0..][..8].copy_from_slice(&NAME_BUILDER.1);
+        assert_eq!(file_name(&file, SKY_FILE).unwrap(), b"QQQQ    .ZZZ\0");
+        assert!(file_name(&file, 0x7ffe).is_err());
+    }
+
+    #[test]
     fn another_build_is_refused() {
         let file = synthetic_mgavideo();
         // Each byte of the font block's instructions but the size and paragraph.
@@ -382,6 +424,10 @@ mod tests {
         // Eight shapes, each drawing something; the set-up's is the arrow, 0; the
         // busy (1) and corner (2) shapes the host picks are among them (T-049).
         assert_eq!((video.pointers.len(), video.pointer), (8, 0));
+        // T-145: the sky template is an 8.3 name with its NUL.
+        let sky = file_name(&std::fs::read(dir.join("mgavideo.dvr")).unwrap(), SKY_FILE);
+        let sky = sky.unwrap();
+        assert_eq!((sky.len(), sky[8], sky[12]), (13, b'.', 0));
         for shape in &video.pointers {
             assert!(shape.mask.contains(&0));
         }
