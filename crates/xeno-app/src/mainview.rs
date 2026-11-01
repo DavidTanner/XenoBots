@@ -273,7 +273,7 @@ impl MapState {
 /// The objects' +0x16 and +0x17 by slot.
 pub type Flags = [(u8, u8); 240];
 
-/// A relay's +0x16 bits 4 and 6 are the sim's.
+/// A relay's +0x16 bits 4 and 6 and an alarm buoy's bit 4 are the sim's.
 /// shortcut: the sim keeps no detection bits (+0x17) and no other object's +0x16, so
 /// those are the scenario's as loaded until it does.
 pub fn flags(scenario: Option<&Scenario>, world: &World) -> Flags {
@@ -284,8 +284,15 @@ pub fn flags(scenario: Option<&Scenario>, world: &World) -> Flags {
         }
     }
     for (id, e) in world.iter() {
-        if let (State::Relay(r), Some(f)) = (e.state, flags.get_mut(usize::from(id.0))) {
-            f.0 = f.0 & !xeno_sim::relay::FLAGS | r.flags;
+        let Some(f) = flags.get_mut(usize::from(id.0)) else {
+            continue;
+        };
+        match e.state {
+            State::Relay(r) => f.0 = f.0 & !xeno_sim::relay::FLAGS | r.flags,
+            State::Drop(d) => {
+                f.0 = f.0 & !flag::RELAY_LINKED | (u8::from(d.alarm) * flag::RELAY_LINKED);
+            }
+            _ => {}
         }
     }
     flags
@@ -570,13 +577,18 @@ pub fn draw_objects(
         let at = pixel(camera, buffer, e.position.x.0, e.position.y.0);
         let kind = u16::from(e.kind);
         let node = match kind {
-            // `1000:f976` (and 10 through `1000:e5fe`, not traced).
+            // `1000:f976`, and a decoy (10) as a robot of its dropper's model
+            // (`1000:fa70`, `e5fe`: +0x19).
             0..=2 | 10 => {
                 let unseen = e.side == Side::Alien && f17 & DETECTED == 0 && !map.reveal;
                 if unseen || f17 & HIDDEN != 0 || map.overlays & Base::MAP_ROBOTS == 0 {
                     continue;
                 }
-                let model = usize::from(inputs.view.kind_models[usize::from(kind)] / 2);
+                let model = match e.state {
+                    State::Drop(d) => d.ticks,
+                    _ => inputs.view.kind_models[usize::from(kind)],
+                };
+                let model = usize::from(model / 2);
                 if !sprites {
                     Node::Dot(inputs.room.robot_dots.get(model).copied().unwrap_or(0))
                 } else {
@@ -1037,6 +1049,30 @@ pub(crate) mod tests {
         let b = draw(Base::MAP_RELAYS, 0, None);
         assert_eq!(b.get(25, 7), Some(MAP_BACKGROUND));
         assert_eq!(draw(0, 0, None).get(10, 10), Some(MAP_BACKGROUND));
+    }
+
+    /// An alarm buoy's +0x16 bit 4 is the sim's, whatever the file held.
+    #[test]
+    fn an_alarm_buoy_s_alarm_is_the_sim_s() {
+        let mut world = World::default();
+        let buoy = |alarm| Entity {
+            kind: ObjectKind::Other(11),
+            side: Side::Human,
+            position: Position::default(),
+            z: Fixed(0),
+            model_height: 0,
+            heading: 0,
+            radius: 0,
+            damage: Damage::None,
+            state: State::Drop(xeno_sim::drops::Drop {
+                alarm,
+                ..Default::default()
+            }),
+        };
+        world.insert(EntityId(3), buoy(true));
+        world.insert(EntityId(5), buoy(false));
+        let f = flags(None, &world);
+        assert_eq!((f[3].0, f[5].0), (flag::RELAY_LINKED, 0));
     }
 
     /// The editor's Ctrl+E shows the undetected alien robot, at (0, 0) here.
