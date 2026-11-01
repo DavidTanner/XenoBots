@@ -992,7 +992,7 @@ own (below).
 | `0xce` | (123, 84, 130, 101) | `86f4` | The speed: cursor (0x55, 0x7c), `DS:0x70e2` (two `8`s and two backspaces) in 0x74, then in 0x0e the speed table `DS:0x7003` by +0x26 (negated if negative) through `02b7`; the third digit is set to a space or `-` but the text starts at the fourth: two digits, no sign. Transparent | none |
 | `0xd0` | (154, 264, 181, 318) | `88b3` | The target panel, opaque in 0x7a (0xff for a warning) at (0x124, 0x9b): with a target (+0xe6) its name (`1fe6:7f38`), its distance (+0xe8, `02b7` and `0301`, `M`, a new line; 0xff while +0xec bit 1 is clear) and its bearing less the heading in degrees (glyph 0x17, a new line; 0xff while +0xec bit 2 is clear); without one `DS:0x65ce` (two lines). Then at (0x124, 0xad) the cannon's rounds (+0x120, `02b7` from the second digit: four digits, leading zeros kept), or `DS:0x71df` when +0xdc bits 0 and 1 are both set | none |
 | `0xd2` x2 | (144, 220, 153, 236), (144, 237, 153, 252) | `8a91` | Weapon `n` (state's second byte): `DS:0x65be[n]` (0x730, 0x740) when selected (+0xdd), else `DS:0x65c2[n]` (0x728, 0x738), opaque, one pixel right | `8ac1`: the frame XOR (`dfd5`); a release selects weapon `n` (`98a9`, F5 and F6's) |
-| `0xd4` x4 | (101, 219, 110, 246) and on, to (124, 219, 133, 246) | `8ae6` | Drop `n` (state's second byte): `DS:0x65c6[n]` (0x6e8, 0x6f8, 0x708, 0x718) + look, opaque at the corner | `8b06`: marks itself, flips the look; a release runs `d5d5` with `n`: through `CS:0xd5df`, `n` 0 to 3 are keys 1, 4, 3 and 2 (a mine, a decoy, an alarm buoy, an ECM buoy). T-137 |
+| `0xd4` x4 | (101, 219, 110, 246) and on, to (124, 219, 133, 246) | `8ae6` | Drop `n` (state's second byte): `DS:0x65c6[n]` (0x6e8, 0x6f8, 0x708, 0x718) + look, opaque at the corner | `8b06`: marks itself, flips the look; a release runs `d5d5` with `n`: through `CS:0xd5df`, `n` 0 to 3 are keys 1, 4, 3 and 2 (a mine, a decoy, an alarm buoy, an ECM buoy). In the port since T-137 |
 | `0xd6` | (137, 62, 175, 100) | `87d6` | The compass: dial 0x910 keyed in `DS:0x669a`; the needle as the humanoid's (the same table, `DS:0x66a2`) from sprite 0x918, every quadrant's blit in the dial's rectangle; then at (0x4c, 0xa0) `DS:0x70db` in 0x74 and the heading in degrees, three digits, in 0x0e, transparent | `887f`: a release sets +0x2a to the bearing from (0x50, 0x9b) to the pointer (`1000:04eb`), the pilot (`d446`), +0x23 bits 4 and 5 cleared. T-169 |
 | `0xd8` | (3, 2, 52, 89) | `833a` | The third display (colour 253, region `DS:0x6558`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7bdb`; once it is done (bit 7, mode 3) the copy through the region and the probe into `DS:0x65e7`. T-170 | `8370`: as the second display's, flag 3 in `DS:0x65e9` |
 | `0xda` | (155, 245, 166, 255) | `89ec` | The lock button: 0x758, 0x760 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque, one pixel up | `8a26`: as the humanoid's `a3f1` (+0x22 bits 3 and 7; a left release `d812`, a right one `d7f8`; +0x22 cleared) |
@@ -1028,9 +1028,10 @@ bit 3 of +0x22 added), the switches lit for whoever drives and while held. In pa
 the fire button held sends `Pilot::Fire` every retrace (as the humanoid's), the weapon
 buttons `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock
 button's left and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scorpion
-half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy`; the weapon buttons and the
-relay panel show their frame XORed while held. Not ported: the speed buttons, lever,
-compass and turn buttons (T-169), the drop buttons (T-137), C, D and L (T-149), the
+half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy`, the drop buttons `Pilot::Drop`
+with the key their number picks (T-137; the shared look while held); the weapon
+buttons and the relay panel show their frame XORed while held. Not ported: the speed
+buttons, lever, compass and turn buttons (T-169), C, D and L (T-149), the
 fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code (the signal is the sim's since T-148): +0xee and +0xfa bit 7 are worked
 out from the passes since the load (T-167); the gauges are worked out each frame from
 the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
@@ -1062,7 +1063,7 @@ lever's drag uses +0x22 too (1 while dragging).
 | `0x128` | (133, 226, 143, 238) | `bdc1` | The lock button: 0xa70, 0xa78 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque at +1 | `be01`: as the humanoid's `a3f1` (a left release `d812`, which also marks the target panel; a right one `d7f8`; +0x22 cleared) |
 | `0x12a` | (105, 71, 114, 100) | `bee8` | The lock warning light: 0xa88, 0xa90 while +0xed is not 0 and +0xee bit 2 is set; opaque at the corner | none |
 | `0x12c` | (190, 59, 195, 66) | `c208` | The speed: cursor (0x3b, 0xbe), `DS:0x70e2` in 0x68, then in 0x60 the speed table `DS:0x7003` by +0x26 (negated if negative) through `02b7`, the third digit a space or `-` but drawn from the fourth: two digits, no sign. Transparent | none |
-| `0x12e` x4 | (151, 261, 159, 318) and on, 8 rows apart | `b860` | Sprite 0xa98 + look, opaque 5 right and 3 down of the corner; all four the same (the handler works out `2n` and drops it) | `b88d`: marks itself, flips the look; a release runs `d5d5` with `n` (keys 1, 4, 3, 2: a mine, a decoy, an alarm buoy, an ECM buoy). T-137 |
+| `0x12e` x4 | (151, 261, 159, 318) and on, 8 rows apart | `b860` | Sprite 0xa98 + look, opaque 5 right and 3 down of the corner; all four the same (the handler works out `2n` and drops it) | `b88d`: marks itself, flips the look; a release runs `d5d5` with `n` (keys 1, 4, 3, 2: a mine, a decoy, an alarm buoy, an ECM buoy). In the port since T-137 |
 | `0x130`, `0x132` | (133, 66, 143, 95), (119, 69, 129, 97) | `be4c`, `be9a` | Sprites 0xaa8 and 0xab8 + look, opaque 3 and 4 pixels left of the corner | `be77`, `bec5`: flip the look; a release runs F8 (`d95e`, the cloak) or F7 (`d92d`, the ECM): `Pilot::Cloak`, `Pilot::Ecm` (T-136) |
 | `0x134`, `0x136`, `0x138` | (159, 88, 170, 96), (171, 88, 182, 96), (183, 88, 194, 96) | `c274`, `c2b9`, `c2fe` | Sprites 0xae8, 0xaf8, 0xb08 + look, opaque at the corner | `c28c`, `c2d1`, `c316`: flip the look; a release sets the stance asked for (+0x10c) to 0, 0x30 or 0x60, as E, W and Q (`c2b3` is the tail of `c28c`) |
 | `0x13a` | (160, 99, 196, 142) | `c343` | The stance gauge: 0xb18 + ((+0x10b >> 1) & 0x38), opaque at the corner | none |
@@ -1090,15 +1091,15 @@ panel (`0x11e`, its first part `console::target_part` with the `M` and space), t
 status panel (`0x11c`, `console::draw_status`, shared with the humanoid's) and every
 button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added), the
 weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
-each named in the code: the drops and a target's serial are the
-scenario's as loaded (T-137; the signal and, since T-136, the cloaks and ECM charges are the sim's); +0xee and the status
+each named in the code: a target's serial is the
+scenario's as loaded (the signal, the cloaks and ECM charges since T-136 and the drops since T-137 are the sim's); +0xee and the status
 page are worked out from the passes since the load (T-167). In part 3 the fire button
 held sends `Pilot::Fire` every retrace (as the other kinds'), the weapon buttons
 `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock button's left
 and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scout half), the stance
-buttons `Pilot::Stance` (as E, W and Q; the look flipped while held). Not ported: the
-compass's, gear lever's and turn buttons' mouse (T-172), the third display (T-173), the
-drop buttons (T-137), the status panel's press
+buttons `Pilot::Stance` (as E, W and Q; the look flipped while held), the drop buttons
+`Pilot::Drop` (T-137, as the scorpion's). Not ported: the compass's, gear lever's and
+turn buttons' mouse (T-172), the third display (T-173), the status panel's press
 (T-167). Still to check in DOSBox (T-174): every widget's look and the blink and page
 timing.
 
