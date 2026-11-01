@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-148, T-177)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-146, T-148, T-177)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -380,6 +380,87 @@ interpolated as the sine is); the angle is the octants and the table entry shift
 right 3 together, rounded: `(octants << 13) | (atan >> 3)`, plus the last bit shifted
 out. Heading 0 is +y and a quarter turn +x, as for the velocity.
 
+### The fine bearing and the true distance (T-146)
+
+**The coarse flag.** `DS:0x1cb2` is a byte that starts at 0 and is only ever
+incremented before and decremented after a call, so it is a nesting count: the
+coarse wrappers (`1000:04cc` bearing, `04dd` bearing between two 16-bit points,
+`04f8` climb, `0530` bearing and rough distance, `0550` the same with the climb,
+`0727`, `074d`, `0768`, and the facing for the models, `05a4`; and the sine's,
+`05d3`) raise it around their call, and everything else reaches the angle routine
+(`1000:0782`) with it at 0: the **fine** path. The sine (`1000:05e6`) and the cosine
+(`067e`) read it the same way.
+
+**The fine path** (`1000:07fa`): with the ratio `r` (16 bits) from the division
+above, `i = r >> 8` and `f = r & 0xff`; `lo = atan[i]`, and the step is
+`atan[i + 1] - lo` in 16 bits. Only the step's low byte and bit 8 are used:
+`add = ((step & 0xff) * f + 0x80) >> 8`, plus `f` when the step's high byte is
+exactly 1 (the stock table's steps run from 0xa3 to 0x146, so this is exact for it).
+The entry `lo + add` is then shifted with the octants as the coarse one is. For
+`i = 255` the next entry is the word after the 256-entry table at `DS:0x20ba`, which
+is 0 in the stock build: the step wraps to 0x10000 less the last entry, the right
+one. `xeno_formats::motion` reads that word as `Motion::atan[256]`.
+Against the exact angle, the fine bearing is off by under one 65,536th of a turn
+all round with the user's table; the coarse one by up to about 40.
+
+**The true distance** (`1000:0942`) is **level**: the squares of x and y only (the
+T-112 survey's z was wrong; the routine moves its pointers on to y and back, never
+to z). Each axis goes through `1000:0b8c`: the 32-bit difference (wrapping, from SI
+to DI) as its magnitude `d`, squared from its top 16 significant bits:
+
+| `d` | square |
+|---|---|
+| under 0x1_0000 | `d * d` (32 bits) |
+| under 0x100_0000 | `(d >> 8)^2 << 16` |
+| from 0x100_0000 | `(d >> 16)^2 << 32` |
+
+The two are added into a five-word scratch at `DS:0x1ca6` (cleared first; the second
+add carries into the fifth word). Each square is at most 2^62, so the sum `s` fits 64
+bits and the fifth word stays 0; the branch that would handle it (`1000:09c7`, which
+assumes it is exactly 1) is never taken. Then, by `s`'s size, a 32-bit root at a
+scale:
+
+| `s` | distance (16.16) |
+|---|---|
+| under 2^32 | `root(s)` |
+| under 2^40 | `root(s >> 8) << 4` |
+| under 2^48 | `root(s >> 16) << 8` |
+| from 2^48 | `root(s >> 32) << 16` |
+
+`root` (`1000:0bca`) is the digit-by-digit square root, two bits a step (8 steps for
+a value under 2^16, 16 otherwise), exact: the **floor** of the root, 16 bits, in AX
+with DX 0. So the distance is never more than the exact one and loses under 1/256 of
+it (the truncated squares). `1000:0ab4`, a three-axis copy of the same sum, is called
+by nothing traced.
+
+**Callers.** In the disassembled code, the fine path is used by:
+
+- the lock's upkeep (`1000:d6e6`, through `1000:0545`: the fine bearing to the target
+  into +0xea and the true distance's middle word into +0xe8) and the lock's range check
+  (`1000:d730`, also through `0545`, the middle word against `DS:0x7079[kind]`);
+- the lead (`1000:4549`, the fine angle at `1000:45ed`);
+- the missile's launch climb (`1000:e98d` through `1000:0519`: the fine angle of the
+  target's height over the true distance);
+- the three consoles' compasses (`1000:04eb`, the fine bearing between two 16-bit
+  points: `889c`, `a6dd`, `b97c`), not yet ported (T-165, T-169, T-172).
+
+`1000:0545`'s sibling `057c` (with the climb), the bare `04da`, `03a8` and `042a` are
+called by nothing found. Everything else (the scripts' steering, the scan, the
+missile in flight, the contact check, the models' facing) is coarse. The listing was
+searched by a linear disassembly of segment `1000`; a call from code reached only
+through a table could still be missed.
+
+**The port.** `xeno_sim::script::fine_bearing` (and `angle` with `fine`) and
+`xeno_sim::sense::true_distance` (`u32::isqrt` is the same floor root). The lock's
+upkeep and its range check take both; the lead and the missile's launch climb take
+the fine angle and the climb the true distance. The stock closing test
+(`real_assets_two_stock_robots_find_and_close_on_each_other`) now uses seed 3: the
+finer aim changes when the fight's hits land, and seed 7's human turns back (most
+seeds' do, with either aim). `xeno-app`'s
+`real_assets_a_training_mission_is_won_and_lost_by_play` now takes over the `ntrain`
+scorpion at 30,000 retraces and locks only the base: the escort's finer aim cost the
+old play's scorpion its targeting computer. Not checked in DOSBox (T-199).
+
 **The speed scale.** Speeds asked for are small: the scripts' and the cockpit's speeds
 are at most 95 (humanoid), 63 (scorpion) and 113 (scout), and the velocity is
 `speed * sin(heading)` in 1/65,536ths of a unit a tick (T-052's port is right). So a
@@ -494,7 +575,7 @@ message and **event 4** is posted. Otherwise a unit target gets `locked_on` (+0x
 are cleared; the bearing (`1000:0545`, the fine one) goes to +0xea, and bit 2 is set
 when it less the heading is under the arc either way (unsigned compares with the arc
 and its negation); the true distance (`1000:0942`: the square root of the sum of the
-squares of x, y and z) as 8.8 (its middle word, the top byte dropped) goes to +0xe8,
+squares of x and y, "The fine bearing and the true distance") as 8.8 (its middle word, the top byte dropped) goes to +0xe8,
 and bit 1 is set when it is under the range. When it drops the target the kind's
 routine marks the console's panels (not the sim's concern).
 
@@ -574,8 +655,8 @@ the nearest (0x63), the target opcodes 0x6b, 0x6c and 0x73, goal bit 3, and the 
 its distance and bearing (+0xe8, +0xea) and `locked_on` (+0xed); `World::lock_window`
 keeps `DS:0x7201` and `0x7203`; the targeting and warning bits are the robot's
 `Components`. All hashed. Messages go to the robot's panel and the lock's sound is a
-`motion::Event::Sound` for the robot. Shortcuts, each named in the code: the true
-distance is exact in x and y (no z); the upkeep's bearing is the coarse one; a locked base is not marked spotted; the
+`motion::Event::Sound` for the robot. Shortcuts, each named in the code (the true
+distance and the upkeep's fine bearing are ported since T-146): a locked base is not marked spotted; the
 field +0xe6 reads the target's slot plus one, not a pointer; the lock window starts
 at 0 each mission; a target is gone when its slot is empty or holds another kind.
 
@@ -1529,8 +1610,8 @@ shot kinds (`shot::fire` with a gun, `State::Shot` ticked by `motion::tick` in s
 order), the lead, the hit search and the blast through `damage::hit`, and the
 explosions from their templates. A shot is freed after the damage it does, so an
 explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
-each named in the code: in the field by kind (T-147); the coarse bearing for the lead
-and the missile's level distance (T-146); a gone target is an empty slot or one a shot or explosion took; removal
+each named in the code: in the field by kind (T-147); (until T-146, the coarse bearing for
+the lead and an exact level distance for the missile); a gone target is an empty slot or one a shot or explosion took; removal
 frees the slot at once.
 
 Part 2 (`t-114-fire`): `xeno_sim::weapons` has the trigger (`weapons::trigger`, from

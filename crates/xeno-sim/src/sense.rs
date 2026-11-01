@@ -9,7 +9,7 @@ use xeno_formats::usg::{Object, ObjectKind, status};
 
 use crate::motion::{Event, Tables, movement, robot};
 use crate::orders::RobotKind;
-use crate::script::{bearing, post};
+use crate::script::{bearing, fine_bearing, post};
 use crate::terrain::approx_distance;
 use crate::world::{Components, Damage, Entity, EntityId, Position, State, World};
 
@@ -58,13 +58,30 @@ fn say(world: &mut World, id: EntityId, text: u16) {
     }
 }
 
-/// The true distance (`1000:0942`), 16.16.
-// shortcut: the square root of x and y's squares, exact; the original's also takes z
-// and rounds its own way (`Entity::z`, kept since T-119). Upgrade with T-146.
+/// The true distance (`1000:0942`), 16.16: level (x and y only), each axis squared
+/// by `1000:0b8c` and the sum rooted by `1000:0bca` at a scale its size picks
+/// (`docs/sim.md`, "The fine bearing and the true distance (T-146)").
 pub(crate) fn true_distance(a: Position, b: Position) -> u32 {
-    let dx = i128::from(b.x.0) - i128::from(a.x.0);
-    let dy = i128::from(b.y.0) - i128::from(a.y.0);
-    u32::try_from((dx * dx + dy * dy).isqrt()).unwrap_or(u32::MAX)
+    // An axis' difference (wrapping, then its magnitude) squared from its top 16 bits.
+    let square = |d: i32| {
+        let d = u64::from(d.unsigned_abs());
+        match d {
+            0..0x1_0000 => d * d,
+            0x1_0000..0x100_0000 => ((d >> 8) * (d >> 8)) << 16,
+            _ => ((d >> 16) * (d >> 16)) << 32,
+        }
+    };
+    // Each square is at most 2^62, so the sum fits 64 bits (the 80-bit scratch's top
+    // word stays 0, and `1000:09c7` is never reached).
+    let s = square(b.x.0.wrapping_sub(a.x.0)) + square(b.y.0.wrapping_sub(a.y.0));
+    // `1000:0bca`: the floor of the square root of 32 bits.
+    let root = |v: u64| (v as u32).isqrt();
+    match s {
+        0..0x1_0000_0000 => root(s),
+        0x1_0000_0000..0x100_0000_0000 => root(s >> 8) << 4,
+        0x100_0000_0000..0x1_0000_0000_0000 => root(s >> 16) << 8,
+        _ => root(s >> 32) << 16,
+    }
 }
 
 /// The true distance as the lock keeps it: 8.8, the top byte dropped.
@@ -324,10 +341,8 @@ fn update(
     let (Some(me), Some(t)) = (world.get(id), world.get(target)) else {
         return;
     };
-    // shortcut: the coarse bearing; the original's upkeep interpolates the arctangent
-    // (`1000:0545`), at most a few 65,536ths of a turn finer. Upgrade with the shots'
-    // aim (T-114).
-    let b = bearing(&tables.atan, me.position, t.position);
+    // `1000:0545`: the fine bearing and the true distance.
+    let b = fine_bearing(&tables.atan, me.position, t.position);
     let off = b.wrapping_sub(me.heading);
     let distance = lock_distance(me.position, t.position);
     let mut bits = 0;

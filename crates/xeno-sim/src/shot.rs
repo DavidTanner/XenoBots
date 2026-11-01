@@ -12,7 +12,7 @@ use crate::damage::{alloc_small, spawn_explosion};
 use crate::motion::{Event, Tables, component, velocity};
 use crate::orders::RobotKind;
 use crate::random::Random;
-use crate::script::bearing;
+use crate::script::{angle, bearing};
 use crate::terrain::approx_distance;
 use crate::world::{Damage, Entity, EntityId, Fixed, Position, State, World};
 
@@ -154,22 +154,14 @@ fn aim(world: &mut World, id: EntityId, lead: u16, tables: &Tables) -> u16 {
     }
     dx = dx.wrapping_sub(vx >> 1);
     dy = dy.wrapping_sub(vy >> 1);
-    // shortcut: the coarse bearing; the original's is the fine one (T-146).
-    let to = Position {
-        x: Fixed(i32::from(dx) << 8),
-        y: Fixed(i32::from(dy) << 8),
-    };
-    bearing(&tables.atan, Position::default(), to)
+    // `1000:45ed`: the fine bearing.
+    angle(&tables.atan, i32::from(dx) << 8, i32::from(dy) << 8, true)
 }
 
 /// The climb from height `dz` over a level distance (`1000:0782` on the two, as a
-/// bearing).
-fn pitch(tables: &Tables, dz: i32, distance: u32) -> u16 {
-    let to = Position {
-        x: Fixed(dz),
-        y: Fixed(distance as i32),
-    };
-    bearing(&tables.atan, Position::default(), to)
+/// bearing): `fine` at the missile's launch (`1000:0519`), coarse in flight.
+fn pitch(tables: &Tables, dz: i32, distance: u32, fine: bool) -> u16 {
+    angle(&tables.atan, dz, distance as i32, fine)
 }
 
 /// The target's height for aiming: its z and its kind's height (`DS:0xe7a5`) above.
@@ -279,11 +271,9 @@ pub fn fire(
             // The climb is not kept: the object has no field for it (T-116).
             let climb;
             (shot_heading, climb) = match aimed {
-                // shortcut: the true distance takes z too (`1000:0942`); the port's is
-                // level (T-146).
                 Some((dz, level)) => (
                     aim(world, id, ms.lead, tables).wrapping_add(spread),
-                    pitch(tables, dz, level),
+                    pitch(tables, dz, level, true),
                 ),
                 None => (heading.wrapping_add(spread), 0),
             };
@@ -463,7 +453,7 @@ fn home(tables: &Tables, at: Position, z: i32, t: &Entity) -> (u16, u16, u32) {
     let heading = bearing(&tables.atan, at, t.position);
     let distance = approx_distance(at, t.position).0 as u32;
     let dz = aim_height(tables, t).wrapping_sub(z);
-    (heading, pitch(tables, dz, distance), distance)
+    (heading, pitch(tables, dz, distance, false), distance)
 }
 
 /// `heading` turned towards `to` by at most `limit`.
