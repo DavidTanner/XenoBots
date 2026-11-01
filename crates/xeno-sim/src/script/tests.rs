@@ -214,6 +214,45 @@ fn the_bearing_points_at_the_goal() {
 }
 
 #[test]
+fn the_fine_bearing_interpolates_in_every_octant() {
+    // A table of `i << 8`: the word after it is 0, a step of 0x100 (bit 8 alone), so
+    // the fine angle is the ratio itself where the coarse one drops its low byte.
+    let atan: Vec<u16> = (0..257u32).map(|i| (i << 8) as u16).collect();
+    let o = Position::default();
+    let raw = |x: i32, y: i32| Position {
+        x: Fixed(x),
+        y: Fixed(y),
+    };
+    // 1/3 is a ratio of 0x5555: 0xaab fine (0x5555 >> 3, rounded up), 0xaa0 coarse;
+    // 2/4 past the diagonal is 0x8000, the same both ways.
+    for ((x, y), fine, coarse) in [
+        ((1, 3), 0x0aab, 0x0aa0),
+        ((3, 1), 0x3000, 0x3000),
+        ((3, -1), 0x4aab, 0x4aa0),
+        ((1, -3), 0x7000, 0x7000),
+        ((-1, -3), 0x8aab, 0x8aa0),
+        ((-3, -1), 0xb000, 0xb000),
+        ((-3, 1), 0xcaab, 0xcaa0),
+        ((-1, 3), 0xf000, 0xf000),
+        // The axes and the diagonals.
+        ((0, 5), 0x0000, 0x0000),
+        ((5, 0), 0x4000, 0x4000),
+        ((0, -5), 0x8000, 0x8000),
+        ((-5, 0), 0xc000, 0xc000),
+        ((5, 5), 0x2000, 0x2000),
+        ((-5, -5), 0xa000, 0xa000),
+    ] {
+        assert_eq!(fine_bearing(&atan, o, raw(x, y)), fine, "{x}, {y}");
+        assert_eq!(bearing(&atan, o, raw(x, y)), coarse, "{x}, {y}");
+    }
+    assert_eq!(fine_bearing(&atan, o, o), 0);
+    // A step's low byte is scaled and rounded: 0x80 at a fraction of 0x55 adds 0x2b.
+    let mut bent = atan.clone();
+    bent[0x56] = 0x5580;
+    assert_eq!(angle(&bent, 1, 3, true), (0x5500 + 0x2b) >> 3);
+}
+
+#[test]
 fn an_event_runs_the_program_s_handler_and_returns() {
     // A header sending event 5 to `0x109` (a return); then a test and a halt.
     let (mut world, tables) = setup(&[0x0f, 0x05, 0x09, 0x01, 0x11, 0x0b, 0x0a, 0x00, 0x00, 0x06]);
@@ -725,4 +764,35 @@ fn m_of(world: &World, id: EntityId) -> Movement {
         State::Robot(m) => m,
         other => panic!("{other:?}"),
     }
+}
+
+/// The user's arctangent: the fine bearing is within a 65,536th of the exact
+/// angle all round (0.66 at worst), the coarse one off by up to about 40.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_the_fine_bearing_follows_the_arctangent() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let atan = xeno_formats::motion::read(&exe).unwrap().atan;
+    let (mut fine_worst, mut coarse_worst) = (0f64, 0f64);
+    for k in 0..4096 {
+        let t = (f64::from(k) * 0.618_034).fract() * std::f64::consts::TAU;
+        let (x, y) = ((t.sin() * 1e6) as i32, (t.cos() * 1e6) as i32);
+        let exact = f64::from(x).atan2(f64::from(y)) / std::f64::consts::TAU * 65536.0;
+        let off =
+            |b: u16| ((f64::from(b) - exact).rem_euclid(65536.0) + 32768.0) % 65536.0 - 32768.0;
+        let to = Position {
+            x: Fixed(x),
+            y: Fixed(y),
+        };
+        fine_worst = fine_worst.max(off(fine_bearing(&atan, Position::default(), to)).abs());
+        coarse_worst = coarse_worst.max(off(bearing(&atan, Position::default(), to)).abs());
+    }
+    assert!(fine_worst < 1.0, "{fine_worst}");
+    assert!(coarse_worst > 30.0, "{coarse_worst}");
 }

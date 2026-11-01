@@ -484,8 +484,29 @@ fn distance(world: &World, id: EntityId, to: Option<Position>) -> u16 {
 /// The bearing from `from` to `to` (`sim_get_bearing` through
 /// `sim_get_bearing_coarse`): 65,536 to a turn, 0 towards +y, a quarter turn +x.
 pub fn bearing(atan: &[u16], from: Position, to: Position) -> u16 {
-    let mut x = to.x.0.wrapping_sub(from.x.0) as u32;
-    let mut y = to.y.0.wrapping_sub(from.y.0) as u32;
+    angle(
+        atan,
+        to.x.0.wrapping_sub(from.x.0),
+        to.y.0.wrapping_sub(from.y.0),
+        false,
+    )
+}
+
+/// The fine bearing from `from` to `to` (`sim_get_bearing`, `1000:0735`, with
+/// `DS:0x1cb2` at 0): the arctangent interpolated between entries.
+pub fn fine_bearing(atan: &[u16], from: Position, to: Position) -> u16 {
+    angle(
+        atan,
+        to.x.0.wrapping_sub(from.x.0),
+        to.y.0.wrapping_sub(from.y.0),
+        true,
+    )
+}
+
+/// The angle of `(x, y)` (`1000:0782`): the entry by the ratio's high byte, or,
+/// `fine`, interpolated by its low byte (`1000:07fa`).
+pub(crate) fn angle(atan: &[u16], x: i32, y: i32, fine: bool) -> u16 {
+    let (mut x, mut y) = (x as u32, y as u32);
     let mut octants = 0u16;
     if (x as i32) < 0 {
         octants = 2;
@@ -517,7 +538,20 @@ pub fn bearing(atan: &[u16], from: Position, to: Position) -> u16 {
         (high, low) = (high - 1, 0xffff);
     }
     let ratio = (high << 16 | low) / top;
-    let a = atan.get((ratio >> 8) as usize).copied().unwrap_or(0);
+    let entry = |i: u32| u32::from(atan.get(i as usize).copied().unwrap_or(0));
+    let (i, f) = (ratio >> 8, ratio & 0xff);
+    let mut a = entry(i);
+    if fine {
+        // The step's low byte times the fraction, rounded, and its bit 8 as the
+        // fraction itself; higher bits are dropped (the stock steps are under 0x200).
+        let step = entry(i + 1).wrapping_sub(a) & 0xffff;
+        let mut add = ((step & 0xff) * f + 0x80) >> 8;
+        if step >> 8 == 1 {
+            add += f;
+        }
+        a = (a + add) & 0xffff;
+    }
+    let a = a as u16;
     ((octants & 7) << 13 | a >> 3).wrapping_add((a >> 2) & 1)
 }
 

@@ -332,7 +332,9 @@ fn real_assets_two_stock_robots_find_and_close_on_each_other() {
     let tables = xeno_formats::motion::read(&exe).unwrap();
     let scenario =
         xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
-    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(7), tables);
+    // The fight decides whether the human retreats once hit: with the fine aim (T-146)
+    // seed 7's human turns back, seed 3's closes (most seeds' turn back either way).
+    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(3), tables);
     let world = &sim.world;
     let human = *world
         .units(Side::Human)
@@ -424,4 +426,68 @@ fn real_assets_a_steps_through_the_stock_enemies_and_r_drops() {
         me.panel.queue[..3],
         [text.locked, text.relocked, text.dropped]
     );
+}
+
+fn raw(x: i32, y: i32) -> Position {
+    Position {
+        x: Fixed(x),
+        y: Fixed(y),
+    }
+}
+
+#[test]
+fn the_true_distance_is_rooted_at_its_sum_s_scale() {
+    let o = Position::default();
+    for ((x, y), d) in [
+        ((3, 4), 5),
+        ((0, 0), 0),
+        // Exact squares and their neighbours: the floor, under 2^32 exact.
+        ((0xffff, 0), 0xffff),
+        ((0xffff, 1), 0xffff),
+        ((-0xffff, -1), 0xffff),
+        ((12, 0), 12),
+        ((12, 4), 12),
+        ((12, 5), 13),
+        // From 1 unit an axis is squared from its middle word: 0x100^2 << 16.
+        ((0x1_0000, 0), 0x1_0000),
+        ((0x1_00ff, 0), 0x1_0000),
+        // A sum from 2^32 is rooted from its top 32 bits of 40 and shifted back:
+        // 2 * 0xffff^2 = 0x1_fffc_0002, root(0x1ff_fc00) = 5792, times 16.
+        ((0xffff, 0xffff), 5792 << 4),
+        // From 2^40, its top 32 of 48: (2^20 >> 8)^2 << 16 = 2^40, root 2^12, times 2^8.
+        ((0x10_0000, 0), 0x10_0000),
+        // From 2^48 its top 32 of 64: 2 * 0x7fff^2 << 32, root 46339.
+        ((0x7fff_ffff, 0x7fff_ffff), 46339 << 16),
+        // The widest: two differences of 2^31 (wrapped), 2^63, root 46340.
+        ((i32::MIN, i32::MIN), 46340 << 16),
+    ] {
+        assert_eq!(true_distance(o, raw(x, y)), d, "{x:#x}, {y:#x}");
+        assert_eq!(true_distance(raw(x, y), o), d, "{x:#x}, {y:#x}");
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn the_true_distance_is_the_floor_root_under_one_unit(
+        x in -0xffff..=0xffffi32, y in -0xb504..=0xb504i32,
+    ) {
+        // Both squares exact and the sum under 2^32: the floor of the root.
+        let exact = (i64::from(x) * i64::from(x) + i64::from(y) * i64::from(y)).isqrt();
+        if exact < 0x1_0000 && i64::from(x).pow(2) + i64::from(y).pow(2) < 1 << 32 {
+            proptest::prop_assert_eq!(i64::from(true_distance(raw(0, 0), raw(x, y))), exact);
+        }
+    }
+
+    #[test]
+    fn the_true_distance_never_passes_the_exact_root(
+        ax in proptest::num::i32::ANY, ay in proptest::num::i32::ANY,
+        bx in proptest::num::i32::ANY, by in proptest::num::i32::ANY,
+    ) {
+        let (dx, dy) = (bx.wrapping_sub(ax).unsigned_abs(), by.wrapping_sub(ay).unsigned_abs());
+        let exact = (u128::from(dx).pow(2) + u128::from(dy).pow(2)).isqrt();
+        let d = u128::from(true_distance(raw(ax, ay), raw(bx, by)));
+        // An axis squared from its top 16 bits loses under 1/256 of it; the root at a
+        // coarser scale less.
+        proptest::prop_assert!(d <= exact && exact - d <= (exact >> 7) + 1, "{d} {exact}");
+    }
 }

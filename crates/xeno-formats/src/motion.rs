@@ -99,8 +99,9 @@ pub const SINE_ENTRIES: usize = 257;
 pub const SPEED_ENTRIES: usize = 64;
 /// No more speed tables than this (the stock build has 7).
 const MAX_SPEED_TABLES: usize = 16;
-/// Entries in the arctangent table the scripts read.
-pub const ATAN_ENTRIES: usize = 256;
+/// Entries in the arctangent table: 256, and the word after it, which the fine
+/// bearing (`1000:0782`) reads as entry 256 (0 in the stock build: 0x10000 wrapped).
+pub const ATAN_ENTRIES: usize = 257;
 /// The path missions (`docs/formats/usg.md`, "How paths are used").
 pub const MISSIONS: usize = 7;
 
@@ -120,8 +121,8 @@ pub struct Motion {
     /// The program a path's mission starts, by mission and kind (humanoid, scorpion,
     /// scout).
     pub mission_programs: [[u8; 3]; MISSIONS],
-    /// `atan(i / 256)`, 0x10000 to an eighth of a turn (`docs/sim.md`, "The
-    /// bearing").
+    /// `atan(i / 256)`, 0x10000 to an eighth of a turn, and the word after it
+    /// (`docs/sim.md`, "The bearing", "The fine bearing").
     pub atan: Vec<u16>,
     /// The speed the script's opcodes 0x54 to 0x58 ask for, by opcode and kind.
     pub script_speeds: [[i16; 3]; 5],
@@ -800,7 +801,17 @@ mod tests {
         assert!(motion.mission_programs.iter().flatten().all(|&p| p < 31));
         // A rising arctangent from 0 towards an eighth of a turn.
         assert_eq!(motion.atan[0], 0);
-        assert!(motion.atan.windows(2).all(|w| w[0] < w[1]));
+        assert!(motion.atan[..256].windows(2).all(|w| w[0] < w[1]));
+        // The word after the table is 0x10000 wrapped, so the fine bearing's last
+        // step is the right one.
+        assert_eq!(motion.atan[256], 0);
+        // Every step under 0x200, as the fine bearing's interpolation assumes.
+        let steps = motion.atan.windows(2).map(|w| w[1].wrapping_sub(w[0]));
+        assert!(steps.clone().all(|s| s < 0x200));
+        assert_eq!(
+            (steps.clone().min(), steps.max()),
+            (Some(0xa3), Some(0x146))
+        );
         // Opcode 0x54 is each kind's top speed, 0x58 its fastest reverse.
         assert!(motion.script_speeds[0].iter().all(|&s| s > 0));
         assert!(motion.script_speeds[4].iter().all(|&s| s < 0));

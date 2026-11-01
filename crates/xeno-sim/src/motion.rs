@@ -852,7 +852,9 @@ pub(crate) fn synthetic_tables() -> Tables {
             std::array::from_fn(|k| (10 * m + k) as u8)
         }),
         atan: (0..xeno_formats::motion::ATAN_ENTRIES)
-            .map(|i| ((i as f64 / 256.0).atan() / std::f64::consts::FRAC_PI_4 * 65536.0) as u16)
+            .map(|i| {
+                ((i as f64 / 256.0).atan() / std::f64::consts::FRAC_PI_4 * 65536.0) as u32 as u16
+            })
             .collect(),
         gears: xeno_formats::motion::Gears {
             humanoid: vec![-43, -23, 0, 28, 56, 95],

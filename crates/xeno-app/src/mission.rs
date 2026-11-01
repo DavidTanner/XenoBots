@@ -6711,12 +6711,13 @@ pub mod tests {
     }
 
     /// A training mission is won and lost by play alone, through the keys (T-150, T-177,
-    /// T-141). On `ntrain`, the first scorpion is left to its program for 60,000
-    /// retraces (about 14 minutes: the alien escort's first attacks are spent on the
-    /// human net), then its console: Up for speed, F6 (the tail gun), steered at the
-    /// alien base by Left and Right, stopped by `.` near it; A when nothing is locked or,
-    /// near the base, until the base is; Space fires at what is locked. Won about 22
-    /// minutes in. On `htrain`, each of the player's units in turn is steered by its
+    /// T-141). On `ntrain`, the first scorpion is left to its program for 30,000
+    /// retraces (about 7 minutes), then its console: Up for speed, F6 (the tail gun),
+    /// steered at the alien base by Left and Right, stopped by `.` near it; A only near
+    /// the base, until the base is locked; Space fires at the base. (Since the fine aim,
+    /// T-146, the escort's shots land where they did not, and a scorpion that locks and
+    /// fights robots on the way loses its targeting computer.) Won about 31 minutes in.
+    /// On `htrain`, each of the player's units in turn is steered by its
     /// console's keys to stand just behind the player's base, away from the aliens, and
     /// stopped with `.`: the aliens' shots at them hit the base, which falls about 15
     /// minutes in. (Left alone, the units fight the aliens on the human net, where the
@@ -6770,7 +6771,7 @@ pub mod tests {
         let mut retrace = 0u32;
         let won = end(&mut m, &mut |m| {
             retrace += 1;
-            if retrace < 60_000 {
+            if retrace < 30_000 {
                 return;
             }
             let at = m.world().get(base).unwrap().position;
@@ -6778,7 +6779,7 @@ pub mod tests {
                 panic!("the scorpion is gone at retrace {retrace}");
             };
             let mut press = |word| _ = m.key(word, &assets);
-            if retrace == 60_000 {
+            if retrace == 30_000 {
                 (0..5).for_each(|_| press(0x48));
                 press(0x40);
             }
@@ -6790,12 +6791,10 @@ pub mod tests {
             if units < 5.0 && r.speed > 0 {
                 press(0x34);
             }
-            if retrace.is_multiple_of(16)
-                && (r.target.is_none() || units < 8.0 && r.target != Some(base))
-            {
+            if retrace.is_multiple_of(16) && units < 8.0 && r.target != Some(base) {
                 press(0x1e);
             }
-            if retrace.is_multiple_of(4) && r.target.is_some() {
+            if retrace.is_multiple_of(4) && r.target == Some(base) {
                 press(0x39);
             }
         });
