@@ -296,8 +296,8 @@ fn tail(
         c.equipment &= !TOLD;
         return;
     };
-    // shortcut: the second display's switch to the missile camera (+0xef, +0xf0) is
-    // the console's (T-134).
+    // The second display's switch to the missile camera (+0xef, +0xf0) is the
+    // console's: `xeno-app` sees `missile` set (T-134).
     m.guns.missile = Some(slot);
     m.panel.post(text.launched);
     c.equipment |= TOLD;

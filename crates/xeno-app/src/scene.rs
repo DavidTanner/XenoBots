@@ -92,6 +92,28 @@ pub fn second_camera(
     })
 }
 
+/// The scorpion's missile camera (`1000:8190`): from its tail missile `missile` in
+/// flight, the missile's x, y and z with no eye height and its heading, at a zoom of 1
+/// and a zoom shift of 1, its own node left out.
+pub fn missile_camera(
+    world: &World,
+    missile: EntityId,
+    view: &View3d,
+    tables: &Tables,
+) -> Option<Camera> {
+    let e = world.get(missile)?;
+    Some(Camera {
+        x: e.position.x.0,
+        y: e.position.y.0,
+        z: e.z.0,
+        heading: e.heading,
+        sin: trig(tables, e.heading),
+        cos: trig(tables, 0x4000u16.wrapping_sub(e.heading)),
+        focal: focal_shifted(view.focal[0], 1, 1),
+        viewer: missile.0,
+    })
+}
+
 /// The objects' nodes in slot order, each kind's model and node type from `view`,
 /// after the terrain's, sorted far to near.
 pub fn nodes(

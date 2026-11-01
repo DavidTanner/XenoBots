@@ -114,6 +114,19 @@ mod handler {
     ];
     pub const DISPLAY_ZOOM_IN: u16 = 0xda0e;
     pub const DISPLAY_ZOOM_OUT: u16 = 0xda37;
+    /// Z, X and Y on each kind's console: the pan less or plus the zoom's step, or 0
+    /// (`1000:db7e`, `db8f`; `docs/screens.md`, "The display's other modes (T-134)").
+    pub const DISPLAY_PANS: [(u16, Option<bool>); 9] = [
+        (0xb377, Some(false)),
+        (0xb389, Some(true)),
+        (0xb39b, None),
+        (0x9bca, Some(false)),
+        (0x9bdc, Some(true)),
+        (0x9bee, None),
+        (0xcb4f, Some(false)),
+        (0xcb61, Some(true)),
+        (0xcb73, None),
+    ];
     /// Situation room: F3 recalls the selected unit (`1000:675e`), F2 launches it
     /// from the base (`1000:6704`).
     pub const RECALL: u16 = 0x675e;
@@ -213,13 +226,20 @@ const STANCES: [u8; 3] = [0, 0x30, 0x60];
 /// A robot console's second display (+0xef to +0xf5): the display mode (0 the
 /// camera, 1 thermal, 2 the map, 3 the scorpion's missile camera), the camera's and
 /// the map's zoom steps, and the camera's pan (`docs/screens.md`, "The second display
-/// (T-104)").
+/// (T-104)"); the mode to go back to after the missile camera (+0xf0), the zoom
+/// name's time (+0xf3, in 16s of ticks) and the missile camera's break-up (+0x117).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Display {
     pub mode: u8,
     pub zoom: u8,
     pub map_zoom: u8,
     pub pan: u16,
+    pub before: u8,
+    pub label: u8,
+    pub static_time: u8,
+    /// The port's: whether the scorpion's tail missile was in flight at the last
+    /// tick, to see its launch (`1000:97b0` sets the mode itself).
+    flying: bool,
 }
 
 /// Display mode 2, the map, and bit 2: the mode's device is damaged. Mode 7 (the
@@ -227,6 +247,11 @@ pub struct Display {
 const MAP_DISPLAY: u8 = 2;
 const DAMAGED: u8 = 4;
 const LOST_MISSILE_CAMERA: u8 = 7;
+const MISSILE_DISPLAY: u8 = 3;
+/// The zoom's name shows for this many 16-tick periods after a mode or zoom key, and
+/// the missile camera breaks up for this many once its missile is gone (`1000:998a`).
+const LABEL_TIME: u8 = 6;
+const STATIC_TIME: u8 = 5;
 /// The zoom steps go from 0 to 4 (`1000:da0e`, `da37`).
 const MAX_DISPLAY_ZOOM: u8 = 4;
 /// The second display's region, and its view modes: the camera (6) and the map (0xc).
@@ -242,7 +267,14 @@ const REGION_WIDGETS: [[u16; 3]; 3] = [
     [0x106, 0x108, 0x126],
 ];
 const CAMERA_VIEW: u8 = 6;
+const THERMAL_VIEW: u8 = 0xa;
+const MISSILE_VIEW: u8 = 8;
 const MAP_VIEW: u8 = 0xc;
+/// The second display's clear colour, the base of its noise (`DS:0x1456`), and the
+/// zoom name's font and colour (the text state `DS:0x6a52`, as T-104 read it).
+const DISPLAY_CLEAR: u8 = 0x20;
+const LABEL_FONT: u16 = 2;
+const LABEL_COLOUR: u8 = 0x0f;
 /// The sound events of a display mode key (10) and of a damaged display (28).
 const DISPLAY_SOUND: u8 = 10;
 const NOISE_SOUND: u8 = 28;
@@ -370,6 +402,8 @@ pub struct Assets {
     /// The scout console's (T-132) and its sprites (`msprite4`).
     pub scoutcon: Option<ScoutCon>,
     pub scoutcon_sprites: Vec<Sprite>,
+    /// The thermal and missile cameras' remap, from `mgavideo.dvr` (T-134).
+    pub thermal: Vec<u8>,
 }
 
 /// What a file dialog was opened for.
@@ -426,6 +460,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         panels::PANEL_FONT,
         panels::DETAIL_FONT,
         status::FONT,
+        LABEL_FONT,
     ]) {
         let font = video
             .font(id)
@@ -505,6 +540,7 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         scoutcon_sprites: bank("msprite4.b@n")
             .inspect_err(|e| log::warn!("scout console: no sprites: {e}"))
             .unwrap_or_default(),
+        thermal: video.thermal.clone(),
     })
 }
 
@@ -643,6 +679,13 @@ pub struct Mission {
     sounds: Vec<Sound>,
     /// Each robot's console display, as loaded and as its keys change it.
     displays: BTreeMap<u16, Display>,
+    /// The world ticked since the displays last followed it ([`Mission::step_displays`]).
+    ticked: bool,
+    /// The damaged displays' random word (the original draws from the sim's; the port
+    /// keeps the sim's for the sim, so a replay does not depend on what was drawn).
+    noise: std::cell::RefCell<Random>,
+    /// The colour record the open console's display runs (`DS:0x70d0`; none 0xff).
+    display_record: Option<u8>,
     /// The open console's display mode when the noise was last checked
     /// (`DS:0x70ad`).
     noise_mode: u8,
@@ -726,12 +769,19 @@ impl Mission {
         mission.map = base.map(MapState::of).unwrap_or_default();
         for o in scenario.objects.iter().flatten() {
             if let usg::Body::Robot(r) = &o.body {
-                let (mode, zoom, map_zoom, pan) = (r.display, r.zoom, r.map_zoom, r.pan);
+                let (static_time, flying) = match &r.parts {
+                    usg::Parts::Scorpion(p) => (p.static_time, p.missile != 0xffff),
+                    _ => (0, false),
+                };
                 let display = Display {
-                    mode,
-                    zoom,
-                    map_zoom,
-                    pan,
+                    mode: r.display,
+                    zoom: r.zoom,
+                    map_zoom: r.map_zoom,
+                    pan: r.pan,
+                    before: r.display_before,
+                    label: r.zoom_label,
+                    static_time,
+                    flying,
                 };
                 mission.displays.insert(o.slot, display);
             }
@@ -756,6 +806,9 @@ impl Mission {
             viewed: Viewed::Base,
             sounds: Vec::new(),
             displays: BTreeMap::new(),
+            ticked: false,
+            noise: std::cell::RefCell::new(Random::seeded(0)),
+            display_record: None,
             noise_mode: 0,
             selected: None,
             roster_top: 0,
@@ -854,6 +907,10 @@ impl Mission {
                     if let Some(d) = self.displays.get(&o.slot) {
                         (r.display, r.zoom, r.map_zoom, r.pan) =
                             (d.mode, d.zoom, d.map_zoom, d.pan);
+                        (r.display_before, r.zoom_label) = (d.before, d.label);
+                        if let usg::Parts::Scorpion(p) = &mut r.parts {
+                            p.static_time = d.static_time;
+                        }
                     }
                 }
                 _ => {}
@@ -1093,6 +1150,23 @@ impl Mission {
         assets.sitroom.as_ref()?.status.records.get(kind).copied()
     }
 
+    /// The record the open console's display mode runs (`1000:d9ca`, `DS:0x70b6`),
+    /// when it changes: the one to turn off where it stands, and the one to start.
+    pub fn display_record(&mut self, assets: &Assets) -> Option<(Option<u8>, u8)> {
+        let Viewed::Robot(slot) = self.viewed else {
+            return None;
+        };
+        let records = &assets.views.second_display.records;
+        let record = *records.get(usize::from(self.display_mode(slot, assets)))?;
+        let old = self.display_record.replace(record);
+        (old != Some(record)).then_some((old, record))
+    }
+
+    /// The display's record as the console's picture is closed (`1000:d9ef` with 0xff).
+    pub fn take_display_record(&mut self) -> Option<u8> {
+        self.display_record.take()
+    }
+
     /// The weight to start [`TINT_RECORDS`] with now, if the mission clock's
     /// (`Clock::tint`) changed since the last (`pal_tint_for_time_of_day`); none in the
     /// situation room's mode 2 or while the mission is parked.
@@ -1221,6 +1295,7 @@ impl Mission {
             return None;
         };
         let (mut over, mut taken) = (None, false);
+        self.ticked = true;
         for event in sim.tick(events) {
             log::debug!("mission: retrace {}: {event:?}", sim.retrace());
             match event {
@@ -1306,13 +1381,82 @@ impl Mission {
     }
 
     /// A display mode key (`ui_set_humanoid_display_mode` and the other kinds'): the
-    /// mode set and its sound played, whatever the mode was.
-    // shortcut: the zoom's name (+0xf3) and the colour records the mode picks
-    // (`1000:d9ca`, `DS:0x70b6`) are T-134's.
+    /// mode set, the zoom's name shown and the mode's sound played (heard whichever
+    /// console is open, as `1000:ee90` plays it), whatever the mode was.
     fn set_display_mode(&mut self, slot: u16, mode: u8) {
-        self.displays.entry(slot).or_default().mode = mode;
+        let d = self.displays.entry(slot).or_default();
+        (d.mode, d.label, d.static_time) = (mode, LABEL_TIME, 0);
         self.sounds.push(Sound::Play(DISPLAY_SOUND));
         self.dirty = true;
+    }
+
+    /// Z, X and Y (`1000:db7e`, `db8f`, `b39b`): the pan less or plus the zoom's step,
+    /// or 0; the target no longer tracked.
+    fn pan_display(&mut self, slot: u16, more: Option<bool>, assets: &Assets) {
+        let steps = &assets.views.second_display.pan_steps;
+        let d = self.displays.entry(slot).or_default();
+        let step = steps.get(usize::from(d.zoom)).copied().unwrap_or(0);
+        d.pan = match more {
+            Some(true) => d.pan.wrapping_add(step),
+            Some(false) => d.pan.wrapping_sub(step),
+            None => 0,
+        };
+        self.pilot(slot, Pilot::Untrack);
+    }
+
+    /// After each tick of the world, every robot's display as its kind's tick leaves
+    /// it (`docs/screens.md`, "The display's other modes (T-134)"): following a tracked
+    /// target's distance and bearing every tick; the scorpion's missile camera on a
+    /// launch; every 16 ticks (tick table entry 0) the zoom name's time down, and the
+    /// missile camera's break-up once its missile is gone, then the mode before it.
+    pub fn step_displays(&mut self, assets: &Assets) {
+        if !std::mem::take(&mut self.ticked) {
+            return;
+        }
+        let ranges = &assets.views.second_display.ranges;
+        let mut modes = Vec::new();
+        for (&slot, d) in &mut self.displays {
+            let Run::Running(sim) = &self.run else {
+                return;
+            };
+            let Some(e) = sim.world.get(EntityId(slot)) else {
+                continue;
+            };
+            let State::Robot(m) = &e.state else {
+                continue;
+            };
+            if m.target.is_some() && m.status & usg::status::TRACKING != 0 {
+                let zoom = ranges.iter().position(|&r| m.target_distance <= r);
+                d.zoom = zoom.unwrap_or(ranges.len() - 1) as u8;
+                d.pan = m.target_bearing.wrapping_sub(e.heading);
+            }
+            let flying = m.guns.missile.is_some();
+            if flying && !std::mem::replace(&mut d.flying, flying) {
+                d.before = d.mode;
+                modes.push((slot, MISSILE_DISPLAY));
+            }
+            d.flying = flying;
+            if m.tick & 0x1e != 0 {
+                continue;
+            }
+            d.label = d.label.saturating_sub(1);
+            if e.kind != usg::ObjectKind::Scorpion {
+                continue;
+            }
+            if d.mode == MISSILE_DISPLAY && !flying {
+                d.static_time = STATIC_TIME;
+            }
+            if d.static_time != 0 {
+                d.mode |= DAMAGED;
+                d.static_time -= 1;
+                if d.static_time == 0 {
+                    modes.push((slot, d.before & !DAMAGED));
+                }
+            }
+        }
+        for (slot, mode) in modes {
+            self.set_display_mode(slot, mode);
+        }
     }
 
     /// `1000:da0e`, `da37`: the map's zoom step in the map mode, the camera's in the
@@ -1327,7 +1471,8 @@ impl Mission {
             false if *step != 0 => step.wrapping_sub(1),
             _ => *step,
         };
-        self.dirty = true;
+        d.label = LABEL_TIME;
+        self.pilot(slot, Pilot::Untrack);
     }
 
     /// The robots the player's side destroyed and lost (its base's +0x2c and +0x2b).
@@ -1392,6 +1537,11 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::DISPLAY_ZOOM_IN | handler::DISPLAY_ZOOM_OUT) => {
                 self.zoom_display(slot, handler == handler::DISPLAY_ZOOM_IN, assets);
+                None
+            }
+            (Viewed::Robot(slot), h) if handler::DISPLAY_PANS.iter().any(|&(p, _)| p == h) => {
+                let pan = handler::DISPLAY_PANS.iter().find(|&&(p, _)| p == h)?.1;
+                self.pan_display(slot, pan, assets);
                 None
             }
             (Viewed::Robot(slot), h) if handler::PILOT.iter().any(|&(p, _)| p == h) => {
@@ -1679,8 +1829,8 @@ impl Mission {
     /// position (the original draws them continuously).
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
         self.pointer = Some(at);
-        // shortcut: redraws on every move, the original every 4 ticks; follow the
-        // original when the map gets its frame rate (T-134).
+        // shortcut: redraws on every move, the original every 4 ticks (its frames
+        // run over several passes; the map's too, T-134).
         self.dirty |= matches!(self.viewed, Viewed::Robot(_))
             || (self.viewed == Viewed::Base && self.mode == MAP_MODE);
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
@@ -2300,12 +2450,12 @@ impl Mission {
             if colour == SECOND_DISPLAY && second.is_some_and(|r| self.draw_second(fb, assets, r)) {
                 continue;
             }
-            // Without the situation room's tables, its main view (T-103); the
-            // consoles' other displays and third displays T-166, T-170 and T-173.
+            // Without the situation room's tables, its main view (T-103); without the
+            // 3D view's, a console's views (T-101); the third displays T-166, T-170
+            // and T-173.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-103",
-                (_, 255) => "T-101",
-                (_, SECOND_DISPLAY) => "T-134",
+                (_, 255 | SECOND_DISPLAY) => "T-101",
                 (View::Humanoid, _) => "T-166",
                 (View::Scorpion, _) => "T-170",
                 _ => "T-173",
@@ -2507,29 +2657,51 @@ impl Mission {
             .map_or(&[][..], |t| &t.features);
         let mut buffer = Framebuffer::new(Size::new(width, height));
         let probe = self.probe_at(left, top);
-        let (under, point) = match tables.view_modes.get(usize::from(mode)) {
-            Some(&CAMERA_VIEW) => {
+        let view_mode = tables.view_modes.get(usize::from(mode)).copied();
+        let (under, point) = match view_mode {
+            Some(CAMERA_VIEW | THERMAL_VIEW | MISSILE_VIEW) => {
                 let id = EntityId(slot);
-                let zoom_pan = (d.zoom, d.pan);
-                let Some(camera) = scene::second_camera(world, id, view, motion, zoom_pan) else {
-                    return false;
+                let camera = if view_mode == Some(MISSILE_VIEW) {
+                    let missile = match world.get(id).map(|e| &e.state) {
+                        Some(State::Robot(m)) => m.guns.missile,
+                        _ => None,
+                    };
+                    missile.and_then(|m| scene::missile_camera(world, m, view, motion))
+                } else {
+                    scene::second_camera(world, id, view, motion, (d.zoom, d.pan))
                 };
-                let sky = assets.skies.get(&self.file);
-                let models = &assets.models;
-                let under = scene::draw_from(
-                    &mut buffer,
-                    world,
-                    &camera,
-                    view,
-                    motion,
-                    terrain,
-                    models,
-                    sky,
-                    probe,
-                );
-                (under, None)
+                match camera {
+                    Some(camera) => {
+                        let sky = assets.skies.get(&self.file);
+                        let models = &assets.models;
+                        let under = scene::draw_from(
+                            &mut buffer,
+                            world,
+                            &camera,
+                            view,
+                            motion,
+                            terrain,
+                            models,
+                            sky,
+                            probe,
+                        );
+                        // Lists 8 and 0xa end with slot `0x5f0`'s remap.
+                        if view_mode != Some(CAMERA_VIEW) {
+                            remap(buffer.pixels_mut(), &assets.thermal);
+                        }
+                        (under, None)
+                    }
+                    // shortcut: until the next 16-tick step breaks the picture up, a
+                    // missile camera whose missile is gone shows the noise; the
+                    // original's camera reads slot 0xffff then (T-190).
+                    None if view_mode == Some(MISSILE_VIEW) => {
+                        self.draw_noise(&mut buffer);
+                        (None, None)
+                    }
+                    None => return false,
+                }
             }
-            Some(&MAP_VIEW) => {
+            Some(MAP_VIEW) => {
                 let (Some(room), Some(e)) = (&assets.sitroom, world.get(EntityId(slot))) else {
                     return false;
                 };
@@ -2570,13 +2742,33 @@ impl Mission {
                     .map(|at| mainview::pointer_to_world(&camera, rect, at));
                 (under, point)
             }
-            _ => return false,
+            // View mode 0x18, a damaged device: `1000:3c20`'s noise.
+            _ => {
+                self.draw_noise(&mut buffer);
+                (None, None)
+            }
         };
+        if let (Some((at, name)), Some(font)) = (
+            zoom_name(robot.kind, mode, d, tables),
+            assets.fonts.get(&LABEL_FONT),
+        ) {
+            let mut cursor = TextCursor::at(at.0.into(), at.1.into(), LABEL_COLOUR);
+            // shortcut: the names' bit-7 codes in the same colour (T-189 checks the
+            // text state).
+            cursor.high_colour = LABEL_COLOUR;
+            buffer.draw_text(font, &mut cursor, name, TextMode::Transparent);
+        }
         let [main, _] = self.probed.get();
         self.probed.set([main, under]);
         self.map_point.set(point);
         review::copy_through_colour(fb, &buffer, (left, top), SECOND_DISPLAY);
         true
+    }
+
+    /// A frame of list 0x18's noise from the display's own random word.
+    fn draw_noise(&self, buffer: &mut Framebuffer) {
+        let word = self.noise.borrow_mut().word();
+        noise(buffer.pixels_mut(), word, DISPLAY_CLEAR);
     }
 
     /// The situation room's main view (widget type 0x50).
@@ -3157,6 +3349,79 @@ pub fn frame(fb: &mut Framebuffer, area: Rect, colour: u8) {
     }
 }
 
+/// Slot `0x5f0` (`mgavideo.dvr` 0x28f6): every pixel through the thermal table.
+fn remap(pixels: &mut [u8], table: &[u8]) {
+    for p in pixels {
+        *p = table.get(usize::from(*p)).copied().unwrap_or(*p);
+    }
+}
+
+/// List 0x18's step (`1000:3c20`, `docs/screens.md`, "The display's other modes
+/// (T-134)"): a shift register started from the random `word` visits every pixel but
+/// the first, each getting `clear` plus a count down by one, modulo 16; then the first
+/// gets `clear`.
+fn noise(pixels: &mut [u8], word: u16, clear: u8) {
+    let n = pixels.len();
+    // The register never reaches 0, so one pixel has nothing to visit.
+    if n < 2 {
+        pixels.fill(clear);
+        return;
+    }
+    const MASKS: [(u16, u16); 6] = [
+        (0x8000, 0xb400),
+        (0x4000, 0x6000),
+        (0x2000, 0x3500),
+        (0x1000, 0x1b00),
+        (0x0800, 0x0ca0),
+        (0x0400, 0x0500),
+    ];
+    let size = n as u16;
+    let mask = MASKS
+        .iter()
+        .find(|&&(bit, _)| size & bit != 0)
+        .map_or(0x0240, |&(_, m)| m);
+    let mut register = (word % mask) | 1;
+    let mut colour = register as u8;
+    for _ in 0..n {
+        loop {
+            let out = register & 1 != 0;
+            register >>= 1;
+            if out {
+                register ^= mask;
+            }
+            if usize::from(register) < n {
+                break;
+            }
+        }
+        colour = (colour.wrapping_sub(1) & 0xf).wrapping_add(clear);
+        pixels[usize::from(register)] = colour;
+    }
+    pixels[0] = clear;
+}
+
+/// Where the open console's overlay puts the zoom's name, and the name, while it is
+/// shown (+0xf3): in the camera modes the camera's zoom, in the map mode the map's;
+/// the humanoid's and the scorpion's none in the missile camera and the damaged modes,
+/// the scout's the camera's in every mode but the map (`1000:9e79`, `9ec5`, `81d6`,
+/// `8222`, `b632`).
+fn zoom_name(
+    kind: RobotKind,
+    mode: u8,
+    d: Display,
+    t: &views::SecondDisplay,
+) -> Option<((u16, u16), &[u8])> {
+    if d.label == 0 || (kind != RobotKind::Scout && mode > MAP_DISPLAY) {
+        return None;
+    }
+    let map = mode == MAP_DISPLAY;
+    let (names, zoom) = match map {
+        true => (&t.map_zoom_names, d.map_zoom),
+        false => (&t.zoom_names, d.zoom),
+    };
+    let at = t.zoom_name_at[kind.index()][usize::from(map)];
+    Some((at, names.get(usize::from(zoom))?))
+}
+
 /// Slot `0x526` (`mgavideo.dvr` 0x0f34): the rectangle's pixels XORed with `value`.
 pub fn xor_fill(fb: &mut Framebuffer, area: Rect, value: u8) {
     for (x, y) in pixels(area) {
@@ -3299,6 +3564,8 @@ pub mod tests {
             scorpcon_sprites: Vec::new(),
             scoutcon: None,
             scoutcon_sprites: Vec::new(),
+            // Each colour turned to 255 less it: not the stock table.
+            thermal: (0..=255u8).rev().collect(),
             motion: motion::Motion {
                 sine: vec![0; motion::SINE_ENTRIES],
                 turn_step: [0x5b; 3],
@@ -4156,6 +4423,113 @@ pub mod tests {
             [Sound::Play(DISPLAY_SOUND), Sound::Play(NOISE_SOUND)]
         );
         assert_eq!(m.display_mode(robot, &assets), DAMAGED);
+    }
+
+    /// T-134: a tracked target's distance and bearing pick the zoom and pan every
+    /// tick until a pan key; the zoom's name counts down every 16 ticks; the scorpion's
+    /// missile camera comes on at a launch and breaks up for five steps once the
+    /// missile is gone, then gives the mode back.
+    #[test]
+    fn the_display_follows_its_target_and_the_scorpion_s_missile() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        let other = m
+            .world()
+            .iter()
+            .map(|(id, _)| id)
+            .find(|id| id.0 != robot)
+            .unwrap();
+        m.view_robot(robot).unwrap();
+        let edit = |m: &mut Mission, f: &dyn Fn(&mut xeno_sim::Entity)| {
+            f(m.world_mut().get_mut(EntityId(robot)).unwrap());
+        };
+        fn movement(e: &mut xeno_sim::Entity) -> &mut xeno_sim::Movement {
+            match &mut e.state {
+                State::Robot(r) => r,
+                _ => unreachable!(),
+            }
+        }
+        let step = |m: &mut Mission, tick: u8| {
+            edit(m, &|e| movement(e).tick = tick);
+            m.ticked = true;
+            m.step_displays(&assets);
+        };
+        edit(&mut m, &|e| {
+            let heading = e.heading;
+            let r = movement(e);
+            (r.target, r.target_distance) = (Some(other), 15);
+            r.target_bearing = heading.wrapping_add(0x1234);
+            r.status |= usg::status::TRACKING;
+        });
+        step(&mut m, 2);
+        assert_eq!((m.display(robot).zoom, m.display(robot).pan), (1, 0x1234));
+        // X: the pan plus the zoom's step, and no more tracking.
+        m.pan_display(robot, Some(true), &assets);
+        step(&mut m, 2);
+        assert_eq!(m.display(robot).pan, 0x1234 + 80);
+        m.pan_display(robot, None, &assets);
+        assert_eq!(m.display(robot).pan, 0);
+        // The zoom's name: six steps of 16 ticks.
+        m.set_display_mode(robot, 0);
+        step(&mut m, 0);
+        step(&mut m, 2);
+        assert_eq!(m.display(robot).label, LABEL_TIME - 1);
+        // The scorpion's missile.
+        m.take_sounds();
+        edit(&mut m, &|e| {
+            e.kind = usg::ObjectKind::Scorpion;
+            movement(e).guns.missile = Some(other);
+        });
+        step(&mut m, 2);
+        let d = m.display(robot);
+        assert_eq!((d.mode, d.before), (MISSILE_DISPLAY, 0));
+        assert_eq!(m.take_sounds(), [Sound::Play(DISPLAY_SOUND)]);
+        edit(&mut m, &|e| movement(e).guns.missile = None);
+        for _ in 0..STATIC_TIME - 1 {
+            step(&mut m, 0);
+            assert_eq!(m.display(robot).mode, LOST_MISSILE_CAMERA);
+        }
+        step(&mut m, 0);
+        assert_eq!(m.display(robot).mode, 0);
+        assert_eq!(m.take_sounds(), [Sound::Play(DISPLAY_SOUND)]);
+    }
+
+    /// List 0x18's noise visits every pixel once, in colours 0x20 to 0x2f; the zoom's
+    /// name goes by kind and mode.
+    #[test]
+    fn a_damaged_display_is_noise_and_the_zoom_s_name_goes_by_kind() {
+        for n in [37, 0x500, 100 * 60] {
+            let mut pixels = vec![0; n];
+            noise(&mut pixels, 0x1357, DISPLAY_CLEAR);
+            assert!(pixels.iter().all(|&p| (0x20..=0x2f).contains(&p)), "{n}");
+            assert_eq!(pixels[0], DISPLAY_CLEAR);
+        }
+        let mut pixels = [7, 0, 255];
+        remap(&mut pixels, &(0..=255u8).rev().collect::<Vec<_>>());
+        assert_eq!(pixels, [248, 255, 0]);
+        let t = &test_assets().views.second_display;
+        let d = Display {
+            zoom: 1,
+            map_zoom: 2,
+            label: 1,
+            ..Display::default()
+        };
+        let name = |kind, mode, d| zoom_name(kind, mode, d, t);
+        assert_eq!(
+            name(RobotKind::Humanoid, 0, d),
+            Some(((0x40, 0x20), &b"bx"[..]))
+        );
+        assert_eq!(
+            name(RobotKind::Scorpion, 2, d),
+            Some(((0x45, 0x25), &b"hx"[..]))
+        );
+        assert_eq!(name(RobotKind::Humanoid, 4, d), None);
+        assert_eq!(
+            name(RobotKind::Scout, 6, d),
+            Some(((0x49, 0x29), &b"bx"[..]))
+        );
+        assert_eq!(name(RobotKind::Scout, 1, Display { label: 0, ..d }), None);
     }
 
     #[test]
@@ -5129,7 +5503,8 @@ pub mod tests {
     }
 
     /// Every stock scenario's first robot of each kind: its console's second display
-    /// fills the colour-254 region in the camera and map modes.
+    /// fills the colour-254 region in the camera, thermal and map modes and with a
+    /// damaged device; thermal is in the remap's colours and the noise in 0x20..0x2f.
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_the_second_display_fills_its_region() {
@@ -5156,7 +5531,7 @@ pub mod tests {
                 let view = m.view_robot(robot).unwrap();
                 let file = crate::screens::Screen::Mission(view).file().unwrap();
                 let picture = pictures.iter().find(|(n, _)| *n == file).unwrap();
-                for mode in [0, MAP_DISPLAY] {
+                for mode in [0, 1, MAP_DISPLAY, LOST_MISSILE_CAMERA] {
                     m.displays.entry(robot).or_default().mode = mode;
                     let mut fb = Framebuffer::new(Size::MODE_13H);
                     fb.pixels_mut().copy_from_slice(&picture.1.pixels);
@@ -5180,6 +5555,20 @@ pub mod tests {
                     let clear = assets.views.second_display.map_colours[kind.index()][0];
                     if mode == MAP_DISPLAY {
                         assert!(count(clear) > before / 2, "{name} {kind:?}");
+                    }
+                    let within = |colours: &[u8]| {
+                        fb.pixels()
+                            .iter()
+                            .zip(&region)
+                            .filter(|&(p, &r)| r && !colours.contains(p))
+                            .count()
+                    };
+                    // Allow for the zoom's name, which mode 7 does not draw.
+                    let ramp: Vec<u8> = (DISPLAY_CLEAR..DISPLAY_CLEAR + 16).collect();
+                    match mode {
+                        1 => assert!(within(&assets.thermal) < before / 20, "{name}"),
+                        LOST_MISSILE_CAMERA => assert_eq!(within(&ramp), 0, "{name}"),
+                        _ => {}
                     }
                 }
             }
