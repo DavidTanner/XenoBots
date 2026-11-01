@@ -753,11 +753,9 @@ the scout's flag `0x6e16`.
 starts as its file has it and changes with V, T, M, =, -, keypad + and -; the camera
 mode draws the 3D view from `scene::second_camera`, the map mode the situation room's
 map (`mainview::draw_map` without its zoom label) in the kind's colours from
-`mainview::console_map`; the thermal and missile camera modes and a damaged device keep
-a "T-134" placeholder. Event 10 plays on a mode key; event 28 and its silence follow the
-noise check after each retrace and on leaving the console. Not ported (T-134): the
-overlays, the colour records, the remap, the static, the frame-skipping of the map, the
-buttons and the zoom's name.
+`mainview::console_map`; the other modes are T-134's (below). Event 10 plays on a mode
+key; event 28 and its silence follow the noise check after each retrace and on leaving
+the console.
 
 **In the port (T-133)**: `xeno_render`'s `draw_view` runs the probe at the pointer
 (kept by `Mission::hover`, which also has a console drawn again so the probe follows
@@ -886,6 +884,19 @@ device bit 0 tested instead) has no caller.
 and pan keys. The display's state (+0xef to +0xf4, +0x117) stays in `xeno-app`'s
 `Display`, as T-104 left it, and is saved through the `.usg` robot fields; the
 tracking reads the sim's target, distance and bearing but writes only the display.
+`Mission::step_displays`, after each tick of the world, follows a tracked target, sees
+the scorpion's launch (the sim's `Guns::missile`) and runs the 16-tick steps (the zoom
+name's time, the missile camera's break-up and return). `draw_second` draws thermal
+(the camera, then `remap` through `mgavideo::thermal`), the missile camera
+(`scene::missile_camera`, remapped), the noise (`noise`) for view mode 0x18, and the
+zoom's name (`zoom_name`, font 2 in 0x0f); X, Y and Z pan (`Mission::pan_display`);
+`Mission::display_record` gives `xeno-app`'s screens the mode's colour record to start
+in place of the last, turned off as the console is left. Shortcuts: the noise draws
+from a random word of its own (seed 0), not the sim's, so drawing never changes a
+replay; a missile camera whose missile is gone draws the noise until the next 16-tick
+step (the original reads slot 0xffff's object then); the names' bit-7 codes are drawn
+in the same colour. Not ported: the buttons (T-188), the target's name and the missile
+camera's string and sight (T-189); none of it is checked in DOSBox (T-190).
 
 ### The humanoid console's instruments (T-130)
 

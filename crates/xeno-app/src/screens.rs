@@ -459,7 +459,8 @@ impl Screens {
     fn viewed(&mut self, view: View) {
         self.mission.restart_tint();
         if let Mission(old) = self.screen {
-            for &record in mission::view_records(old) {
+            let display = self.mission.take_display_record();
+            for &record in mission::view_records(old).iter().chain(&display) {
                 self.dac.anims_mut().set_active(record, false);
             }
         }
@@ -762,6 +763,7 @@ impl Screens {
             self.mission_request(request);
         }
         if matches!(self.screen, Mission(_)) && self.next.is_none() {
+            self.mission.step_displays(&self.mission_assets);
             self.mission.check_noise(&self.mission_assets);
         }
         // The view's own records, then the time-of-day tint, once no fade is pending or
@@ -784,6 +786,12 @@ impl Screens {
                 }
             }
             if let Some(record) = self.mission.status_record(&self.mission_assets) {
+                self.dac.start_anim(record, 0);
+            }
+            if let Some((old, record)) = self.mission.display_record(&self.mission_assets) {
+                if let Some(old) = old {
+                    self.dac.anims_mut().set_active(old, false);
+                }
                 self.dac.start_anim(record, 0);
             }
         }
