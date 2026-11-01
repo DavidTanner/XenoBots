@@ -5357,6 +5357,57 @@ pub mod tests {
         }
     }
 
+    /// With the user's focal factor, the grid's dots at zooms 0 to 5 are each within a
+    /// pixel of a lattice point's (x, y even, x = y mod 4), and there are some.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_grid_dots_the_lattice() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_formats::usg::Base;
+        use xeno_sim::{Fixed, Position};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let view = assets.view3d.as_ref().unwrap();
+        for zoom in 0..=5 {
+            let map = MapState {
+                overlays: Base::MAP_FREE,
+                zoom,
+                centre: Position {
+                    x: Fixed(0x82_4000),
+                    y: Fixed(0x7f_c000),
+                },
+                ..MapState::default()
+            };
+            let camera = mainview::camera(Position::default(), None, &map, view, &assets.motion);
+            let mut fb = Framebuffer::new(Size::new(256, 128));
+            fb.clear(mainview::MAP_BACKGROUND);
+            mainview::draw_grid(&mut fb, &camera);
+            let mut points = Vec::new();
+            for x in (0..0x100).step_by(2) {
+                for y in (0..0x100).step_by(2).filter(|y| (x - y) % 4 == 0) {
+                    points.push(mainview::pixel(&camera, &fb, x << 16, y << 16));
+                }
+            }
+            let dots: Vec<_> = (0..256)
+                .flat_map(|c| (0..128).map(move |r| (c, r)))
+                .filter(|&(c, r)| fb.get(c, r) == Some(0))
+                .collect();
+            assert!(!dots.is_empty(), "zoom {zoom}: {} dots", dots.len());
+            for (c, r) in dots {
+                let near = |&(pc, pr): &(i32, i32)| {
+                    (pc - c as i32).abs() <= 1 && (pr - r as i32).abs() <= 1
+                };
+                assert!(points.iter().any(near), "zoom {zoom}: ({c}, {r})");
+            }
+        }
+    }
+
     /// Modes M, R and C fill the whole main view in every stock scenario: the map's
     /// background, the robot's view, the log's clear colour.
     #[test]
