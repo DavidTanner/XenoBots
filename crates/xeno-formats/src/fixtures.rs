@@ -1087,7 +1087,17 @@ pub fn synthetic_mission_usg() -> Vec<u8> {
         let mut data = synthetic_bytes(usize::from(size) - 12, u64::from(slot));
         let at = |offset: usize| offset - 12;
         data[at(0x10)..at(0x12)].copy_from_slice(&(slot << 12).to_le_bytes());
-        data[at(0x16)] = side | if kind <= 2 { 0x20 } else { 0 };
+        // The flags a made robot (`1000:f812`), base (`1000:6209`) or relay (`1000:cc2a`)
+        // gets; the status bytes of the base and relay clear.
+        data[at(0x16)] = side
+            | match kind {
+                0..=2 => 0x66,
+                3 => 0x46,
+                _ => 0x02,
+            };
+        if kind > 2 {
+            data[at(0x17)] = 0;
+        }
         match kind {
             0..=2 => {
                 data[at(0x23)] = mode;

@@ -15,8 +15,8 @@ expression: "&objects[..3]"
         heading: 0,
         model_height: 57888,
         radius: 26100,
-        flags: 0,
-        status: 161,
+        flags: 70,
+        status: 0,
         body: Base(
             Base {
                 look: 106,
@@ -192,7 +192,7 @@ expression: "&objects[..3]"
         heading: 8192,
         model_height: 38744,
         radius: 7746,
-        flags: 32,
+        flags: 102,
         status: 11,
         body: Robot(
             Robot {
@@ -325,8 +325,8 @@ expression: "&objects[..3]"
         heading: 12288,
         model_height: 7435,
         radius: 43401,
-        flags: 0,
-        status: 123,
+        flags: 2,
+        status: 0,
         body: Relay(
             Relay {
                 frames: [

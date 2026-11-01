@@ -244,8 +244,10 @@ impl Sim {
             Pilot::Destination(point) => script::set_destination(world, id, point, tables),
             Pilot::GoalObject(object) => script::set_goal_object(world, id, object, tables),
             Pilot::Untrack => {
-                if let Some(m) = motion::movement(world, id) {
-                    m.status &= !xeno_formats::usg::status::TRACKING;
+                if let Some(e) = world.get_mut(id)
+                    && matches!(e.state, State::Robot(_))
+                {
+                    e.status &= !xeno_formats::usg::status::TRACKING;
                 }
             }
             Pilot::Charge => {
@@ -615,11 +617,9 @@ mod tests {
         sim.pilot(id, Pilot::Stance(0x60));
         assert_eq!(robot(&sim).0.stance_target, 0x60);
         // A display key stops the tracking and nothing else.
-        if let Some(m) = motion::movement(&mut sim.world, id) {
-            m.status |= xeno_formats::usg::status::TRACKING | 1;
-        }
+        sim.world.get_mut(id).unwrap().status |= xeno_formats::usg::status::TRACKING | 1;
         assert!(sim.pilot(id, Pilot::Untrack).is_empty());
-        assert_eq!(robot(&sim).0.status & 0x41, 1);
+        assert_eq!(sim.world.get(id).unwrap().status & 0x41, 1);
         // The keys are part of the state, and nothing acts on a slot without a robot.
         let before = sim.state_hash();
         assert!(sim.pilot(EntityId(1), Pilot::Faster).is_empty());

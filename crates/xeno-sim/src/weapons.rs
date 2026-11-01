@@ -6,7 +6,7 @@
 //! [`crate::shot`].
 
 use xeno_formats::motion::Walk;
-use xeno_formats::usg::{ObjectKind, status};
+use xeno_formats::usg::{ObjectKind, Side, status};
 use xeno_formats::weapons::Gun;
 
 use crate::motion::{Event, Tables};
@@ -35,6 +35,17 @@ const BROKEN: u8 = 6;
 /// The guns by kind: [`xeno_formats::weapons::Weapons::guns`]' pairs.
 fn gun(tables: &Tables, k: RobotKind, w: usize) -> Gun {
     tables.weapons.guns[2 * k.index() + w]
+}
+
+/// Sets or clears `bits` of object `id`'s +0x17.
+fn set_status(world: &mut World, id: EntityId, bits: u8, on: bool) {
+    if let Some(e) = world.get_mut(id) {
+        e.status = if on {
+            e.status | bits
+        } else {
+            e.status & !bits
+        };
+    }
 }
 
 fn robot_parts(world: &mut World, id: EntityId) -> Option<(&mut Movement, &mut Components)> {
@@ -100,7 +111,7 @@ pub fn ecm(world: &mut World, id: EntityId, tables: &Tables) {
     } else {
         m.guns.ecm -= 1;
         m.guns.ecm_time = d.ecm_time;
-        m.status |= status::ECM;
+        set_status(world, id, status::ECM, true);
         d.ecm_on
     };
     crate::log::say(world, id, text, tables);
@@ -123,18 +134,21 @@ pub fn cloak(world: &mut World, id: EntityId, tables: &Tables) {
     energy(m, c, d.cloak_energy);
     m.guns.cloaks -= 1;
     m.guns.cloak_time = d.cloak_time;
-    m.status |= status::CLOAKED;
+    set_status(world, id, status::CLOAKED, true);
     if let (Some(slot), Some(e)) = (crate::damage::alloc_small(world), world.get(id)) {
         // `1000:dfff`: the robot's x, y and z, the first heading and radius.
         let sparkle = Entity {
             kind: d.sparkle.into(),
-            side: e.side,
+            side: Side::Human,
             position: e.position,
             z: e.z,
             model_height: 0,
             heading: d.heading,
             radius: d.radius,
             damage: Damage::None,
+            // `1000:f4b1` clears the flags and `1000:dfff` sets none.
+            flags: 0,
+            status: 0,
             state: State::Sparkle {
                 frame: 0,
                 ticks: 0,
@@ -244,24 +258,29 @@ pub fn step(
     let gone = robot_parts(world, id)
         .and_then(|(m, _)| m.guns.missile)
         .is_some_and(|s| !matches!(world.get(s).map(|e| e.state), Some(State::Shot(_))));
-    let Some((m, c)) = robot_parts(world, id) else {
+    let Some((m, _)) = robot_parts(world, id) else {
         return;
     };
     // Each step first counts the ECM down (and the cloak, but for the scorpion's),
     // clearing its status bit at 0.
     let g = &mut m.guns;
+    let mut ended = 0;
     if g.ecm_time != 0 {
         g.ecm_time -= 1;
         if g.ecm_time == 0 {
-            m.status &= !status::ECM;
+            ended |= status::ECM;
         }
     }
     if kind != ObjectKind::Scorpion && g.cloak_time != 0 {
         g.cloak_time -= 1;
         if g.cloak_time == 0 {
-            m.status &= !status::CLOAKED;
+            ended |= status::CLOAKED;
         }
     }
+    set_status(world, id, ended, false);
+    let Some((m, c)) = robot_parts(world, id) else {
+        return;
+    };
     if kind == ObjectKind::Scorpion {
         if m.guns.burst != 0 {
             m.guns.burst -= 1;

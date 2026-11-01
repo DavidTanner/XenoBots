@@ -2,7 +2,7 @@ use super::*;
 use crate::motion::synthetic_tables;
 use crate::motion::tests::{at, base, robot};
 use crate::world::{Damage, Entity, Fixed, Position};
-use xeno_formats::usg::ObjectKind;
+use xeno_formats::usg::{ObjectKind, flag};
 
 const RELAY: EntityId = EntityId(2);
 const SCORPION: EntityId = EntityId(1);
@@ -23,11 +23,18 @@ fn laid(tables: &Tables) -> World {
             heading: 0,
             radius: 0x500,
             damage: Damage::Taken(0),
+            flags: flag::TARGETABLE,
+            status: 0,
             state: State::Relay(state),
         },
     );
     world.insert(SCORPION, robot(ObjectKind::Scorpion, Side::Alien, 128, 128));
     world
+}
+
+/// Object `slot`'s +0x16 bits a relay's tick moves.
+fn bits(world: &World, slot: u16) -> u8 {
+    world.get(EntityId(slot)).unwrap().flags & FLAGS
 }
 
 fn relay(world: &World) -> (Relay, u16) {
@@ -64,7 +71,7 @@ fn a_laid_relay_rises_once_the_scorpion_moves_on_and_folds_when_it_comes_back() 
     let mut seen = Vec::new();
     for _ in 0..5 {
         let (r, height) = run(&mut world, &tables);
-        seen.push((r.state, r.stage, r.frames[1], height, r.flags));
+        seen.push((r.state, r.stage, r.frames[1], height, bits(&world, RELAY.0)));
     }
     assert_eq!(
         seen,
@@ -94,7 +101,7 @@ fn a_laid_relay_rises_once_the_scorpion_moves_on_and_folds_when_it_comes_back() 
         ]
     );
     // Folded, it is out of the field.
-    assert_eq!(relay(&world).0.flags, 0);
+    assert_eq!(bits(&world, RELAY.0), 0);
 }
 
 #[test]
@@ -130,7 +137,11 @@ fn an_up_relay_is_linked_while_powered_and_coloured_by_its_side() {
             (r.state, r.stage, r.power, r.clock) = (UP, 3, 4, 0x0f);
         }
         let (r, _) = run(&mut world, &tables);
-        assert_eq!((r.flags, r.frames[5]), (FLAGS, colour), "{side:?}");
+        assert_eq!(
+            (bits(&world, RELAY.0), r.frames[5]),
+            (FLAGS, colour),
+            "{side:?}"
+        );
     }
 }
 
@@ -145,6 +156,8 @@ fn up(x: i16, y: i16) -> Entity {
         heading: 0,
         radius: 0x500,
         damage: Damage::Taken(0),
+        flags: flag::TARGETABLE | flag::IN_FIELD,
+        status: 0,
         state: State::Relay(Relay {
             state: UP,
             stage: 3,
@@ -203,13 +216,13 @@ fn power_spreads_from_a_base_a_hop_a_link_run_and_the_side_follows_it() {
         (a.power, a.power_side, a.links, side),
         (0x1f, 1, [2, 2, 2, 1], Side::Human)
     );
-    assert_eq!(a.flags, FLAGS);
+    assert_eq!(bits(&world, 2), FLAGS);
     let (b, _) = relay_at(&world, 3);
     assert_eq!((b.power, b.power_side, b.links), (0x1e, 1, [2, 2, 2, 1]));
     // C has none within reach: unpowered, no side, no links.
     let (c, _) = relay_at(&world, 4);
     assert_eq!(
-        (c.power, c.power_side, c.links, c.flags),
+        (c.power, c.power_side, c.links, bits(&world, 4)),
         (0, 0, [0; 4], flag::IN_FIELD)
     );
     // D takes the alien base's side, but the power of its own (human) side's base, and
@@ -219,6 +232,9 @@ fn power_spreads_from_a_base_a_hop_a_link_run_and_the_side_follows_it() {
         (d.power, d.power_side, side, d.frames[5]),
         (0x1f, 2, Side::Alien, 2)
     );
+    // `1000:ce48`: its side bit follows.
+    let alien = world.get(EntityId(5)).unwrap().flags & flag::ALIEN;
+    assert_eq!(alien, flag::ALIEN);
     // The links run once every 256 ticks: the next 255 change no power.
     world.get_mut(EntityId(0)).unwrap().position = at(0, 0);
     for _ in 0..255 {
@@ -229,7 +245,7 @@ fn power_spreads_from_a_base_a_hop_a_link_run_and_the_side_follows_it() {
     tick_all(&mut world, &tables);
     let (a, _) = relay_at(&world, 2);
     assert_eq!(
-        (a.power, a.power_side, a.links, a.flags),
+        (a.power, a.power_side, a.links, bits(&world, 2)),
         (0, 0, [0; 4], flag::IN_FIELD)
     );
 }
@@ -253,9 +269,7 @@ fn a_robot_s_signal_falls_with_the_last_linked_relay_s_distance() {
     let mut world = World::default();
     let linked = |x: i16, y: i16| {
         let mut r = up(x, y);
-        if let State::Relay(s) = &mut r.state {
-            s.flags = FLAGS;
-        }
+        r.flags |= FLAGS;
         r
     };
     world.insert(
@@ -298,9 +312,7 @@ fn the_signal_step_runs_the_battery_and_the_drive() {
         robot(ObjectKind::Humanoid, Side::Human, 100, 100),
     );
     let mut linked = up(101, 100);
-    if let State::Relay(s) = &mut linked.state {
-        s.flags = FLAGS;
-    }
+    linked.flags |= FLAGS;
     // The humanoid's signal entry is 3: its tick counter 6.
     let set = |world: &mut World, energy: u8| {
         if let Some(State::Robot(m)) = world.get_mut(EntityId(1)).map(|e| &mut e.state) {
@@ -361,12 +373,12 @@ fn a_file_s_relay_loads_with_its_state() {
         links: [link(1), link(2), link(0), link(2)],
         damage: 3,
     };
-    let s = Relay::of(&r, 0x5a);
+    let s = Relay::of(&r);
     assert_eq!(
         (s.frames, s.clock, s.state, s.stage, s.power, s.power_side),
         (r.frames, 0x42, UP, 2, 5, 2)
     );
-    assert_eq!((s.links, s.flags), ([1, 2, 0, 2], FLAGS));
+    assert_eq!(s.links, [1, 2, 0, 2]);
 }
 
 /// scen00a with its alien scorpion (on DENSE NET) the only robot, and the scorpion.
@@ -447,7 +459,7 @@ fn real_assets_a_relay_a_stock_scorpion_lays_rises_once_it_moves_on() {
         if stages.last() != Some(&r.stage) {
             stages.push(r.stage);
         }
-        if r.state == UP && r.flags & flag::IN_FIELD != 0 {
+        if r.state == UP && e.flags & flag::IN_FIELD != 0 {
             assert_eq!((r.stage, e.model_height, r.frames[1]), (3, heights[3], 0));
             up_at = Some(t);
             break;
@@ -466,7 +478,7 @@ fn real_assets_a_relay_a_stock_scorpion_lays_rises_once_it_moves_on() {
         panic!("{:?}", e.state)
     };
     assert!(r.power > 0 && r.links.contains(&1), "{r:?}");
-    assert_eq!(r.flags, FLAGS);
+    assert_eq!(e.flags & FLAGS, FLAGS);
     assert_eq!(e.side, sim.world.get(scorpion).unwrap().side);
     let mut world = sim.world.clone();
     let tables = sim.tables().unwrap();

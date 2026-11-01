@@ -4,6 +4,7 @@ use crate::motion::{movement, synthetic_tables};
 use crate::world::{Fixed, Position};
 use crate::{Pilot, Random};
 use xeno_formats::fixtures::synthetic_mission_usg;
+use xeno_formats::usg::flag;
 
 /// Writes `sim`'s world into a save's bytes and loads them back, as the log-in does.
 fn round_trip(sim: &Sim, loaded: &Scenario, table: u16) -> (Vec<u8>, Scenario, Sim) {
@@ -95,7 +96,9 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
     sim.recall(EntityId(7));
     // The scout is in its base, out of the field; the humanoid is out.
     for (slot, in_base) in [(7, true), (2, false)] {
-        if let Damage::Robot(c) = &mut sim.world.get_mut(EntityId(slot)).unwrap().damage {
+        let e = sim.world.get_mut(EntityId(slot)).unwrap();
+        e.flags = e.flags & !flag::IN_FIELD | (u8::from(!in_base) * flag::IN_FIELD);
+        if let Damage::Robot(c) = &mut e.damage {
             c.equipment =
                 c.equipment & !usg::Robot::IN_BASE | (u8::from(in_base) * usg::Robot::IN_BASE);
         }
@@ -127,13 +130,14 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         .find(|(_, e)| matches!(e.state, State::Drop(_)))
         .map(|(id, _)| id)
         .unwrap();
-    sim.world.get_mut(buoy).unwrap().state = State::Drop(crate::drops::Drop {
+    let e = sim.world.get_mut(buoy).unwrap();
+    e.state = State::Drop(crate::drops::Drop {
         battery: 1,
         ticks: 0x41,
         level: 8,
         charges: 0,
-        alarm: true,
     });
+    e.flags |= flag::RELAY_LINKED;
     // Heights the file did not hold.
     let scout = sim.world.get_mut(EntityId(7)).unwrap();
     (scout.z, scout.model_height) = (Fixed(0x3_0042), 0x0cb0);
@@ -149,17 +153,16 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         let kind = [TAIL, SHELL, HOMING, MISSILE][n];
         let e = Entity {
             kind: kind.into(),
-            side: if n % 2 == 0 {
-                usg::Side::Alien
-            } else {
-                usg::Side::Human
-            },
+            side: usg::Side::Human,
             position: at,
             z: Fixed(0x1_2345 + i32::from(n as u16)),
             model_height: 0,
             heading: 0x1234 + n as u16,
             radius: 0,
             damage: Damage::None,
+            // Shots have no side bit; a status byte kept as any other.
+            flags: 0,
+            status: n as u8,
             state: State::Shot(shot(flight, n as u16)),
         };
         sim.world.insert(EntityId(20 + n as u16), e);

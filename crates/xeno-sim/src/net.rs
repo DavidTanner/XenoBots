@@ -4,7 +4,7 @@
 //! (`xeno_formats::net`, in `Tables::net`).
 
 use xeno_formats::net::Line;
-use xeno_formats::usg::{ObjectKind, Side};
+use xeno_formats::usg::{self, ObjectKind, Side};
 
 use crate::motion::{Event, Tables};
 use crate::random::Random;
@@ -192,7 +192,7 @@ pub fn deploy(
 }
 
 /// `1000:cc69`: a relay in the lowest free slot at `at`, height `z`, set up
-/// (`1000:cc2a`) folded, unpowered, on no side (+0x16 cleared), its clock a random
+/// (`1000:cc2a`) folded, unpowered, on no side (+0x16 only `TARGETABLE`), its clock a random
 /// byte, with its look. `None` with no room.
 pub(crate) fn make(
     world: &mut World,
@@ -212,6 +212,9 @@ pub(crate) fn make(
         heading: 0,
         radius: tables.net.radius,
         damage: Damage::Taken(0),
+        // `1000:cc2a`: `TARGETABLE`, on no side.
+        flags: usg::flag::TARGETABLE,
+        status: 0,
         state: State::Relay(state),
     };
     world.insert(slot, relay);
@@ -275,6 +278,8 @@ mod tests {
             heading: 0,
             radius: 0x500,
             damage: Damage::Taken(0),
+            flags: 0,
+            status: 0,
             state: State::None,
         };
         world.insert(EntityId(9), relay.clone());

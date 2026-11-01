@@ -6,7 +6,6 @@ use xeno_formats::usg;
 
 use crate::damage::{alloc_small, spawn_explosion};
 use crate::motion::{Event, Tables};
-use crate::orders::RobotKind;
 use crate::random::Random;
 use crate::world::{Damage, Entity, EntityId, Fixed, Position, State, World};
 
@@ -16,7 +15,8 @@ const ECM_BUOY: usize = 1;
 const ALARM_BUOY: usize = 2;
 const DECOY: usize = 3;
 
-/// A dropped object's bytes +0x18 to +0x1b, and an alarm buoy's +0x16 bit 4.
+/// A dropped object's bytes +0x18 to +0x1b (an alarm buoy's alarm is its +0x16
+/// `RELAY_LINKED`, on the entity).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Drop {
     /// +0x18 bit 0: the dropper was on its battery. Nothing reads it.
@@ -29,8 +29,6 @@ pub struct Drop {
     pub level: u8,
     /// +0x1b: an ECM buoy's alerts left.
     pub charges: u8,
-    /// +0x16 bit 4: an alarm buoy shows its alarm (on the map).
-    pub alarm: bool,
 }
 
 /// Key `key + 1` (`1000:d5e7`, `d609`, `d62b`, `d64d`): with one left of its count, an
@@ -56,7 +54,7 @@ pub fn drop(world: &mut World, id: EntityId, key: u8, tables: &Tables, random: &
         return;
     };
     // `1000:e801`: a random word's quarter (signed) off x, then another off y; z
-    // and the side the robot's.
+    // and the side the robot's, and no other flag.
     let mut offset = |at: Fixed| Fixed(at.0.wrapping_add(i32::from(random.word() as i16 >> 2)));
     let x = offset(e.position.x);
     let y = offset(e.position.y);
@@ -70,6 +68,8 @@ pub fn drop(world: &mut World, id: EntityId, key: u8, tables: &Tables, random: &
         heading: 0,
         radius: 0,
         damage: Damage::None,
+        flags: e.flags & usg::flag::ALIEN,
+        status: 0,
         state: State::Drop(Drop {
             battery: c.equipment & usg::Robot::ON_BATTERY,
             ticks: if k == DECOY { model(e.kind) } else { 0 },
@@ -88,7 +88,7 @@ pub fn drop(world: &mut World, id: EntityId, key: u8, tables: &Tables, random: &
 /// Cloaked, gone or not, in its base or not: only the unit flag and the side count.
 fn enemy_near(world: &World, at: Position, side: usg::Side, range: u16) -> bool {
     world.iter().any(|(_, e)| {
-        RobotKind::of(e.kind).is_some()
+        e.flags & usg::flag::UNIT != 0
             && e.side != side
             && crate::sense::within(at, e.position, range)
     })
@@ -109,7 +109,7 @@ pub fn tick(
     let Some(e) = world.get_mut(id) else {
         return false;
     };
-    let State::Drop(s) = &mut e.state else {
+    let (State::Drop(s), flags) = (&mut e.state, &mut e.flags) else {
         return false;
     };
     let Some(k) = d
@@ -130,7 +130,11 @@ pub fn tick(
     if k != MINE {
         s.level >>= 1;
         if k == ALARM_BUOY {
-            s.alarm = s.level != 0;
+            // `1000:e615`: the alarm shows on the map while the level is not 0.
+            *flags &= !usg::flag::RELAY_LINKED;
+            if s.level != 0 {
+                *flags |= usg::flag::RELAY_LINKED;
+            }
         }
     }
     let level = s.level;

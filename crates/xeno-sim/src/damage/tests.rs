@@ -301,13 +301,7 @@ fn a_base_is_destroyed_at_300_and_a_relay_removed_at_20() {
     assert!(hit_for(&mut world, 0, 9, &mut random).is_empty());
     let b = world.get(EntityId(0)).unwrap();
     assert_eq!(b.damage, Damage::Taken(300));
-    assert!(matches!(
-        b.state,
-        State::Base {
-            destroyed: true,
-            ..
-        }
-    ));
+    assert_ne!(b.flags & xeno_formats::usg::flag::GONE, 0);
     // A relay at 19 stays; one more removes it and leaves an explosion.
     assert!(hit_for(&mut world, 3, 19, &mut random).is_empty());
     assert_eq!(

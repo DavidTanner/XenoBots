@@ -247,8 +247,10 @@ fn a_blast_halves_its_points_for_each_step_out_from_half_its_radius() {
         r.position.x = Fixed(x);
         world.insert(EntityId(slot), r);
     }
-    // Slot 5 is in its base, out of the field (T-115).
-    if let Some(Damage::Robot(c)) = world.get_mut(EntityId(5)).map(|e| &mut e.damage) {
+    // Slot 5 is in its base, out of the field (T-115, T-147).
+    let e = world.get_mut(EntityId(5)).unwrap();
+    e.flags &= !xeno_formats::usg::flag::IN_FIELD;
+    if let Damage::Robot(c) = &mut e.damage {
         c.equipment = xeno_formats::usg::Robot::IN_BASE;
     }
     let mut events = Vec::new();

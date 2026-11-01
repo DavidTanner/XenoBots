@@ -1505,7 +1505,7 @@ impl Mission {
             let State::Robot(m) = &e.state else {
                 continue;
             };
-            if m.target.is_some() && m.status & usg::status::TRACKING != 0 {
+            if m.target.is_some() && e.status & usg::status::TRACKING != 0 {
                 let zoom = ranges.iter().position(|&r| m.target_distance <= r);
                 d.zoom = zoom.unwrap_or(ranges.len() - 1) as u8;
                 d.pan = m.target_bearing.wrapping_sub(e.heading);
@@ -4376,9 +4376,10 @@ pub mod tests {
             return;
         };
         let base = sim.world.base(side).unwrap();
-        while let Some(State::Base {
-            destroyed: false, ..
-        }) = sim.world.get(base).map(|e| e.state)
+        while sim
+            .world
+            .get(base)
+            .is_some_and(|e| e.flags & usg::flag::GONE == 0)
         {
             sim.hit(base, u8::MAX);
         }
@@ -4690,7 +4691,7 @@ pub mod tests {
             let r = movement(e);
             (r.target, r.target_distance) = (Some(other), 15);
             r.target_bearing = heading.wrapping_add(0x1234);
-            r.status |= usg::status::TRACKING;
+            e.status |= usg::status::TRACKING;
         });
         step(&mut m, 2);
         assert_eq!((m.display(robot).zoom, m.display(robot).pan), (1, 0x1234));
@@ -6492,7 +6493,7 @@ pub mod tests {
             assert!(!m.look.pressed);
         }
         let s = usg::status::CLOAKED | usg::status::ECM;
-        assert_eq!(state(&m).status & s, s);
+        assert_eq!(m.world().get(EntityId(robot)).unwrap().status & s, s);
         // The drop buttons: pressed while held; let go, each drops one of its count
         // (buttons 0 to 3 run keys 1, 4, 3 and 2).
         if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
@@ -6676,7 +6677,7 @@ pub mod tests {
         click(&mut m, find(h::CLOAK_TYPE), LEFT);
         click(&mut m, find(h::ECM_TYPE), LEFT);
         let s = usg::status::CLOAKED | usg::status::ECM;
-        assert_eq!(robot_state(&m).status & s, s);
+        assert_eq!(m.world().get(EntityId(robot)).unwrap().status & s, s);
         assert_eq!(robot_state(&m).guns.cloaks, cloaks - 1);
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(h::LOCK_TYPE);

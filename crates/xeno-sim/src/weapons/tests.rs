@@ -39,6 +39,11 @@ fn shots(world: &World) -> usize {
         .count()
 }
 
+/// Robot 4's +0x17.
+fn st(world: &World) -> u8 {
+    world.get(EntityId(4)).unwrap().status
+}
+
 #[test]
 fn a_humanoid_raises_its_arm_then_fires_when_cooled_and_in_the_arc() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
@@ -353,7 +358,7 @@ fn the_ecm_takes_a_charge_and_energy_and_runs_for_its_steps() {
     // None left: only the message.
     ecm(&mut world, EntityId(4), &tables);
     let (m, _) = parts(&mut world);
-    assert_eq!((m.guns.ecm_time, m.status & status::ECM), (0, 0));
+    assert_eq!((m.guns.ecm_time, st(&world) & status::ECM), (0, 0));
     assert!(m.panel.queue.contains(&d.no_ecm));
     // Short on the battery: the energy goes, the charge stays.
     let (m, c) = robot_parts(&mut world, EntityId(4)).unwrap();
@@ -367,14 +372,14 @@ fn the_ecm_takes_a_charge_and_energy_and_runs_for_its_steps() {
     ecm(&mut world, EntityId(4), &tables);
     let (m, _) = parts(&mut world);
     assert_eq!((m.guns.ecm, m.guns.ecm_time), (1, d.ecm_time));
-    assert_ne!(m.status & status::ECM, 0);
+    assert_ne!(st(&world) & status::ECM, 0);
     assert!(m.panel.queue.contains(&d.ecm_on));
     // Each weapon step counts it down; at 0 the bit goes.
     for n in (0..d.ecm_time).rev() {
         step_at(&mut world, 1, &mut random);
         assert_eq!(parts(&mut world).0.guns.ecm_time, n);
     }
-    assert_eq!(parts(&mut world).0.status & status::ECM, 0);
+    assert_eq!(st(&world) & status::ECM, 0);
     // A step between the weapon steps leaves it.
     ecm(&mut world, EntityId(4), &tables);
     step_at(&mut world, 2, &mut random);
@@ -395,7 +400,7 @@ fn the_cloak_ignores_short_energy_makes_the_sparkle_and_runs_out() {
     let (m, _) = parts(&mut world);
     assert_eq!((m.guns.cloaks, m.guns.energy), (0, 0));
     assert_eq!(
-        (m.guns.cloak_time, m.status & status::CLOAKED),
+        (m.guns.cloak_time, st(&world) & status::CLOAKED),
         (d.cloak_time, status::CLOAKED)
     );
     assert!(m.panel.queue.contains(&d.cloak_on));
@@ -412,7 +417,7 @@ fn the_cloak_ignores_short_energy_makes_the_sparkle_and_runs_out() {
         step_at(&mut world, 1, &mut random);
     }
     let (m, _) = parts(&mut world);
-    assert_eq!((m.guns.cloak_time, m.status & status::CLOAKED), (0, 0));
+    assert_eq!((m.guns.cloak_time, st(&world) & status::CLOAKED), (0, 0));
     // A scorpion's step counts no cloak.
     let mut world = armed(ObjectKind::Scorpion);
     robot_parts(&mut world, EntityId(4))
@@ -482,8 +487,11 @@ fn real_assets_a_stock_humanoid_s_ecm_and_cloak_run_out() {
         .iter()
         .find(|&&id| world.get(id).unwrap().kind == ObjectKind::Humanoid)
         .unwrap();
-    let guns = |sim: &crate::Sim| match sim.world.get(id).unwrap().state {
-        State::Robot(m) => (m.guns, m.status),
+    let guns = |sim: &crate::Sim| match sim.world.get(id).unwrap() {
+        e @ Entity {
+            state: State::Robot(m),
+            ..
+        } => (m.guns, e.status),
         _ => unreachable!(),
     };
     let before = guns(&sim).0;
@@ -530,4 +538,52 @@ fn real_assets_a_stock_humanoid_s_ecm_and_cloak_run_out() {
     );
     let life = u32::from(d.life) * (u32::from(d.frame_ticks) + 1);
     assert_eq!(gone, Some(life), "{gone:?}");
+}
+
+/// What `1000:f4b1` and each kind's set-up leave in +0x16 and +0x17: a shell, the
+/// sparkle and an explosion nothing, not even an alien maker's side bit; a drop the
+/// side bit alone; a laid relay `TARGETABLE` alone.
+#[test]
+fn objects_made_in_play_carry_the_original_s_flags() {
+    use xeno_formats::usg::flag;
+    let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
+    let mut world = armed(ObjectKind::Scorpion);
+    let me = world.get_mut(EntityId(4)).unwrap();
+    (me.side, me.flags, me.status) = (Side::Alien, me.flags | flag::ALIEN, 0);
+    let made = |world: &World, before: &[EntityId]| -> Vec<(u8, u8)> {
+        world
+            .iter()
+            .filter(|(id, _)| !before.contains(id))
+            .map(|(_, e)| (e.flags, e.status))
+            .collect()
+    };
+    let slots = |world: &World| world.iter().map(|(id, _)| id).collect::<Vec<_>>();
+    robot_parts(&mut world, EntityId(4)).unwrap().0.guns.rounds = 1;
+    let before = slots(&world);
+    trigger(&mut world, EntityId(4), &tables);
+    step_at(&mut world, 1, &mut random);
+    assert_eq!(made(&world, &before), [(0, 0)], "a shell");
+    let before = slots(&world);
+    robot_parts(&mut world, EntityId(4)).unwrap().0.guns.cloaks = 1;
+    cloak(&mut world, EntityId(4), &tables);
+    assert_eq!(made(&world, &before), [(0, 0)], "the sparkle");
+    let before = slots(&world);
+    let template = tables.damage.robot_explosion;
+    let kind = tables.damage.explosion_kind;
+    crate::damage::spawn_explosion(&mut world, Position::default(), Fixed(0), kind, template);
+    assert_eq!(made(&world, &before), [(0, 0)], "an explosion");
+    let before = slots(&world);
+    robot_parts(&mut world, EntityId(4)).unwrap().0.guns.drops = [1; 4];
+    crate::drops::drop(&mut world, EntityId(4), 0, &tables, &mut random);
+    assert_eq!(made(&world, &before), [(flag::ALIEN, 0)], "a mine");
+    let before = slots(&world);
+    robot_parts(&mut world, EntityId(4)).unwrap().0.relays = 1;
+    crate::net::deploy(
+        &mut world,
+        EntityId(4),
+        &tables,
+        &mut random,
+        &mut Vec::new(),
+    );
+    assert_eq!(made(&world, &before), [(flag::TARGETABLE, 0)], "a relay");
 }

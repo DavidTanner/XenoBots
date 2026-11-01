@@ -11,8 +11,14 @@ pub(crate) fn at(x: i16, y: i16) -> Position {
     }
 }
 
+/// A side's +0x16 bit.
+pub(crate) fn side_bit(side: Side) -> u8 {
+    crate::world::side_code(side) * xeno_formats::usg::flag::ALIEN
+}
+
 /// A robot standing at `(x, y)`, heading 0, full helm, drive and battery, standing
-/// (scouts).
+/// (scouts), with a made robot's flags (`1000:f812`: in the field, a unit, scanned and
+/// targetable).
 pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
     Entity {
         kind,
@@ -31,6 +37,8 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
             systems: 0,
             total: 0,
         }),
+        flags: 0x66 | side_bit(side),
+        status: 0,
         state: State::Robot(Movement {
             drive: 0xff,
             stance: STANDING,
@@ -45,6 +53,7 @@ pub(crate) fn robot(kind: ObjectKind, side: Side, x: i16, y: i16) -> Entity {
     }
 }
 
+/// A base, with `sim_init_base`'s flags.
 pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
     Entity {
         kind: ObjectKind::Base,
@@ -55,11 +64,13 @@ pub(crate) fn base(side: Side, x: i16, y: i16, tick: u8) -> Entity {
         heading: 0,
         radius: 0x2300,
         damage: Damage::Taken(0),
+        // `sim_init_base` (`1000:6209`): in the field, scanned and targetable.
+        flags: 0x46 | side_bit(side),
+        status: 0,
         state: State::Base {
             tick,
             kills: 0,
             losses: 0,
-            destroyed: false,
             end_step: 0,
             look: 0,
             counts: [0; 7],

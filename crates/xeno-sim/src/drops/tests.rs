@@ -133,6 +133,11 @@ fn run(world: &mut World, id: EntityId, n: u32, tables: &Tables) -> (Vec<Event>,
     (events, false)
 }
 
+/// An alarm buoy's alarm: its +0x16 `RELAY_LINKED`.
+fn alarm(world: &World, id: EntityId) -> bool {
+    world.get(id).unwrap().flags & usg::flag::RELAY_LINKED != 0
+}
+
 fn state(world: &World, id: EntityId) -> Drop {
     match world.get(id).unwrap().state {
         State::Drop(s) => s,
@@ -191,7 +196,7 @@ fn an_alarm_buoy_alerts_then_waits_for_its_level_to_halve_to_nothing() {
     let (mut world, buoy) = armed(2, i32::from(d.alarm_range), &tables);
     run(&mut world, buoy, 256, &tables);
     let s = state(&world, buoy);
-    assert_eq!((s.level, s.alarm), (d.alarm_level, false));
+    assert_eq!((s.level, alarm(&world, buoy)), (d.alarm_level, false));
     assert_eq!(log(&world).len(), 1);
     // Each look halves it, showing the alarm while it is not 0; the next alert comes
     // on the look that finds it at 0.
@@ -200,7 +205,10 @@ fn an_alarm_buoy_alerts_then_waits_for_its_level_to_halve_to_nothing() {
         run(&mut world, buoy, 256, &tables);
         looks += 1;
         let s = state(&world, buoy);
-        assert_eq!(s.alarm, s.level != 0 && s.level != d.alarm_level);
+        assert_eq!(
+            alarm(&world, buoy),
+            s.level != 0 && s.level != d.alarm_level
+        );
     }
     assert_eq!(looks, d.alarm_level.ilog2() + 1);
     assert_eq!(log(&world)[1], (tables.messages.alert, d.alarm_alert));
