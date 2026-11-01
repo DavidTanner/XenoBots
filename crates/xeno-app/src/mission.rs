@@ -447,13 +447,16 @@ enum Purpose {
     /// The terrain editor's Alt+L and Alt+S.
     LoadMap,
     SaveMap,
+    /// The map room's and training menu's Alt+L (`ui_load_scenario_with_dialog`): the
+    /// path handed to the screens ([`Mission::take_load`]), which load it.
+    LoadScenario,
 }
 
 /// The most Ctrl+Alt+O reads of a file (`mov cx, 0x320` at `1000:6d8e`).
 const ORDERS_FILE_MAX: usize = 800;
 
 /// The pointer's shape while a file dialog runs (`ui_run_file_dialog`, slot `0x1496`).
-const DIALOG_SHAPE: u8 = 0;
+pub const DIALOG_SHAPE: u8 = 0;
 
 /// The name Ctrl+Alt+P saves under without the file dialogs, and the terrain editor's
 /// leave file.
@@ -778,6 +781,8 @@ pub struct Mission {
     dialog: Option<(FileDialog, Purpose)>,
     /// The dialogs' name field, which each leaves for the next (none: the first's).
     dialog_name: Option<Vec<u8>>,
+    /// The file Alt+L's dialog chose, for the screens to load.
+    load: Option<PathBuf>,
     /// F1's pause: the sim stands still under the box until a key or button press.
     paused: bool,
     /// Ctrl+Alt+S: the maps show the shots (`DS:0x62ec` bit 6).
@@ -874,6 +879,7 @@ impl Mission {
             terrain: None,
             dialog: None,
             dialog_name: None,
+            load: None,
             paused: false,
             shots: false,
         };
@@ -2037,7 +2043,7 @@ impl Mission {
             .unwrap_or_else(|| tables.first_name.clone());
         let kind = match purpose {
             Purpose::SaveScenario | Purpose::SaveMap => dialog::Kind::Save,
-            Purpose::Orders | Purpose::LoadMap => dialog::Kind::Open,
+            Purpose::Orders | Purpose::LoadMap | Purpose::LoadScenario => dialog::Kind::Open,
         };
         let dialog = FileDialog::open(kind, dir.to_path_buf(), name, tables);
         self.dialog = Some((dialog, purpose));
@@ -2062,6 +2068,7 @@ impl Mission {
             Purpose::Orders => self.load_orders(&path),
             Purpose::LoadMap => self.load_map(&path),
             Purpose::SaveMap => self.save_map(&path),
+            Purpose::LoadScenario => self.load = Some(path),
         }
     }
 
@@ -2090,6 +2097,49 @@ impl Mission {
 
     pub fn dialog_open(&self) -> bool {
         self.dialog.is_some()
+    }
+
+    /// The map room's and training menu's Alt+L (`0x14c`) and Alt+S (`0x14e`): the
+    /// open dialog, whose file [`Mission::take_load`] hands over, or the save dialog, which
+    /// writes this mission's scenario as Ctrl+Alt+P does. False without the dialogs.
+    pub fn open_file_dialog(&mut self, save: bool, assets: &Assets) -> bool {
+        let Some(tables) = &assets.file_dialogs else {
+            return false;
+        };
+        let purpose = if save {
+            Purpose::SaveScenario
+        } else {
+            Purpose::LoadScenario
+        };
+        self.open_dialog(purpose, tables, &assets.save_dir);
+        true
+    }
+
+    /// The file Alt+L's dialog chose, once.
+    pub fn take_load(&mut self) -> Option<PathBuf> {
+        self.load.take()
+    }
+
+    /// `next` takes this mission's place (Alt+L's load), keeping the dialogs' name
+    /// field, which the original keeps for the whole run.
+    pub fn replace_with(&mut self, mut next: Mission) {
+        next.dialog_name = self.dialog_name.take();
+        *self = next;
+    }
+
+    /// Draws the open file dialog alone, over another screen (the map room's or the
+    /// training menu's picture).
+    pub fn draw_dialog(&self, fb: &mut Framebuffer, assets: &Assets) {
+        if let (Some((dialog, _)), Some(tables)) = (&self.dialog, &assets.file_dialogs) {
+            dialog.draw(fb, tables, &assets.fonts, &assets.map_sprites);
+        }
+    }
+
+    /// One retrace of an open file dialog away from the mission (a held arrow).
+    pub fn dialog_retrace(&mut self) {
+        if let Some((dialog, _)) = &mut self.dialog {
+            dialog.retrace();
+        }
     }
 
     /// F1's pause is on.
@@ -2511,9 +2561,7 @@ impl Mission {
     /// Draws the view's own parts over its picture, which `fb` already shows.
     pub fn draw(&self, fb: &mut Framebuffer, assets: &Assets) {
         self.draw_under_dialog(fb, assets);
-        if let (Some((dialog, _)), Some(tables)) = (&self.dialog, &assets.file_dialogs) {
-            dialog.draw(fb, tables, &assets.fonts, &assets.map_sprites);
-        }
+        self.draw_dialog(fb, assets);
         if let (true, Some(room)) = (self.paused, &assets.sitroom) {
             draw_pause(fb, room, assets.fonts.get(&PAUSE_FONT));
         }

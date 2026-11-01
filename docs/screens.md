@@ -158,7 +158,7 @@ Each widget type is an offset into three handler tables: draw (`DS:0x3328`), mou
 | `0x3a` | none | The hover label (`ui_draw_map_tooltip`, `1000:773c`); no mouse handler |
 | `0x3c` x5 | (137, 271, 147, 311), then 9 rows lower each | The buttons (`ui_draw_map_room_button`, `1000:71fc`; mouse `ui_map_room_button_on_mouse`, `1000:721c`). Their ids, from the template, are 8, 0, 2, 4, 6 top to bottom: review, play, log-in, training, quit, as `MAPROOM`'s own art labels them |
 | `0x3e` | none | The key table (`1000:737f`) |
-| `0x148`, `0x14c`, `0x14e` | none | Keys every screen has (the screenshot key `1000:7d3f`, and `f3ef`, `f405`, not traced) |
+| `0x148`, `0x14c`, `0x14e` | none | Keys every screen has (the screenshot key `1000:7d3f`, and Alt+L `f3ef` and Alt+S `f405`: "The file dialogs (T-110)", T-144) |
 
 **Sprites.** All from `msprite5` (handles 0x200 on, 8 per sprite: `b@n.md`). The
 buttons are drawn **opaque** (slot `0x5c4`) at their rectangle's corner with the
@@ -1440,7 +1440,7 @@ until a widget sets the action; then it jumps through the table at `DS:0x5e52`.
 | `0x30` | the screen | `TRAINMEN` (file id 0x06), fading in over 32 retraces (slot `0x498`) |
 | `0x32` x5 | (14, 200, 25, 275), then 10 rows lower each | The buttons, drawn by the picture; their actions, from the template, are 0, 2, 4, 6 and 8 top to bottom (`ui_training_button_on_mouse`, `1000:6e98`) |
 | `0x34` | none | The key table `DS:0x5e9f` (`ui_training_menu_on_key`, `1000:6ee5`): ESC and Alt+Q action 8; H 0, N 2, S 4, C 6 |
-| `0x14c`, `0x14e`, `0x148` | none | The keys every screen has |
+| `0x14c`, `0x14e`, `0x148` | none | The keys every screen has: Alt+L and Alt+S load and save a scenario (T-144, "The file dialogs (T-110)") |
 
 A button shows its press by XORing its rectangle's frame with 9 (slot `0x536`, on the
 press and again on the release, so the release restores it) and acts on a release over
@@ -2031,7 +2031,48 @@ sets two key widgets with no unlock check: type `0x14c` (`1000:f3ef`), Alt+L, op
 the dialog and loads the chosen file as the scenario (`ui_load_scenario_with_dialog`,
 the save loader `1000:eefc` with AL 0; a beep if it fails), and type `0x14e`
 (`1000:f405`), Alt+S, saves the scenario through the SAVE GAME dialog, then calls
-`1fe6:398c` (not traced).
+`1fe6:398c` (the event-queue flush). Both are below (T-144).
+
+**Alt+L and Alt+S in the map room and the training menu (T-144).** The two key
+widgets compare the key word whole with 0x2026 (Alt+L) and 0x201f (Alt+S), so no
+Shift or Ctrl, and check no unlock word. Each pushes the game clock `DS:0x374` first
+and pops it after, so no game time passes.
+
+- **Alt+L** (`ui_load_scenario_with_dialog`): the open dialog; on a cancel nothing
+  else happens. Otherwise the chunk reader (`scen_read_chunks`, `1000:eefc`) on the
+  path with `AL` = 0: the same load the map room's play and the training menu use.
+  It saves the campaign's calendar day and month (`DS:0x7d4a`, `0x7d4b`) and puts
+  them back after the file, and with the flag 0 the `SDEF` handler returns carry, so a
+  save's `SDEF` is skipped like an unknown chunk: **a `<NAME>.LOG` loads exactly as a
+  plain `.usg`**, its scenario only. After the chunks it loads the sky if needed
+  (`gfx_load_sky`, `1000:2894`) and puts both sides' bases (`DS:0x5690` alien, then
+  `0x568e` human) through `ui_base_select_first_unit` (`1fe6:6f13`; Ghidra shows the
+  far call as `2000:6d73`): the base's selected unit (+0x3c) becomes the first
+  word of its 38-word unit list (+0x4d), 0 if that is empty (its loop counts 38 but
+  never moves past the first word); two panels are marked for a
+  redraw (+0xc7, +0xcd = 3), and if the base's view mode (+0x37) is 2, +0xc6 = 3 and
+  +0x32 bit 14 too. Nothing else: **the campaign is untouched**. The selection
+  (`DS:0x5f97`), the loaded record (`DS:0x5f99`), the progress, score, counters,
+  result byte (`DS:0x5fab`), the game-loaded flag (`DS:0x6005`) and the screen all
+  stay; the menu just goes on (the dialog's end reopens its widget set). What changes
+  is the scenario in memory, so: in the map room, playing the selection when it is
+  the loaded record resumes **the file just loaded** (play loads nothing then); any
+  other selection loads its `scenNNa.usg` over it; N and Q, once a game is loaded,
+  save it as the campaign's scenario; Ctrl+Space runs it. In the training menu the
+  loaded record is already none (opening the menu clears it), so the file is only
+  kept for Alt+S, N and Q until a training button or play loads another.
+- **Failure**: the reader fails (carry) only when the file does not open or its first
+  6 bytes are not an `SHDR` tag; then the calendar is put back, nothing in memory has
+  changed, and the beep (`1000:0261`) sounds. A file that starts with `SHDR` but is
+  damaged later is read as it comes.
+- **Alt+S** (`ui_key_save_scenario_with_dialog`): the save dialog, then on an
+  accept `file_write_scenario` (`1000:efde`): the scenario in memory as it stands,
+  with no `SDEF` (the same writer as the situation room's Ctrl+Alt+P), whether or not
+  a game is loaded. At start-up of a new campaign with no scenario ever loaded that
+  is the empty object table and whatever the buffers hold; after a mission, training
+  or Alt+L, that scenario as left. A file that cannot be created is silently skipped
+  (no beep, no message). Then the event queue is emptied (slot `0x338`, `1fe6:398c`),
+  dropping any input that arrived during the write.
 
 ### Which parts need the running simulation (T-056)
 
@@ -2329,8 +2370,17 @@ original.
   directory below it, the name as typed or the file found in any case. Shortcuts: the
   lists are sorted (DOS gives directory order), names that are not 8.3 are left out,
   there are no drives, a path with a drive or from a root shows the error box, and
-  the directory line shows the host path's parts as `C:` and DOS's form. The map
-  room's and training menu's Alt+L and Alt+S are T-144.
+  the directory line shows the host path's parts as `C:` and DOS's form.
+- **Alt+L and Alt+S** in the map room and the training menu (T-144): the dialogs are
+  hosted by the parked mission (`Mission::open_file_dialog`), drawn over the screen's
+  picture, which is drawn again when they close. Alt+L parses the chosen file (a
+  `.usg` or a `.LOG`, its `SDEF` ignored) into a new parked mission with the
+  campaign's day and month in its clock; the campaign is untouched, so P resumes it
+  when the selection is the loaded record. Alt+S writes the mission as Ctrl+Alt+P
+  does. Shortcuts: a file the port's parser rejects counts as a failed load (the
+  original reads any file that starts with `SHDR`); the beep is silent (T-193); with
+  no scenario ever loaded Alt+S writes nothing (the original writes its empty state);
+  the event-queue flush after the write is not ported.
 - **Saves** (T-057): the log-in loads `<NAME>.LOG` from `--save-dir` (else the game
   directory), any case, into the campaign, the map room's selection and the loaded
   mission (parked, so playing the loaded scenario resumes it); a file that does not
@@ -2400,7 +2450,9 @@ Named in the Ghidra project in this pass (T-040), all `confirmed` from the code 
   Whether the dispatcher sends a corner its enter bit when a view opens with the
   pointer already over it (the port waits for the next move into it).
 - What `1000:0270` (presumably a beep) does. (The keys `f3ef` and `f405` are the
-  map room's and the training menu's Alt+L and Alt+S, T-110.)
+  map room's and the training menu's Alt+L and Alt+S, T-144.)
+- Whether reopening the map room's or the training menu's widget set after a file
+  dialog fades its picture in again or just draws it (the port draws it; T-196).
 
 T-042 named, in `xeno.exe`: `ui_draw_map_area` (`1000:7255`), `ui_map_area_on_mouse`
 (`1000:72fa`), `ui_map_room_play_selected` (`1000:739c`), `ui_map_room_select_next`
@@ -2555,6 +2607,8 @@ T-048 named, in `xeno.exe`: `file_write_scenario` (`1000:efde`), `scen_write_shd
 `ui_enter_map_editor` (`0x006e`), `ui_exit_map_editor` (`0x011a`),
 `gfx_emit_map_editor_render_nodes` (`0x01c9`) and `ui_map_editor_on_key` (`0x032a`).
 All `confirmed`, all saved.
+
+T-144 named, in `xeno.exe`: `ui_base_select_first_unit` (`1fe6:6f13`). Saved.
 
 T-057 named, in `xeno.exe`: `ui_map_room_save_if_loaded` (`1000:7423`),
 `scen_load_scenario_table` (`1000:712e`, the log-in's new campaign: `scendef.bin`
