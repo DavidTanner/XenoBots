@@ -365,9 +365,10 @@ fn keep_lock(world: &mut World, id: EntityId, window: (u16, u16), tables: &Table
         return;
     };
     // `1000:d685`: the target's `GONE`.
-    // shortcut: the port frees a destroyed robot's slot at once (T-054), so an empty
-    // slot, or one an object that is not targetable took, is the target gone too; the
-    // original keeps the slot while robots reference it.
+    // shortcut: the original's lock holds the target's pointer and no reference
+    // (T-154), so a freed target's slot can be taken by a new object; the port keeps
+    // the slot, so an empty one, or one a new object that is not targetable took, is
+    // the target gone too. Upgrade if the sim keeps the pools' memory.
     let gone = world
         .get(target)
         .is_none_or(|t| t.flags & (flag::GONE | flag::TARGETABLE) != flag::TARGETABLE);

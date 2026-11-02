@@ -533,17 +533,20 @@ fn the_worked_out_point_follows_the_goal_object_with_its_offset() {
 fn a_console_s_map_press_sets_an_object_goal_or_a_destination() {
     let (mut world, tables) = setup(&[0x0a]);
     let text = tables.sensing.messages;
-    // An object goal on the base at (0, 0) from (10, 10).
+    let refs = world.refs(EntityId(0));
+    // An object goal on the base at (0, 0) from (10, 10), a reference on its slot.
     movement(&mut world, EntityId(1)).unwrap().goal = 0x18;
     set_goal_object(&mut world, EntityId(1), EntityId(0), &tables);
+    assert_eq!(world.refs(EntityId(0)), refs + 1);
     let r = m(&world);
     assert_eq!(
         (r.goal, r.goal_object, r.destination),
         (0x01, 0, at(10, 10))
     );
     assert_eq!(r.script.events, 1 << 5);
-    // A destination drops it.
+    // A destination drops it, and the reference.
     set_destination(&mut world, EntityId(1), at(3, 4), &tables);
+    assert_eq!(world.refs(EntityId(0)), refs);
     let r = m(&world);
     assert_eq!(
         (r.goal, r.goal_object, r.destination),

@@ -257,7 +257,11 @@ pub fn step(
     // A tail missile in flight that is gone is let go (`1000:973f`).
     let gone = robot_parts(world, id)
         .and_then(|(m, _)| m.guns.missile)
-        .is_some_and(|s| !matches!(world.get(s).map(|e| e.state), Some(State::Shot(_))));
+        .filter(|&s| !matches!(world.get(s).map(|e| e.state), Some(State::Shot(_))));
+    // `1000:9755`: its reference released (only the scorpion keeps one).
+    if let Some(s) = gone.filter(|_| kind == ObjectKind::Scorpion) {
+        world.release(s);
+    }
     let Some((m, _)) = robot_parts(world, id) else {
         return;
     };
@@ -287,7 +291,7 @@ pub fn step(
             c.weapons |= REQUEST;
         }
         count_down(&mut m.guns.cooldown[0]);
-        if gone {
+        if gone.is_some() {
             m.guns.missile = None;
         }
     } else {
@@ -422,7 +426,10 @@ fn tail(
     if let Some(text) = refused {
         return tell(m, c, text);
     }
-    m.guns.missile = None;
+    // `1000:97bc`: the last missile's reference released.
+    if let Some(s) = m.guns.missile.take() {
+        world.release(s);
+    }
     let slot = shoot(world, id, &g, tables, random, events);
     let Some((m, c)) = robot_parts(world, id) else {
         return;
@@ -438,6 +445,8 @@ fn tail(
     c.equipment |= TOLD;
     m.guns.missiles -= 1;
     m.guns.cooldown[1] = g.cooldown;
+    // `1000:97cd`: a reference on the new missile's slot.
+    world.take(slot);
 }
 
 /// The scout's plasma gun (`1000:c8ff`, weapon 0) and cannon (`c990`).

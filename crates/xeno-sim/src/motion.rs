@@ -439,9 +439,10 @@ pub fn walk(
     }
 }
 
-/// Where robot `id` heads now: `at`, as a point (`sim_set_robot_destination`; an
-/// object it was heading for is dropped).
+/// Where robot `id` heads now: `at`, as a point (`sim_set_robot_destination`,
+/// `1000:46f3`; an object it was heading for is dropped, its reference released).
 pub fn set_destination(world: &mut World, id: EntityId, at: Position) {
+    crate::script::drop_object_goal(world, id);
     if let Some(m) = movement(world, id) {
         m.destination = at;
         m.goal = Movement::GOAL_POINT;

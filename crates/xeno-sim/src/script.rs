@@ -429,19 +429,24 @@ fn check_object_goal(world: &mut World, id: EntityId) {
 }
 
 /// `sim_drop_object_goal` (`1000:473d`): an object goal (+0x32 bit 0) is dropped
-/// (+0x32 = 0, no object). The original also releases the object's reference, which
-/// the port does not count.
-fn drop_object_goal(m: &mut Movement) {
+/// (+0x32 = 0, no object) and the reference on its slot released (`1000:f6bb`),
+/// whatever +0x3a holds: a slot never taken (the stock files' 0) is released too.
+pub(crate) fn drop_object_goal(world: &mut World, id: EntityId) {
+    let Some(m) = movement(world, id) else {
+        return;
+    };
     if m.goal & 0x01 != 0 {
-        (m.goal, m.goal_object) = (0, 0xffff);
+        let slot = std::mem::replace(&mut m.goal_object, 0xffff);
+        m.goal = 0;
+        world.release(EntityId(slot));
     }
 }
 
 /// The consoles' map-mode press on nothing (`1000:46c7`, T-133): robot `id`'s old
 /// object goal dropped, its destination `point` (+0x32 = 2), a message and event 5.
 pub fn set_destination(world: &mut World, id: EntityId, point: Position, tables: &Tables) {
+    drop_object_goal(world, id);
     if let Some(m) = movement(world, id) {
-        drop_object_goal(m);
         (m.destination, m.goal) = (point, 0x02);
         m.panel.post(tables.sensing.messages.destination);
         post(m, EVENT_HOLD);
@@ -460,11 +465,12 @@ pub fn set_goal_object(world: &mut World, id: EntityId, object: EntityId, tables
         x: Fixed(at.position.x.0.wrapping_sub(o.position.x.0)),
         y: Fixed(at.position.y.0.wrapping_sub(o.position.y.0)),
     };
+    drop_object_goal(world, id);
     if let Some(m) = movement(world, id) {
-        drop_object_goal(m);
         (m.goal_object, m.destination, m.goal) = (object.0, offset, 0x01);
         m.panel.post(tables.sensing.messages.goal_object);
         post(m, EVENT_HOLD);
+        world.take(object);
     }
 }
 
@@ -822,9 +828,11 @@ fn run(
             set_carry(world, id, !found);
         }
         (0x6f, _) => {
-            m.destination = position;
-            m.goal = 0x02;
-            post(m, EVENT_HOLD);
+            drop_object_goal(world, id);
+            if let Some(m) = movement(world, id) {
+                (m.destination, m.goal) = (position, 0x02);
+                post(m, EVENT_HOLD);
+            }
         }
         (0x70, _) => join_nearest_path_point(world, id),
         (0x71, _) => {

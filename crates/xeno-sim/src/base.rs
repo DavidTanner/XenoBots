@@ -117,6 +117,17 @@ fn repair(world: &mut World, id: EntityId, b: &Bases) {
     if let Some(d) = depot(world, id) {
         d.repairing = next;
     }
+    // `1000:650b` takes a reference on the robot found, `64db` releases it when mended.
+    if next != repairing {
+        // shortcut: a robot gone from the slot is let go here; the original steps the
+        // null object (`2000:7e5f`) until that reads as mended. Untraced edge.
+        if let Some(r) = repairing {
+            world.release(r);
+        }
+        if let Some(r) = next {
+            world.take(r);
+        }
+    }
 }
 
 /// `2000:7e6d`: one repair step on robot `r` mends the first of: the helm, the power,

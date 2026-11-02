@@ -43,6 +43,14 @@ fn slot(id: Option<EntityId>) -> u16 {
     id.map_or(NONE, |id| id.0)
 }
 
+/// Object `e`'s target, if it is a robot that has one.
+fn target(e: &Entity) -> Option<EntityId> {
+    match &e.state {
+        State::Robot(m) => m.target,
+        _ => None,
+    }
+}
+
 /// Robots and bases come from the big pool (`DS:0xe7c7` bit 0).
 fn big(kind: ObjectKind) -> bool {
     RobotKind::of(kind).is_some() || kind == ObjectKind::Base
@@ -57,9 +65,9 @@ impl World {
     /// pointers count from (`xeno_formats::editor::Editor::program_table`).
     ///
     /// Bytes the sim does not keep stay as loaded; an object made during play starts
-    /// from zeros, its reference count 1 and the lowest pool index free in its pool.
-    // shortcut: the reference counts are the loaded ones (stock files hold 0, 1 and
-    // junk; the port reads none), not the live counts with the pack's one a target (T-154).
+    /// from zeros and the lowest pool index free in its pool. Each reference count is
+    /// the slot's live one ([`World::refs`]) with one more for each robot that targets
+    /// it (the pack's `1000:f6a6`).
     // shortcut: shots, explosions, sparkles and drops made in play keep only what the sim keeps (their
     // other bytes zeros), until cross-loading in DOSBox (T-155) shows more is needed.
     pub fn save(&self, loaded: &Scenario, program_table: u16) -> Scenario {
@@ -94,6 +102,9 @@ impl World {
                     }
                 };
                 pack(&mut r, w, id, e, program_table);
+                let held = w.iter().filter(|(_, o)| target(o) == Some(id)).count();
+                let refs = w.refs(id).wrapping_add(held as u16);
+                r.0[4..6].copy_from_slice(&refs.to_le_bytes());
                 Object::from_record(&r.0).expect("a packed object reads back")
             })
             .collect();

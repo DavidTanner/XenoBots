@@ -170,6 +170,8 @@ fn aim_height(tables: &Tables, t: &Entity) -> i32 {
 /// Robot `id` fires `gun` (each gun's routine from the shot's allocation on). Returns
 /// the slot it took, none if none was free; the set-up may still drop the shot (a
 /// homing shot or tail missile whose target is gone), as the original frees it.
+// shortcut: the tail missile's set-up frees the launching robot instead (`1000:e0e1`
+// pops the robot before `f656`); the port drops the shot. T-203.
 pub fn fire(
     world: &mut World,
     id: EntityId,
@@ -275,6 +277,10 @@ pub fn fire(
             shot_heading = ms.heading;
         }
         _ => return Some(slot),
+    }
+    // `1000:e0d4`, `e3b2`: a reference on the target's slot.
+    if let Some(t) = shot.target {
+        world.take(t);
     }
     world.insert(
         slot,
@@ -431,15 +437,19 @@ fn fly(world: &mut World, id: EntityId, s: &mut Shot, tables: &Tables) -> End {
     find_hit(world, id, at, z, tables).map_or(End::Flying, End::Hit)
 }
 
-/// The target of a homing shot or tail missile, if still there.
-// shortcut: the port frees a destroyed robot's slot at once (T-054), so a slot holding
-// a shot or explosion is the target gone; the original holds the slot by reference.
+/// The target of a homing shot or tail missile, if still there (`1000:f67a`): the shot
+/// holds a reference on the slot, so a freed target leaves it empty.
 fn target(world: &World, s: &Shot) -> Option<EntityId> {
-    s.target.filter(|&t| {
-        world
-            .get(t)
-            .is_some_and(|e| !matches!(e.state, State::Shot(_) | State::Explosion { .. }))
-    })
+    s.target.filter(|&t| world.get(t).is_some())
+}
+
+/// Shot `id` is freed and the reference on its target released (`1000:e46f`, the
+/// tail missile's `e210`).
+fn free(world: &mut World, id: EntityId, s: &Shot) {
+    if let Some(t) = s.target {
+        world.release(t);
+    }
+    world.remove(id);
 }
 
 /// The heading and climb from shot `at`, `z` to `t` and its level distance
@@ -501,13 +511,11 @@ pub fn tick(
             let h = &w.homing;
             s.age = s.age.wrapping_add(1);
             if s.age >= h.life {
-                world.remove(id);
-                return;
+                return free(world, id, &s);
             }
             if s.age & h.steer_mask == 0 {
                 let Some(t) = target(world, &s).and_then(|t| world.get(t)) else {
-                    world.remove(id);
-                    return;
+                    return free(world, id, &s);
                 };
                 let (to, climb, _) = home(tables, position, z.0, t);
                 s.climb = climb;
@@ -546,8 +554,14 @@ pub fn tick(
         }
         _ => {}
     }
-    // Freed after the damage, so an explosion it causes takes another slot.
-    world.remove(id);
+    // Freed after the damage, so an explosion it causes takes another slot. A homing
+    // shot on the ground keeps its target's reference (`1000:e47c` frees it without
+    // `f6bb`): the original's leak, ported.
+    if s.flight == Flight::Homing && matches!(end, End::Ground) {
+        world.remove(id);
+    } else {
+        free(world, id, &s);
+    }
 }
 
 /// The tail missile's tick (`1000:e0e8`): on the tail for its launch ticks, then
@@ -613,8 +627,7 @@ fn tick_tail(
             }
             if world.terrain.below_ground(at, Fixed(z)) {
                 burst(world, id, t.explosion, false, tables, events);
-                world.remove(id);
-                return;
+                return free(world, id, &s);
             }
             let hit = find_hit(world, id, at, z, tables).is_some();
             if !hit {
@@ -629,8 +642,8 @@ fn tick_tail(
     }
     burst(world, id, t.explosion, false, tables, events);
     // shortcut: removal makes the original's kind 15 for two ticks (`1000:f5a4`); the
-    // port frees the slot at once, as it does every object's.
-    world.remove(id);
+    // port frees the slot at once. Upgrade if a slot's reuse in those ticks matters.
+    free(world, id, &s);
 }
 
 #[cfg(test)]

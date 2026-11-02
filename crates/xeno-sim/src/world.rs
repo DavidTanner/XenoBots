@@ -640,6 +640,10 @@ pub(crate) fn side_code(side: Side) -> u8 {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct World {
     entities: BTreeMap<EntityId, Entity>,
+    /// `DS:0xe2c6`: each slot's reference count (only those not 0): one for the
+    /// object in it and one for each reference held on the slot (`docs/sim.md`,
+    /// "Reference counts (T-154)"). A slot is reused only when empty with a count of 0.
+    pub(crate) refs: BTreeMap<EntityId, u16>,
     pub orders: OrderBook,
     pub terrain: Terrain,
     pub paths: Paths,
@@ -743,6 +747,22 @@ impl World {
                 (EntityId(o.slot), entity)
             })
             .collect();
+        // `1000:f47d` writes each file's count; the unpack (`1000:9c80`, `b43a`,
+        // `cc12`) then drops the reference a robot's saved target held.
+        let mut refs = BTreeMap::new();
+        for o in scenario.objects.iter().flatten() {
+            refs.insert(EntityId(o.slot), o.ref_count);
+        }
+        let mut world = World {
+            refs,
+            ..World::default()
+        };
+        for o in scenario.objects.iter().flatten() {
+            if let Some(r) = o.robot() {
+                world.release(EntityId(r.target));
+            }
+        }
+        world.refs.retain(|_, c| *c != 0);
         // The loader adds each robot to its side's list and makes each base its side's
         // command object, in file order (`scen_on_object_loaded`).
         let (mut units, mut bases) = (<[Vec<EntityId>; 2]>::default(), [None; 2]);
@@ -756,6 +776,7 @@ impl World {
         }
         World {
             entities,
+            refs: world.refs,
             orders: OrderBook::from_scenario(scenario),
             terrain: Terrain::from_scenario(scenario),
             paths: Paths::from_scenario(scenario),
@@ -827,13 +848,63 @@ impl World {
         census
     }
 
-    /// Puts `entity` in slot `id`, returning the one it replaces.
+    /// Puts `entity` in slot `id`, returning the one it replaces. Into an empty slot
+    /// it is a new object, which counts a reference on the slot (`1000:f4b1`).
     pub fn insert(&mut self, id: EntityId, entity: Entity) -> Option<Entity> {
-        self.entities.insert(id, entity)
+        let old = self.entities.insert(id, entity);
+        if old.is_none() {
+            self.take(id);
+        }
+        old
     }
 
+    /// `sim_free_object_slot` (`1000:f5cd`): the object in slot `id` leaves the world
+    /// and drops its own reference; the slot stays taken while others hold one.
     pub fn remove(&mut self, id: EntityId) -> Option<Entity> {
-        self.entities.remove(&id)
+        let old = self.entities.remove(&id);
+        if old.is_some() {
+            self.release(id);
+        }
+        old
+    }
+
+    /// Slot `id`'s reference count (`DS:0xe2c6`).
+    pub fn refs(&self, id: EntityId) -> u16 {
+        self.refs.get(&id).copied().unwrap_or(0)
+    }
+
+    /// `1000:f6a6`: one more reference on slot `id`.
+    pub fn take(&mut self, id: EntityId) {
+        self.count(id, 1);
+    }
+
+    /// `1000:f6bb`: one reference fewer on slot `id`; nothing checks for 0, so a count
+    /// can wrap (a stock file holds 0xfff2), and nothing is freed.
+    pub fn release(&mut self, id: EntityId) {
+        self.count(id, 0xffff);
+    }
+
+    fn count(&mut self, id: EntityId, delta: u16) {
+        // 0xffff is no slot (both routines do nothing). shortcut: another number past
+        // the 240 slots would write past the original's table; the port ignores it
+        // (no stock file has one).
+        if usize::from(id.0) >= usg::Object::SLOTS {
+            return;
+        }
+        let c = self.refs(id).wrapping_add(delta);
+        if c == 0 {
+            self.refs.remove(&id);
+        } else {
+            self.refs.insert(id, c);
+        }
+    }
+
+    /// The search of `sim_alloc_object_slot` (`1000:f4b1`): the lowest of the 240
+    /// slots that is empty and has a count of 0.
+    pub fn free_slot(&self) -> Option<EntityId> {
+        (0..usg::Object::SLOTS as u16)
+            .map(EntityId)
+            .find(|&id| self.get(id).is_none() && self.refs(id) == 0)
     }
 
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
@@ -889,6 +960,11 @@ impl StateHash for World {
             e.damage.state_hash(h);
             e.state.state_hash(h);
         }
+        h.u64(self.refs.len() as u64);
+        for (id, &c) in &self.refs {
+            h.u16(id.0);
+            h.u16(c);
+        }
         self.orders.state_hash(h);
         self.terrain.state_hash(h);
         self.paths.state_hash(h);
@@ -941,6 +1017,41 @@ mod tests {
         let mut h = StateHasher::default();
         world.state_hash(&mut h);
         h.finish()
+    }
+
+    /// A new object counts one reference on its slot; freeing it drops that one, and the
+    /// slot is reused only once every other reference is released too. A release past 0
+    /// wraps and keeps the slot from use, as the original's does.
+    #[test]
+    fn a_slot_is_reused_only_when_empty_and_unreferenced() {
+        let mut world = World::default();
+        world.insert(EntityId(0), robot(0, 0));
+        world.insert(EntityId(1), robot(1, 0));
+        assert_eq!(
+            (world.refs(EntityId(1)), world.free_slot()),
+            (1, Some(EntityId(2)))
+        );
+        world.take(EntityId(1));
+        world.take(EntityId(0xffff));
+        let before = hash(&world);
+        world.remove(EntityId(1));
+        assert_eq!(
+            (world.refs(EntityId(1)), world.free_slot()),
+            (1, Some(EntityId(2)))
+        );
+        assert_ne!(hash(&world), before);
+        world.release(EntityId(1));
+        assert_eq!(
+            (world.refs(EntityId(1)), world.free_slot()),
+            (0, Some(EntityId(1)))
+        );
+        // An object loaded with a count of 0 leaves 0xffff when freed.
+        world.release(EntityId(0));
+        world.remove(EntityId(0));
+        assert_eq!(world.refs(EntityId(0)), 0xffff);
+        assert_eq!(world.free_slot(), Some(EntityId(1)));
+        world.insert(EntityId(1), robot(1, 0));
+        assert_eq!(world.free_slot(), Some(EntityId(2)));
     }
 
     #[test]
