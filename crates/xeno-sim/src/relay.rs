@@ -103,13 +103,19 @@ impl Relay {
 /// the reach).
 fn folder_near(world: &World, id: EntityId, tables: &Tables) -> bool {
     let t = &tables.relays;
-    let Some(at) = world.get(id).map(|e| e.position) else {
-        return false;
-    };
-    world.iter().any(|(_, e)| {
-        let d = approx_distance(at, e.position).0 as u32;
-        u16::from(e.kind) == t.folder && d >> 24 == 0 && ((d >> 8) as u16) < t.fold_reach
+    world.get(id).is_some_and(|e| {
+        nearest(world, e.position, t.folder).is_some_and(|(_, d)| d < t.fold_reach)
     })
+}
+
+/// `1000:f703`: the nearest object of kind `kind` to `at` and its distance (8.8):
+/// any slot, any side, under 256 units only; the first in slot order on a tie.
+pub(crate) fn nearest(world: &World, at: crate::Position, kind: u16) -> Option<(EntityId, u16)> {
+    world
+        .iter()
+        .filter(|(_, e)| u16::from(e.kind) == kind)
+        .filter_map(|(id, e)| Some((id, distance(at, e.position)?)))
+        .min_by_key(|&(_, d)| d)
 }
 
 /// The distance from `a` to `b` as 8.8, under 256 units only (`1000:08ec`, `DH`

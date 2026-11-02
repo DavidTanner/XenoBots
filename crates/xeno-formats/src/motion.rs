@@ -327,7 +327,7 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<Motion, For
         scripts: script::read_image(image, ds)?,
         damage: damage::read_image(image, ds)?,
         sensing: sensing::read_image(image, ds)?,
-        net: net::read_image(image)?,
+        net: net::read_image(image, ds)?,
         relays: relay::read_image(image, ds)?,
         weapons: weapons::read_image(image, ds)?,
         bases: base::read_image(image, ds)?,
@@ -623,7 +623,7 @@ mod tests {
         crate::fixtures::synthetic_gears(&mut image, DS);
         crate::fixtures::synthetic_weapon_keys(&mut image, DS);
         crate::fixtures::synthetic_sensing(&mut image, DS);
-        crate::fixtures::synthetic_net(&mut image);
+        crate::fixtures::synthetic_net(&mut image, DS);
         crate::fixtures::synthetic_relays(&mut image, DS);
         crate::fixtures::synthetic_weapons(&mut image, DS);
         crate::fixtures::synthetic_bases(&mut image, DS);
