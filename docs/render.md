@@ -26,7 +26,7 @@ pointer probe (below) and moves on to the list for the **view mode**, the byte a
 | 8 | `DS:0x3936` | camera, build, ground, sky, draw, `1000:4164`, the remap (`1000:3f3d`, slot `0x5f0`), static, end | The second display, mode 3 (the missile camera) |
 | 0xa | `DS:0x3948` | as 6, plus `4164` and the remap | The second display, mode 1 (thermal) |
 | 0xc, 0xe | `DS:0x395a`, `0x3964` | camera (`DS:0x4d32`), map steps; 0xe adds the grid (`1000:3760`, below) between the clear and the probe | The second display, mode 2; the situation room's map (T-103); 0xe the terrain editor (T-109) |
-| 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build or reuse, map steps | The situation room (T-103) |
+| 0x10 to 0x16 | `DS:0x3970`, `0x397c` | camera (`DS:0x4d2e`), build (0x10, 0x14) or reuse (0x12, 0x16), the background sprite (`1000:3b29`), a dot per node (`3b58`), static, end | 0x12: the consoles' third displays, the radar (`docs/screens.md`, "The third display (T-166)"); no `mov byte [0x1451]` in the build sets 0x10, 0x14 or 0x16 |
 | 0x18 | `DS:0x3988` | noise (`1000:3c20`), end | The second display's damaged modes 4 to 7 (`docs/screens.md`, "The display's other modes (T-134)") |
 | 0x1a | `DS:0x398c` | camera, clear, one node at a time, end | The review (below, "The review's view") |
 
@@ -111,7 +111,7 @@ entries of 4 bytes, the first word the object or 0) and readies the paths. Then:
    the scenario editor's path display is on (`1000:6d27`; nothing draws type 0xe in the
    3D view);
 2. in view modes 0xc, 0xe and 0x12 only, one node for the viewed robot (`1000:f914`,
-   the maps);
+   the maps; list 0x12 reuses the main view's list and never asks the producers);
 3. every object in slot order, 0 to 239, skipping empty slots: the kind's model is
    `DS:0xe70c[kind]` (a byte), and the kind's routine (`DS:0xe7d8[kind]`, or
    `DS:0xe7fa[kind]` in view modes 0xc and 0xe) writes the node or skips the object.

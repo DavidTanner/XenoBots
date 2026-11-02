@@ -36,6 +36,7 @@ pub mod orders;
 pub mod packed;
 mod palette;
 pub mod pcx;
+pub mod radar;
 pub mod relay;
 pub mod review;
 pub mod rst;

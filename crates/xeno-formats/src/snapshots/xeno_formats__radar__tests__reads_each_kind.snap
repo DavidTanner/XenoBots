@@ -1,0 +1,16 @@
+---
+source: crates/xeno-formats/src/radar.rs
+expression: "radars[1]"
+---
+Radar {
+    frames: 3,
+    device: 32,
+    view_mode: 34,
+    damaged_mode: 40,
+    dot: 68,
+    background: 4660,
+    zoom: 4,
+    zoom_shift: 2,
+    heading_offset: 258,
+    noise: 48,
+}
