@@ -252,6 +252,10 @@ pub struct Guns {
     /// (+0x103, +0x104: 0 down, 1 rising, 2 ready, 3 lowering).
     pub arms: [u8; 2],
     pub raised: [u8; 2],
+    /// The scorpion's frames +0x105 to +0x109 (`crate::weapons::scorpion_frames`): its
+    /// two cannons' turn (0 to 3, 4 destroyed), its tail missile (0 shown) and the
+    /// flashes of barrels 1 and 0.
+    pub frames: [u8; 5],
     /// +0xde to +0xe1: the ECM's charges and the weapon steps it stays on, the sparkle
     /// cloaks and the steps one stays on (`docs/sim.md`, "The ECM and the cloak").
     pub ecm: u8,
@@ -306,6 +310,7 @@ impl Movement {
                 burst: p.burst,
                 fired: p.fired,
                 missile: slot(p.missile),
+                frames: p.frames[7..].try_into().expect("+0x105 to +0x109"),
                 ..Guns::default()
             },
             Parts::Scout(p) => Guns {
@@ -453,6 +458,7 @@ impl StateHash for State {
                 let g = m.guns;
                 h.bytes(&[g.energy, g.missiles, g.burst, g.fired]);
                 h.bytes(&[g.arms[0], g.arms[1], g.raised[0], g.raised[1]]);
+                h.bytes(&g.frames);
                 h.bytes(&[g.ecm, g.ecm_time, g.cloaks, g.cloak_time]);
                 h.bytes(&g.drops);
                 g.cooldown.iter().for_each(|&c| h.u16(c));

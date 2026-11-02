@@ -207,6 +207,28 @@ fn a_scorpion_launches_one_tail_missile_and_reloads() {
 }
 
 #[test]
+fn a_scorpion_s_cannons_turn_flash_and_break_and_its_tail_shows_a_ready_missile() {
+    let mut m = Movement::default();
+    let mut c = parts(&mut armed(ObjectKind::Scorpion)).1;
+    (m.guns.missiles, m.guns.fired, m.guns.frames) = (1, 0x81, [3, 0, 1, 0, 0]);
+    // Between the fourth passes only the tail is set: a missile, no reload.
+    scorpion_frames(5, &mut m, &c);
+    assert_eq!((m.guns.frames, m.guns.fired), ([3, 0, 0, 0, 0], 0x81));
+    // A fourth pass: the cannons turn both ways, barrel 0's flash shows at +0x109,
+    // and the fired bits are cleared (the others kept).
+    scorpion_frames(8, &mut m, &c);
+    assert_eq!((m.guns.frames, m.guns.fired), ([0, 3, 0, 0, 1], 0x80));
+    // Reloading hides the tail missile; barrel 1 fired; barrel 0 damaged stops turning.
+    (m.guns.cooldown[1], m.guns.fired, c.weapons) = (7, 2, 1);
+    scorpion_frames(12, &mut m, &c);
+    assert_eq!(m.guns.frames, [0, 2, 1, 1, 0]);
+    // The flashes go out; a destroyed cannon shows frame 4; no missiles hide the tail.
+    (m.guns.cooldown[1], m.guns.missiles, c.systems) = (0, 0, DESTROYED << 1);
+    scorpion_frames(16, &mut m, &c);
+    assert_eq!(m.guns.frames, [0, 4, 1, 0, 0]);
+}
+
+#[test]
 fn a_scout_s_cannon_tells_when_out_of_shells() {
     let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
     let mut world = armed(ObjectKind::Scout);

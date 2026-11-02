@@ -526,6 +526,31 @@ pub fn arms(walk: &Walk, ticks: u16, m: &mut Movement, c: &mut Components) {
     }
 }
 
+/// The scorpion's weapons' frames (`docs/render.md`, "Walking"): its tail missile shows
+/// (+0x107 at 0) with missiles and the reload at 0 (`1000:95a2`); every 4 passes
+/// (`1000:96ab`) a cannon whose barrel is not damaged (+0xdc bit 0, 1) turns, +0x105 up
+/// and +0x106 down, wrapping at 4; the barrels that fired since (+0x11d bits 0, 1) show
+/// their flashes, barrel 0's at +0x109 and 1's at +0x108, and are cleared; a destroyed
+/// cannon (+0xf6 bit 6, 7) shows frame 4, which has no picture.
+pub fn scorpion_frames(ticks: u16, m: &mut Movement, c: &Components) {
+    let g = &mut m.guns;
+    g.frames[2] = u8::from(g.missiles == 0 || g.cooldown[1] != 0);
+    if ticks & 3 != 0 {
+        return;
+    }
+    for w in 0..2 {
+        if c.weapons & (1 << w) == 0 {
+            let turn = if w == 0 { 1 } else { 3 };
+            g.frames[w] = g.frames[w].wrapping_add(turn) & 3;
+        }
+        g.frames[4 - w] = (g.fired >> w) & 1;
+        if c.systems & (DESTROYED << w) != 0 {
+            g.frames[w] = 4;
+        }
+    }
+    g.fired &= !3;
+}
+
 /// The weapon state's cooling (bit 1) and none-left (bit 6) bits for robot `id`'s
 /// weapon `w`: the cool-down (the scorpion's missile: its reload) not 0; the
 /// scorpion's rounds or missiles, or the scout's shells, at 0.
