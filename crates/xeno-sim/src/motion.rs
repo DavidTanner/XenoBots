@@ -784,10 +784,14 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                         only_for: Some(id),
                     })
                 });
-                if e.kind == ObjectKind::Humanoid
-                    && let Damage::Robot(c) = &mut e.damage
-                {
-                    crate::weapons::arms(&tables.walk, ticks, m, c);
+                match (e.kind, &mut e.damage) {
+                    (ObjectKind::Humanoid, Damage::Robot(c)) => {
+                        crate::weapons::arms(&tables.walk, ticks, m, c)
+                    }
+                    (ObjectKind::Scorpion, Damage::Robot(c)) => {
+                        crate::weapons::scorpion_frames(ticks, m, c)
+                    }
+                    _ => {}
                 }
             }
             // The last call of the kind's tick.

@@ -1555,7 +1555,7 @@ then:
   gone is let go (+0x123 = 0xffff). The request is taken: weapon 0 the cannon
   (`982d`): only in the arc, with rounds (+0x120, a word) and the cool-down 0 (each
   failure silent), and energy; +0xdc bit 6 flips to pick a barrel, and the barrel's
-  damaged bit (0 or 1) stops it silently; +0x11d records the barrel that fired; a
+  damaged bit (0 or 1) stops it silently; +0x11d records the barrel that fired (for its flash, `docs/render.md`, "Walking"); a
   shell (kind 6) of 1 point, sound 5 for everyone, one round fewer, cool-down 2. So a
   burst of 5 requests fires 3 shells. Weapon 1 the tail missile (`978d`): with
   missiles (+0x122), its reload (+0x125) at 0 (counted down at entry 9), not damaged

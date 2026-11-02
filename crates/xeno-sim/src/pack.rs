@@ -339,6 +339,7 @@ fn robot(
             }
             r.u8(0x114, n.step);
             r.put(0xff, &m.legs);
+            r.put(0x105, &g.frames);
             r.u8(0x116, m.stride);
             r.u8(0x118, m.relays);
             r.u8(0x11c, m.dump_wait);

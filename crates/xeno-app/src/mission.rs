@@ -6794,7 +6794,7 @@ pub mod tests {
             .unwrap();
         m.view_robot(robot).unwrap();
         let base = m.world().base(Side::Alien).unwrap();
-        let mut retrace = 0u32;
+        let (mut retrace, mut reloading) = (0u32, false);
         let won = end(&mut m, &mut |m| {
             retrace += 1;
             if retrace < 30_000 {
@@ -6804,6 +6804,8 @@ pub mod tests {
             let Some((off, units, r)) = sight(m, robot, at) else {
                 panic!("the scorpion is gone at retrace {retrace}");
             };
+            // Its tail missile hidden while it reloads (T-151).
+            reloading |= r.guns.frames[2] == 1 && r.guns.missiles != 0;
             let mut press = |word| _ = m.key(word, &assets);
             if retrace == 30_000 {
                 (0..5).for_each(|_| press(0x48));
@@ -6824,7 +6826,7 @@ pub mod tests {
                 press(0x39);
             }
         });
-        assert_eq!(won, Some(Request::Over { won: true }));
+        assert_eq!((won, reloading), (Some(Request::Over { won: true }), true));
 
         let mut m = start("htrain.usg");
         let at = m

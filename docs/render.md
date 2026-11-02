@@ -192,7 +192,7 @@ model has animations. Who writes them:
 | Kind | Bytes | Animations |
 |---|---|---|
 | Humanoid | +0xfe to +0x102 | 0 body (1 frame), 1 and 2 arms (7), 3 and 4 legs (5) |
-| Scorpion | +0xfe to +0x109 | 0 body, 1 to 6 legs (6 each), 7 to 11 tail and claws |
+| Scorpion | +0xfe to +0x109 | 0 body, 1 to 6 legs (6 each), 7 and 8 the cannons (5: 4 turning, the fifth empty), 9 the tail missile (2: shown, empty), 10 and 11 the flashes (3: the middle one the flash) |
 | Scout | +0xfe to +0x104 | 0 body, 1, 2, 5, 6 legs (12 each), 3 and 4 (2 each) |
 | Base | +0x18 | its damaged look, 0 to 2 |
 | Relay | +0x18 to +0x1d | its stage's look (`sim_tick_relay`, T-113) |
@@ -221,15 +221,27 @@ humanoid's arms swing by is the legs' (`1000:ad80` sets it; the legs' routine an
 footstep, which pushes it, leave it alone), so `CS:0xaf11` and `0xaf21` are read with the
 same step as the legs.
 
-The scorpion's routine (`1000:95a2`) first sets +0x107 (frame 9, part of the tail) to 0
-when it has missiles (+0x122) and its reload (+0x125) is 0, else 1, then the legs, then
-`1000:96ab` (T-151's).
+The scorpion's routine (`1000:95a2`) first sets +0x107 (frame 9, the missile on its
+tail) to 0 when it has missiles (+0x122, a byte) and its reload (+0x125, a word) is 0,
+else 1, then the legs, then `1000:96ab`, its weapons' frames (T-151). That routine
+does nothing unless the pass count is a multiple of 4 (`DS:0x62c6 & 3`, a word test);
+then: +0x105 (frame 7, cannon 0) steps up one, wrapping at 4, unless barrel 0 is damaged
+(+0xdc bit 0); +0x106 (frame 8, cannon 1) steps down one, wrapping at 4, unless barrel 1
+is (+0xdc bit 1); +0x109 (frame 11) is 1 if barrel 0 fired (+0x11d bit 0) and +0x108
+(frame 10) 1 if barrel 1 did (+0x11d bit 1), else 0, and those two bits are cleared (the
+rest of +0x11d kept); last, a destroyed cannon (+0xf6 bit 6 for +0x105, bit 7 for
++0x106) is set to 4, its model's empty frame. So a flash shows for 4 passes after the
+fourth pass following the shot, however many shells the barrel fired in between. The
+counts in the table above are `scorpion.m08`'s; nothing else in the scorpion's code (`1000:8f00`..`9d00`) stores to
++0x105..+0x109 by DI, so these frames are object state, saved with the scorpion. The
+port: `xeno_sim::weapons::scorpion_frames`, run after the scorpion's walk, keeps them in
+`Guns::frames` (loaded, saved and hashed), and `scene::frames` draws them.
 
 The tables are in the code segment (`CS:x` is image offset `x`). The humanoid's arms
 (+0xff, +0x100) follow its weapons (`1000:ae23`, `ae8a`: raised through +0x103 and
 +0x104 while firing, otherwise swung by `CS:0xaf11[step]` while walking and settled to
 0 when still); a destroyed arm (+0xf6 bit 6, bit 7) shows frame 6. The scorpion's
-other animations are stepped by `1000:96ab` (T-114).
+other animations are stepped by `1000:96ab` (above).
 
 **Footsteps** (`docs/formats/dsounds.md`, "Sound events", all for the viewed robot
 only): a humanoid plays event 13 when a leg's new frame from the table is 0 and its
@@ -555,9 +567,8 @@ nodes' programs (the hill and block programs are read from the user's `xeno.exe`
 (T-121)").
 Each object's z and model height and the viewed robot's eye height are the sim's
 (`Entity::z`, `Entity::model_height`, `Movement::eye_height`; `docs/sim.md`,
-"Heights"). Not yet: the scorpion's tail and claws (+0x105 to +0x109, T-151) and the
-scout's +0x101 and +0x102 (as loaded) are the only robot frames the sim does not
-step; the sky is detail 1 only (the main view's).
+"Heights"). Not yet: the scout's +0x101 and +0x102 (as loaded) are the only robot frames the
+sim does not step; the sky is detail 1 only (the main view's).
 
 `xeno_sim::motion::walk` runs each robot's walking animation after its move with the
 leg tables `xeno_formats::motion` reads (`Motion::walk`, through the `mov al,
