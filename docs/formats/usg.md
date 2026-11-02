@@ -724,7 +724,8 @@ them (above, "Writing"): every slot of the object table in use, whatever its kin
 (shots, explosions, mines and removed objects included), after the pack routines,
 which only robots have (`DS:0xe81c`: the script pointer to its saved form and the
 target to a slot, one more reference counted on it while saved). The reference count
-written is the table's (`DS:0xe2c6`); stock files hold 0, 1 and once 0xfff2.
+written is the table's (`DS:0xe2c6`), with the pack's one for each robot's target; stock
+files hold 0, 1 and once 0xfff2 (`docs/sim.md`, "Reference counts (T-154)").
 `xeno_sim::World::save` packs the port's world this way (`docs/sim.md`, "Saving the
 world (T-116)").
 

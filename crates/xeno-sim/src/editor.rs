@@ -312,7 +312,7 @@ impl Sim {
 /// `sim_alloc_object_slot` (`1000:f4b1`): the lowest free slot, and the entry in
 /// the object's pool.
 fn alloc(world: &World, big_pool: bool) -> Option<(u16, u16)> {
-    let slot = (0..Object::SLOTS as u16).find(|&s| world.get(EntityId(s)).is_none())?;
+    let slot = world.free_slot()?.0;
     // shortcut: the pool's lowest free entry is taken as the count of the pool's
     // objects (true while none has been freed); only the save shows it. Upgrade if
     // the sim keeps the pools.

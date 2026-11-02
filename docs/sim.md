@@ -681,8 +681,8 @@ mission. The consoles' map-mode press sets one (T-133, below).
 the old object goal dropped (`sim_drop_object_goal`, only with bit 0), +0x32 written
 whole (2 or 1), the destination the point or the robot's offset from the object, the
 slot kept, a message read from `xeno.exe` with the lock's (`sensing::Messages::
-destination`, `goal_object`) and event 5. The object's reference count is not kept (as
-nowhere in the port). No new state: the state hash is unchanged.
+destination`, `goal_object`) and event 5. The reference on the object's slot is taken
+and released as the original does since T-154 ("Reference counts").
 
 **The target keys (T-138).** A (`1000:d812`, the same in every console's key table)
 keeps the robot (`DS:0x71f7`), its side bit (+0x16 bit 3, `DS:0x709c`) and its kind's
@@ -1656,7 +1656,7 @@ order), the lead, the hit search and the blast through `damage::hit`, and the
 explosions from their templates. A shot is freed after the damage it does, so an
 explosion that damage makes takes another slot. The shot's state is hashed. Shortcuts,
 each named in the code: (until T-147, in the field by kind); (until T-146, the coarse bearing for
-the lead and an exact level distance for the missile); a gone target is an empty slot or one a shot or explosion took; removal
+the lead and an exact level distance for the missile); a gone target is an empty slot (its shot holds a reference, T-154); removal
 frees the slot at once.
 
 Part 2 (`t-114-fire`): `xeno_sim::weapons` has the trigger (`weapons::trigger`, from
@@ -1848,8 +1848,8 @@ At the stock 0x40 that is a relay every 600 * 4 * 16 ticks, about 9 minutes at 7
 
 **Repairs** (phase 12): +0x1c += +0x3a (the second slider); once it reaches 0x1800 it
 restarts and one repair step is made on the robot whose slot is +0x1a (0xffff none in
-stock files). With no robot there (the slot empty, `1000:f691`; an `int3` the DOS
-handler ignores precedes the search), it takes the first robot in its unit list (+0x4d,
+stock files). With none (0xffff, `1000:f691`'s carry; an `int3` the DOS handler
+ignores precedes the search), it takes the first robot in its unit list (+0x4d,
 38 entries) that is in the base (+0xfd bit 2) and damaged (+0xf9 not 0), takes a
 reference on its slot (`f656`, `f6a6`) and keeps the slot in +0x1a; none, 0xffff.
 Otherwise `2000:7e5f` makes one step (`2000:7e6d`) and then, if the robot's damage
@@ -2158,7 +2158,9 @@ a path and leftover points stay). Robots get their movement, orders, script (pac
 above), panel, guns and kind's parts; every object its +0x16 and +0x17 (T-147); bases
 their tick, counts, kills, losses, depot and damage; relays their damage; shots and
 explosions their fields by kind (`usg.md`, "Kinds made during play"). An object made in
-play starts from zeros, a reference count of 1 and the lowest index free in its pool.
+play starts from zeros and the lowest index free in its pool; every object's reference
+count is the slot's live one plus the pack's one for each robot that targets it, and
+loading takes the file's counts less the unpack's one a robot target (T-154, below).
 `Sim::load` reads shots and explosions back (`pack::unpack_made`; a missile's damage is
 the kind's). The shots no longer keep what their objects do not: a tail missile's
 damage (its blast has its own points) and a missile's climb (used once, when fired), so
@@ -2169,9 +2171,95 @@ each shot and an explosion, save and load it: the world comes back equal to the 
 one with the loader's resets applied, and saving and loading again changes no byte and
 no hash. `real_assets_stock_missions_save_and_load_back` does the same for every stock
 scenario after 4,500 ticks (fights, shots and relays in play), then runs both copies
-2,000 ticks more to the same hash. Shortcuts: the reference counts are the loaded ones
-(T-154); a shot or explosion made in play has no bytes beyond what the sim keeps (a
-relay's are all kept since T-148).
+2,000 ticks more to the same hash. Shortcut: a shot or explosion made in play has no
+bytes beyond what the sim keeps (a relay's are all kept since T-148).
+
+## Reference counts (T-154)
+
+**The table.** The object table `DS:0xe2c4` has 240 entries of four bytes: the object's
+pointer (0 for an empty slot) and, at `DS:0xe2c6`, a **word** count of references on the
+slot. Every reader and writer of the count was found by a byte search for the operand
+(four instructions in all) and the callers of the routines that use them:
+
+- **The loader** (`1000:f462`) zeroes the whole table before a scenario's objects are
+  read, and `1000:f47d` (from the `DCBS` reader at `f1eb`, and the old layout's at
+  `f238`) puts each object in its slot with the file's count as it is.
+- **Making an object** (`sim_alloc_object_slot`, `1000:f4b1`) takes the lowest slot
+  whose pointer **and** count are both 0, stores the pointer and adds one to the count.
+  So a new object holds one reference on its own slot.
+- **Freeing a slot** (`sim_free_object_slot`, `1000:f5cd`): with a pointer there, the
+  object's `GONE` is set, the pointer cleared, the count lowered by one and the
+  object's pool entry freed (the pool's memory is reused at once; only the slot waits).
+  Nothing frees on a count reaching 0: the slot is simply free for `f4b1` once both
+  words are 0. Removal (`1000:f5a4`, only the tail missile's end) turns the object into
+  kind 15 with `GONE` and +0x17 = 2; kind 15's tick (`f5c1`) counts that down and frees
+  the slot through `f5cd` two ticks later. Ctrl+Alt+R (`1000:6ac8`, `f60f` with kind 4)
+  frees every relay the same way.
+- **Take** (`1000:f6a6`) adds one, **release** (`1000:f6bb`) subtracts one; both do
+  nothing for slot 0xffff and nothing else: no check for 0, no free. A count can wrap.
+
+**Who takes and releases.**
+
+| Reference | Take | Release |
+|---|---|---|
+| A robot's object goal (+0x3a, with +0x32 bit 0) | the map-mode press on an object (`1000:4685`, at `468d`) | `sim_drop_object_goal` (`473d`): only with +0x32 bit 0, whatever +0x3a holds; from a new object goal or destination (`4685`, `46c7`), `sim_set_robot_destination` (`46f3`, the hold opcode 0x6f and the moves that set a point), and `sim_destroy_robot`. The step's check on a goal of 0xffff (`48f2`) clears +0x32 only (its release at `4909` is never reached) |
+| A base's robot being repaired (+0x1a) | the search finds one (`650b`) | mended, its damage total 0 (`64db`) |
+| The scorpion's tail missile (+0x123) | a launch (`97cd`), after releasing the last one (`97bc`) | the weapon step, when the slot is empty or `GONE` (`9755`) |
+| A tail missile's target (kind 5, +0x19) | its set-up from the robot's target (`e0d4`) | every end: hit, ground or target gone (`e213`), before its removal |
+| A homing shot's target (kind 7, +0x19) | its set-up (`e3b2`) | life over, target gone or a hit (`e472`); **not** on the ground (`e47c` frees the shot without it, a leak) |
+| A robot's target (+0xe6), only while saving | the pack (`9c77`, `b432`, `cc0a`) | the unpack (`9c87`, `b442`, `cc1a`), which also clears the target |
+
+The lock itself holds a pointer (+0xe6) and **no** reference, so a locked target's slot
+can be freed and reused while locked; the upkeep drops it on `GONE` (`d685`), a bit the
+next object made in the same pool memory clears. Destroying a robot releases only its
+object goal: a scorpion's reference on its missile stays, and the missile's slot is
+never free again.
+
+**Stock counts.** Most stock objects hold 1 (made by the editor, `f4b1`). Many hold 0
+(how is not traced: one release more than takes in the editor session, or a count the
+old layout's loader set, would do it); such an object, freed, leaves 0xffff and its slot
+is never reused that mission. scen06a's human base (slot 0) holds 0xfff2: fourteen more
+releases than takes on slot 0. A likely source, not confirmed: the stock robots' +0x3a
+is 0, not 0xffff, so a robot whose +0x32 has bit 0 without a taken object goal (a script
+can store +0x32 whole) releases slot 0 when it drops it.
+A save skips empty slots (`scen_write_dcbs` walks the pointers), so the count of a slot
+freed while still referenced is lost; after loading, its holders' releases take it to
+0xffff.
+
+The unpack's drop of the robot's target when loading means a file's counts already
+include each robot's target; the stock robots' targets are 0xffff.
+
+### The port (T-154)
+
+`World` keeps the counts (`refs`, by slot, hashed: the state hash changes) beside the
+objects: `World::insert` into an empty slot takes one, `World::remove` is `f5cd` (the
+object leaves and drops its own), `take` and `release` are `f6a6` and `f6bb` (wrapping;
+slot numbers past 240 ignored), and `free_slot` is `f4b1`'s search, which every maker
+(shots, explosions, sparkles, drops, relays, the editor's objects) now uses.
+`World::from_scenario` takes the file's counts and the unpack's release for each robot
+target; `World::save` writes each slot's count plus one per robot targeting it. The takes
+and releases are where the table above has them: `script::set_goal_object` and
+`drop_object_goal` (now also from `motion::set_destination`, opcode 0x6f and
+`damage::destroy`, which before left +0x3a set; the drop now writes 0xffff there as the
+original does), the base's repairs, the scorpion's launch and weapon step, and the tail
+missile's and homing shot's set-up and ends (`shot::free`), the homing shot's leak on the
+ground included. Retired shortcuts: `spawn_explosion`'s and every maker's immediate reuse
+of a freed slot, L's immediate free (L's `World::remove` is now `f5cd`), the save's
+loaded counts, and the shots' check for a target slot holding a shot or explosion (an
+empty slot is the target gone). Kept: the lock's check (`sense.rs`: an empty slot or one
+a new object that is not targetable took is the target gone, since the port has no
+pool memory) and the tail missile's removal freeing its slot at once rather than two
+ticks later.
+
+Tests: `world`'s `a_slot_is_reused_only_when_empty_and_unreferenced`, the console's
+object goal taking and releasing in `script`'s tests, `pack`'s round trip (an empty slot's
+count is not saved), and `real_assets_reference_counts_follow_the_references_held`:
+every stock scenario saves its counts unchanged, and run 4,500 ticks with each human
+robot given the alien base as its goal object, every slot's count every 10 ticks is its
+loaded one, plus objects made less freed, plus exactly the references held. The ntrain
+part of `xeno-app`'s `real_assets_a_training_mission_is_won_and_lost_by_play` now takes
+the alien robots out when the drive starts: slots blocked at 0xffff move where shots are
+made, and the fight the scorpion survived with seed 1 went the other way.
 
 ## The mission clock (T-102)
 

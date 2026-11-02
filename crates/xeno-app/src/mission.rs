@@ -6800,6 +6800,13 @@ pub mod tests {
             if retrace < 30_000 {
                 return;
             }
+            // The alien robots taken out, so the drive does not hang on a fight that
+            // any change in slot use reshuffles (T-154).
+            if retrace == 30_000 {
+                for id in m.world().units(Side::Alien).to_vec() {
+                    xeno_sim::damage::destroy(m.world_mut(), id, &assets.motion, &mut Vec::new());
+                }
+            }
             let at = m.world().get(base).unwrap().position;
             let Some((off, units, r)) = sight(m, robot, at) else {
                 panic!("the scorpion is gone at retrace {retrace}");

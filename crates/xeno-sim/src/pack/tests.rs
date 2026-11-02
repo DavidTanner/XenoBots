@@ -16,9 +16,11 @@ fn round_trip(sim: &Sim, loaded: &Scenario, table: u16) -> (Vec<u8>, Scenario, S
 
 /// `running` as the original's loader leaves it, taking what the loader resets from
 /// `loaded`: the scripts restart with the program given, the targets are dropped, and
-/// the counts carried from mission to mission start over.
+/// the counts carried from mission to mission start over; an empty slot's reference
+/// count is not saved, so it starts over at 0.
 fn as_loaded(running: &World, loaded: &World) -> World {
     let mut expected = running.clone();
+    expected.refs.retain(|&id, _| running.get(id).is_some());
     for (id, e) in loaded.iter() {
         if let (State::Robot(m), Some(State::Robot(want))) =
             (e.state, expected.get_mut(id).map(|e| &mut e.state))
@@ -306,4 +308,85 @@ fn real_assets_stock_missions_save_and_load_back() {
         assert_eq!(twice.state_hash(), again.state_hash(), "{name}");
     }
     assert!(made > 0, "no shot or explosion was saved");
+}
+
+/// The references objects in `world` hold on each slot: a robot's object goal, a
+/// scorpion's missile, a base's robot being repaired and a homing shot's or tail
+/// missile's target (`docs/sim.md`, "Reference counts (T-154)").
+fn held(world: &World) -> BTreeMap<EntityId, u16> {
+    let mut held = BTreeMap::new();
+    for (_, e) in world.iter() {
+        let slots = match &e.state {
+            State::Robot(m) => [
+                (m.goal & 1 != 0).then_some(EntityId(m.goal_object)),
+                m.guns.missile,
+            ],
+            State::Base { depot, .. } => [depot.repairing, None],
+            State::Shot(s) => [s.target, None],
+            _ => [None, None],
+        };
+        for s in slots.into_iter().flatten() {
+            *held.entry(s).or_default() += 1;
+        }
+    }
+    held
+}
+
+/// Every stock scenario saves its loaded counts unchanged; run a while with each human
+/// robot given the alien base as its goal object, each slot's count has moved by its objects made and freed plus the references held on it, at
+/// least (a homing shot on the ground keeps its target's, as the original's does).
+#[test]
+#[ignore]
+fn real_assets_reference_counts_follow_the_references_held() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let table = xeno_formats::editor::read(&exe).unwrap().program_table;
+    let names = (0..13)
+        .map(|n| format!("scen{n:02}a.usg"))
+        .chain(["ctrain", "htrain", "ntrain", "strain"].map(|n| format!("{n}.usg")));
+    let mut references = 0;
+    for name in names {
+        let scenario = usg::parse(&std::fs::read(dir.join(&name)).unwrap()).unwrap();
+        let counts = |s: &Scenario| -> Vec<(u16, u16)> {
+            s.objects
+                .iter()
+                .flatten()
+                .map(|o| (o.slot, o.ref_count))
+                .collect()
+        };
+        let mut sim = Sim::load(&scenario, Random::seeded(5), tables.clone());
+        assert_eq!(
+            counts(&sim.world.save(&scenario, table)),
+            counts(&scenario),
+            "{name}"
+        );
+        let start = sim.world.clone();
+        // Every human robot heads for the alien base: a reference each.
+        let alien = sim.world.base(usg::Side::Alien).unwrap();
+        for id in sim.world.units(usg::Side::Human).to_vec() {
+            sim.pilot(id, Pilot::GoalObject(alien));
+        }
+        for tick in 1..=4500 {
+            _ = sim.tick(&[]);
+            if tick % 10 != 0 {
+                continue;
+            }
+            let held = held(&sim.world);
+            for slot in (0..Object::SLOTS as u16).map(EntityId) {
+                let lives = |w: &World| i32::from(w.get(slot).is_some());
+                let moved = sim.world.refs(slot).wrapping_sub(start.refs(slot)) as i16;
+                let taken = i32::from(moved) - (lives(&sim.world) - lives(&start));
+                let want = i32::from(held.get(&slot).copied().unwrap_or(0));
+                assert_eq!(taken, want, "{name} tick {tick} slot {}", slot.0);
+                references += want;
+            }
+        }
+    }
+    assert!(references > 0, "no reference was held");
 }

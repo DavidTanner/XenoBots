@@ -19,9 +19,7 @@ const EVENT_CRIPPLED: u8 = 12;
 /// destroyed (and a base's big explosion).
 const SOUND_HIT: u8 = 21;
 const SOUND_DESTROYED: u8 = 2;
-/// The object table's slots, and the small objects' pool (everything but robots and
-/// bases).
-const SLOTS: u16 = 240;
+/// The small objects' pool (everything but robots and bases).
 const SMALL_POOL: usize = 200;
 
 /// Object `id` takes a hit of `points` (`sim_damage_object`). Robots wear down or are
@@ -179,9 +177,10 @@ fn wear(parts: &mut Components, part: &Part, random: &mut Random) -> Option<u16>
     }
 }
 
-/// Robot `id` is destroyed (`sim_destroy_robot`): a loss for its side and a kill for
-/// the other, an explosion where it stood, and it leaves its unit list, its orders
-/// and the world.
+/// Robot `id` is destroyed (`sim_destroy_robot`): its object goal dropped, a loss for
+/// its side and a kill for the other, an explosion where it stood, and it leaves its
+/// unit list, its orders and the world (its slot freed; other references it holds, as
+/// a scorpion's on its missile, are kept, as the original keeps them).
 // shortcut: its call sign's slot, the roster's redraw and selection and the view's
 // change are the consoles' and situation room's (T-103, T-104).
 pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
@@ -189,6 +188,7 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
         return;
     };
     let (side, at, z) = (e.side, e.position, e.z);
+    crate::script::drop_object_goal(world, id);
     for (side, loss) in [(side, true), (other(side), false)] {
         if let Some(State::Base { kills, losses, .. }) = world
             .base(side)
@@ -214,8 +214,6 @@ pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Ve
 /// An explosion of `kind` at `at`, height `z` (the object it replaces), from `template`
 /// (`sim_spawn_explosion`), in the lowest free slot; none if the slots or the small
 /// objects' pool are full.
-// shortcut: a freed slot is reused at once; the original waits for the robots that
-// target the object to let go of it (T-112).
 pub(crate) fn spawn_explosion(
     world: &mut World,
     at: Position,
@@ -248,14 +246,14 @@ pub(crate) fn spawn_explosion(
 }
 
 /// `sim_alloc_object_slot` (`1000:f4b1`) for an object of the small pool: the lowest
-/// free slot, none if the slots or the pool of 200 are full.
+/// free slot ([`World::free_slot`]), none if the slots or the pool of 200 are full.
 pub(crate) fn alloc_small(world: &World) -> Option<EntityId> {
     let small = world
         .iter()
         .filter(|(_, e)| !matches!(e.kind, ObjectKind::Base) && RobotKind::of(e.kind).is_none())
         .count();
-    let slot = (0..SLOTS).find(|&s| world.get(EntityId(s)).is_none())?;
-    (small < SMALL_POOL).then_some(EntityId(slot))
+    let slot = world.free_slot()?;
+    (small < SMALL_POOL).then_some(slot)
 }
 
 /// One step of destroyed base `id`'s end script (`sim_end_mission_with_result`, run
