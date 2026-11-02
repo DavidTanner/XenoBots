@@ -562,3 +562,116 @@ proptest::proptest! {
         proptest::prop_assert!(d <= exact && exact - d <= (exact >> 7) + 1, "{d} {exact}");
     }
 }
+
+/// The console counters (T-167) at the synthetic entry 13: +0xee up by 2 on each kind;
+/// the humanoid's and scout's page steps (AND 3) when +0xfa's low five bits are 0, then
+/// +0xfa; the scorpion halves its lock warning and flips +0xfa bit 7 instead.
+#[test]
+fn the_console_counters_step_by_kind() {
+    let mut world = world();
+    let entry = 13 << 1;
+    // The humanoid at +0xfa 0x1f with page 3: one step to 0x20, the next turns the page.
+    let h = movement(&mut world, EntityId(1)).unwrap();
+    (h.blink, h.clock, h.page, h.locked_on) = (0xfe, 0x1f, 3, 0x80);
+    step_at(&mut world, entry);
+    let h = m(&world, 1);
+    assert_eq!((h.blink, h.clock, h.page, h.locked_on), (0, 0x20, 3, 0x80));
+    step_at(&mut world, entry);
+    assert_eq!((m(&world, 1).clock, m(&world, 1).page), (0x21, 0));
+    // Other entries leave them be.
+    step_at(&mut world, entry + 2);
+    assert_eq!((m(&world, 1).blink, m(&world, 1).clock), (2, 0x21));
+    // A scout goes round all four pages, as the humanoid when uncut.
+    let mut m4 = Movement {
+        page: 3,
+        ..Movement::default()
+    };
+    counters(RobotKind::Scout, &mut m4);
+    assert_eq!((m4.blink, m4.clock, m4.page), (2, 1, 0));
+    // The scorpion: no page; bit 7 flips each time and the lock halves.
+    let mut s = Movement {
+        clock: 0x05,
+        locked_on: 0xff,
+        ..Movement::default()
+    };
+    counters(RobotKind::Scorpion, &mut s);
+    assert_eq!((s.blink, s.clock, s.page, s.locked_on), (2, 0x85, 0, 0x7f));
+    counters(RobotKind::Scorpion, &mut s);
+    assert_eq!((s.clock, s.locked_on), (0x05, 0x3f));
+}
+
+/// A stock humanoid, scorpion and scout (scen00a's first of each) keep their counters
+/// as loaded, step them in play, and save and load them back unchanged.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_stock_console_counters_load_step_and_save() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let table = xeno_formats::editor::read(&exe).unwrap().program_table;
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("scen00a.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, crate::random::Random::seeded(3), tables);
+    let robots: Vec<EntityId> = [
+        ObjectKind::Humanoid,
+        ObjectKind::Scorpion,
+        ObjectKind::Scout,
+    ]
+    .into_iter()
+    .map(|kind| {
+        sim.world
+            .iter()
+            .find(|(_, e)| e.kind == kind)
+            .map(|(id, _)| id)
+            .unwrap()
+    })
+    .collect();
+    let loaded = |id: EntityId| {
+        let r = scenario
+            .objects
+            .iter()
+            .flatten()
+            .find(|o| o.slot == id.0)
+            .and_then(|o| o.robot())
+            .unwrap();
+        let (page, gauges) = match &r.parts {
+            xeno_formats::usg::Parts::Humanoid(p) => (p.light, [0; 2]),
+            xeno_formats::usg::Parts::Scorpion(p) => (0, p.gauges),
+            xeno_formats::usg::Parts::Scout(p) => (p.light, [0; 2]),
+        };
+        (r.blink, r.clock, page, gauges)
+    };
+    for &id in &robots {
+        let r = m(&sim.world, id.0);
+        assert_eq!((r.blink, r.clock, r.page, r.gauges), loaded(id), "{id:?}");
+    }
+    // 32 ticks run each kind's counters twice.
+    let before: Vec<Movement> = robots.iter().map(|id| m(&sim.world, id.0)).collect();
+    for _ in 0..32 {
+        _ = sim.tick(&[]);
+    }
+    for (id, b) in robots.iter().zip(before) {
+        let r = m(&sim.world, id.0);
+        assert_eq!(r.blink, b.blink.wrapping_add(4), "{id:?}");
+    }
+    let bytes = xeno_formats::usg::write(&sim.world.save(&scenario, table)).unwrap();
+    let back = xeno_formats::usg::parse(&bytes).unwrap();
+    let again = crate::Sim::load(
+        &back,
+        crate::random::Random::seeded(1),
+        sim.tables.clone().unwrap(),
+    );
+    for &id in &robots {
+        let (a, b) = (m(&sim.world, id.0), m(&again.world, id.0));
+        assert_eq!(
+            (a.blink, a.clock, a.page, a.gauge_bias, a.gauges),
+            (b.blink, b.clock, b.page, b.gauge_bias, b.gauges),
+            "{id:?}"
+        );
+    }
+}

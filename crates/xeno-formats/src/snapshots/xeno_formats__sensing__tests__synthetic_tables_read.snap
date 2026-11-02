@@ -21,6 +21,7 @@ Sensing {
             range: 768,
             locked_on: 6,
             contact: 8,
+            counters: 13,
         },
         KindTicks {
             scan: 15,
@@ -29,6 +30,7 @@ Sensing {
             range: 784,
             locked_on: 7,
             contact: 8,
+            counters: 13,
         },
         KindTicks {
             scan: 15,
@@ -37,6 +39,7 @@ Sensing {
             range: 800,
             locked_on: 6,
             contact: 8,
+            counters: 13,
         },
     ],
     messages: Messages {

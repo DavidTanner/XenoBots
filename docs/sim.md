@@ -584,6 +584,32 @@ routine marks the console's panels (not the sim's concern).
 a lock warns its target within 16 ticks and the warning fades 128 ticks after the
 lock goes.
 
+**The console counters (T-167).** Entry 4 of every kind's table (humanoid `1000:b318`,
+scorpion `9a14`, scout `caf5`; found by address and checked by its two `inc byte [di +
+0xee]` by `xeno_formats::sensing`, `KindTicks::counters`) adds 2 to +0xee, the lock
+warning light's blink (bit 2: on and off every 32 ticks). While +0xee's low two bits
+are then 0 (every other call; never, for an odd +0xee) it marks the light for a redraw
+and, with `locked_on` not 0 and +0xee bit 2 set, plays **sound event 9** for the
+robot on view (`mov ax, 0x12`, `call 1000:eec6` at `b347`, `9a39`, `cb1f`; to be posted from here by T-206).
+The humanoid and the scout then step their status page (humanoid +0x10a, scout +0x108:
+`inc`, `and 3`, and a mark) when +0xfa's low five bits are 0, and step +0xfa; so the
+page turns every 512 ticks. The scorpion instead halves `locked_on` a second time (as
+well as the decay at its entry 7, so its warning fades twice as fast) and flips +0xfa
+bit 7, its console's damage lights (on every other 16 ticks). Entry 5 of the
+scorpion's, the dump's step (`9a50`, "Relay nets"), then always sets its cargo gauges
+(+0x11a, +0x11b; below). Every other `[di + 0xee]`, `[di + 0xfa]`, `[di + 0x10a]`,
+`[di + 0x108]` and `[di + 0x11a/0x11b]` access in the code segment is a draw that
+reads them (the warning lights `a454`, `8a7f`, `bef6`; the damage panel `9069`; the
+status panels `a96f`, `bf39`; the gauges `8c0a`, `8c22`), S (`ddb0`) and the status
+panel's press (`dd7f`), both +0xfa = 0, the humanoid's status panel's draw, which cuts
++0x10a by 3 when 3 or more before it picks the page (`a96f`), the relay net's line
+(scorpion +0x10a to +0x114), the scout's walking counter (its +0x10a), the humanoid's
+cool-downs and the scorpion's frames (+0x108), the humanoid's widget marks (+0x11b) and
+the situation room's widget marks of 3 on the base it is given (`5e91`, `678f`,
+`67b2`). The port steps them in `sense::counters` (`Movement::blink`, `clock`, `page`,
+`gauges`, loaded, hashed and saved); `Pilot::StatusClock` is S and the press,
+`Pilot::StatusShown` the humanoid's draw's cut.
+
 **The target opcodes.** 0x6b pushes the distance to the target (as 0x5e does, 0xffff
 with none or past 256 units). 0x6c steers to it: +0x32 is set to 8 for the steering
 and put back, so the target heading becomes the coarse bearing to the target, carry
@@ -862,8 +888,9 @@ only, and S in the humanoid's and scout's.
   the next entry 4 (within 16 ticks) and then every 32 calls from there: S turns the
   page now rather than up to 32 calls later. The only other `[DI + 0xfa]` accesses
   are the humanoid's and scout's steps (`1000:b34a`, `cb22`), the scorpion's bit-7
-  flip (`9a45`) and a write of 3 in `ui_sitroom_set_view_mode` (`1000:678f`, on the
-  object it is given; not traced further).
+  flip (`9a45`), its damage panel's test (`9069`) and a write of 3 in
+  `ui_sitroom_set_view_mode` (`1000:678f`: a widget mark on the base it is given, not a
+  robot's +0xfa; T-167).
 - **Ctrl+P** (`1000:d193`): with `DS:0x1598` = 0xba17 (unlock word 8, `key.md`) power
   (+0x4e) 100, the signal (+0x4f), battery (+0x50) and drive (+0x51) 0xff, then the
   beep; without it, nothing. Unlike the new robot's set-up (`1000:d17d`) it leaves
@@ -885,8 +912,8 @@ app: no ticks, the briefing stops typing, the colour records are held, the box a
 its text (`xeno_formats::sitroom::SitRoom::pause_box`, `pause_text`, read from the
 user's `xeno.exe`) are drawn over the view, and the next key or button press only
 ends it. Ctrl+Alt+S flips `MapState::shots`. Not ported: the beep (no PC speaker in
-`xeno-audio`; T-193), and S, whose +0xfa is worked out from the passes in the app
-until T-167 keeps it in the sim (S and the status panel's press then set it to 0).
+`xeno-audio`; T-193). S and the status panel's press are `Pilot::StatusClock`
+(+0xfa = 0) since T-167.
 The shots flag is kept by the mission, not the run (a shortcut).
 
 ## The ECM and the cloak (T-136)
@@ -1149,9 +1176,12 @@ So a relay a scorpion lays rises only after the scorpion moves on.
   carried, the deployer damaged, or no room) D's routine runs, which clears bit 4
   with its "stopped" message (after deploying's "no relay"). So a dump lays a relay
   every 160 ticks while it moves or stands, until the cargo is empty. The step then
-  marks the cargo for a redraw (`9bbe`: +0x138 and +0x165) and sets the gauges
-  (T-131). Nothing checks the speed or the cell, and the net programs' own deploying
-  is unaffected.
+  marks the cargo for a redraw (`9bbe`: +0x138 and +0x165) and, dumping or not, sets
+  the gauges (T-131): +0x11a to the relays times 16 plus +0x119, +0x11b to the relays
+  times 8 plus twice +0x119 (bytes, wrapping; +0x119 is cleared when the robot is made
+  and nothing else writes it), each marked when it changes. The port does it in
+  `net::dump_step` since T-167. Nothing checks the speed or the cell, and the net
+  programs' own deploying is unaffected.
 - **The console's buttons** C, D and L (`0xfa`, `0xfc`, `0xfe`; mouse `1000:8d53`,
   `8dad`, `8cbf`) are U's (`8d0b`): a press or release (`AX` bit 7) flips the
   shared look (+0x22 bit 3) and marks the button; a release (`AX` bits 2 or 4) then

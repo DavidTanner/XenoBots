@@ -318,7 +318,8 @@ fn robot(
     r.u16(0xe6, slot(m.target));
     r.u16(0xe8, m.target_distance);
     r.u16(0xea, m.target_bearing);
-    r.u8(0xed, m.locked_on);
+    r.put(0xed, &[m.locked_on, m.blink]);
+    r.u8(0xfa, m.clock);
     r.u8(0xf7, m.contacts);
     r.u8(0xfb, m.bump_wait);
     let g = &m.guns;
@@ -337,7 +338,7 @@ fn robot(
             );
             r.u8(0x105, m.stride);
             r.put(0x108, &[g.cooldown[0] as u8, g.cooldown[1] as u8]);
-            r.u8(0x10b, m.gear);
+            r.put(0x10a, &[m.page, m.gear]);
         }
         Some(RobotKind::Scorpion) => {
             let n = &m.grid;
@@ -352,7 +353,7 @@ fn robot(
             r.put(0xff, &m.legs);
             r.put(0x105, &g.frames);
             r.u8(0x116, m.stride);
-            r.u8(0x118, m.relays);
+            r.put(0x118, &[m.relays, m.gauge_bias, m.gauges[0], m.gauges[1]]);
             r.u8(0x11c, m.dump_wait);
             r.put(0x11d, &[g.fired, g.burst, g.cooldown[0] as u8]);
             r.u16(0x120, g.rounds);
@@ -363,7 +364,7 @@ fn robot(
         Some(RobotKind::Scout) => {
             let c = g.cooldown.map(|c| c as u8);
             r.put(0xff, &m.legs);
-            r.put(0x105, &[c[0], c[1], g.rounds as u8]);
+            r.put(0x105, &[c[0], c[1], g.rounds as u8, m.page]);
             r.put(0x109, &[m.gear, m.stride, m.stance, m.stance_target]);
         }
         None => {}

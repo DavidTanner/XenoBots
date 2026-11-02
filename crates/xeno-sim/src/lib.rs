@@ -285,7 +285,9 @@ impl Sim {
             | Pilot::Stance(_)
             | Pilot::Weapon(_)
             | Pilot::OtherWeapon
-            | Pilot::ReleaseTurn { .. } => false,
+            | Pilot::ReleaseTurn { .. }
+            | Pilot::StatusClock
+            | Pilot::StatusShown => false,
             _ => return events,
         };
         if takes_over {
@@ -334,6 +336,12 @@ impl Sim {
                     _ => m.weapon ^ 1,
                 };
                 motion::select_weapon(tables, kind, weapons, id, m, weapon, &mut events);
+            }
+            Pilot::StatusClock => m.clock = 0,
+            Pilot::StatusShown
+                if kind == xeno_formats::usg::ObjectKind::Humanoid && m.page >= 3 =>
+            {
+                m.page -= 3
             }
             _ => {}
         }
@@ -499,6 +507,13 @@ pub enum Pilot {
     /// (`docs/formats/key.md`): power (+0x4e) 100, the signal (+0x4f), the battery
     /// (+0x50) and the drive (+0x51) 0xff. The original then beeps (`1000:0261`).
     Charge,
+    /// S on the humanoid and scout (`1000:ddb0`) and a press on their status panels
+    /// (`1000:dd7f`): +0xfa is 0, so the page turns at the next count of the console
+    /// counters (`sense::counters`).
+    StatusClock,
+    /// The humanoid's status panel drawn (`1000:a96f`): its page (+0x10a) cut by 3 when
+    /// 3 or more. Other kinds' panels change nothing.
+    StatusShown,
 }
 
 /// A mission whose sim gave the random word back ([`Sim::park`]): its world, input
@@ -799,6 +814,38 @@ mod tests {
         assert_ne!(sim.random.clone().word(), word);
     }
 
+    /// S and the status panel's press set +0xfa to 0 on any kind; the humanoid's panel
+    /// drawn cuts its page by 3 when 3 or more, and nothing else's.
+    #[test]
+    fn s_restarts_the_status_clock_and_the_humanoid_s_panel_cuts_its_page() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        use xeno_formats::usg::ObjectKind;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let robots: Vec<(EntityId, ObjectKind)> = sim
+            .world
+            .iter()
+            .filter(|(_, e)| matches!(e.state, State::Robot(_)))
+            .map(|(id, e)| (id, e.kind))
+            .collect();
+        assert!(robots.iter().any(|&(_, k)| k == ObjectKind::Humanoid));
+        for (id, kind) in robots {
+            let m = motion::movement(&mut sim.world, id).unwrap();
+            (m.clock, m.page) = (0x35, 3);
+            let before = sim.state_hash();
+            assert!(sim.pilot(id, Pilot::StatusClock).is_empty());
+            assert_ne!(sim.state_hash(), before);
+            sim.pilot(id, Pilot::StatusShown);
+            sim.pilot(id, Pilot::StatusShown);
+            let m = motion::movement(&mut sim.world, id).unwrap();
+            let cut = if kind == ObjectKind::Humanoid { 0 } else { 3 };
+            assert_eq!((m.clock, m.page), (0, cut), "{kind:?}");
+            m.page = 2;
+            sim.pilot(id, Pilot::StatusShown);
+            assert_eq!(motion::movement(&mut sim.world, id).unwrap().page, 2);
+        }
+    }
+
     /// The synthetic mission's scorpion (slot 5), its deployer whole, carrying `relays`,
     /// its panel's queue empty.
     fn scorpion(relays: u8) -> (Sim, EntityId) {
@@ -909,6 +956,16 @@ mod tests {
             Damage::Robot(c) if c.equipment & 0x10 == 0
         ));
         assert_eq!(step(&mut sim, 10), 0);
+        // Dumping or not, the step sets the cargo gauges from the relays and +0x119.
+        let m = motion::movement(&mut sim.world, id).unwrap();
+        (m.relays, m.gauge_bias, m.gauges) = (3, 1, [0; 2]);
+        step(&mut sim, 8);
+        assert_eq!(motion::movement(&mut sim.world, id).unwrap().gauges, [0; 2]);
+        step(&mut sim, 10);
+        assert_eq!(
+            motion::movement(&mut sim.world, id).unwrap().gauges,
+            [49, 26]
+        );
     }
 
     #[test]

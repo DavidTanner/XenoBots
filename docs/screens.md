@@ -943,9 +943,11 @@ and 0x31 in the robot's widget state (+0x10c): 0 and 1 in the stock files.
 
 **Counters the panels go by** (each robot's tick table `DS:0x6acf`, entry 4,
 `1000:b318`, so once every 16 ticks when +0x1a & 0x1e is 8): +0xee goes up by 2 (bit 2,
-the warning light's blink, flips every 32 ticks); while +0xed is not 0 and bit 2 is set
-sound event 0x12 plays; when +0xfa's low five bits are 0, +0x10a steps (AND 3); then
-+0xfa goes up by one. So the status panel turns a page every 512 ticks.
+the warning light's blink, flips every 32 ticks); when its low two bits are then 0 the
+light is marked and, while +0xed is not 0 and bit 2 is set, sound event 9 plays (`mov
+ax, 0x12`; once every 64 ticks); when +0xfa's low five bits are 0, +0x10a steps (AND
+3); then +0xfa goes up by one. So the status panel turns a page every 512 ticks. The
+sim keeps and steps them since T-167 (`docs/sim.md`, "The console counters (T-167)").
 
 **Names** (`1fe6:7f38`, the target's): a robot's two letters and serial (as the
 detail panel's); a base six bytes from the immediates at `1fe6:7f71` (three `mov word
@@ -1100,12 +1102,13 @@ is the second byte of their states (+0x150, +0x153); the drop buttons' (+0x156 t
 +0x15c).
 
 **Counters.** The scorpion's tick table `DS:0x6732` (by +0x1a, kept to 0..=0x1e):
-entry 4 (`1000:9a14`) adds 2 to +0xee (marking the warning light; sound event 0x12
-while +0xed holds and bit 2 is set), halves +0xed, and flips +0xfa bit 7 (marking the
-damage panel): so the damage lights show every other 16 ticks. Entry 5 (`9a50`) steps
+entry 4 (`1000:9a14`) adds 2 to +0xee (marking the warning light and, while +0xed
+holds and bit 2 is set, sound event 9, when the low two bits are 0, as the humanoid's),
+halves +0xed, and flips +0xfa bit 7 (marking the damage panel): so the damage lights
+show every other 16 ticks. Entry 5 (`9a50`) steps
 the dump, marks the cargo for a redraw and sets the gauges: +0x11a to the relays times
 16 plus +0x119, +0x11b to the relays times 8 plus twice +0x119 (each marked when it
-changes).
+changes). The sim keeps and steps both since T-167.
 
 **In the port**: `xeno_formats::scorpcon` reads the texts, tables, rectangles and the
 bank's handle; `xeno-app`'s `scorpcon` draws the power panel, the warning light, the
@@ -1168,9 +1171,10 @@ state of widget `0x13a`, the stance gauge, so the open console redraws it each t
 stance moves.
 
 **Counters.** The scout's tick table `DS:0x6ebf` (by +0x1a): entry 4 (`1000:caf5`) adds
-2 to +0xee (marking the warning light; sound event 0x12 while +0xed holds and bit 2 is
-set), and when +0xfa's low five bits are 0 steps +0x108 (AND 3, marking the status
-panel); then +0xfa goes up by one. So the status panel turns a page every 512 ticks,
+2 to +0xee (marking the warning light and, while +0xed holds and bit 2 is set, sound
+event 9, when the low two bits are 0, as the humanoid's), and when +0xfa's low five
+bits are 0 steps +0x108 (AND 3, marking the status panel); then +0xfa goes up by one
+(in the sim since T-167). So the status panel turns a page every 512 ticks,
 round all four. The recall's routine (`cb3d`) marks the program panel and the switches.
 
 **In the port**: `xeno_formats::scoutcon` reads the texts, tables, rectangles and the
