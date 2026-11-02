@@ -244,6 +244,15 @@ fn recall(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Eve
     crate::script::switch(world, id, true, events);
 }
 
+/// `1000:b3d5`, `b3df`: a turn button held asks for the heading less or plus 0x40.
+fn held_turn(heading: u16, m: &mut Movement) {
+    match m.held {
+        Movement::HELD_LEFT => m.target_heading = heading.wrapping_sub(0x40),
+        Movement::HELD_RIGHT => m.target_heading = heading.wrapping_add(0x40),
+        _ => {}
+    }
+}
+
 /// One gear up or down: the speed keys (`1000:acda`, `ace0` and the other kinds')
 /// and the scripts' opcodes 0x51 and 0x52 (the routines at `DS:0x722d`, `0x7233`). A
 /// humanoid or scout takes the next gear's speed; a scorpion's speed asked for moves
@@ -272,11 +281,22 @@ pub fn shift(tables: &Tables, kind: ObjectKind, m: &mut Movement, up: bool) -> b
     };
     // shortcut: an odd or out-of-range gear from a file reads past the original's
     // table; the port leaves the speed asked for. None in the stock files.
-    if let Some(&speed) = gears.get(usize::from(gear / 2)) {
-        m.gear = gear;
-        m.target_speed = speed;
-    }
+    set_gear(tables, kind, m, gear);
     true
+}
+
+/// A humanoid or scout takes `gear` (twice an index) and its speed asked for
+/// (`sim_set_humanoid_gear`, the gear lever); false when it already had it, or for a
+/// gear past its table or a scorpion.
+pub fn set_gear(tables: &Tables, kind: ObjectKind, m: &mut Movement, gear: u8) -> bool {
+    match gears(tables, kind).and_then(|g| g.get(usize::from(gear / 2))) {
+        Some(&speed) if gear != m.gear => {
+            m.gear = gear;
+            m.target_speed = speed;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Robot `id` selects `weapon` (F5, F6, F9 and the scripts' 0x7b and 0x7c: the kinds'
@@ -795,7 +815,13 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                     _ => {}
                 }
             }
-            // The last call of the kind's tick.
+            // The humanoid's turn button held (+0x1b, `DS:0x6aef`), then the last call
+            // of the kind's tick.
+            if let Some(e) = world.get_mut(id)
+                && let (ObjectKind::Humanoid, State::Robot(m)) = (e.kind, &mut e.state)
+            {
+                held_turn(e.heading, m);
+            }
             crate::damage::total(world, id, tables, &mut events);
         }
         if base {

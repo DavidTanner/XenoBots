@@ -778,6 +778,18 @@ arrows act the same, and the keyboard's repeat repeats them.
 | Ctrl+P | | `d193` | the same | With unlock word 8 (`key.md`): power (+0x4e) 100, the signal (+0x4f), battery (+0x50) and drive (+0x51) 0xff, a beep (T-139, below) |
 | Ctrl+Alt+S | `d177` | the same | the same | Flips `DS:0x62ec` bit 6: the shots on the maps (T-139, below) |
 
+The humanoid console's gear lever, compass and turn buttons (T-165; `docs/screens.md`,
+"The humanoid console's instruments (T-130)") act through the same routines and fields:
+the lever sets a gear and its speed asked for (the pilot taking over only when the
+gear changes) and works the velocity out again; the compass and the straight button
+take the pilot and set the heading asked for (the bearing to the pointer, or the
+heading), clearing the turn keys' bits 4 and 5; a turn button held sets +0x1b to 10 or
+11, and the humanoid's tick then asks, at its end, for its heading less or plus 0x40
+(`DS:0x6aef`, `1000:b3d5`, `b3df`), so it turns at its full turn step while held; a
+right release over the button sets bit 4 or 5 instead, so it keeps turning as the
+keys' bits do. No key reaches these handlers. `Sim::pilot` takes them as `Pilot::Gear`,
+`Say`, `Toward`, `Straight`, `HoldTurn` and `ReleaseTurn`.
+
 The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
 Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).
 

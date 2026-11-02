@@ -270,7 +270,7 @@ fn robot(
     m: &Movement,
     program_table: u16,
 ) {
-    r.u8(0x1a, m.tick);
+    r.put(0x1a, &[m.tick, m.held]);
     r.u16(0x1c, m.eye_height);
     r.u16(0x1e, m.velocity.0 as u16);
     r.u16(0x20, m.velocity.1 as u16);

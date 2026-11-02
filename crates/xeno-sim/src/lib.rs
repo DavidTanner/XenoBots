@@ -253,6 +253,7 @@ impl Sim {
                     e.status &= !xeno_formats::usg::status::TRACKING;
                 }
             }
+            Pilot::Say(text) => log::say(world, id, text, tables),
             Pilot::Charge => {
                 if let Some(e) = world.get_mut(id)
                     && let (Damage::Robot(c), State::Robot(m)) = (&mut e.damage, &mut e.state)
@@ -264,23 +265,30 @@ impl Sim {
             _ => {}
         }
         // The rest act on the robot's own movement.
-        if !matches!(
-            key,
+        let takes_over = match key {
             Pilot::Left
-                | Pilot::Right
-                | Pilot::Faster
-                | Pilot::Slower
-                | Pilot::Stop
-                | Pilot::Stance(_)
-                | Pilot::Weapon(_)
-                | Pilot::OtherWeapon
-        ) {
-            return events;
-        }
-        if matches!(
-            key,
-            Pilot::Left | Pilot::Right | Pilot::Faster | Pilot::Slower
-        ) {
+            | Pilot::Right
+            | Pilot::Faster
+            | Pilot::Slower
+            | Pilot::Toward(..)
+            | Pilot::Straight
+            | Pilot::HoldTurn { .. } => true,
+            // The lever takes over only when the gear changes.
+            Pilot::Gear(gear) => world
+                .get(id)
+                .and_then(|e| match &e.state {
+                    State::Robot(m) => Some(m.gear != gear),
+                    _ => None,
+                })
+                .unwrap_or(false),
+            Pilot::Stop
+            | Pilot::Stance(_)
+            | Pilot::Weapon(_)
+            | Pilot::OtherWeapon
+            | Pilot::ReleaseTurn { .. } => false,
+            _ => return events,
+        };
+        if takes_over {
             // `order_switch_to_manual`: the pilot takes over first.
             script::switch(&mut self.world, id, false, &mut events);
         }
@@ -299,6 +307,27 @@ impl Sim {
                 motion::match_gear(tables, kind, m);
             }
             Pilot::Stance(stance) => m.stance_target = stance,
+            Pilot::Gear(gear) => {
+                if motion::set_gear(tables, kind, m, gear) {
+                    m.velocity = motion::velocity(tables, heading, m.speed);
+                }
+            }
+            Pilot::Toward(x, y) => {
+                m.target_heading = script::angle(&tables.atan, x, y, true);
+                m.mode &= !Movement::TURNING;
+            }
+            Pilot::Straight => {
+                m.target_heading = heading;
+                m.mode &= !Movement::TURNING;
+            }
+            Pilot::HoldTurn { right } => m.held = Movement::HELD_LEFT + u8::from(right),
+            Pilot::ReleaseTurn { right, keep } => {
+                m.held = 0;
+                m.mode &= !Movement::TURNING;
+                if keep {
+                    m.mode |= if right { 0x20 } else { 0x10 };
+                }
+            }
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -439,6 +468,33 @@ pub enum Pilot {
     /// no longer follows the target (`docs/screens.md`, "The display's other modes
     /// (T-134)").
     Untrack,
+    /// The humanoid's gear lever (`1000:a88c`; the gear twice its index): a new gear
+    /// gives its speed asked for, the pilot takes over and the velocity is worked out
+    /// again from the speed (`1000:d41c`); the gear it has does nothing.
+    Gear(u8),
+    /// A console sends the robot message `text` (`1000:d53f`, `log::say`): the gear
+    /// lever's release, its gear's.
+    Say(u16),
+    /// The compass's release (`1000:a6c0`): the pilot takes over and the heading asked
+    /// for is the fine bearing (`1000:04eb`) of `(x, y)`, the pointer less the
+    /// compass's centre with y up; the turn keys' bits (+0x23 bits 4, 5) are cleared.
+    Toward(i32, i32),
+    /// The straight button's release (`1000:a7e1`): the pilot takes over, the heading
+    /// asked for is the heading, the turn keys' bits cleared.
+    Straight,
+    /// A turn button's press (`1000:a77d`, `a82b`): the pilot takes over and the button
+    /// is held (+0x1b 10 or 11): at the end of each of its ticks the robot asks for its
+    /// heading less or plus 0x40.
+    HoldTurn {
+        right: bool,
+    },
+    /// The turn button let go (+0x1b 0, +0x23 bits 4, 5 cleared); `keep` (a right
+    /// release over it) sets the left's bit 4 or the right's bit 5, so it keeps turning
+    /// as the turn keys do.
+    ReleaseTurn {
+        right: bool,
+        keep: bool,
+    },
     /// Ctrl+P (`1000:d193`), which the caller lets through only with unlock word 8
     /// (`docs/formats/key.md`): power (+0x4e) 100, the signal (+0x4f), the battery
     /// (+0x50) and the drive (+0x51) 0xff. The original then beeps (`1000:0261`).
@@ -642,6 +698,76 @@ mod tests {
             Some(Damage::Robot(c)) if c.power == 100
         ));
         assert_ne!(sim.state_hash(), before);
+    }
+
+    #[test]
+    fn the_humanoid_s_lever_compass_and_turn_buttons_steer_it() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let id = EntityId(2);
+        let robot = |sim: &Sim| match sim.world.get(id) {
+            Some(Entity {
+                state: State::Robot(m),
+                heading,
+                ..
+            }) => (*m, *heading),
+            other => panic!("{other:?}"),
+        };
+        let drives = |sim: &Sim| sim.world.orders.get(2).unwrap().orders.program_drives;
+        let speeds = sim.tables.as_ref().unwrap().gears.humanoid.clone();
+        // The lever on the gear it has does nothing; on another the pilot takes over.
+        let gear = robot(&sim).0.gear;
+        assert!(sim.pilot(id, Pilot::Gear(gear)).is_empty());
+        assert!(drives(&sim));
+        assert!(matches!(
+            sim.pilot(id, Pilot::Gear(8))[..],
+            [Event::Program(_)]
+        ));
+        let (m, heading) = robot(&sim);
+        assert!(!drives(&sim));
+        assert_eq!((m.gear, m.target_speed), (8, speeds[4]));
+        let tables = sim.tables.as_ref().unwrap();
+        assert_eq!(m.velocity, motion::velocity(tables, heading, m.speed));
+        // Its release tells the robot the gear.
+        motion::movement(&mut sim.world, id).unwrap().panel.queue = [0; 5];
+        sim.pilot(id, Pilot::Say(0x123));
+        assert_eq!(robot(&sim).0.panel.queue[0], 0x123);
+        // The compass: the bearing to the pointer, y up; the turn bits cleared.
+        motion::movement(&mut sim.world, id).unwrap().mode |= Movement::TURNING;
+        sim.pilot(id, Pilot::Toward(5, 0));
+        assert_eq!(robot(&sim).0.target_heading, 0x4000);
+        assert_eq!(robot(&sim).0.mode & Movement::TURNING, 0);
+        sim.pilot(id, Pilot::Toward(0, -3));
+        assert_eq!(robot(&sim).0.target_heading, 0x8000);
+        sim.pilot(id, Pilot::Straight);
+        assert_eq!(robot(&sim).0.target_heading, heading);
+        // A turn button held asks for the heading less 0x40 at the end of each tick.
+        let before = sim.state_hash();
+        sim.pilot(id, Pilot::HoldTurn { right: false });
+        assert_eq!(robot(&sim).0.held, Movement::HELD_LEFT);
+        assert_ne!(sim.state_hash(), before);
+        for _ in 0..3 {
+            sim.tick(&[]);
+            let (m, heading) = robot(&sim);
+            assert_eq!(m.target_heading, heading.wrapping_sub(0x40));
+        }
+        assert_ne!(robot(&sim).1, heading, "it turned");
+        // Let go with the right button it keeps turning that way; with the left it stops.
+        sim.pilot(id, Pilot::HoldTurn { right: true });
+        assert_eq!(robot(&sim).0.held, Movement::HELD_RIGHT);
+        let keep = Pilot::ReleaseTurn {
+            right: true,
+            keep: true,
+        };
+        sim.pilot(id, keep);
+        assert_eq!((robot(&sim).0.held, robot(&sim).0.mode & 0x30), (0, 0x20));
+        let stop = Pilot::ReleaseTurn {
+            right: false,
+            keep: false,
+        };
+        sim.pilot(id, stop);
+        assert_eq!(robot(&sim).0.mode & Movement::TURNING, 0);
     }
 
     #[test]

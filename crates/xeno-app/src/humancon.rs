@@ -317,6 +317,11 @@ mod tests {
             weapon_sprites: [[1, 2], [3, 4]],
             lights: [r(0, 0, 1, 1), r(1, 0, 2, 1)],
             bars: [r(0, 1, 1, 33), r(1, 1, 2, 33)],
+            // Three gears up a lever: rows 30 on, 20 to 29, above 20.
+            gears: vec![r(30, 0, 40, 9), r(20, 0, 29, 9), r(10, 0, 19, 9)],
+            notches: vec![r(30, 10, 32, 12), r(20, 10, 22, 12), r(10, 10, 12, 12)],
+            gear_messages: vec![7, 8, 9],
+            centre: (50, 60),
         }
     }
 
