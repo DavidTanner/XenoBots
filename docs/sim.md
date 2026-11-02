@@ -771,7 +771,7 @@ arrows act the same, and the keyboard's repeat repeats them.
 | 1, 2, 3, 4 | | `d5e7`, `d609`, `d62b`, `d64d` | the same | Drop a mine, ECM buoy, alarm buoy or decoy: "Mines and buoys (T-137)" |
 | A | `d812` | the same | the same | The next target: from where the last search stopped (`DS:0x7205`), round the 240-slot object table, the first other unit of the other side (+0x16 bits 2 and 3) not gone (+0x17 bit 0) and within the kind's range (`DS:0x7079`); locked through `1000:d8af`, else a message |
 | R | `d7f8` | the same | the same | The target is dropped (+0xe6 = 0) with a message |
-| C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4 (the dump) with a message (T-149) |
+| C, D, L, U | | `8d7f`, `9ab8`, `9b2d`, `9afa` | | The relays ("Relay nets"): U deploys one where the scorpion stands (`sim_deploy_relay`, then the cargo redrawn); L loads the nearest within 0.08 units (the deployer whole, fewer than 12 carried, moving slower than 16); C a message on the cargo (+0x118); D flips +0xfd bit 4, the dump: a relay every 10 runs of tick entry 5 (T-149) |
 | S | `ddb0` | | the same | +0xfa = 0: the status panel turns its page at the next count (T-139, below) |
 | X, Y, Z | `b389`, `b39b`, `b377` | `9bdc`, `9bee`, `9bca` | `cb61`, `cb73`, `cb4f` | The second display's pan (+0xf4): X adds the pan step of the zoom (`DS:0x70d1[+0xf1]`), Z takes it off, Y sets 0; each clears `TRACKING` (`docs/screens.md`, "The display's other modes (T-134)") |
 | F1 | `cff3` | the same | the same | The pause (also in the situation room, T-139, below) |
@@ -820,8 +820,9 @@ room's F3 and recall button, for the selected unit); `motion::tick` gives a robo
 it the recall's program (`Tables::recall_program`) and its program takes over, before
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
 (T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). Keys 1 to 4
-are `Pilot::Drop` (T-137), Ctrl+P `Pilot::Charge` (T-139, below). The keys still to
-port are T-149 (the other relay keys) and S (T-167).
+are `Pilot::Drop` (T-137), Ctrl+P `Pilot::Charge` (T-139, below), L, C and D
+`Pilot::Load`, `Cargo` and `Dump` (T-149; mapped in part 2). The key still to port
+is S (T-167).
 
 ## The developer and leftover keys (T-139)
 
@@ -1107,10 +1108,43 @@ up (state 4). State 4: the links (`1000:cd88`, not traced), `IN_FIELD`,
 stage down; at 0 folded. State 8 does nothing; state 10 is `1000:cf7e` (not traced).
 So a relay a scorpion lays rises only after the scorpion moves on.
 
-**The other relay keys** (survey for T-149): L (`1000:9b2d` -> `9b34`) loads the
-nearest relay (`1000:f703` with kind 4) under 0x14 (0.08 units) away, with fewer than
-12 carried and the speed under 16, removing it; each refusal has its message. C
-(`8d7f`) and D (`9ab8`, the dump through +0xfd bit 4 and +0x11c) are not traced.
+**The other relay keys** (T-149; the numbers and messages are read from the user's
+`xeno.exe` by `xeno_formats::net`, `Net::load`, `cargo` and `dump`):
+
+- **L** (`1000:9b2d`: `9b34`, then the cargo redrawn, `9bbe`). With the deployer
+  damaged (+0xfd bit 7) the "no relay" message (the same string as deploying's);
+  with 12 or more carried (+0x118, `cmp` with 0xc) a "full" message; with the speed's
+  size (+0x26, `cwd`, `xor`, `sub`, compared unsigned) 16 or more a "too fast" one.
+  Otherwise the nearest relay (`1000:f703` with kind 4: below) under 0x14 (0.08
+  units) is taken in: +0x118 one more, the relay's slot freed (`1000:f656`, then
+  `sim_free_object_slot`, `f5cd`; Ghidra mis-decodes the bytes from `9b6a`, which are
+  `pop di`, `mov si, message`, `jmp`), and a "loaded" message; with none that near, a
+  "none near" one. Every message goes to the robot's panel (`1000:d2a2`). The
+  relay's state, side and power do not matter.
+- **The nearest test** (`1000:f703`, kind in `AX`, a limit in `CX`): the nearest
+  object of the kind (strictly nearer wins, so the first in slot order on a tie), by
+  `1000:08ec`'s distance under 256 units, as 8.8; none gives 0xffff. L ignores the
+  carry the limit (0x32) sets and compares the distance itself.
+- **C** (`1000:8d7f`): one message to the robot's panel while +0x118 is not 0,
+  another when it is (the deployer's damage is not looked at). The first holds a
+  carriage return, so it is two lines.
+- **D** (`1000:9ab8`): +0xfd bit 4 (`DUMPING`) flips. Set, +0x11c (`dump_wait`)
+  becomes 10 and a "dump started" message; cleared, a "dump stopped" one; both through
+  `1000:d53f` (the robot's panel).
+- **The dump's step** (`1000:9a50`, entry 5 of the scorpion's tick table, so once
+  every 16 ticks): with bit 4 set, +0x11c steps down; at 0 it is 10 again and
+  `sim_deploy_relay` runs (a relay where the scorpion stands, one fewer carried, the
+  "deployed" message and sound 25 for the open console); when that fails (none
+  carried, the deployer damaged, or no room) D's routine runs, which clears bit 4
+  with its "stopped" message (after deploying's "no relay"). So a dump lays a relay
+  every 160 ticks while it moves or stands, until the cargo is empty. The step then
+  marks the cargo for a redraw (`9bbe`: +0x138 and +0x165) and sets the gauges
+  (T-131). Nothing checks the speed or the cell, and the net programs' own deploying
+  is unaffected.
+- **The console's buttons** C, D and L (`0xfa`, `0xfc`, `0xfe`; mouse `1000:8d53`,
+  `8dad`, `8cbf`) are U's (`8d0b`): a press or release (`AX` bit 7) flips the
+  shared look (+0x22 bit 3) and marks the button; a release (`AX` bits 2 or 4) then
+  runs `8d7f`, `9ab8` or `9b34` and `9bbe`.
 
 ### The port (T-113)
 
@@ -1133,9 +1167,21 @@ each in a DENSE NET cell of its own within 0.04 units of the cell's point. Short
 each named in the code: a laid relay had no tick until T-148 (below, "The relay's
 tick"); the net state
 +0x10a..+0x114 is kept for every kind (a humanoid or scout running a net opcode would
-overwrite its gear and light in the original; none is given one). The L, C and D keys
-and the cargo dump are T-149. Saves still write the scenario as loaded, so laid
-relays are not saved.
+overwrite its gear and light in the original; none is given one). Saves still write
+the scenario as loaded, so laid relays are not saved.
+
+### The port (T-149)
+
+`xeno_sim::net` has L (`load`), C (`cargo`), D (`dump`) and the dump's step
+(`dump_step`, from `motion::tick` after the signal step, at `Dump::step`), which the
+scorpion's keys reach through `Sim::pilot` as `Pilot::Load`, `Cargo` and `Dump`
+(the keys and the console's buttons in `xeno-app` are part 2, `t-149-console`). The nearest test is `relay::nearest`, which the relay's
+fold uses too; L frees the relay's slot with `World::remove`, and the dump deploys
+through `net::deploy`. `Movement::dump_wait` is +0x11c, loaded, hashed and saved;
+`DUMPING` is in `Components::equipment` (+0xfd), as before. The cargo's redraw marks
+are not kept: the console draws the gauges every frame (T-131). `relay`'s
+`real_assets_a_stock_scorpion_dumps_its_cargo` shows ctrain's scorpion lay two
+relays in 320 ticks of a dump and none after D again.
 
 ## The relay's tick (T-148)
 

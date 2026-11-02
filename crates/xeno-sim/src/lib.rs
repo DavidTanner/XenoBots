@@ -234,6 +234,9 @@ impl Sim {
             Pilot::Deploy => {
                 net::deploy(world, id, tables, &mut self.random, &mut events);
             }
+            Pilot::Load => net::load(world, id, tables),
+            Pilot::Cargo => net::cargo(world, id, tables),
+            Pilot::Dump => net::dump(world, id, tables),
             Pilot::Fire => weapons::trigger(world, id, tables),
             Pilot::Ecm => weapons::ecm(world, id, tables),
             Pilot::Cloak => weapons::cloak(world, id, tables),
@@ -404,6 +407,11 @@ pub enum Pilot {
     OtherWeapon,
     /// The scorpion's U: a relay deployed where it stands (`net::deploy`).
     Deploy,
+    /// The scorpion's L, C and D: the nearest relay loaded (`net::load`), a message on
+    /// the cargo (`net::cargo`), the cargo dump started or stopped (`net::dump`).
+    Load,
+    Cargo,
+    Dump,
     /// Space: the kind's trigger (`weapons::trigger`), as the scripts' opcode 0x7d.
     Fire,
     /// A: the next enemy in locking range locked (`sense::next_target`); R: the target
@@ -663,6 +671,118 @@ mod tests {
         );
         // Making it drew a random word (the relay's clock).
         assert_ne!(sim.random.clone().word(), word);
+    }
+
+    /// The synthetic mission's scorpion (slot 5), its deployer whole, carrying `relays`,
+    /// its panel's queue empty.
+    fn scorpion(relays: u8) -> (Sim, EntityId) {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        let id = EntityId(5);
+        if let Damage::Robot(c) = &mut sim.world.get_mut(id).unwrap().damage {
+            c.equipment &= 0x7f;
+        }
+        let m = motion::movement(&mut sim.world, id).unwrap();
+        (m.relays, m.speed, m.panel.queue) = (relays, 0, [0; 5]);
+        (sim, id)
+    }
+
+    fn queued(sim: &mut Sim, id: EntityId) -> u16 {
+        let m = motion::movement(&mut sim.world, id).unwrap();
+        std::mem::take(&mut m.panel.queue)[0]
+    }
+
+    #[test]
+    fn the_scorpion_s_l_loads_the_nearest_relay_within_reach() {
+        // The synthetic L: fewer than 10 carried, slower than 0x20, within 0x30.
+        let (mut sim, id) = scorpion(5);
+        sim.pilot(id, Pilot::Deploy);
+        queued(&mut sim, id);
+        let relay = EntityId(1);
+        assert!(sim.world.get(relay).is_some());
+        // Too fast either way.
+        motion::movement(&mut sim.world, id).unwrap().speed = -0x20;
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x56);
+        motion::movement(&mut sim.world, id).unwrap().speed = 0x1f;
+        // Out of reach (0x30 is about 0.19 units).
+        sim.world.get_mut(relay).unwrap().position.x.0 += 0x3000;
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x54);
+        sim.world.get_mut(relay).unwrap().position.x.0 -= 0x2000;
+        let before = sim.state_hash();
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x52);
+        assert!(sim.world.get(relay).is_none());
+        assert_eq!(net::relays(&sim.world, id), 5);
+        assert_ne!(sim.state_hash(), before);
+        // None left near.
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x54);
+        // Full, then the deployer damaged first.
+        motion::movement(&mut sim.world, id).unwrap().relays = 10;
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x55);
+        if let Damage::Robot(c) = &mut sim.world.get_mut(id).unwrap().damage {
+            c.equipment |= 0x80;
+        }
+        sim.pilot(id, Pilot::Load);
+        assert_eq!(queued(&mut sim, id), 0x53);
+    }
+
+    #[test]
+    fn the_scorpion_s_c_tells_the_cargo_and_d_flips_the_dump() {
+        let (mut sim, id) = scorpion(0);
+        sim.pilot(id, Pilot::Cargo);
+        assert_eq!(queued(&mut sim, id), 0x58);
+        motion::movement(&mut sim.world, id).unwrap().relays = 1;
+        sim.pilot(id, Pilot::Cargo);
+        assert_eq!(queued(&mut sim, id), 0x57);
+        let dumping = |sim: &Sim| match sim.world.get(id).unwrap().damage {
+            Damage::Robot(c) => c.equipment & 0x10 != 0,
+            _ => unreachable!(),
+        };
+        let before = sim.state_hash();
+        sim.pilot(id, Pilot::Dump);
+        assert!(dumping(&sim));
+        assert_eq!(queued(&mut sim, id), 0x59);
+        assert_eq!(motion::movement(&mut sim.world, id).unwrap().dump_wait, 3);
+        assert_ne!(sim.state_hash(), before);
+        sim.pilot(id, Pilot::Dump);
+        assert!(!dumping(&sim));
+        assert_eq!(queued(&mut sim, id), 0x5a);
+    }
+
+    #[test]
+    fn the_dump_deploys_a_relay_every_third_step_until_none_is_left() {
+        let (mut sim, id) = scorpion(2);
+        sim.pilot(id, Pilot::Dump);
+        queued(&mut sim, id);
+        let tables = sim.tables.clone().unwrap();
+        // One step at each tick: +0x1a's entry 5 (the synthetic dump's) and entry 4.
+        let step = |sim: &mut Sim, tick: u8| {
+            motion::movement(&mut sim.world, id).unwrap().tick = tick;
+            let mut events = Vec::new();
+            net::dump_step(&mut sim.world, id, &tables, &mut sim.random, &mut events);
+            events.len()
+        };
+        let mut sounds = Vec::new();
+        for i in 0..9 {
+            assert_eq!(step(&mut sim, 8), 0, "not the dump's entry");
+            sounds.push(step(&mut sim, 10 + 0x20 * (i % 2)));
+        }
+        // A relay on the third and sixth steps; on the ninth none is left: the "no
+        // relay" message, and the dump stops.
+        assert_eq!(sounds, [0, 0, 1, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(net::relays(&sim.world, id), 0);
+        let m = motion::movement(&mut sim.world, id).unwrap();
+        assert_eq!(m.panel.queue[..4], [0x51, 0x51, 0x50, 0x5a]);
+        assert!(matches!(
+            sim.world.get(id).unwrap().damage,
+            Damage::Robot(c) if c.equipment & 0x10 == 0
+        ));
+        assert_eq!(step(&mut sim, 10), 0);
     }
 
     #[test]

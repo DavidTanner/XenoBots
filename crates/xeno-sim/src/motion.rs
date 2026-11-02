@@ -772,6 +772,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             crate::contact::step(world, id, tables, random, &mut events);
             crate::weapons::step(world, id, tables, random, &mut events);
             crate::relay::signal_step(world, id, tables);
+            crate::net::dump_step(world, id, tables, random, &mut events);
             let ticks = world.ticks;
             if let Some(e) = world.get_mut(id)
                 && let State::Robot(m) = &mut e.state

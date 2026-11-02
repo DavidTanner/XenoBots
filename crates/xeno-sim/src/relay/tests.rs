@@ -550,3 +550,48 @@ fn real_assets_stock_relay_nets_are_steady() {
     }
     assert!(relays > 100, "{relays}");
 }
+
+/// `ctrain`'s scorpion dumps its cargo with D: a relay every `wait` runs of its tick
+/// entry (160 ticks in the stock build), each where it stands; D again stops it.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_a_stock_scorpion_dumps_its_cargo() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let scenario =
+        xeno_formats::usg::parse(&std::fs::read(dir.join("ctrain.usg")).unwrap()).unwrap();
+    let mut sim = crate::Sim::load(&scenario, crate::Random::seeded(7), tables);
+    let w = &sim.world;
+    let scorpion = *w
+        .units(Side::Human)
+        .iter()
+        .find(|&&id| w.get(id).unwrap().kind == ObjectKind::Scorpion)
+        .unwrap();
+    let relays = |sim: &crate::Sim| {
+        let n = sim
+            .world
+            .iter()
+            .filter(|(_, e)| e.kind == ObjectKind::Relay);
+        n.count()
+    };
+    let (carried, laid) = (crate::net::relays(&sim.world, scorpion), relays(&sim));
+    assert!(carried >= 2, "{carried}");
+    sim.pilot(scorpion, crate::Pilot::Dump);
+    let wait = 16 * usize::from(sim.tables().unwrap().net.dump.wait);
+    for _ in 0..2 * wait {
+        _ = sim.tick(&[]);
+    }
+    assert_eq!(relays(&sim) - laid, 2);
+    assert_eq!(crate::net::relays(&sim.world, scorpion), carried - 2);
+    sim.pilot(scorpion, crate::Pilot::Dump);
+    for _ in 0..2 * wait {
+        _ = sim.tick(&[]);
+    }
+    assert_eq!(relays(&sim) - laid, 2);
+}
