@@ -156,8 +156,8 @@ mod handler {
     /// `docs/sim.md`, "The cockpit keys"), F7 and F8, the ECM and the cloak
     /// (`d92d`, `d95e`; "The ECM and the cloak (T-136)"), and the scorpion's and
     /// scout's keys 1 to 4, the drops (`d5e7`, `d609`, `d62b`, `d64d`; "Mines and
-    /// buoys (T-137)").
-    pub const PILOT: [(u16, Pilot); 29] = [
+    /// buoys (T-137)"), and the scorpion's L, C and D (`9b2d`, `8d7f`, `9ab8`; T-149).
+    pub const PILOT: [(u16, Pilot); 32] = [
         (0xd131, Pilot::Weapon(0)),
         (0xd142, Pilot::Weapon(1)),
         (0xb20c, Pilot::OtherWeapon),
@@ -187,15 +187,18 @@ mod handler {
         (0xd609, Pilot::Drop(1)),
         (0xd62b, Pilot::Drop(2)),
         (0xd64d, Pilot::Drop(3)),
+        (0x9b2d, Pilot::Load),
+        (0x8d7f, Pilot::Cargo),
+        (0x9ab8, Pilot::Dump),
     ];
 }
 
 /// The consoles' buttons whose mouse handlers the port runs: the humanoid's fire,
 /// weapon, pilot, program, lock, cloak and ECM buttons, then the scorpion's first five,
-/// its stop and deploy buttons, its relay panel (which only shows its frame XORed
+/// its stop, cargo, dump, load and deploy buttons, its relay panel (which only shows its frame XORed
 /// while held) and its drop buttons, then the scout's first five, its three stance
 /// buttons, cloak, ECM and drop buttons.
-const INSTRUMENTS: [u16; 27] = [
+const INSTRUMENTS: [u16; 30] = [
     crate::humancon::FIRE_TYPE,
     crate::humancon::WEAPON_TYPE,
     crate::humancon::PILOT_TYPE,
@@ -209,6 +212,9 @@ const INSTRUMENTS: [u16; 27] = [
     crate::scorpcon::PROGRAM_TYPE,
     crate::scorpcon::LOCK_TYPE,
     crate::scorpcon::STOP_TYPE,
+    crate::scorpcon::CARGO_TYPE,
+    crate::scorpcon::DUMP_TYPE,
+    crate::scorpcon::LOAD_TYPE,
     crate::scorpcon::DEPLOY_TYPE,
     crate::scorpcon::RELAYS_TYPE,
     crate::scorpcon::DROP_TYPE,
@@ -235,7 +241,7 @@ const LOCK_TYPES: [u16; 3] = [
     crate::scoutcon::LOCK_TYPE,
 ];
 /// Buttons that flip the shared look on a press and back on a release.
-const SHARED_LOOK_TYPES: [u16; 11] = [
+const SHARED_LOOK_TYPES: [u16; 14] = [
     crate::scorpcon::DROP_TYPE,
     crate::scoutcon::DROP_TYPE,
     crate::humancon::CLOAK_TYPE,
@@ -243,6 +249,9 @@ const SHARED_LOOK_TYPES: [u16; 11] = [
     crate::scoutcon::CLOAK_TYPE,
     crate::scoutcon::ECM_TYPE,
     crate::scorpcon::STOP_TYPE,
+    crate::scorpcon::CARGO_TYPE,
+    crate::scorpcon::DUMP_TYPE,
+    crate::scorpcon::LOAD_TYPE,
     crate::scorpcon::DEPLOY_TYPE,
     crate::scoutcon::STANCE_TYPES[0],
     crate::scoutcon::STANCE_TYPES[1],
@@ -1267,8 +1276,8 @@ impl Mission {
     /// `ca1d`), the switches hand the robot to the pilot or the program (`a5bb`, `a5fa`;
     /// `8b5f`, `8bc9`; `ba8c`, `bac1`), the lock button takes the next target (left) or
     /// drops it (right) and clears the look (`a3f1`, `8a26`, `be01`); the scorpion's stop
-    /// asks for speed 0 and hands it to the pilot (`8e45`), its U deploys a relay
-    /// (`8d0b`, `9b01`); the scout's stance buttons ask for a stance; the humanoid's and
+    /// asks for speed 0 and hands it to the pilot (`8e45`), its C, D, L and U run the
+    /// keys' routines (`8d53`, `8dad`, `8cbf`, `8d0b`; T-149); the scout's stance buttons ask for a stance; the humanoid's and
     /// scout's cloak and ECM buttons run F8 and F7 (`aa5e`, `aa94`; `be77`, `bec5`); the
     /// scorpion's and scout's drop buttons run the key their number picks (`8b06`,
     /// `b88d`, through `1000:d5d5`).
@@ -1298,6 +1307,9 @@ impl Mission {
                 self.pilot(slot, Pilot::Stop);
                 self.change_orders(programs, |book| book.set_program_drives(slot, false));
             }
+            s::CARGO_TYPE => self.pilot(slot, Pilot::Cargo),
+            s::DUMP_TYPE => self.pilot(slot, Pilot::Dump),
+            s::LOAD_TYPE => self.pilot(slot, Pilot::Load),
             s::DEPLOY_TYPE => self.pilot(slot, Pilot::Deploy),
             s::DROP_TYPE | c::DROP_TYPE => {
                 let buttons = assets.motion.weapons.drops.buttons;
@@ -2374,8 +2386,8 @@ impl Mission {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
             let kinds: &[u16] = match view {
                 View::Humanoid => &INSTRUMENTS[..7],
-                View::Scorpion => &INSTRUMENTS[7..16],
-                View::Scout => &INSTRUMENTS[16..],
+                View::Scorpion => &INSTRUMENTS[7..19],
+                View::Scout => &INSTRUMENTS[19..],
                 _ => &[],
             };
             tables
@@ -6575,6 +6587,23 @@ pub mod tests {
         let relays = state(&m).relays;
         click(&mut m, find(s::DEPLOY_TYPE), LEFT);
         assert_eq!(state(&m).relays, relays - 1);
+        // L, standing still, takes it back; D starts the dump with the look flipped
+        // and back.
+        if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+        {
+            r.speed = 0;
+        }
+        click(&mut m, find(s::LOAD_TYPE), LEFT);
+        assert_eq!(state(&m).relays, relays);
+        m.mouse_down(LEFT, centre(find(s::DUMP_TYPE)), &assets);
+        assert!(m.look.pressed);
+        m.mouse_up(LEFT, centre(find(s::DUMP_TYPE)), &assets);
+        assert!(!m.look.pressed);
+        assert!(matches!(
+            m.world().get(EntityId(robot)).unwrap().damage,
+            xeno_sim::world::Damage::Robot(c) if c.equipment & 0x10 != 0
+        ));
+        click(&mut m, find(s::CARGO_TYPE), LEFT);
         // The drop buttons: pressed while held; let go, each drops one of its count
         // (buttons 0 to 3 run keys 1, 4, 3 and 2).
         if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
