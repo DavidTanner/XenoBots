@@ -103,6 +103,43 @@ pub fn draw_gear(fb: &mut Framebuffer, area: Rect, sprites: Sprites, gear: u8) {
     sprite(fb, sprites, handle, area.left, area.top, BlitMode::Opaque);
 }
 
+/// The compass's widget type.
+pub const COMPASS_TYPE: u16 = 0xa6;
+
+/// `(x, y)` within `area`, its bottom and right included (`1000:a8e9`'s tests).
+fn within(area: &Rect, (x, y): (u16, u16)) -> bool {
+    (area.left..=area.right).contains(&x) && (area.top..=area.bottom).contains(&y)
+}
+
+/// The gear lever's press at `at` (`1000:a88c`) with the robot in `gear`: on the
+/// lever's own rectangle nothing (a drag starts); else the gear of the notch under the
+/// pointer, if any (twice its index).
+pub fn lever_press(con: &HumanCon, gear: u8, at: (u16, u16)) -> Option<u8> {
+    if con
+        .gears
+        .get(usize::from(gear / 2))
+        .is_some_and(|r| within(r, at))
+    {
+        return None;
+    }
+    let i = con.notches.iter().position(|r| within(r, at))?;
+    Some(2 * i as u8)
+}
+
+/// The lever dragged to row `y`: the first gear whose rectangle's top is at or above
+/// it, the last below them all (its own top is never compared).
+pub fn lever_drag(con: &HumanCon, y: u16) -> u8 {
+    let last = con.gears.len().saturating_sub(1);
+    let i = con.gears[..last].iter().position(|r| y >= r.top);
+    2 * i.unwrap_or(last) as u8
+}
+
+/// The compass's release at `at` (`1000:a6c0`): the pointer from the centre, y up.
+pub fn compass_offset(con: &HumanCon, (x, y): (u16, u16)) -> (i32, i32) {
+    let (cx, cy) = con.centre;
+    (i32::from(x) - i32::from(cx), i32::from(cy) - i32::from(y))
+}
+
 /// The power panel (`0xb0`): the battery lights and the signal's and energy's bars.
 pub fn draw_power(fb: &mut Framebuffer, con: &HumanCon, sprites: Sprites, robot: &Robot) {
     let handles = if robot.on_battery {
@@ -323,6 +360,22 @@ mod tests {
             gear_messages: vec![7, 8, 9],
             centre: (50, 60),
         }
+    }
+
+    #[test]
+    fn the_lever_and_compass_under_the_pointer() {
+        let con = con();
+        // On the lever's own gear a press only starts the drag; a notch picks its gear,
+        // its edges included.
+        assert_eq!(lever_press(&con, 2, (5, 25)), None);
+        assert_eq!(lever_press(&con, 2, (12, 32)), Some(0));
+        assert_eq!(lever_press(&con, 0, (10, 10)), Some(4));
+        assert_eq!(lever_press(&con, 0, (13, 10)), None);
+        // The drag goes by the row alone.
+        assert_eq!(lever_drag(&con, 35), 0);
+        assert_eq!(lever_drag(&con, 20), 2);
+        assert_eq!(lever_drag(&con, 0), 4);
+        assert_eq!(compass_offset(&con, (53, 56)), (3, 4));
     }
 
     #[test]
