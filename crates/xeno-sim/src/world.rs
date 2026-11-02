@@ -199,6 +199,8 @@ pub struct Movement {
     pub stance_target: u8,
     /// +0x118: the relays a scorpion carries; half of it picks its speed table.
     pub relays: u8,
+    /// +0x11c: a scorpion's steps before its cargo dump's next relay (`net::dump_step`).
+    pub dump_wait: u8,
     /// The walking animation's step counter (humanoid +0x105, scorpion +0x116, scout
     /// +0x10a) and the frame bytes +0xff to +0x104 (`legs[k]` is +0xff + k) its legs
     /// are (`docs/render.md`, "Walking"): the humanoid's +0x101 and +0x102 (its +0xff
@@ -315,18 +317,24 @@ impl Movement {
         // (gear, stride, legs, stance and its target, relays) by kind; the frames start
         // at +0xfe.
         let frames = |f: &[u8]| -> [u8; 6] { f[1..7].try_into().expect("+0xff to +0x104") };
-        let (gear, stride, legs, stance, relays) = match &r.parts {
+        let (gear, stride, legs, stance, (relays, dump_wait)) = match &r.parts {
             Parts::Humanoid(p) => {
                 let [.., a, b] = p.frames;
-                (p.gear, p.step, [0, 0, a, b, 0, 0], (0, 0), 0)
+                (p.gear, p.step, [0, 0, a, b, 0, 0], (0, 0), (0, 0))
             }
-            Parts::Scorpion(p) => (0, p.step, frames(&p.frames), (0, 0), p.relays),
+            Parts::Scorpion(p) => (
+                0,
+                p.step,
+                frames(&p.frames),
+                (0, 0),
+                (p.relays, p.dump_wait),
+            ),
             Parts::Scout(p) => (
                 p.gear,
                 p.step,
                 frames(&p.frames),
                 (p.stance, p.stance_target),
-                0,
+                (0, 0),
             ),
         };
         Movement {
@@ -352,6 +360,7 @@ impl Movement {
             stance: stance.0,
             stance_target: stance.1,
             relays,
+            dump_wait,
             stride,
             legs,
             contacts: r.contacts,
@@ -427,7 +436,7 @@ impl StateHash for State {
                 h.i32(m.destination.y.0);
                 h.bytes(&[m.signal, m.drive, m.gear, m.weapon, m.stance]);
                 h.u8(m.stance_target);
-                h.u8(m.relays);
+                h.bytes(&[m.relays, m.dump_wait]);
                 h.u8(m.stride);
                 h.bytes(&m.legs);
                 h.bytes(&[m.contacts, m.locked_on, m.bump_wait]);

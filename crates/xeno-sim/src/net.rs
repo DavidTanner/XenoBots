@@ -191,6 +191,101 @@ pub fn deploy(
     true
 }
 
+/// The scorpion's L (`1000:9b34`): with the deployer whole, fewer than `Load::full`
+/// carried, the speed's size under `Load::speed` and the nearest relay (any side or
+/// state) within `Load::reach`, that relay is taken in: one more carried and its slot
+/// freed. A message to the robot's panel either way.
+pub fn load(world: &mut World, id: EntityId, tables: &Tables) {
+    let l = &tables.net.load;
+    let Some(e) = world.get(id) else {
+        return;
+    };
+    let (State::Robot(m), Damage::Robot(c)) = (&e.state, &e.damage) else {
+        return;
+    };
+    let near = || crate::relay::nearest(world, e.position, ObjectKind::Relay.into());
+    let (text, relay) = if c.equipment & DEPLOYER_DAMAGED != 0 {
+        (l.damaged, None)
+    } else if m.relays >= l.full {
+        (l.too_full, None)
+    } else if m.speed.unsigned_abs() >= l.speed {
+        (l.too_fast, None)
+    } else {
+        match near() {
+            Some((r, d)) if d < l.reach => (l.loaded, Some(r)),
+            _ => (l.none_near, None),
+        }
+    };
+    if let Some(r) = relay {
+        world.remove(r);
+    }
+    if let Some(m) = crate::motion::movement(world, id) {
+        m.relays += u8::from(relay.is_some());
+        m.panel.post(text);
+    }
+}
+
+/// The scorpion's C (`1000:8d7f`): a message to the robot's panel on whether it
+/// carries relays (+0x118, damaged deployer or not).
+pub fn cargo(world: &mut World, id: EntityId, tables: &Tables) {
+    if let Some(m) = crate::motion::movement(world, id) {
+        let [some, none] = tables.net.cargo;
+        m.panel.post(if m.relays != 0 { some } else { none });
+    }
+}
+
+/// The scorpion's D (`1000:9ab8`): +0xfd's dump bit flips; started, the dump waits its
+/// full count (+0x11c). Either way a message (`1000:d53f`).
+pub fn dump(world: &mut World, id: EntityId, tables: &Tables) {
+    let d = &tables.net.dump;
+    let Some(e) = world.get_mut(id) else {
+        return;
+    };
+    let (State::Robot(m), Damage::Robot(c)) = (&mut e.state, &mut e.damage) else {
+        return;
+    };
+    c.equipment ^= d.bit;
+    let text = if c.equipment & d.bit != 0 {
+        m.dump_wait = d.wait;
+        d.on
+    } else {
+        d.off
+    };
+    crate::log::say(world, id, text, tables);
+}
+
+/// The dump's step (`1000:9a50`), at the scorpion's tick-table entry `Dump::step`:
+/// while dumping, +0x11c counts down and at 0 starts again and a relay is deployed
+/// (`deploy`); one that cannot be stops the dump (`dump`).
+pub fn dump_step(
+    world: &mut World,
+    id: EntityId,
+    tables: &Tables,
+    random: &mut Random,
+    events: &mut Vec<Event>,
+) {
+    let d = &tables.net.dump;
+    let Some(e) = world.get_mut(id) else {
+        return;
+    };
+    let (ObjectKind::Scorpion, State::Robot(m), Damage::Robot(c)) =
+        (e.kind, &mut e.state, &e.damage)
+    else {
+        return;
+    };
+    if (m.tick & 0x1e) >> 1 != d.step || c.equipment & d.bit == 0 {
+        return;
+    }
+    m.dump_wait = m.dump_wait.wrapping_sub(1);
+    if m.dump_wait != 0 {
+        return;
+    }
+    m.dump_wait = d.wait;
+    if !deploy(world, id, tables, random, events) {
+        dump(world, id, tables);
+    }
+}
+
 /// `1000:cc69`: a relay in the lowest free slot at `at`, height `z`, set up
 /// (`1000:cc2a`) folded, unpowered, on no side (+0x16 only `TARGETABLE`), its clock a random
 /// byte, with its look. `None` with no room.

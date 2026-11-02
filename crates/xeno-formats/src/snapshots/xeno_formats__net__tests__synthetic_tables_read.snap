@@ -25,4 +25,25 @@ Net {
     no_relay: 80,
     deployed: 81,
     radius: 1280,
+    load: Load {
+        full: 10,
+        speed: 32,
+        reach: 48,
+        loaded: 82,
+        damaged: 83,
+        none_near: 84,
+        too_full: 85,
+        too_fast: 86,
+    },
+    cargo: [
+        87,
+        88,
+    ],
+    dump: Dump {
+        bit: 16,
+        wait: 3,
+        step: 5,
+        on: 89,
+        off: 90,
+    },
 }

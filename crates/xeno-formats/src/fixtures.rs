@@ -1706,7 +1706,7 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
     synthetic_gears(image, ds);
     synthetic_weapon_keys(image, ds);
     synthetic_sensing(image, ds);
-    synthetic_net(image);
+    synthetic_net(image, ds);
     synthetic_relays(image, ds);
     synthetic_weapons(image, ds);
     synthetic_bases(image, ds);
@@ -1969,7 +1969,7 @@ pub fn synthetic_weapon_tables() -> crate::weapons::Weapons {
 /// Writes made-up relay-net instructions (`crate::net`): DENSE NET (13) on a mask of
 /// 0xfe, SPARSE NET (12) and the others on 0xfc, the others probing; deploying plays
 /// sound 25 and posts 0x50 (none) or 0x51 (deployed); relays of radius 0x500.
-pub fn synthetic_net(image: &mut [u8]) {
+pub fn synthetic_net(image: &mut [u8], ds: usize) {
     use crate::net::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     put(
@@ -1988,13 +1988,56 @@ pub fn synthetic_net(image: &mut [u8]) {
     put(NO_RELAY_AT, &[0xbe, 0x50, 0]);
     put(DEPLOYED_AT, &[0xbe, 0x51, 0]);
     put(RADIUS_AT, &[0xc7, 0x44, 0x14, 0x00, 0x05]);
+    // L: fewer than 10 carried, slower than 0x20, a relay within 0x30; messages 0x52 to
+    // 0x56. C: 0x57 and 0x58. D: bit 4, a relay every 3 steps at the scorpion's tick
+    // entry 5 (its table at `DS:0x9720`, as `synthetic_sensing`'s); 0x59 and 0x5a.
+    put(LOAD_AT, &[0xf6, 0x85, 0xfd, 0x00, 0x80, 0x75, 0x35]);
+    put(LOAD_AT + 7, &[0x80, 0xbd, 0x18, 0x01, 10, 0x73, 0x38]);
+    put(
+        LOAD_AT + 0xe,
+        &[
+            0x8b, 0x45, 0x26, 0x99, 0x33, 0xc2, 0x2b, 0xc2, 0x3d, 0x20, 0, 0x73, 0x30,
+        ],
+    );
+    let call = (NEAREST_AT as u16).wrapping_sub(LOAD_AT as u16 + 0x24);
+    put(LOAD_AT + 0x1b, &[0xb8, 0x04, 0x00, 0xb9, 0x32, 0x00, 0xe8]);
+    put(LOAD_AT + 0x22, &call.to_le_bytes());
+    put(
+        LOAD_AT + 0x24,
+        &[0x3d, 0x30, 0, 0x73, 0x18, 0xfe, 0x85, 0x18, 0x01],
+    );
+    for (i, at) in LOAD_MESSAGES_AT.into_iter().enumerate() {
+        put(at, &[0xbe, 0x52 + i as u8, 0]);
+    }
+    put(
+        CARGO_AT,
+        &[
+            0xbe, 0x57, 0, 0x80, 0xbd, 0x18, 0x01, 0x00, 0x75, 0x03, 0xbe, 0x58, 0,
+        ],
+    );
+    put(
+        DUMP_AT,
+        &[0x80, 0xb5, 0xfd, 0x00, 0x10, 0xf6, 0x85, 0xfd, 0x00, 0x10],
+    );
+    put(DUMP_AT + 10, &[0x75, 0x07, 0xbe, 0x5a, 0, 0xe8, 0, 0, 0xc3]);
+    put(DUMP_AT + 0x13, &[0xc6, 0x85, 0x1c, 0x01, 3, 0xbe, 0x59, 0]);
+    let near = |at: usize, to: usize| (to as u16).wrapping_sub(at as u16 + 3).to_le_bytes();
+    let step = DUMP_STEP_AT;
+    put(step, &[0xf6, 0x85, 0xfd, 0x00, 0x10, 0x74, 0x13]);
+    put(step + 7, &[0xfe, 0x8d, 0x1c, 0x01, 0x75, 0x0d]);
+    put(step + 13, &[0xc6, 0x85, 0x1c, 0x01, 3, 0xe8]);
+    put(step + 19, &near(step + 18, DEPLOY_AT));
+    put(step + 21, &[0x73, 0x03, 0xe8]);
+    put(step + 24, &near(step + 23, DUMP_AT));
+    put(crate::sensing::TICKS_AT[1], &[0xff, 0x97, 0x20, 0x97]);
+    put(ds + 0x9720 + 2 * 5, &(step as u16).to_le_bytes());
 }
 
 /// The made-up relay-net tables of [`synthetic_net`].
 pub fn synthetic_net_tables() -> crate::net::Net {
-    let mut image = vec![0; 0x1_0000];
-    synthetic_net(&mut image);
-    crate::net::read_image(&image).expect("synthetic net tables")
+    let mut image = vec![0; 0x2_0000];
+    synthetic_net(&mut image, 0x1_0000);
+    crate::net::read_image(&image, 0x1_0000).expect("synthetic net tables")
 }
 
 /// Writes a made-up relay tick and signal (`crate::relay`) at the stock addresses:

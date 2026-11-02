@@ -341,6 +341,7 @@ fn robot(
             r.put(0xff, &m.legs);
             r.u8(0x116, m.stride);
             r.u8(0x118, m.relays);
+            r.u8(0x11c, m.dump_wait);
             r.put(0x11d, &[g.fired, g.burst, g.cooldown[0] as u8]);
             r.u16(0x120, g.rounds);
             r.u8(0x122, g.missiles);
