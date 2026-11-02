@@ -1006,7 +1006,7 @@ own (below).
 | `0xee` | (3, 235, 53, 314) | `9065` | The damage panel. While +0xfa bit 7 is clear, the cover 0x908 opaque at the corner; while it is set, keyed lights over it: 0x8d8 in `DS:0x66e2` while the helm (+0x24) is 75 or under, 0x8e0 in `0x66ea` for +0xdc bit 1, 0x8e8 in `0x66f2` for bit 0, 0x8f0 in `0x66fa` for bit 2, 0x8f8 in `0x6702` for +0xfd bit 7 (the deployer), 0x900 in `0x670a` for any of +0xf6 bits 0 to 3 | `90f9`: nothing |
 | `0xf0`, `0xf2` | (163, 1, 173, 59), (175, 1, 185, 59) | `8b31`, `8b9c` | The pilot and program switches in `DS:0x658a` and `0x6592`: 0x6e0 (lit) for the pilot's while the pilot drives (+0x23 bit 7 clear) and for the program's while it drives, else 0x6d8; while one is pressed (`DS:0x652e` its state's offset, +0x149 or +0x14a), 0x6d8 plus the look `DS:0x6530`. Opaque | `8b5f`, `8bc9`: `DS:0x6530` XOR 8 and `DS:0x652e` set; a release (without 0x100) the pilot (`d446`) or the program (`d42c`), then both cleared and `9b87` (redraws) |
 | `0xf4`, `0xf6`, `0xf8` | (154, 68, 160, 77), (153, 78, 159, 84), (154, 85, 160, 94) | `8ebd`, `8f1d`, `8f5d` | Turn left, straight, right: 0x898, 0x8a8, 0x8b8 + look, opaque at the corner | As the humanoid's turn buttons, held codes 0xa and 0xb (`9c3c`, `9c4b`: +0x2a the heading less or plus 0x40). T-169 |
-| `0xfa`, `0xfc`, `0xfe`, `0x100` | (192, 118, 199, 152), (192, 153, 199, 187), (186, 118, 193, 152), (186, 153, 193, 187) | `8d36`, `8d90`, `8ca2`, `8cee` | C, D, L, U: 0x960, 0x970, 0x980, 0x990 + look, opaque at +1 | Flip the look; a release runs the key's routine: C `8d7f` (a message on the cargo), D `9ab8` (the dump), L `9b34` (load), U `9b01` (deploy; `sim_deploy_relay`), the last two then `9bbe` (the cargo redrawn). C, D and L are T-149 |
+| `0xfa`, `0xfc`, `0xfe`, `0x100` | (192, 118, 199, 152), (192, 153, 199, 187), (186, 118, 193, 152), (186, 153, 193, 187) | `8d36`, `8d90`, `8ca2`, `8cee` | C, D, L, U: 0x960, 0x970, 0x980, 0x990 + look, opaque at +1 | Flip the look; a release runs the key's routine: C `8d7f` (a message on the cargo), D `9ab8` (the dump), L `9b34` (load), U `9b01` (deploy; `sim_deploy_relay`), the last two then `9bbe` (the cargo redrawn). Ported by T-149 (`docs/sim.md`, "Relay nets") |
 
 `0xe4` to `0x100` are the second group (177, 115, 200, 209). The weapon buttons' `n`
 is the second byte of their states (+0x150, +0x153); the drop buttons' (+0x156 to
@@ -1029,10 +1029,11 @@ bit 3 of +0x22 added), the switches lit for whoever drives and while held. In pa
 the fire button held sends `Pilot::Fire` every retrace (as the humanoid's), the weapon
 buttons `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock
 button's left and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scorpion
-half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy`, the drop buttons `Pilot::Drop`
+half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy` (and since T-149 C, D and L
+`Pilot::Cargo`, `Dump` and `Load`, with the shared look while held), the drop buttons `Pilot::Drop`
 with the key their number picks (T-137; the shared look while held); the weapon
 buttons and the relay panel show their frame XORed while held. Not ported: the speed
-buttons, lever, compass and turn buttons (T-169), C, D and L (T-149), the
+buttons, lever, compass and turn buttons (T-169), the
 fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code (the signal is the sim's since T-148): +0xee and +0xfa bit 7 are worked
 out from the passes since the load (T-167); the gauges are worked out each frame from
 the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
