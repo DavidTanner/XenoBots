@@ -821,8 +821,7 @@ it the recall's program (`Tables::recall_program`) and its program takes over, b
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
 (T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). Keys 1 to 4
 are `Pilot::Drop` (T-137), Ctrl+P `Pilot::Charge` (T-139, below), L, C and D
-`Pilot::Load`, `Cargo` and `Dump` (T-149; mapped in part 2). The key still to port
-is S (T-167).
+`Pilot::Load`, `Cargo` and `Dump` (T-149). The key still to port is S (T-167).
 
 ## The developer and leftover keys (T-139)
 
@@ -1175,7 +1174,8 @@ the scenario as loaded, so laid relays are not saved.
 `xeno_sim::net` has L (`load`), C (`cargo`), D (`dump`) and the dump's step
 (`dump_step`, from `motion::tick` after the signal step, at `Dump::step`), which the
 scorpion's keys reach through `Sim::pilot` as `Pilot::Load`, `Cargo` and `Dump`
-(the keys and the console's buttons in `xeno-app` are part 2, `t-149-console`). The nearest test is `relay::nearest`, which the relay's
+(`xeno-app` maps `1000:9b2d`, `8d7f` and `9ab8` to them, and runs them on the
+console's buttons' releases). The nearest test is `relay::nearest`, which the relay's
 fold uses too; L frees the relay's slot with `World::remove`, and the dump deploys
 through `net::deploy`. `Movement::dump_wait` is +0x11c, loaded, hashed and saved;
 `DUMPING` is in `Components::equipment` (+0xfd), as before. The cargo's redraw marks
