@@ -1,7 +1,8 @@
 //! What the port reads from the user's `xeno.exe` for the humanoid console's
 //! instruments (`docs/screens.md`, "The humanoid console's instruments (T-130)"): the
 //! sprite bank's handle, the panels' texts, the compass's needle table and rectangles,
-//! the weapon buttons' sprites, the power panel's rectangles and a base's name. Game
+//! the weapon buttons' sprites, the power panel's rectangles, the gear lever's
+//! rectangles and messages, the compass's centre and a base's name. Game
 //! data, read at run time through the instructions that use it.
 
 use crate::FormatError;
@@ -43,6 +44,16 @@ pub(crate) const WEAPON_ON_AT: usize = 0xa37b;
 /// The power panel (`1000:aab7`): `mov bx, rect` for the two lights and the two bars.
 pub(crate) const LIGHTS_AT: [usize; 2] = [0xaabb, 0xaae0];
 pub(crate) const BARS_AT: [usize; 2] = [0xaad6, 0xaafb];
+/// The gear lever's mouse handler (`1000:a88c`): `mov si, [bx + table]` for the
+/// gears' rectangles (the drag), the notches' (a press) and the release's messages;
+/// `cmp bl, last` closing the drag's scan and the notches'.
+pub(crate) const GEARS_AT: usize = 0xa8a5;
+pub(crate) const NOTCHES_AT: usize = 0xa91a;
+pub(crate) const GEAR_MESSAGES_AT: usize = 0xa906;
+pub(crate) const DRAG_LAST_AT: usize = 0xa8b0;
+pub(crate) const NOTCH_LAST_AT: usize = 0xa934;
+/// The compass's mouse handler (`1000:a6c0`): `mov bx, x`, `mov cx, y`, the centre.
+pub(crate) const CENTRE_AT: [usize; 2] = [0xa6d5, 0xa6d8];
 
 /// The compass's headings, a 32nd of a turn each.
 pub const NEEDLES: usize = 32;
@@ -78,6 +89,14 @@ pub struct HumanCon {
     /// The power panel: the two lights' and the two bars' rectangles.
     pub lights: [Rect; 2],
     pub bars: [Rect; 2],
+    /// The gear lever, by gear index: the rectangle whose top the drag compares the
+    /// pointer's row with, a notch a press picks the gear by, and the message a
+    /// release sends the robot (a string-segment offset).
+    pub gears: Vec<Rect>,
+    pub notches: Vec<Rect>,
+    pub gear_messages: Vec<u16>,
+    /// The compass's centre (x, y), the bearings to the pointer are taken from.
+    pub centre: (u16, u16),
 }
 
 /// Reads the tables from a load image whose data segment starts at `ds`.
@@ -87,13 +106,37 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<HumanCon, FormatError> {
     };
     let text = |at| string(image, at_ds(at, &[0xbe])?);
     let area = |at| rect(image, at_ds(at, &[0xbb])?);
-    let words = |at, n: usize| -> Result<Vec<u16>, FormatError> {
-        let table = at_ds(at, &[0x8b, 0x87])?;
+    // `mov ax, [bx + table]` or, `si`, `mov si, [bx + table]`.
+    let table = |at, n: usize, si: bool| -> Result<Vec<u16>, FormatError> {
+        let table = at_ds(at, &[0x8b, if si { 0xb7 } else { 0x87 }])?;
         (0..n).map(|i| word(image, table + 2 * i)).collect()
     };
+    let words = |at, n| table(at, n, false);
     let pair = |at| -> Result<[u16; 2], FormatError> {
         let w = words(at, 2)?;
         Ok([w[0], w[1]])
+    };
+    // The notches' scan ends at its last gear; the drag's checks one fewer, the last
+    // gear taking the rows below them all.
+    let imm8 = |at: usize| -> Result<u8, FormatError> {
+        match image.get(at..at + 3) {
+            Some([0x80, 0xfb, n]) if n % 2 == 0 => Ok(*n),
+            _ => Err(invalid(at, "not the expected cmp bl")),
+        }
+    };
+    let last = imm8(NOTCH_LAST_AT)?;
+    if imm8(DRAG_LAST_AT)?.wrapping_add(2) != last {
+        return Err(invalid(
+            DRAG_LAST_AT,
+            "the drag scans another count of gears",
+        ));
+    }
+    let count = usize::from(last / 2) + 1;
+    let gear_rects = |at| -> Result<Vec<Rect>, FormatError> {
+        table(at, count, true)?
+            .into_iter()
+            .map(|r| rect(image, ds + usize::from(r)))
+            .collect()
     };
     let mut base_name = [0; 6];
     for (i, op) in BASE_NAME_OPS.iter().enumerate() {
@@ -124,6 +167,13 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<HumanCon, FormatError> {
         weapon_sprites: [pair(WEAPON_OFF_AT)?, pair(WEAPON_ON_AT)?],
         lights: [area(LIGHTS_AT[0])?, area(LIGHTS_AT[1])?],
         bars: [area(BARS_AT[0])?, area(BARS_AT[1])?],
+        gears: gear_rects(GEARS_AT)?,
+        notches: gear_rects(NOTCHES_AT)?,
+        gear_messages: table(GEAR_MESSAGES_AT, count, true)?,
+        centre: (
+            operand(image, CENTRE_AT[0], &[0xbb])?,
+            operand(image, CENTRE_AT[1], &[0xb9])?,
+        ),
     })
 }
 
@@ -141,7 +191,8 @@ mod tests {
     /// Made-up tables: bank 0x100; texts "u0".."p2" at DS + 0x100 on; needles
     /// 0, 1, .. 31; rectangles (n, n + 1, n + 2, n + 3) for the dial (1), quadrants
     /// (2..5), lights (6, 7) and bars (8, 9); weapon sprites 0x10, 0x11 and 0x20, 0x21;
-    /// the base "BASE01".
+    /// the base "BASE01"; three gears (rectangles 0x10 + n.., notches 0x20 + n..,
+    /// messages 0x30 + n) and the centre (0x41, 0x42).
     fn synthetic() -> Vec<u8> {
         let mut image = vec![0u8; DS + 0x1000];
         let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -188,6 +239,26 @@ mod tests {
         put(WEAPON_OFF_AT, &op(&[0x8b, 0x87], 0x400));
         put(WEAPON_ON_AT, &op(&[0x8b, 0x87], 0x404));
         put(DS + 0x400, &[0x10, 0, 0x11, 0, 0x20, 0, 0x21, 0]);
+        put(DRAG_LAST_AT, &[0x80, 0xfb, 2]);
+        put(NOTCH_LAST_AT, &[0x80, 0xfb, 4]);
+        for (k, (at, base)) in [(GEARS_AT, 0x10), (NOTCHES_AT, 0x20)]
+            .into_iter()
+            .enumerate()
+        {
+            let table = 0x500 + 0x40 * k as u16;
+            put(at, &op(&[0x8b, 0xb7], table));
+            for n in 0..3u16 {
+                let r = table + 8 + 8 * n;
+                put(DS + usize::from(table + 2 * n), &r.to_le_bytes());
+                for (i, w) in [base + n, 1, 2, 3].into_iter().enumerate() {
+                    put(DS + usize::from(r) + 2 * i, &w.to_le_bytes());
+                }
+            }
+        }
+        put(GEAR_MESSAGES_AT, &op(&[0x8b, 0xb7], 0x600));
+        put(DS + 0x600, &[0x30, 0, 0x31, 0, 0x32, 0]);
+        put(CENTRE_AT[0], &op(&[0xbb], 0x41));
+        put(CENTRE_AT[1], &op(&[0xb9], 0x42));
         image
     }
 
@@ -201,6 +272,11 @@ mod tests {
         );
         assert_eq!((con.needles[31], con.quadrants[3].top), (31, 5));
         assert_eq!(con.weapon_sprites, [[0x10, 0x11], [0x20, 0x21]]);
+        assert_eq!((con.gears[2].top, con.notches[1].top), (0x12, 0x21));
+        assert_eq!(
+            (&con.gear_messages[..], con.centre),
+            (&[0x30, 0x31, 0x32][..], (0x41, 0x42))
+        );
         insta::assert_debug_snapshot!(con);
     }
 
@@ -209,6 +285,13 @@ mod tests {
         let mut checked = vec![BANK_AT, UNLIT_AT, NO_TARGET_AT, OUT_AT, PAGES_AT[2]];
         checked.extend([BASE_NAME_AT + 12, DIAL_AT, NEEDLES_AT + 1, QUADRANTS_AT[1]]);
         checked.extend([WEAPON_OFF_AT, WEAPON_ON_AT + 1, LIGHTS_AT[1], BARS_AT[0]]);
+        checked.extend([
+            GEARS_AT + 1,
+            NOTCHES_AT,
+            GEAR_MESSAGES_AT + 1,
+            DRAG_LAST_AT + 2,
+        ]);
+        checked.extend([NOTCH_LAST_AT + 1, CENTRE_AT[0], CENTRE_AT[1]]);
         for at in checked {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -244,5 +327,10 @@ mod tests {
         assert!(con.out.iter().all(|&b| !(0x20..0x80).contains(&b)));
         assert!(con.base_name.iter().all(u8::is_ascii));
         assert_eq!(con.bars[0].right - con.bars[0].left, 32);
+        // Six gears, reverse first: the drag's rectangles go up the lever, and the
+        // compass's centre is inside its widget (110, 81, 135, 110).
+        assert_eq!((con.gears.len(), con.notches.len()), (6, 6));
+        assert!(con.gears.windows(2).all(|g| g[0].top > g[1].top));
+        assert!((81..110).contains(&con.centre.0) && (110..135).contains(&con.centre.1));
     }
 }

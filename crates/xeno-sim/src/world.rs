@@ -161,6 +161,12 @@ impl Depot {
 pub struct Movement {
     /// +0x1a: the tick counter, stepping by 2.
     pub tick: u8,
+    /// +0x1b: the button held, picking a routine at the end of the robot's tick: a
+    /// humanoid's turn buttons 10 (left) and 11 (right), which ask for the heading
+    /// less or plus 0x40 (`DS:0x6aef`'s `1000:b3d5`, `b3df`); others do nothing here.
+    // shortcut: its fire button's 7 is sent as `Pilot::Fire` (`xeno-app`); the
+    // scorpion's and scout's codes are T-169 and T-172.
+    pub held: u8,
     /// +0x1c: the eye height, the 3D view's camera above `z` (`docs/render.md`, "The
     /// camera"), in 1/65,536ths of a unit.
     pub eye_height: u16,
@@ -290,6 +296,11 @@ impl Movement {
     pub const ON_PATH: u8 = usg::Robot::ON_PATH;
     /// [`Movement::mode`]: recalled by the situation room (+0x23 bit 3).
     pub const RECALL: u8 = usg::Robot::RECALL;
+    /// [`Movement::mode`]: the turn keys' bits (+0x23 bits 4 and 5, left and right).
+    pub const TURNING: u8 = 0x30;
+    /// [`Movement::held`]: the humanoid's left and right turn buttons.
+    pub const HELD_LEFT: u8 = 10;
+    pub const HELD_RIGHT: u8 = 11;
     /// [`Movement::goal`]: heading for [`Movement::destination`].
     pub const GOAL_POINT: u8 = 0x22;
 
@@ -344,6 +355,7 @@ impl Movement {
         };
         Movement {
             tick: r.tick,
+            held: r.state,
             eye_height: r.eye_height,
             velocity: (r.velocity_x, r.velocity_y),
             mode: r.mode & !usg::Robot::PROGRAM,
@@ -428,7 +440,7 @@ impl StateHash for State {
         match *self {
             State::Robot(m) => {
                 h.u8(0);
-                h.bytes(&[m.tick, m.mode]);
+                h.bytes(&[m.tick, m.held, m.mode]);
                 h.u16(m.eye_height);
                 h.u16(m.velocity.0 as u16);
                 h.u16(m.velocity.1 as u16);
@@ -1213,6 +1225,10 @@ mod tests {
                 assert_eq!((e.flags, e.status), (o.flags, o.status), "{name}");
                 assert_eq!((back.flags, back.status), (o.flags, o.status), "{name}");
                 assert_eq!(e.flags & usg::flag::ALIEN != 0, e.side == Side::Alien);
+                // No robot starts with a console's button held (+0x1b, T-165).
+                if let State::Robot(m) = e.state {
+                    assert_eq!(m.held, 0, "{name}");
+                }
             }
             let (mut units, mut big, mut small) = (0, 0, 0);
             for side in [Side::Human, Side::Alien] {
