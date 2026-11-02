@@ -932,7 +932,7 @@ they are not drawn again until marked.
 | `0xa4` | (170, 37, 200, 94) | `a874` | The gear lever: sprite 0x640 + 4 * the gear (+0x10b, twice an index), opaque at the corner | `a88c` (T-165): events over the lever or, while it holds the pointer, from anywhere (0x80 or 0x100). With +0x22 at 0 (a press) it sets +0x22 = 1; on the current gear's rectangle (a pointer table, `DS:0x6874`) nothing more, a drag starts; else the first notch (`DS:0x68b0`, its edges included) under the pointer picks its gear. With +0x22 set, a release (0x4 or 0x10) sends the robot its gear's message (`DS:0x68f8`, through `d53f`) and clears +0x22; anything else is a drag: the gear is the first of the first five whose rectangle's top is at or above the pointer's row (the column is not looked at), the sixth below them all. A gear picked that is not the robot's: +0x10b, the speed asked for (`DS:0x68ec`), the pilot (`d446`), the velocity again from the heading and speed (`d41c`) |
 | `0xa6` | (110, 81, 135, 110) | `a617` | The compass: the dial 0x5c0 keyed in `DS:0x6904`; a needle by `((heading + 0x400) >> 11) & 31` from the word table `DS:0x692c`: low byte one of four quadrants, high byte the needle 0 to 8, sprite 0x5f8 + 8 * needle, keyed and turned (quadrant 0: as it is in `DS:0x690c`; 1: flipped, `0x6914`; 2: turned 180 degrees, `0x691c`; 3: mirrored, `0x6924`). Then font 2 at (0x5a, 0x78): `DS:0x70db` in 0x58 and the heading in degrees, three digits, in 0x0f, transparent | `a6c0` (T-165): a release over it (0x80, not a move) takes the pilot (`d446`: the call is to `d446`, not the bare `ret` at `d445`), sets the target heading (+0x2a) to the bearing of the pointer from the centre (0x5f, 0x7a), y up, by `1000:04eb` (`sim_get_bearing`'s fine path) and clears +0x23 bits 4 and 5 |
 | `0xa8` | (7, 275, 48, 314) | `a93e` | The status panel: filled in the kind's message panel colours (`DS:0x71b0`, fill the low byte), font 2, text in the high byte on the fill. +0x10a is cut by 3 when 3 or more, and its low two bits pick a page (`CS:0xa98a`; page 3 is page 2). Its heading (`DS:0x69c7`, `0x69f5`, `0x6a1f`) transparent at (0x113, 7), then opaque: page 0 at (0x12a, 0x13) `1000:ddb6`'s percentages of 100, +0x4e and +0x24, then `de12` of +0xec bit 0 and of 0; page 1 at (0x12e, 0x13) `de12` of +0xdc bits 0 and 1, at (0x12a, 0x25) `de24` of +0xe0 and +0xde; page 2 at (0x12e, 0x13) `de12` of +0xf6 bits 0 to 4. `de12`: `DS:0x71cc` for 0, else `0x71d1` (bit-7 codes: the high colour). `de24`: 0 gives `0x71d1` transparent; else the last two of five digits, a leading zero a space, a new line, transparent | `dd7f`: a press with +0x22 clear sets it to 0xff and +0xfa to 0; a release or leave clears +0x22 |
-| `0xaa` | (111, 19, 146, 73) | `9f96` | The third display (colour 253, region `DS:0x684a`): every 8 passes (`DS:0x62ed`) a frame of view mode 0x12, heading up (the robot's heading, zoom 8, zoom shift 1, clear colour 0x7f, `DS:0x1458` = 0x670); with +0xf6 bit 3 (the radar) damaged, mode 0x18 cleared to 0x10. The probe goes to `DS:0x6a7c`. T-166 | `9fcc`: as the second display's, flag 3 |
+| `0xaa` | (111, 19, 146, 73) | `9f96` | The third display, the radar (colour 253, region `DS:0x684a`): below, "The third display (T-166)" | `9fcc`: as the second display's, flag 3, without the map's Alt press |
 | `0xac`, `0xae` | (168, 227, 180, 262), (181, 227, 193, 262) | `aa4b`, `aa81` | Sprites 0x580 and 0x590 + look, opaque at the corner | `aa5e`, `aa94`: flip the look; a release runs F8 (`d95e`) or F7 (through `d92d`, an `int 3` before `d92e`): `Pilot::Cloak`, `Pilot::Ecm` (T-136) |
 | `0xb0` | (0, 186, 12, 238) | `aab7` | The power: sprite 0x5a0 in `DS:0x696c` and 0x5a8 in `0x6974` while on battery (+0xfd bit 0), the other way round otherwise; after each a bar (`1000:ab02`) in `DS:0x697c` of the signal (+0x4f) and in `0x6984` of the energy (+0x50): 255 counts as 256, `n = (value >> 1) >> 3` lit sprites 0x5b8 then `16 - n` dark 0x5b0, 2 pixels apart, all opaque | `ab62`: nothing |
 | `0xb2`, `0xb4`, `0xb6` | (141, 86, 148, 93), (141, 93, 148, 98), (141, 98, 148, 105) | `a760`, `a7ca`, `a80e` | Turn left, straight, right: 0x5c8, 0x5d8, 0x5e8 + look, opaque at +1, +1 down, +1 | `a77d`, `a7e1`, `a82b`: flip the look. Left and right: a press sets +0x1b = 10 or 11 (each tick the target heading is the heading less or plus 0x40, `b3d5`, `b3df`) and the pilot; a left release or leave clears it and +0x23 bits 4, 5; a right release clears it and sets bit 4 (left) or 5 (right): a turn that keeps on. Straight: a release, the pilot, the target heading the heading, bits 4 and 5 cleared. Each event but a move flips the look. The held routines run at the end of the robot's tick (`1000:abff`, after the movement), so the turn is asked for a tick ahead (T-165) |
@@ -980,6 +980,75 @@ not +0x22 (which the shared look and the lock button also set); a turn button's 
 is taken at the release, as the fire button's. Not ported: the status panel's press
 (T-167), the third display (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
+
+### The third display (T-166)
+
+From a Ghidra pass over the humanoid's draw handler (`1000:9f96`), its frame routine
+(`1fe6:7cff`), view mode 0x12's list and the mouse handler (`9fcc`). The scorpion's and
+the scout's routines (`1fe6:7bdb`, `1fe6:7e2b`) have the same shape (T-170, T-173).
+
+**The draw handler** marks its widget for a redraw on every pass, so it runs every
+pass. With no view frame running (`DS:0x1450` 0) it calls the frame routine; while
+another frame runs (1 to 0x7f) it does nothing; once a frame is done (bit 7) and it is
+its own (3), it copies the buffer through region `DS:0x684a` (slot `0x5a4`), reads the
+pointer probe into `DS:0x6a7c` and sets `DS:0x1450` to 0. `DS:0x1450` is shared with
+the 3D view (1) and the second display (2), so the three take turns.
+
+**The frame routine** counts `DS:0x62ed` down and does nothing until it reaches 0;
+then it sets it to 8 again (5 for the scorpion and the scout), so a frame starts only
+at every 8th chance, a chance being a pass on which no other view's frame runs. With
++0xf6 bit 3 (the radar) damaged it starts view mode 0x18, the noise
+(`docs/screens.md`, "The display's other modes (T-134)"), in colours from
+`DS:0x1456` = 0x10 (its first pixel 0x10 too). Otherwise: `DS:0x1450` = 3, view mode
+0x12, `DS:0x1453` = 0 (not read by list 0x12's steps as far as traced), the target
+rectangle `DS:0x684a`, the robot as the viewer (`DS:0x145c`), `DS:0x1457` = 0x7f (the
+dots' colour, not a clear colour), `DS:0x1458` = 0x670 (a sprite handle, not a hill
+colour), `DS:0x1456` = 0x10, zoom shift 1, the robot's heading (the scorpion's less a
+constant: its display is turned), zoom 8, its x and y, and its z plus its eye height
+(the scout's without), which list 0x12 does not use.
+
+**View mode 0x12** is list `DS:0x397c` (0x10 is `0x3970`, the same with a build in
+place of the reuse; 0x14 and 0x16 share them): the camera with the focal factor
+`DS:0x4d2e` (`1000:2999`), the **reuse** (`2b1a`: the render list the main view's last
+build made, so the same objects and hills, from where the robot stood then), then:
+
+1. `1000:3b29`: sprite `[DS:0x1458]` (`msprite2`'s 0x670, 55 by 35, the radar's
+   screen) opaque at the buffer's corner (slot `0x5c4` with the buffer's clip
+   rectangle), then the pointer probe's arm (`4042`).
+2. `1000:3b58`: for each node of the list, in its far-to-near order, the offset of
+   its x and y (+0x0a, +0x0e) from the camera's, as 32-bit magnitudes and signs, goes
+   through the maps' projection (`1000:3eb9`, the camera's heading turning it, so the
+   robot's heading is up), and `1000:3bca` writes **one pixel** of `DS:0x1457` at
+   column `W/2 + X`, row `H/2 - Z` (modes 0x14 and 0x16 put the camera on the bottom
+   row instead, `H - 1 - Z`), if both are in the buffer (unsigned). Every node is a
+   dot of the same colour, whatever its type: robots, the base, relays, shots,
+   explosions and the cloak's sparkle (every kind with a 3D node), the hills' and
+   blocks' centres, and the robot's own node; nothing is culled but by the buffer,
+   and undetected aliens are shown. When the list is done, one more dot at the
+   middle (`3b40`: the viewer), and the step is over. The steps' pass budget
+   (`DS:0x372`) can split the list over passes.
+3. The static (`3c91`, never draws) and the end.
+
+At zoom 8 and shift 1 a unit is about 10 pixels, so the 54 by 35 buffer shows
+about 2.7 units to each side and 1.7 ahead and behind.
+
+**The probe.** `1000:3bca` names an object when its dot's offsets from the middle are
+exactly the pointer's (`DS:0x4c80`, `0x4c82`), but it reads the word two bytes past
+the node's object field (its `BX` is the node plus 2, and it reads `[BX + 2]` as the
+maps' dot routine does with the node itself): the node's type and model bytes (2 and
+the model for a robot), or for the middle dot the word after `DS:0x145c`. So a dot
+under the pointer puts a word that is no object in `DS:0x6a7c`.
+
+**The mouse** (`9fcc`): a move tests the region (slot `0x5bc`): inside, pointer shape
+4 (`a02b`) and the region flag `DS:0x6a7e` = 3; outside or on leaving, shape 0 and 0.
+A left release with the flag 3 and `DS:0x6a7c` not 0 calls the lock (`1000:d8a7`); a
+right release, `7eac` (open the object's view). Given the probe above, both act on the
+non-object word; what that does was not traced.
+
+**In the port**: `xeno_formats::radar` reads each kind's frame routine from the user's
+`xeno.exe` (the handler's head checked, the routine decoded instruction by
+instruction): the frame count, the radar's bit, the view modes, the dots' colour, the
+background sprite, the zoom, the shift, the heading offset and the noise colour.
 
 ### The scorpion console's instruments (T-131)
 
