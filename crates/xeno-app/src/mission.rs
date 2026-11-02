@@ -451,6 +451,10 @@ pub struct Assets {
     /// The scout console's (T-132) and its sprites (`msprite4`).
     pub scoutcon: Option<ScoutCon>,
     pub scoutcon_sprites: Vec<Sprite>,
+    /// The consoles' third displays (T-166), humanoid, scorpion and scout, if the
+    /// user's `xeno.exe` has them where the port reads them; without them the
+    /// colour-253 region keeps the placeholder.
+    pub radars: Option<[xeno_formats::radar::Radar; 3]>,
     /// The thermal and missile cameras' remap, from `mgavideo.dvr` (T-134).
     pub thermal: Vec<u8>,
     /// Ctrl+Alt+B's sky name template (`mgavideo.dvr`'s name for file id 0x34) and the
@@ -599,6 +603,9 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
         scoutcon_sprites: bank("msprite4.b@n")
             .inspect_err(|e| log::warn!("scout console: no sprites: {e}"))
             .unwrap_or_default(),
+        radars: xeno_formats::radar::read(&exe)
+            .inspect_err(|e| log::warn!("xeno.exe: no third displays this port can read: {e}"))
+            .ok(),
         thermal: video.thermal.clone(),
         sky_template: mgavideo::file_name(&video_bytes, mgavideo::SKY_FILE)
             .inspect_err(|e| log::warn!("mgavideo.dvr: no sky name for Ctrl+Alt+B: {e}"))
@@ -786,6 +793,9 @@ pub struct Mission {
     /// The point under the pointer on the second display's last map frame
     /// (`ui_map_pointer_to_world`); none after a camera frame.
     map_point: Cell<Option<xeno_sim::Position>>,
+    /// The third display's last frame, kept until its next (every `frames` passes),
+    /// with the robot and the pass group it was drawn for.
+    radar: std::cell::RefCell<Option<((u16, u16), Framebuffer)>>,
     /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
     alt: bool,
     /// The map display's Alt press waits for the next frame (+0x23 bit 2).
@@ -899,6 +909,7 @@ impl Mission {
             region: None,
             probed: Cell::default(),
             map_point: Cell::default(),
+            radar: std::cell::RefCell::default(),
             alt: false,
             goal_press: false,
             dirty: true,
@@ -2720,7 +2731,8 @@ impl Mission {
         let font = assets.fonts.get(&UNIT_FONT);
         // Measured from the picture before anything is drawn, which can leave the
         // regions' colours behind (the placeholders' labels, a probe's pixel).
-        let [main, second] = [255, SECOND_DISPLAY].map(|c| review::region_of(fb, c));
+        let [main, second, third] =
+            [255, SECOND_DISPLAY, THIRD_DISPLAY].map(|c| review::region_of(fb, c));
         for &colour in colours {
             if colour == 255 && main.is_some_and(|r| self.draw_view(fb, assets, r)) {
                 continue;
@@ -2728,9 +2740,12 @@ impl Mission {
             if colour == SECOND_DISPLAY && second.is_some_and(|r| self.draw_second(fb, assets, r)) {
                 continue;
             }
+            if colour == THIRD_DISPLAY && third.is_some_and(|r| self.draw_third(fb, assets, r)) {
+                continue;
+            }
             // Without the situation room's tables, its main view (T-103); without the
-            // 3D view's, a console's views (T-101); the third displays T-166, T-170
-            // and T-173.
+            // 3D view's, a console's views (T-101); without the radars' (T-166), the
+            // humanoid's third display; the others' T-170 and T-173.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-103",
                 (_, 255 | SECOND_DISPLAY) => "T-101",
@@ -3042,6 +3057,75 @@ impl Mission {
     fn draw_noise(&self, buffer: &mut Framebuffer) {
         let word = self.noise.borrow_mut().word();
         noise(buffer.pixels_mut(), word, DISPLAY_CLEAR);
+    }
+
+    /// The humanoid console's third display (the colour-253 region, `1000:9f96` and
+    /// `1fe6:7cff`): every `frames` passes a frame of view mode 0x12, the main view's
+    /// render list as dots around the robot, heading up, or with the radar damaged
+    /// list 0x18's noise; the last frame is copied through the region in between.
+    /// `false` (nothing drawn) for the other kinds (T-170, T-173) and without the
+    /// tables.
+    fn draw_third(&self, fb: &mut Framebuffer, assets: &Assets, region: Region) -> bool {
+        let Viewed::Robot(slot) = self.viewed else {
+            return false;
+        };
+        let (left, top, width, height) = region;
+        let (Some(view), Some(radars), Some(robot), Some(con)) = (
+            &assets.view3d,
+            &assets.radars,
+            self.book().get(slot),
+            &assets.humancon,
+        ) else {
+            return false;
+        };
+        if robot.kind != RobotKind::Humanoid {
+            return false;
+        }
+        let radar = &radars[RobotKind::Humanoid.index()];
+        let world = self.world();
+        let Some(e) = world.get(EntityId(slot)) else {
+            return false;
+        };
+        // shortcut: a frame every `frames` passes of the sim; the original's counter
+        // (`DS:0x62ed`) steps only when no other view's frame is running, so its frames
+        // are further apart (T-168 measures them).
+        let key = (slot, world.ticks / u16::from(radar.frames.max(1)));
+        let mut kept = self.radar.borrow_mut();
+        if kept
+            .as_ref()
+            .is_none_or(|(k, b)| *k != key || b.surface() != Size::new(width, height))
+        {
+            let mut buffer = Framebuffer::new(Size::new(width, height));
+            let systems = match e.damage {
+                xeno_sim::Damage::Robot(c) => c.systems,
+                _ => 0,
+            };
+            if systems & radar.device != 0 {
+                let word = self.noise.borrow_mut().word();
+                noise(buffer.pixels_mut(), word, radar.noise);
+            } else {
+                let camera = mainview::radar_camera(e, radar, view, &assets.motion);
+                let terrain = self
+                    .scenario
+                    .as_ref()
+                    .and_then(|s| s.terrain.as_ref())
+                    .map_or(&[][..], |t| &t.features);
+                // List 0x12 reuses the main view's list (`1000:2b1a`).
+                let main = scene::camera(world, EntityId(slot), view, &assets.motion);
+                let nodes = main
+                    .map(|c| scene::nodes(world, view, &c, &assets.motion, terrain))
+                    .unwrap_or_default();
+                let background =
+                    crate::console::lookup(&assets.humancon_sprites, con.bank, radar.background);
+                let points = nodes.iter().map(|n| (n.position[0], n.position[1]));
+                mainview::draw_radar(&mut buffer, &camera, points, background, radar.dot);
+            }
+            *kept = Some((key, buffer));
+        }
+        if let Some((_, buffer)) = kept.as_ref() {
+            review::copy_through_colour(fb, buffer, (left, top), THIRD_DISPLAY);
+        }
+        true
     }
 
     /// The situation room's main view (widget type 0x50).
@@ -3859,6 +3943,7 @@ pub mod tests {
             scorpcon_sprites: Vec::new(),
             scoutcon: None,
             scoutcon_sprites: Vec::new(),
+            radars: None,
             // Each colour turned to 255 less it: not the stock table.
             thermal: (0..=255u8).rev().collect(),
             sky_template: None,
@@ -6064,6 +6149,98 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    /// The humanoid's third display on `htrain`'s first humanoid: its region drawn
+    /// (no placeholder) over the radar's background, a dot for the robot in the middle
+    /// and one for each object and hill near enough, at its pixel heading up; with the
+    /// radar damaged, the noise.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_humanoid_radar_shows_what_is_near() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let radar = assets.radars.unwrap()[RobotKind::Humanoid.index()];
+        let pictures = crate::screens::load(&files).unwrap();
+        let picture = &pictures
+            .iter()
+            .find(|(n, _)| *n == "humancon.m@l")
+            .unwrap()
+            .1;
+        let name = "htrain.usg";
+        let mut m = Mission::new(
+            name.into(),
+            &assets.scenarios[name],
+            Random::seeded(1),
+            &assets.motion,
+        );
+        let robot = m
+            .robots()
+            .into_iter()
+            .find(|&s| m.book().get(s).unwrap().kind == RobotKind::Humanoid)
+            .unwrap();
+        m.view_robot(robot).unwrap();
+        let picture_fb = || {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            fb.pixels_mut().copy_from_slice(&picture.pixels);
+            fb
+        };
+        let (left, top, width, height) = review::region_of(&picture_fb(), THIRD_DISPLAY).unwrap();
+        let region: Vec<bool> = picture.pixels.iter().map(|&p| p == THIRD_DISPLAY).collect();
+        let draw = |m: &Mission| {
+            let mut fb = picture_fb();
+            m.draw(&mut fb, &assets);
+            let inside: Vec<u8> = (fb.pixels().iter().zip(&region))
+                .filter_map(|(&p, &r)| r.then_some(p))
+                .collect();
+            (fb, inside)
+        };
+        let (fb, inside) = draw(&m);
+        let count = |c: u8| inside.iter().filter(|&&p| p == c).count();
+        assert!(inside.len() > 1000);
+        assert_eq!(count(THIRD_DISPLAY), 0, "no placeholder");
+        assert_eq!(count(PLACEHOLDER_INK), 0);
+        // A dot at the pixel of every object with a 3D node in the region, and the
+        // robot's own in the middle.
+        let world = m.world();
+        let e = world.get(EntityId(robot)).unwrap();
+        let view = assets.view3d.as_ref().unwrap();
+        let camera = mainview::radar_camera(e, &radar, view, &assets.motion);
+        let buffer = Framebuffer::new(Size::new(width, height));
+        let near: Vec<_> = world
+            .iter()
+            .filter(|(_, o)| view.node_types[usize::from(u16::from(o.kind))].is_some())
+            .map(|(_, o)| mainview::pixel(&camera, &buffer, o.position.x.0, o.position.y.0))
+            .filter(|&(x, y)| (0..width as i32).contains(&x) && (0..height as i32).contains(&y))
+            .map(|(x, y)| (left + x as usize, top + y as usize))
+            .filter(|&(x, y)| region[y * 320 + x])
+            .collect();
+        assert!(near.len() > 1, "something near the robot on htrain");
+        for (x, y) in near {
+            assert_eq!(fb.get(x, y), Some(radar.dot), "{x}, {y}");
+        }
+        assert_eq!(fb.get(left + width / 2, top + height / 2), Some(radar.dot));
+        // The radar damaged: the noise's colours, from the next frame on.
+        if let Some(xeno_sim::Damage::Robot(c)) = m
+            .world_mut()
+            .get_mut(EntityId(robot))
+            .map(|e| &mut e.damage)
+        {
+            c.systems |= radar.device;
+        }
+        for _ in 0..radar.frames {
+            m.tick(&[]);
+        }
+        let (_, inside) = draw(&m);
+        let ramp = radar.noise..radar.noise + 16;
+        assert!(inside.iter().all(|p| ramp.contains(p)));
     }
 
     /// Each console's 3D view is drawn in a buffer the size of its picture's colour-255

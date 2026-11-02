@@ -5,6 +5,7 @@
 use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
 use xeno_formats::maproom::{HANDLE_STEP, Rect};
+use xeno_formats::radar::Radar;
 use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{Base, Message, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
@@ -337,6 +338,48 @@ pub fn console_map(
         shots: false,
     };
     (camera, map)
+}
+
+/// A console's third display's camera (humanoid `1fe6:7cff`): on robot `e`, heading
+/// up (its heading less the kind's offset), the focal factor of list 0x12's camera
+/// step (`DS:0x4d2e`, `1000:2999`) at the kind's zoom and zoom shift.
+pub fn radar_camera(e: &Entity, radar: &Radar, view: &View3d, tables: &Tables) -> Camera {
+    let heading = e.heading.wrapping_sub(radar.heading_offset);
+    Camera {
+        x: e.position.x.0,
+        y: e.position.y.0,
+        z: 0,
+        heading,
+        sin: trig(tables, heading),
+        cos: trig(tables, 0x4000u16.wrapping_sub(heading)),
+        focal: focal_shifted(view.focal[1], radar.zoom, radar.zoom_shift),
+        viewer: u16::MAX,
+    }
+}
+
+/// View mode 0x12 after its camera (list `DS:0x397c`; `docs/screens.md`, "The third
+/// display (T-166)"): the background sprite opaque at the buffer's corner
+/// (`1000:3b29`, slot `0x5c4`), then (`3b58`) a dot of `colour` at each of
+/// `points`, the main view's render list reused, as `1000:3bca` places it (as
+/// [`pixel`], clipped), then one in the middle for the robot itself.
+pub fn draw_radar(
+    buffer: &mut Framebuffer,
+    camera: &Camera,
+    points: impl IntoIterator<Item = (i32, i32)>,
+    background: Option<&Sprite>,
+    colour: u8,
+) {
+    opaque(buffer, background, 0, 0);
+    for (x, y) in points {
+        let at = pixel(camera, buffer, x, y);
+        dot(buffer, at, colour);
+    }
+    let size = buffer.surface();
+    dot(
+        buffer,
+        ((size.width / 2) as i32, (size.height / 2) as i32),
+        colour,
+    );
 }
 
 /// A position's pixel in the buffer (`1000:3ad8`): columns right with the lateral
@@ -1437,5 +1480,57 @@ pub(crate) mod tests {
             [Some(c(0x310)), Some(c(0x340))]
         );
         assert_eq!(b.get(40 + 14, 2), Some(c(0x190 + 8)));
+    }
+
+    /// Made-up set-up: zoom 2 and shift 1, so a unit is a pixel at `view()`'s focal
+    /// factor (1/256); dots 0x44 over a 2x2 background of colour 5.
+    fn radar(heading_offset: u16) -> Radar {
+        Radar {
+            frames: 3,
+            device: 0x20,
+            view_mode: 0x22,
+            damaged_mode: 0x28,
+            dot: 0x44,
+            background: 0,
+            zoom: 2,
+            zoom_shift: 1,
+            heading_offset,
+            noise: 0x30,
+        }
+    }
+
+    /// The radar draws its background, a dot per point around the robot heading up,
+    /// clipped to the buffer, and the robot's own in the middle.
+    #[test]
+    fn the_radar_dots_its_points_heading_up() {
+        let tables = crate::mission::tests::test_assets().motion;
+        let (world, _) = world();
+        // The humanoid at (15, 13), its heading turned to 0 or a half turn.
+        let frame = |heading: u16, offset: u16| {
+            let mut robot = world.get(EntityId(2)).unwrap().clone();
+            robot.heading = heading;
+            let camera = radar_camera(&robot, &radar(offset), &view(), &tables);
+            let mut b = Framebuffer::new(xeno_render::Size::new(21, 11));
+            b.clear(0x99);
+            let background = sprites()[4].clone();
+            let unit = |x: i32, y: i32| (x << 16, y << 16);
+            // Three right and two up of it, and one far out of the buffer.
+            let points = [unit(18, 15), unit(15 + 40, 13)];
+            draw_radar(&mut b, &camera, points, Some(&background), 0x44);
+            b
+        };
+        let b = frame(0, 0);
+        let at = |b: &Framebuffer, x, y| b.get(x, y).unwrap();
+        assert_eq!(at(&b, 0, 0), 5, "the background at the corner");
+        assert_eq!(at(&b, 3, 0), 0x99, "past the background");
+        assert_eq!(at(&b, 10, 5), 0x44, "the robot");
+        assert_eq!(at(&b, 13, 3), 0x44, "the point at heading 0, as on the map");
+        let count = |b: &Framebuffer| b.pixels().iter().filter(|&&p| p == 0x44).count();
+        assert_eq!(count(&b), 2, "the far point clipped");
+        // A half turn turns the point round the middle; so does the offset.
+        for b in [frame(0x8000, 0), frame(0x9000, 0x1000)] {
+            assert_eq!(at(&b, 7, 7), 0x44);
+            assert_eq!(count(&b), 2);
+        }
     }
 }

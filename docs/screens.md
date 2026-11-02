@@ -978,7 +978,7 @@ to share them, T-169, T-172) and `Movement::held` (+0x1b, loaded, saved and hash
 the humanoid's tick runs 10 and 11). Shortcuts: the lever goes by its own capture,
 not +0x22 (which the shared look and the lock button also set); a turn button's leave
 is taken at the release, as the fire button's. Not ported: the status panel's press
-(T-167), the third display (T-166). Still to check
+(T-167). The third display is below (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
 
 ### The third display (T-166)
@@ -1049,6 +1049,17 @@ non-object word; what that does was not traced.
 `xeno.exe` (the handler's head checked, the routine decoded instruction by
 instruction): the frame count, the radar's bit, the view modes, the dots' colour, the
 background sprite, the zoom, the shift, the heading offset and the noise colour.
+`mainview::radar_camera` (the robot's position and heading less the offset, the
+focal factor `DS:0x4d2e` at the zoom and shift) and `mainview::draw_radar` (the
+background, then a dot per point through the maps' `pixel`, then the middle) are view
+mode 0x12 for any kind. `Mission::draw_third` draws the humanoid's: the points are the
+main view's render list (`scene::nodes` from the main view's camera), or with the
+radar's bit in +0xf6 the noise in its colours; the frame is kept (`Mission::radar`)
+and copied through the colour-253 region until the next. Shortcuts: a frame every 8
+ticks of the sim, not every 8 chances the frame pipeline gives (T-209); the list is
+built afresh for the frame rather than kept from the main view's last; the probe names
+nothing, so clicks on the display do nothing (T-208); the noise draws from the
+displays' own random word, as the second display's. Not checked in DOSBox (T-168).
 
 ### The scorpion console's instruments (T-131)
 
