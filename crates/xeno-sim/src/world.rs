@@ -723,6 +723,9 @@ pub struct World {
     /// `DS:0x5946`: the game clock when a base last said it is under attack; none
     /// yet this run.
     pub attack_told: Option<u16>,
+    /// The string segment's bytes the scorpion's status lines rewrote (`1000:9153`
+    /// on, `log::status`); the rest are the image's. Not saved, as the original's.
+    pub strings: BTreeMap<u16, u8>,
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -846,6 +849,24 @@ impl World {
             // start and the first attack of a run is always told.
             game_clock: 0,
             attack_told: None,
+            // The original's rewritten bytes stay from mission to mission; only a
+            // status line rewrites them, each time before it is sent.
+            strings: BTreeMap::new(),
+        }
+    }
+
+    /// `1fe6:826d` for robot `id`: the next byte of its panel's message, from the
+    /// string segment `strings` as the status lines left it. `true` when one was typed.
+    pub fn type_panel(&mut self, id: EntityId, strings: &xeno_formats::motion::Strings) -> bool {
+        let patched = &self.strings;
+        match self.entities.get_mut(&id).map(|e| &mut e.state) {
+            Some(State::Robot(m)) => m.panel.type_one(|at| {
+                patched
+                    .get(&at)
+                    .copied()
+                    .unwrap_or_else(|| strings.byte(at))
+            }),
+            _ => false,
         }
     }
 
@@ -1024,6 +1045,11 @@ impl StateHash for World {
         h.u64(self.call_signs);
         h.u16(self.game_clock);
         h.u16(self.attack_told.unwrap_or(0xffff));
+        h.u64(self.strings.len() as u64);
+        for (&at, &b) in &self.strings {
+            h.u16(at);
+            h.u8(b);
+        }
         h.u16(self.lock_window.0);
         h.u16(self.lock_window.1);
         h.u16(self.target_search);

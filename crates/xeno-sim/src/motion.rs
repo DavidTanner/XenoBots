@@ -797,9 +797,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                 crate::damage::hit(world, id, 0, tables, random, &mut events);
             }
             // `1fe6:826d` comes after the move.
-            if let Some(m) = movement(world, id) {
-                m.panel.type_one(&tables.strings);
-            }
+            world.type_panel(id, &tables.strings);
             crate::sense::step(world, id, tables);
             crate::contact::step(world, id, tables, random, &mut events);
             crate::weapons::step(world, id, tables, random, &mut events);

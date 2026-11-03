@@ -254,6 +254,7 @@ impl Sim {
                 }
             }
             Pilot::Say(text) => log::say(world, id, text, tables),
+            Pilot::Status(line) => log::status(world, id, line.into(), tables),
             Pilot::Charge => {
                 if let Some(e) = world.get_mut(id)
                     && let (Damage::Robot(c), State::Robot(m)) = (&mut e.damage, &mut e.state)
@@ -491,6 +492,9 @@ pub enum Pilot {
     /// A console sends the robot message `text` (`1000:d53f`, `log::say`): the gear
     /// lever's release, its gear's.
     Say(u16),
+    /// A release on the scorpion's damage panel's status line `line`, in the order
+    /// its handler tests them (`1000:90f9`, `log::status`).
+    Status(u8),
     /// The compass's release (`1000:a6c0`, scorpion `887f`, scout `b95f`): the pilot takes over and the heading asked
     /// for is the fine bearing (`1000:04eb`) of `(x, y)`, the pointer less the
     /// compass's centre with y up; the turn keys' bits (+0x23 bits 4, 5) are cleared.

@@ -3,10 +3,11 @@
 //! mission clock and a text (a string-segment offset); a base keeps seven, dropping
 //! the oldest.
 
+use xeno_formats::messages::Field;
 use xeno_formats::usg::{Message, ObjectKind, Side};
 
 use crate::motion::{Tables, movement};
-use crate::world::{EntityId, State, World};
+use crate::world::{Components, Damage, EntityId, State, World};
 
 pub const LINES: usize = 7;
 
@@ -90,6 +91,42 @@ pub fn say(world: &mut World, id: EntityId, text: u16, tables: &Tables) {
     }
 }
 
+/// `1000:9153` to `926c`: status line `line` of the scorpion's damage panel (in the
+/// order its release tests them): its fields written into the string segment as
+/// `id`'s parts stand, then its message to `id` (`1000:d53f`).
+pub fn status(world: &mut World, id: EntityId, line: usize, tables: &Tables) {
+    let (Some(l), Some(Damage::Robot(mut parts))) = (
+        tables.messages.status.get(line),
+        world.get(id).map(|e| e.damage),
+    ) else {
+        return;
+    };
+    let mut byte = |offset| Components::byte(&mut parts, offset).map_or(0, |b| *b);
+    for field in &l.fields {
+        let (at, bytes) = match *field {
+            Field::Flag {
+                at,
+                offset,
+                bit,
+                ok,
+                out,
+            } => (at, if byte(offset) & bit != 0 { out } else { ok }),
+            Field::Number { at, offset, mask } => {
+                let d = format!("{:05}", byte(offset) & mask).into_bytes();
+                (at, [d[2], d[3], d[4]])
+            }
+        };
+        for (i, b) in (0..).zip(bytes) {
+            world.strings.insert(at.wrapping_add(i), b);
+        }
+    }
+    let text = match l.alternate {
+        Some((offset, bit, other)) if byte(offset) & bit != 0 => other,
+        _ => l.message,
+    };
+    say(world, id, text, tables);
+}
+
 /// `1000:d54c`: `id` logs `text` for `side`, then every robot of `side` in the human
 /// side's unit list (`DS:0x62f5`, the only list it walks) is sent the header and the
 /// text.
@@ -157,5 +194,32 @@ mod tests {
         // The alien side's robots are in no list the original walks.
         tell_side(&mut world, robot, Side::Alien, 6, &tables);
         assert_eq!(log(&world, Side::Alien)[0].text, 6);
+    }
+
+    #[test]
+    fn a_status_line_writes_its_fields_then_goes_to_the_panel() {
+        let tables = crate::motion::synthetic_tables();
+        let mut world = crate::damage::tests::world();
+        let robot = world.units[0][0];
+        if let Some(Damage::Robot(c)) = world.get_mut(robot).map(|e| &mut e.damage) {
+            (c.weapons, c.helm, c.equipment) = (1, 0x80 | 42, 0x80);
+        }
+        // The synthetic lines: 0 a flag on +0xdc bit 0, 1 the helm, 2 a choice on
+        // +0xfd bit 7, 3 a flag on +0xdc bit 3 (clear).
+        for line in 0..4 {
+            status(&mut world, robot, line, &tables);
+        }
+        let at = |a: u16, n: u16| (a..a + n).map(|a| world.strings[&a]).collect::<Vec<_>>();
+        assert_eq!(at(0x60, 3), b"BAD");
+        assert_eq!(at(0x70, 3), b"042");
+        assert_eq!(at(0x6c, 3), b"GO ");
+        let m = movement(&mut world, robot).unwrap();
+        assert_eq!(m.panel.queue[..4], [0x100, 0x101, 0x200, 0x103]);
+        // Typed from the rewritten bytes: the line at 0x60 now reads BAD.
+        m.panel.queue = [0x60, 0, 0, 0, 0];
+        for _ in 0..3 {
+            world.type_panel(robot, &tables.strings);
+        }
+        assert_eq!(movement(&mut world, robot).unwrap().panel.shown(), b"BAD");
     }
 }
