@@ -94,12 +94,19 @@ pub fn draw_pan(
     lit_number(fb, font, at, unlit, colours.into(), &degrees);
 }
 
-/// What the console keeps of a press: +0x22 bit 3, the buttons' shared look, and bit
-/// 7, the lock button held.
+/// A robot's console byte (+0x22) as the buttons draw it: bit 3 the shared look, bit
+/// 7 the lock button (or the program panel) held (`docs/screens.md`, "The console's
+/// byte (T-204)").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Look {
-    pub pressed: bool,
-    pub lock_held: bool,
+pub struct Look(pub u8);
+
+impl Look {
+    pub fn pressed(self) -> bool {
+        self.0 & 8 != 0
+    }
+    pub fn lock_held(self) -> bool {
+        self.0 & 0x80 != 0
+    }
 }
 
 /// A console's sprites by handle.

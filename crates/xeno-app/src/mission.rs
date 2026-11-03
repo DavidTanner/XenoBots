@@ -335,6 +335,15 @@ const SHARED_LOOK_TYPES: [u16; 22] = [
     crate::scoutcon::STANCE_TYPES[1],
     crate::scoutcon::STANCE_TYPES[2],
 ];
+/// What a shared-look button XORs +0x22 with: bit 3, or for the scorpion's mode buttons
+/// bits 3 and 7 (`1000:85fc`).
+fn look_flip(kind: u16) -> u8 {
+    if MODE_TYPES[1].contains(&kind) {
+        0x88
+    } else {
+        8
+    }
+}
 /// The stances the scout's stance buttons ask for (`1000:c28c`, `c2d1`, `c316`), as E,
 /// W and Q.
 const STANCES: [u8; 3] = [0, 0x30, 0x60];
@@ -369,6 +378,11 @@ pub struct Display {
     pub before: u8,
     pub label: u8,
     pub static_time: u8,
+    /// The console's byte (+0x22, saved as the program panel's): the gear lever's drag
+    /// (1), the shared look (bit 3), the lock button or the program panel held (bit 7,
+    /// with the panel's bit 0) and the status panel held (0xff); `docs/screens.md`,
+    /// "The console's byte (T-204)".
+    pub console: u8,
     /// The port's: whether the scorpion's tail missile was in flight at the last
     /// tick, to see its launch (`1000:97b0` sets the mode itself).
     flying: bool,
@@ -855,18 +869,13 @@ pub struct Mission {
     /// The situation room's roster: its selection (base +0x3e) and first row (+0x4c).
     selected: Option<u16>,
     roster_top: usize,
-    /// The program panel is pressed, and which way its colours are swapped (+0x22).
-    panel_pressed: bool,
-    panel_swap: bool,
     /// The unit-name button's frame is XORed.
     unit_pressed: bool,
     /// The situation room's buttons' shared pressed look (base +0x40).
     button_look: bool,
-    /// The humanoid console's buttons' look (+0x22 bits 3 and 7) and its fire button
-    /// held (+0x1b = 7).
+    /// The console's fire button held (+0x1b = 7).
     // shortcut: one for every console, put back when a view opens; the original keeps
-    // +0x22 and +0x1b in each robot.
-    look: crate::console::Look,
+    // +0x1b in each robot.
     firing: bool,
     /// The briefing (`ORDR`), the main view's mode (base +0x37) and how many of the
     /// briefing's bytes are typed (+0x34).
@@ -957,6 +966,7 @@ impl Mission {
                     before: r.display_before,
                     label: r.zoom_label,
                     static_time,
+                    console: r.program_panel,
                     flying,
                 };
                 mission.displays.insert(o.slot, display);
@@ -988,11 +998,8 @@ impl Mission {
             noise_mode: 0,
             selected: None,
             roster_top: 0,
-            panel_pressed: false,
-            panel_swap: false,
             unit_pressed: false,
             button_look: false,
-            look: crate::console::Look::default(),
             firing: false,
             orders: Vec::new(),
             mode: ORDERS_MODE,
@@ -1089,6 +1096,7 @@ impl Mission {
                         (r.display, r.zoom, r.map_zoom, r.pan) =
                             (d.mode, d.zoom, d.map_zoom, d.pan);
                         (r.display_before, r.zoom_label) = (d.before, d.label);
+                        r.program_panel = d.console;
                         if let usg::Parts::Scorpion(p) = &mut r.parts {
                             p.static_time = d.static_time;
                         }
@@ -1198,9 +1206,8 @@ impl Mission {
     }
 
     fn reset_looks(&mut self) {
-        self.panel_pressed = false;
         self.unit_pressed = false;
-        (self.look, self.firing) = (crate::console::Look::default(), false);
+        self.firing = false;
         self.capture = None;
         // A new view has drawn no frame yet: nothing is under the pointer.
         (self.goal_press, self.region) = (false, None);
@@ -1438,7 +1445,7 @@ impl Mission {
             kind if ZOOM_TYPES.contains(&kind) => self.zoom_display(slot, !right, assets),
             kind if mode_button(kind).is_some() => {
                 if s::MODE_TYPES.contains(&kind) {
-                    self.look = crate::console::Look::default();
+                    self.set_console(|_| 0);
                 }
                 self.set_display_mode(slot, mode_button(kind).unwrap_or(0));
             }
@@ -1455,7 +1462,6 @@ impl Mission {
             h::CLOAK_TYPE | c::CLOAK_TYPE => self.pilot(slot, Pilot::Cloak),
             h::ECM_TYPE | c::ECM_TYPE => self.pilot(slot, Pilot::Ecm),
             h::LOCK_TYPE | s::LOCK_TYPE | c::LOCK_TYPE => {
-                self.look = crate::console::Look::default();
                 let key = if right {
                     Pilot::DropTarget
                 } else {
@@ -1569,6 +1575,39 @@ impl Mission {
     /// Robot `slot`'s console display.
     fn display(&self, slot: u16) -> Display {
         self.displays.get(&slot).copied().unwrap_or_default()
+    }
+
+    /// The viewed robot's console byte (+0x22); 0 in the situation room.
+    fn console(&self) -> u8 {
+        match self.viewed {
+            Viewed::Robot(slot) => self.display(slot).console,
+            Viewed::Base => 0,
+        }
+    }
+
+    /// Sets the viewed robot's console byte from its old value.
+    fn set_console(&mut self, f: impl FnOnce(u8) -> u8) {
+        if let Viewed::Robot(slot) = self.viewed {
+            let d = self.displays.entry(slot).or_default();
+            d.console = f(d.console);
+            self.dirty = true;
+        }
+    }
+
+    #[cfg(test)]
+    fn look(&self) -> crate::console::Look {
+        crate::console::Look(self.console())
+    }
+
+    /// The console byte as the port draws it.
+    // shortcut: the port draws every widget every frame, the original only those
+    // marked; the status panel's press (0xff) marks no button, so it is drawn as 0
+    // while the panel holds the pointer. Upgrade with T-205's marks.
+    fn drawn_console(&self) -> u8 {
+        match self.capture {
+            Some((Target::Instrument(w), _)) if STATUS_TYPES.contains(&w.kind) => 0,
+            _ => self.console(),
+        }
     }
 
     /// Robot `slot`'s display mode as `1000:db5c` leaves it each tick: bit 2 set while
@@ -2615,10 +2654,8 @@ impl Mission {
         }
         self.capture = Some((target, button));
         match target {
-            Target::Panel => {
-                self.panel_pressed = true;
-                self.panel_swap = !self.panel_swap;
-            }
+            // `1000:d34c`: +0x22 bit 0 flipped and bit 7 set.
+            Target::Panel => self.set_console(|b| (b ^ 1) | 0x80),
             Target::UnitButton => self.unit_pressed = !self.unit_pressed,
             Target::Button(i) => {
                 self.button_look = !self.button_look;
@@ -2646,31 +2683,31 @@ impl Mission {
                 }
             }
             // `1000:a329`, `89b8`: the fire button fires every tick while held (+0x1b =
-            // 7); `a3f1`, `8a26`: the lock button's press sets +0x22 bit 7. Both, the
-            // scorpion's stop and deploy buttons and the scout's stance buttons flip the
-            // look.
+            // 7); `a3f1`, `8a26`, `be01`: the lock button's press sets +0x22 bit 7. Both,
+            // the scorpion's stop and deploy buttons and the scout's stance buttons flip
+            // the look (bit 3); the scorpion's mode buttons XOR it with 0x88 (`85fc`).
             Target::Instrument(w) if FIRE_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
+                self.set_console(|b| b ^ 8);
                 self.firing = true;
             }
             Target::Instrument(w) if LOCK_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
-                self.look.lock_held = true;
+                self.set_console(|b| (b ^ 8) | 0x80);
             }
             Target::Instrument(w) if SHARED_LOOK_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
+                self.set_console(|b| b ^ look_flip(w.kind));
             }
-            // `1000:dd7f`: a press on the humanoid's or scout's status panel restarts its
-            // clock. shortcut: the original goes by +0x22 being 0, as the gear lever.
+            // `1000:dd7f`: a press on the humanoid's or scout's status panel with +0x22
+            // at 0 sets it to 0xff and restarts the panel's clock.
             Target::Instrument(w) if STATUS_TYPES.contains(&w.kind) => {
-                if let Viewed::Robot(slot) = self.viewed {
+                if let (Viewed::Robot(slot), 0) = (self.viewed, self.console()) {
+                    self.set_console(|_| 0xff);
                     self.pilot(slot, Pilot::StatusClock);
                 }
             }
             // `1000:a77d`, `a82b`: a turn button held (+0x1b), and the look; the
             // scorpion's speed buttons the same (`8df6`, `8e8b`).
             Target::Instrument(w) if TURN_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
+                self.set_console(|b| b ^ 8);
                 if let Viewed::Robot(slot) = self.viewed {
                     let right = TURN_TYPES[3..].contains(&w.kind);
                     self.pilot(slot, Pilot::HoldTurn { right });
@@ -2678,7 +2715,7 @@ impl Mission {
             }
             // `1000:a162`, `a1ba` and the other kinds': a pan button held (+0x1b 1 or 2).
             Target::Instrument(w) if PAN_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
+                self.set_console(|b| b ^ 8);
                 if let Viewed::Robot(slot) = self.viewed {
                     self.displays.entry(slot).or_default();
                     let more = PAN_TYPES[3..].contains(&w.kind);
@@ -2686,22 +2723,26 @@ impl Mission {
                 }
             }
             Target::Instrument(w) if SPEED_TYPES.contains(&w.kind) => {
-                self.look.pressed = !self.look.pressed;
+                self.set_console(|b| b ^ 8);
                 if let Viewed::Robot(slot) = self.viewed {
                     let faster = w.kind == SPEED_TYPES[0];
                     self.pilot(slot, Pilot::HoldSpeed { faster });
                 }
             }
-            // `1000:a88c`, `c156`: a press on a notch takes its gear; the drag follows
-            // (`hover`).
-            // shortcut: the original goes by +0x22 being 0, which the shared look and
-            // the lock button also set; the port goes by the lever's capture alone.
+            // `1000:a88c`, `c156`: with +0x22 at 0 the press sets it to 1 and takes the
+            // gear of a notch under it; with it set (another button's look or the program
+            // panel held), the press is a drag. The drag follows (`hover`).
             Target::Instrument(w) if gear_lever(assets, w.kind).is_some() => {
+                let dragging = self.console() != 0;
+                self.set_console(|b| if b == 0 { 1 } else { b });
                 if let (Viewed::Robot(slot), Some((gears, notches, _)), Some(at)) =
                     (self.viewed, gear_lever(assets, w.kind), at)
-                    && let Some(gear) = self
-                        .robot_gear(slot)
-                        .and_then(|gear| crate::humancon::lever_press(gears, notches, gear, at))
+                    && let Some(gear) = match dragging {
+                        true => Some(crate::humancon::lever_drag(gears, at.1)),
+                        false => self.robot_gear(slot).and_then(|gear| {
+                            crate::humancon::lever_press(gears, notches, gear, at)
+                        }),
+                    }
                 {
                     self.pilot(slot, Pilot::Gear(gear));
                 }
@@ -2743,8 +2784,7 @@ impl Mission {
         if let Target::Instrument(w) = target
             && (FIRE_TYPES.contains(&w.kind) || SHARED_LOOK_TYPES.contains(&w.kind))
         {
-            self.look.pressed = !self.look.pressed;
-            self.dirty = true;
+            self.set_console(|b| b ^ look_flip(w.kind));
             if FIRE_TYPES.contains(&w.kind) {
                 self.firing = false;
                 return None;
@@ -2755,8 +2795,7 @@ impl Mission {
         // The lever's release anywhere sends its gear's message (`1000:a900`).
         if let (Target::Instrument(w), Viewed::Robot(slot)) = (target, self.viewed) {
             if TURN_TYPES.contains(&w.kind) {
-                self.look.pressed = !self.look.pressed;
-                self.dirty = true;
+                self.set_console(|b| b ^ 8);
                 let over = at.and_then(|at| self.target(assets, at)) == Some(target);
                 let right = TURN_TYPES[3..].contains(&w.kind);
                 let keep = over && by == MouseButton::Right;
@@ -2767,19 +2806,18 @@ impl Mission {
             // handler declines, so the button stays held.
             if PAN_TYPES.contains(&w.kind) {
                 if !self.pan_declines(target, assets) {
-                    self.look.pressed = !self.look.pressed;
-                    self.dirty = true;
+                    self.set_console(|b| b ^ 8);
                     self.pilot(slot, Pilot::ReleasePan);
                 }
                 return None;
             }
             // A speed button let go or left (the same shortcut).
             if SPEED_TYPES.contains(&w.kind) {
-                self.look.pressed = !self.look.pressed;
-                self.dirty = true;
+                self.set_console(|b| b ^ 8);
                 self.pilot(slot, Pilot::ReleaseSpeed);
                 return None;
             }
+            // ... and clears +0x22, whatever else had set it.
             if let Some((_, _, messages)) = gear_lever(assets, w.kind) {
                 if let Some(&text) = self
                     .robot_gear(slot)
@@ -2787,7 +2825,14 @@ impl Mission {
                 {
                     self.pilot(slot, Pilot::Say(text));
                 }
+                self.set_console(|_| 0);
                 return None;
+            }
+            // The lock button's (`1000:a3f1`, taking 0x100 events too) and the status
+            // panel's (`dd7f`, a release or leave) release anywhere clears +0x22; the
+            // lock acts only over itself (below).
+            if LOCK_TYPES.contains(&w.kind) || STATUS_TYPES.contains(&w.kind) {
+                self.set_console(|_| 0);
             }
         }
         // The handlers act only on events over the widget that captured the pointer:
@@ -2801,9 +2846,7 @@ impl Mission {
         match target {
             Target::Panel => {
                 // The release clears the panel's state (+0x22 = 0) and redraws it.
-                self.panel_pressed = false;
-                self.panel_swap = false;
-                self.look = crate::console::Look::default();
+                self.set_console(|_| 0);
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
@@ -3613,10 +3656,16 @@ impl Mission {
         let tables = assets.console_tables(robot.kind);
         if let Some(area) = tables.find(PROGRAM_PANEL_TYPE).and_then(|w| w.area) {
             let style = assets.views.program_panel[robot.kind.index()];
-            if self.panel_pressed {
+            // `1000:d319`: pressed while +0x22 bit 7 is set, bit 0 which way.
+            // shortcut: shown only while no other widget holds the pointer (the lock
+            // button and the scorpion's mode buttons set bit 7 but do not mark the
+            // panel); upgrade with T-205's marks.
+            let byte = self.display(slot).console;
+            let others = matches!(self.capture, Some((t, _)) if t != Target::Panel);
+            if byte & 0x80 != 0 && !others {
                 // `gfx_recolour_rect`: one pressed colour becomes the other.
                 let [a, b] = style.pressed;
-                let (from, to) = if self.panel_swap { (b, a) } else { (a, b) };
+                let (from, to) = if byte & 1 != 0 { (b, a) } else { (a, b) };
                 recolour(fb, area, from, to);
             } else {
                 fill(fb, area, style.fill);
@@ -3702,11 +3751,12 @@ impl Mission {
             let colours = assets.views.message_panel.colours[RobotKind::Humanoid.index()];
             h::draw_status(fb, a, font, con, colours, &robot);
         }
+        let look = crate::console::Look(self.drawn_console());
         let widgets = tables.widgets.iter().chain(&tables.nested);
         for w in widgets {
             let Some(a) = w.area else { continue };
             let weapon = self.widget_byte(slot, w).unwrap_or(0);
-            h::draw_button(fb, sprites, con, (w.kind, a, weapon), &robot, self.look);
+            h::draw_button(fb, sprites, con, (w.kind, a, weapon), &robot, look);
             // `1000:dfd5`: a switch held shows its frame XORed.
             if self
                 .capture
@@ -3761,13 +3811,14 @@ impl Mission {
         if let Some(a) = area(s::RELAYS_TYPE) {
             s::draw_relays(fb, a, font, con, robot.relays);
         }
+        let look = crate::console::Look(self.drawn_console());
         for w in tables.widgets.iter().chain(&tables.nested) {
             let Some(a) = w.area else { continue };
             let n = self.widget_byte(slot, w).unwrap_or(0);
             let held = self
                 .capture
                 .is_some_and(|(t, _)| t == Target::Instrument(*w));
-            s::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
+            s::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (look, held));
             // `1000:dfd5`: a weapon button or the relay panel held shows its frame XORed.
             if held
                 && matches!(
@@ -3818,13 +3869,14 @@ impl Mission {
             let texts = (&human.ok[..], &human.out[..]);
             c::draw_status(fb, (a, font), con, texts, colours, &robot);
         }
+        let look = crate::console::Look(self.drawn_console());
         for w in tables.widgets.iter().chain(&tables.nested) {
             let Some(a) = w.area else { continue };
             let n = self.widget_byte(slot, w).unwrap_or(0);
             let held = self
                 .capture
                 .is_some_and(|(t, _)| t == Target::Instrument(*w));
-            c::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
+            c::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (look, held));
             // `1000:dfd5`: a switch held shows its frame XORed.
             if held
                 && (matches!(
@@ -5584,7 +5636,7 @@ pub mod tests {
         m.mouse_down(LEFT, Some((130, 92)), &assets);
         m.mouse_up(LEFT, Some((10, 150)), &assets);
         assert_eq!(m.book().get(2).unwrap().orders.program, 1);
-        assert!(m.panel_pressed);
+        assert!(m.look().lock_held());
         m.view_robot(2);
         // The corner goes back to the situation room, and there ends the mission.
         assert_eq!(
@@ -5699,6 +5751,95 @@ pub mod tests {
         assert_eq!(m.mode, 6);
     }
 
+    /// T-204: the humanoid console's byte (+0x22), as its handlers read and write it:
+    /// the shared look (bit 3), the lock button (bit 7), the status panel (0xff), the
+    /// program panel (bits 7 and 0) and the gear lever (1, or a drag while set).
+    #[test]
+    fn the_console_byte_is_one_byte() {
+        use crate::humancon as h;
+        let mut assets = test_assets();
+        assets.humancon = Some(h::tests::con());
+        let widget = |kind, top, left| views::Widget {
+            kind,
+            state: 0,
+            area: Some(Rect {
+                top,
+                left,
+                bottom: top + 5,
+                right: left + 9,
+            }),
+        };
+        // The synthetic lever's gears are rows 10 to 40, columns 0 to 9.
+        let lever = views::Widget {
+            area: Some(Rect {
+                top: 10,
+                left: 0,
+                bottom: 40,
+                right: 12,
+            }),
+            ..widget(h::GEAR_TYPE, 0, 0)
+        };
+        let buttons = [h::FIRE_TYPE, h::LOCK_TYPE, h::STATUS_TYPE];
+        let humanoid = &mut assets.views.humanoid.widgets;
+        humanoid.push(lever);
+        humanoid.extend(
+            (0..)
+                .zip(buttons)
+                .map(|(i, kind)| widget(kind, 165, 10 * i)),
+        );
+        let at = |i: u16| Some((10 * i + 4, 167));
+        let mut m = mission(&assets);
+        m.view_robot(2);
+        m.displays.get_mut(&2).unwrap().console = 0;
+        let press = |m: &mut Mission, at, then: u8| {
+            m.mouse_down(LEFT, at, &assets);
+            assert_eq!(m.console(), then, "{at:?}");
+        };
+        // The fire button flips bit 3 on the press and back on the release.
+        press(&mut m, at(0), 8);
+        m.mouse_up(LEFT, at(0), &assets);
+        assert_eq!(m.console(), 0);
+        // The lock button sets bits 3 and 7; a release anywhere clears the byte.
+        press(&mut m, at(1), 0x88);
+        m.mouse_up(LEFT, None, &assets);
+        assert_eq!(m.console(), 0);
+        // The status panel: 0xff from a clear byte, and its clock restarted.
+        robot_state_mut(&mut m, 2).clock = 5;
+        press(&mut m, at(2), 0xff);
+        assert_eq!(robot_state_mut(&mut m, 2).clock, 0);
+        m.mouse_up(LEFT, at(2), &assets);
+        assert_eq!(m.console(), 0);
+        // ... and nothing from a set one.
+        m.displays.get_mut(&2).unwrap().console = 8;
+        robot_state_mut(&mut m, 2).clock = 5;
+        press(&mut m, at(2), 8);
+        assert_eq!(robot_state_mut(&mut m, 2).clock, 5);
+        m.mouse_up(LEFT, at(2), &assets);
+        assert_eq!(m.console(), 0);
+        // The program panel: bit 0 flipped and bit 7 set; released elsewhere it stays.
+        press(&mut m, Some((130, 92)), 0x81);
+        m.mouse_up(LEFT, None, &assets);
+        assert_eq!(m.console(), 0x81);
+        // The row's case: the lever pressed while the byte is set is a drag (the gear by
+        // the row, not a notch), and its release clears the whole byte.
+        robot_state_mut(&mut m, 2).gear = 0;
+        press(&mut m, Some((5, 12)), 0x81);
+        assert_eq!(robot_state_mut(&mut m, 2).gear, 4);
+        m.mouse_up(LEFT, None, &assets);
+        assert_eq!(m.console(), 0);
+        // From a clear byte the press sets 1 and only a notch takes a gear.
+        robot_state_mut(&mut m, 2).gear = 0;
+        press(&mut m, Some((5, 12)), 1);
+        assert_eq!(robot_state_mut(&mut m, 2).gear, 0);
+        m.mouse_up(LEFT, None, &assets);
+        assert_eq!(m.console(), 0);
+        // The byte is the robot's: a save keeps it as its +0x22.
+        m.displays.get_mut(&2).unwrap().console = 0x88;
+        let saved = m.saved(&assets).unwrap();
+        let robot = saved.objects.iter().flatten().find(|o| o.slot == 2);
+        assert_eq!(robot.and_then(|o| o.robot()).unwrap().program_panel, 0x88);
+    }
+
     #[test]
     fn the_console_draws_the_program_and_its_pressed_look() {
         let mut assets = test_assets();
@@ -5706,6 +5847,9 @@ pub mod tests {
         assets.programs.programs[1].name = b"AA".to_vec();
         let mut m = mission(&assets);
         m.view_robot(2);
+        // The synthetic robot is saved with its +0x22 set: so is its console.
+        assert_eq!(m.console(), 0x7b);
+        m.displays.get_mut(&2).unwrap().console = 0;
         let mut fb = Framebuffer::new(Size::MODE_13H);
         m.draw(&mut fb, &assets);
         // Filled with the humanoid's fill colour (0x10), the name in its text colour (the program drives).
@@ -7233,18 +7377,18 @@ pub mod tests {
         // The stance buttons: E, W and Q's stances, the look pressed while held.
         for (kind, stance) in c::STANCE_TYPES.into_iter().zip([0, 0x30, 0x60]) {
             m.mouse_down(LEFT, centre(find(kind)), &assets);
-            assert!(m.look.pressed);
+            assert!(m.look().pressed());
             m.mouse_up(LEFT, centre(find(kind)), &assets);
-            assert!(!m.look.pressed);
+            assert!(!m.look().pressed());
             assert_eq!(state(&m).stance_target, stance);
         }
         assert!(drives(&m), "a stance leaves the program driving");
         // The cloak and ECM buttons: pressed while held; let go, F8 and F7 run.
         for kind in [c::CLOAK_TYPE, c::ECM_TYPE] {
             m.mouse_down(LEFT, centre(find(kind)), &assets);
-            assert!(m.look.pressed);
+            assert!(m.look().pressed());
             m.mouse_up(LEFT, centre(find(kind)), &assets);
-            assert!(!m.look.pressed);
+            assert!(!m.look().pressed());
         }
         let s = usg::status::CLOAKED | usg::status::ECM;
         assert_eq!(m.world().get(EntityId(robot)).unwrap().status & s, s);
@@ -7256,9 +7400,9 @@ pub mod tests {
         }
         for w in tables.all(c::DROP_TYPE).collect::<Vec<_>>() {
             m.mouse_down(LEFT, centre(w), &assets);
-            assert!(m.look.pressed);
+            assert!(m.look().pressed());
             m.mouse_up(LEFT, centre(w), &assets);
-            assert!(!m.look.pressed);
+            assert!(!m.look().pressed());
         }
         assert_eq!(state(&m).guns.drops, [1; 4]);
         // Keys 1 to 4 are in the console's key table, as the handlers `PILOT` maps.
@@ -7268,15 +7412,15 @@ pub mod tests {
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(c::LOCK_TYPE);
         m.mouse_down(RIGHT, centre(lock), &assets);
-        assert!(m.look.pressed && m.look.lock_held);
+        assert!(m.look().pressed() && m.look().lock_held());
         m.mouse_up(RIGHT, centre(lock), &assets);
-        assert_eq!(m.look, crate::console::Look::default());
+        assert_eq!(m.look(), crate::console::Look::default());
         // The fire button: held, every tick sets the fire request; let go, it stops.
         let fire = find(c::FIRE_TYPE);
         m.mouse_down(LEFT, centre(fire), &assets);
-        assert!(m.firing && m.look.pressed);
+        assert!(m.firing && m.look().pressed());
         m.mouse_up(LEFT, None, &assets);
-        assert!(!m.firing && !m.look.pressed);
+        assert!(!m.firing && !m.look().pressed());
         // The status panel's press restarts +0xfa; the scout's page 3 is not cut.
         robot_state_mut(&mut m, robot).clock = 9;
         robot_state_mut(&mut m, robot).page = 3;
@@ -7333,16 +7477,16 @@ pub mod tests {
         // heading, with no look of its own.
         let left = find(c::LEFT_TYPE);
         m.mouse_down(RIGHT, centre(left), &assets);
-        assert!(m.look.pressed);
+        assert!(m.look().pressed());
         m.tick(&[]);
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(state(&m).target_heading, heading.wrapping_sub(0x40));
         m.mouse_up(RIGHT, centre(left), &assets);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         assert_eq!((state(&m).held, state(&m).mode & 0x30), (0, 0x10));
         let ahead = find(c::AHEAD_TYPE);
         m.mouse_down(LEFT, centre(ahead), &assets);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         m.mouse_up(LEFT, centre(ahead), &assets);
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(state(&m).target_heading, heading);
@@ -7459,9 +7603,9 @@ pub mod tests {
             r.target_speed = 42;
         }
         m.mouse_down(LEFT, centre(find(s::STOP_TYPE)), &assets);
-        assert!(m.look.pressed);
+        assert!(m.look().pressed());
         m.mouse_up(LEFT, centre(find(s::STOP_TYPE)), &assets);
-        assert!(!m.look.pressed && !drives(&m));
+        assert!(!m.look().pressed() && !drives(&m));
         assert_eq!(state(&m).target_speed, 0);
         // U lays a relay where the scorpion stands.
         let relays = state(&m).relays;
@@ -7476,9 +7620,9 @@ pub mod tests {
         click(&mut m, find(s::LOAD_TYPE), LEFT);
         assert_eq!(state(&m).relays, relays);
         m.mouse_down(LEFT, centre(find(s::DUMP_TYPE)), &assets);
-        assert!(m.look.pressed);
+        assert!(m.look().pressed());
         m.mouse_up(LEFT, centre(find(s::DUMP_TYPE)), &assets);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         assert!(matches!(
             m.world().get(EntityId(robot)).unwrap().damage,
             xeno_sim::world::Damage::Robot(c) if c.equipment & 0x10 != 0
@@ -7492,9 +7636,9 @@ pub mod tests {
         }
         for w in tables.all(s::DROP_TYPE).collect::<Vec<_>>() {
             m.mouse_down(LEFT, centre(w), &assets);
-            assert!(m.look.pressed);
+            assert!(m.look().pressed());
             m.mouse_up(LEFT, centre(w), &assets);
-            assert!(!m.look.pressed);
+            assert!(!m.look().pressed());
         }
         assert_eq!(state(&m).guns.drops, [1; 4]);
         // Keys 1 to 4 are in the console's key table, as the handlers `PILOT` maps.
@@ -7504,15 +7648,15 @@ pub mod tests {
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(s::LOCK_TYPE);
         m.mouse_down(LEFT, centre(lock), &assets);
-        assert!(m.look.pressed && m.look.lock_held);
+        assert!(m.look().pressed() && m.look().lock_held());
         m.mouse_up(LEFT, centre(lock), &assets);
-        assert_eq!(m.look, crate::console::Look::default());
+        assert_eq!(m.look(), crate::console::Look::default());
         // The fire button: held, every tick sets the fire request; let go, it stops.
         let fire = find(s::FIRE_TYPE);
         m.mouse_down(LEFT, centre(fire), &assets);
-        assert!(m.firing && m.look.pressed);
+        assert!(m.firing && m.look().pressed());
         m.mouse_up(LEFT, None, &assets);
-        assert!(!m.firing && !m.look.pressed);
+        assert!(!m.firing && !m.look().pressed());
         // T-169: faster held steps the speed asked for one a tick, the pilot driving;
         // let go it stops; slower steps it down.
         let con = assets.scorpcon.as_ref().unwrap();
@@ -7521,12 +7665,12 @@ pub mod tests {
         robot_state_mut(&mut m, robot).target_speed = gears.scorpion_top - 1;
         let faster = find(s::FASTER_TYPE);
         m.mouse_down(LEFT, centre(faster), &assets);
-        assert!(m.look.pressed && !drives(&m));
+        assert!(m.look().pressed() && !drives(&m));
         m.tick(&[]);
         m.tick(&[]);
         assert_eq!(state(&m).target_speed, gears.scorpion_top);
         m.mouse_up(LEFT, None, &assets);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         assert_eq!(state(&m).held, 0);
         let slower = find(s::SLOWER_TYPE);
         m.mouse_down(LEFT, centre(slower), &assets);
@@ -7561,14 +7705,14 @@ pub mod tests {
         // release over it keeps it turning (+0x23 bit 5); straight asks for the heading.
         let right = find(s::RIGHT_TYPE);
         m.mouse_down(RIGHT, centre(right), &assets);
-        assert!(m.look.pressed);
+        assert!(m.look().pressed());
         m.tick(&[]);
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(state(&m).target_heading, heading.wrapping_add(0x40));
         m.mouse_up(RIGHT, centre(right), &assets);
         assert_eq!((state(&m).held, state(&m).mode & 0x30), (0, 0x20));
         click(&mut m, find(s::AHEAD_TYPE), LEFT);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(state(&m).target_heading, heading);
         assert_eq!(state(&m).mode & 0x30, 0);
@@ -7646,21 +7790,15 @@ pub mod tests {
         // The lock button: held, its look is pressed and held; let go, both clear.
         let lock = find(h::LOCK_TYPE);
         m.mouse_down(LEFT, centre(lock), &assets);
-        assert_eq!(
-            m.look,
-            crate::console::Look {
-                pressed: true,
-                lock_held: true
-            }
-        );
+        assert_eq!(m.look(), crate::console::Look(0x88));
         m.mouse_up(LEFT, centre(lock), &assets);
-        assert_eq!(m.look, crate::console::Look::default());
+        assert_eq!(m.look(), crate::console::Look::default());
         // The fire button: held, every tick sets the fire request; let go, it stops.
         let fire = find(h::FIRE_TYPE);
         m.mouse_down(LEFT, centre(fire), &assets);
-        assert!(m.firing && m.look.pressed);
+        assert!(m.firing && m.look().pressed());
         m.mouse_up(LEFT, None, &assets);
-        assert!(!m.firing && !m.look.pressed);
+        assert!(!m.firing && !m.look().pressed());
         // The gear lever (T-165): a notch takes its gear, the pilot driving; a drag to
         // the top takes the top gear; the release tells the robot.
         let con = assets.humancon.as_ref().unwrap();
@@ -7697,18 +7835,18 @@ pub mod tests {
         // over it keeps it turning (+0x23 bit 4); straight asks for the heading.
         let left = find(h::LEFT_TYPE);
         m.mouse_down(RIGHT, centre(left), &assets);
-        assert!(m.look.pressed);
+        assert!(m.look().pressed());
         m.tick(&[]);
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(robot_state(&m).target_heading, heading.wrapping_sub(0x40));
         m.mouse_up(RIGHT, centre(left), &assets);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         assert_eq!(
             (robot_state(&m).held, robot_state(&m).mode & 0x30),
             (0, 0x10)
         );
         click(&mut m, find(h::AHEAD_TYPE), LEFT);
-        assert!(!m.look.pressed);
+        assert!(!m.look().pressed());
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(robot_state(&m).target_heading, heading);
         assert_eq!(robot_state(&m).mode & 0x30, 0);
@@ -7775,10 +7913,10 @@ pub mod tests {
             let [thermal, camera, map] = [1, 0, 2].map(|n| MODE_TYPES[i][n]);
             // The scorpion's mode button held shows its lit sprite whatever the mode.
             m.mouse_down(LEFT, centre(thermal), &assets);
-            assert_eq!(m.look.pressed, kind == RobotKind::Scorpion, "{kind:?}");
+            assert_eq!(m.look().pressed(), kind == RobotKind::Scorpion, "{kind:?}");
             m.mouse_up(LEFT, centre(thermal), &assets);
             assert_eq!(
-                (m.display(robot).mode, m.look.pressed),
+                (m.display(robot).mode, m.look().pressed()),
                 (1, false),
                 "{kind:?}"
             );
@@ -7803,7 +7941,7 @@ pub mod tests {
             }
             m.mouse_up(LEFT, None, &assets);
             assert_eq!(m.display(robot).pan, 3 * step, "{kind:?}");
-            assert!(!m.look.pressed);
+            assert!(!m.look().pressed());
             m.tick(&[]);
             m.step_displays(&assets);
             assert_eq!(m.display(robot).pan, 3 * step);
@@ -7821,7 +7959,10 @@ pub mod tests {
             click(&mut m, map, LEFT);
             assert_eq!(m.display(robot).mode, MAP_DISPLAY);
             m.mouse_down(LEFT, centre(more), &assets);
-            assert_eq!((robot_state(&m, robot).held, m.look.pressed), (0, false));
+            assert_eq!(
+                (robot_state(&m, robot).held, m.look().pressed()),
+                (0, false)
+            );
             m.mouse_up(LEFT, None, &assets);
         }
     }

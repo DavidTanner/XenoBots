@@ -300,7 +300,7 @@ fn button(
     robot: &Robot,
     (look, held): (Look, bool),
 ) -> Option<Place> {
-    let pressed = if look.pressed { NEXT } else { 0 };
+    let pressed = if look.pressed() { NEXT } else { 0 };
     let lit = |on: bool| if on { NEXT } else { 0 };
     // shortcut: the original adds all of +0x22, so while the lock button or the
     // program panel is held the shared-look buttons show another sprite; they are not
@@ -319,7 +319,7 @@ fn button(
             Some(Place::At(sprites[usize::from(n & 1)], 1, 0))
         }
         LOCK_TYPE => {
-            let on = robot.target.is_some() != (look.lock_held && look.pressed);
+            let on = robot.target.is_some() != (look.lock_held() && look.pressed());
             Some(Place::At(LOCK + lit(on), 0, -1))
         }
         // `1000:8b31`, `8b9c`: lit for whoever drives; held, the look `DS:0x6530`
@@ -333,7 +333,7 @@ fn button(
         k if MODE_TYPES.contains(&k) => {
             let mode = MODE_TYPES.iter().position(|&t| t == k)? as u8;
             let on = if held {
-                look.pressed
+                look.pressed()
             } else {
                 robot.display_mode == mode
             };
@@ -481,10 +481,8 @@ mod tests {
         );
         assert_eq!(mode(&robot, look, true), Some(Place::At(0x6b8, 0, -1)));
         robot.display_mode = 0;
-        let pressed = Look {
-            pressed: true,
-            ..look
-        };
+        // `1000:85fc`: the press XORs +0x22 with 0x88.
+        let pressed = Look(0x88);
         assert_eq!(
             mode(&robot, pressed, true),
             Some(Place::At(0x6b8 + NEXT, 0, -1))
@@ -535,12 +533,12 @@ mod tests {
             Some(Place::In(SWITCH, r))
         );
         // Pressed: the shared look; the lock button held shows the other light.
-        look.pressed = true;
+        look.0 |= 8;
         assert_eq!(
             at(STOP_TYPE, 0, &robot, look, false),
             Some(Place::At(0x7c8 + NEXT, 1, 1))
         );
-        look.lock_held = true;
+        look.0 |= 0x80;
         assert_eq!(
             at(LOCK_TYPE, 0, &robot, look, false),
             Some(Place::At(LOCK + NEXT, 0, -1))

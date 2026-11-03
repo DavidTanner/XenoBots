@@ -1081,6 +1081,26 @@ one) together, as the situation room's +0x40. +0x22 is also the program panel's 
 status panel's press (below), so while those are held the other buttons' sum is off;
 they are not drawn again until marked.
 
+**The console's byte (T-204).** +0x22 is one byte in the robot (saved in the `.usg`
+as `program_panel`; 0 for every robot of the stock files), and every console handler
+reads and writes it whole. A byte search of the unpacked image for accesses at +0x22
+through `DI` (every console handler loads the viewed robot, `DS:0x62f1`, into `DI`)
+finds these writers and readers on a robot, the same for all three kinds:
+
+| Value or bit | Set by | Cleared by | Read by |
+|---|---|---|---|
+| bit 3, the shared look | XOR 8 on each press, release and leave of the shared-look buttons (humanoid `a177`, `a1cf`, `a220`, `a338`, `a78b`, `a7ef`, `a839`, `aa6c`, `aaa2`; scorpion `84fe` to `8f7e`; scout `b8a1` to `c324`) and of the lock button | a release of the lock button, the status panel, the program panel or the gear lever (the whole byte) | the buttons' draws, `base + (signed) +0x22`; the lock button's (with bit 7) |
+| bit 7, held | the lock button's press (XOR 8, OR 0x80: `a3ff`, scorpion `8a34`, scout `be0f`); the program panel's press or release (XOR 1, OR 0x80, `d361`); the scorpion's mode buttons (XOR 0x88, `860a`, `866f`, `86d4`) | their releases set the byte to 0 (the lock's from anywhere, it takes 0x100 events; the panel's and the mode buttons' only over themselves) | the lock button's draw; the program panel's draw (`d319`, bit 0 which way the colours swap); the scorpion's mode buttons' draw (`base + (+0x22 & 0x7f)`) |
+| 0xff | the status panel's press while the byte is 0 (`dd93`, with +0xfa = 0) | its release or leave (`dda8`) | the status panel's own test (`dd8d`) |
+| 1 | the gear lever's press while the byte is 0 (`a8d5`, scout `c19f`) | its release (`a912`, scout `c1dc`), which sends the gear's message | the lever (`a895`, scout `c15f`): any event while the byte is not 0 is a drag (a release ends it) |
+
+So a press on the gear lever while any other widget left the byte set (the shared
+look flipped by a release the handler did not see, or the program panel released off
+it) is taken as a drag, and the lever's release then clears that look and the panel's
+press too. Nothing else writes a robot's +0x22: opening a console leaves it as it is.
+The other `+0x22` accesses in the image are other objects' (a relay's power side
+`ce2c`, `cc49`; a shell's damage `e235`, `e30f`; the situation room's panel `59ab`).
+
 | Type | Rectangle | Draw | What it shows | Mouse |
 |---|---|---|---|---|
 | `0x94` | (107, 208, 117, 230) | `1000:a30c` | Sprite 0x530 + look, opaque at +1: FIRE | `a329`: flips the look; a press sets +0x1b = 7, a release or leave 0. While +0x1b is 7 the robot's tick (`1000:abff`, table `DS:0x6aef` by +0x1b) runs `b3cf`: +0xdc bit 7, the fire request, every tick |
@@ -1126,23 +1146,29 @@ compass (`0xa6`) and the gear lever (`0xa4`) (part 1), the target panel (`0xa2`)
 status panel (`0xa8`) and the buttons (part 2). In part 3 the fire button held sends
 `Pilot::Fire` every retrace; the weapon buttons `Pilot::Weapon`; the switches hand the
 robot over as F2 and F3; the lock button's left and right releases `Pilot::NextTarget`
-and `DropTarget` (T-162's humanoid half). The console keeps one shared look and fire
-button for whichever robot is viewed (`Mission::look`, `firing`). Shortcuts, each
+and `DropTarget` (T-162's humanoid half). The console keeps one fire button held for
+whichever robot is viewed (`Mission::firing`); the look is each robot's +0x22 since
+T-204. Shortcuts, each
 named in the code: a target's serial is the
 scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
-+0x22; the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
++0x22 (T-205); the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
 the turn buttons answer the mouse: `xeno_formats::humancon` reads the lever's gear
 rectangles, notches and messages and the compass's centre; the sim's `Pilot::Gear`,
 `Say`, `Toward`, `Straight`, `HoldTurn` and `ReleaseTurn` (the scorpion's and scout's
 to share them, T-169, T-172) and `Movement::held` (+0x1b, loaded, saved and hashed;
-the humanoid's tick runs 10 and 11). Shortcuts: the lever goes by its own capture,
-not +0x22 (which the shared look and the lock button also set); a turn button's leave
-is taken at the release, as the fire button's. Since T-167 the warning light's blink
+the humanoid's tick runs 10 and 11). Shortcut: a turn button's leave
+is taken at the release, as the fire button's. Since T-204 the lever, the status panel,
+the lock button, the program panel and every shared-look button read and write one
+byte per robot (`Display::console` in `xeno-app`, loaded from and saved to the robot's
++0x22), so the lever goes by +0x22 as the original does. The port draws every widget
+every frame, so until T-205 the buttons draw the byte as 0 while the status panel
+holds the pointer and the program panel shows its pressed look only while no other
+widget holds it. Since T-167 the warning light's blink
 and the status page are the sim's (+0xee, +0x10a); the panel's press and S are
 `Pilot::StatusClock`, and with the console open the app sends `Pilot::StatusShown`
 before each tick, the draw's cut (a shortcut: the original cuts in the frame after the
-step). The press goes by its capture, not +0x22, as the lever does. The third display is below (T-166). Still to check
+step). The press restarts the clock only with +0x22 at 0 (T-204). The third display is below (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
 
 ### The third display (T-166)
