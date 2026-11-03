@@ -2247,6 +2247,17 @@ impl Mission {
         self.dialog.is_some()
     }
 
+    /// A file dialog or the terrain editor has a widget set of its own open over the
+    /// view's (T-180): the view's picture is closed until that set is left.
+    pub fn view_covered(&self) -> bool {
+        self.dialog.is_some() || self.terrain.is_some()
+    }
+
+    #[cfg(test)]
+    pub fn set_terrain_editor(&mut self, open: bool) {
+        self.terrain = open.then(TerrainEditor::enter);
+    }
+
     /// The map room's and training menu's Alt+L (`0x14c`) and Alt+S (`0x14e`): the
     /// open dialog, whose file [`Mission::take_load`] hands over, or the save dialog, which
     /// writes this mission's scenario as Ctrl+Alt+P does. False without the dialogs.

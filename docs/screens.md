@@ -556,6 +556,64 @@ to F8 (and F9 on the humanoid), Space, `.`, A, R and the arrows, the number keys
 "The cockpit keys (T-105)"); F1 pauses, and Ctrl+P (scorpion and scout only) and
 Ctrl+Alt+S are developer keys (`docs/sim.md`, "The developer and leftover keys (T-139)").
 
+### When a view's widgets are drawn again (T-180)
+
+From a Ghidra pass over the widget routines (`1000:2343` on), the near-call slots the
+other segments use for them, and every writer of the picture widgets' state bytes.
+
+**The mechanism.** A widget's first state byte holds its redraw bits. The draw pass
+(`1000:26cd`, slot `DS:0x1526` for far callers) shifts each byte right by `DS:0x64b`
+and runs the widget's draw handler (table `DS:0x3328`) if the last bit shifted out
+was set. `mgavideo.dvr` sets `DS:0x64b` to 2 (nothing else writes it), so a widget
+marked 3 is drawn **once**, at the next pass, and its byte becomes 0. Handlers mark
+their own widget (`mov si, [bx+2]` then 3 at `[bp+si]`, many places) or a panel by
+its offset in the viewed object. Opening a widget set (`1000:2343`, slot
+`DS:0x151c`; filled at start-up from a table of slot and routine pairs) first runs
+the old set's close handlers (table `DS:0x31b8`, `1000:2690`; the same set too, if
+it is reopened), copies the new set's records in (unless it is the set open now),
+marks **every** widget 3, groups' members included (`1000:23c1`), and runs every
+open handler (table `DS:0x3048`). Attaching a group (`1000:2429`, slot `0x151e`)
+marks only that group.
+
+**The picture widget** is the second widget of each view's set: state offset 3, so
+the situation room's at the base's +0xc0, the humanoid console's at the robot's
++0x10f, the scorpion's +0x12a and the scout's +0x110. Nothing writes those bytes
+directly (the one write to +0x12a, `1000:acb7`, is in humanoid or scout code, where
+that offset is another widget), its event handler does nothing, and no routine
+marks a whole set but the opener. So the picture, and its colour records
+(`palette.md`, "The views' records"), are drawn again exactly when the view's set is
+opened. Its callers in a mission:
+
+- **A view switch**, every one through `ui_open_view_of_object` (`1000:7ef2`, the
+  openers at `DS:0x6411`): the mission's start on the player's base (`1000:7e24`),
+  Tab and Alt+Tab (`7db2`, `7dd9`; they reopen the same console when no other unit
+  qualifies), a scanner's right click (`7eac`), ESC, Alt+Q, the corner and a robot
+  taken into its base (`7ee7`), and the situation room's view buttons and roster.
+- **The end of a file dialog** (`ui_run_file_dialog`, `1fe6:83db` on, through the
+  far thunk `1fe6:8f93` to slot `0x151c`): opening it closes the view's set (the
+  picture's records off where they stand, the second display's too), and its end
+  reopens the set it was opened over. In a mission that is the situation room's
+  (Ctrl+Alt+P's SAVE GAME, the editor's orders and sky dialogs). The error box
+  (`1fe6:8f1f`) is opened over a dialog and reopens the dialog's set, not the view's.
+- **The terrain editor** (`mapdvr.dvr`): entering opens its own set (closing the
+  situation room's), leaving reopens the situation room's. Its own file dialogs
+  reopen the editor's set, so they do not draw the view's picture.
+
+Not callers: F1's pause (`1000:cff3`) holds the records, saves the area under its
+box and puts it back, and reopens nothing. Nothing else opens a widget set over a
+view: the near callers of `1000:2343` and the far callers of its slot are all listed
+here or below. The map room's, training menu's, review's and name entry's sets are opened by
+their own loops (`1000:6e16`, `6f61`, `7989`, `79cd`, `77e8`, `7828`), not over a view.
+
+**The port** (`xeno-app`'s `Screens`): every view switch goes through `show_view`,
+which turns the old view's records off and starts the new one's once no fade runs
+(T-125). A file dialog or the terrain editor open over the view
+(`Mission::view_covered`) turns the view's records and the second display's off as
+it opens; as it closes, the view's records start again and the tint restarts, as a
+view switch's do. The port does not set the picture's palette again on the reopen
+(the original's draw does, slot `0x494`); the restarted records write their own
+first frames.
+
 ### The message panel (T-104)
 
 Every robot has a panel of text (object +0x52 to +0xda, `usg::Robot::panel` and the

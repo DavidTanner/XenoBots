@@ -310,6 +310,8 @@ pub struct Screens {
     fade_in: Option<Fade>,
     /// The mission view whose colour records start once no fade is pending or running.
     view_records: Option<View>,
+    /// A file dialog or the terrain editor covered the view at the last retrace.
+    view_covered: bool,
     keys: Keys,
     quit: bool,
     /// The screen changed since [`Screens::take_changed`].
@@ -392,6 +394,7 @@ impl Screens {
             dac,
             fade_in: None,
             view_records: None,
+            view_covered: false,
             keys: Keys::default(),
             quit: false,
             changed: true,
@@ -467,10 +470,7 @@ impl Screens {
     fn viewed(&mut self, view: View) {
         self.mission.restart_tint();
         if let Mission(old) = self.screen {
-            let display = self.mission.take_display_record();
-            for &record in mission::view_records(old).iter().chain(&display) {
-                self.dac.anims_mut().set_active(record, false);
-            }
+            self.close_view_records(old);
         }
         self.view_records = Some(view);
         if let Some(console) = match view {
@@ -481,6 +481,16 @@ impl Screens {
         } {
             self.console = console;
         }
+    }
+
+    /// The picture widget's close handler (`DS:0x31b8`): the view's records and the
+    /// second display's turned off where they stand.
+    fn close_view_records(&mut self, view: View) {
+        let display = self.mission.take_display_record();
+        for &record in mission::view_records(view).iter().chain(&display) {
+            self.dac.anims_mut().set_active(record, false);
+        }
+        self.view_records = None;
     }
 
     /// The mission shown, or the last one.
@@ -770,6 +780,18 @@ impl Screens {
             }
             self.keys.apply(event);
             self.mouse.apply(event);
+        }
+        // A file dialog or the terrain editor opens its own widget set over the view's,
+        // closing the view's picture; leaving reopens the view's set, so the picture is
+        // drawn again and its records restart from their beginning (T-180).
+        if let Mission(view) = self.screen
+            && self.mission.view_covered() != self.view_covered
+        {
+            self.view_covered = !self.view_covered;
+            match self.view_covered {
+                true => self.close_view_records(view),
+                false => self.viewed(view),
+            }
         }
         if self.screen == MapRoom && self.next.is_none() && self.map.take_dirty() {
             self.draw_map(fb);
@@ -1108,6 +1130,7 @@ impl Screens {
             if matches!(self.screen, Mission(_)) {
                 self.dac.anims_mut().stop_all();
                 self.view_records = None;
+                self.view_covered = false;
             }
         }
         match (self.screen, action) {
@@ -2382,6 +2405,50 @@ pub(crate) mod tests {
         // Leaving the mission stops them all.
         screens.mission_request(MissionRequest::End);
         assert!((0..24).all(|r| !active(&screens, r)));
+    }
+
+    /// A file dialog or the terrain editor over the situation room closes its picture
+    /// (records off where they stand); leaving reopens the view's widget set, whose
+    /// picture's draw starts them again from their beginning (T-180).
+    #[test]
+    fn covering_the_view_stops_its_records_and_leaving_restarts_them() {
+        use xeno_render::anim::flag::ACTIVE;
+        let records = mission::view_records(View::SitRoom);
+        let on = |s: &Screens| {
+            records
+                .iter()
+                .map(|&r| s.dac.anims().flags(r).unwrap() & ACTIVE != 0)
+                .collect::<Vec<_>>()
+        };
+        let mut screens = new(Mission(View::SitRoom));
+        screens.mission_assets.file_dialogs = Some(crate::dialog::test_tables());
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        (0..80).for_each(|_| screens.retrace([], &mut fb));
+        assert!(on(&screens).iter().all(|&a| a));
+        // Ordinary frames never restart them: a record left off stays off.
+        screens.dac.anims_mut().set_active(records[0], false);
+        (0..10).for_each(|_| screens.retrace([], &mut fb));
+        assert!(!on(&screens)[0]);
+        screens.dac.start_anim(records[0], 0);
+        fn cover(s: &mut Screens, terrain: bool, open: bool) {
+            match (terrain, open) {
+                (true, _) => s.mission.set_terrain_editor(open),
+                (false, true) => assert!(s.mission.open_file_dialog(true, &s.mission_assets)),
+                (false, false) => s.retrace(&[down(0x01)], &mut Framebuffer::new(Size::MODE_13H)),
+            }
+        }
+        for (what, terrain) in [("dialog", false), ("terrain editor", true)] {
+            cover(&mut screens, terrain, true);
+            (0..10).for_each(|_| screens.retrace([], &mut fb));
+            assert!(on(&screens).iter().all(|&a| !a), "{what}: off while open");
+            cover(&mut screens, terrain, false);
+            screens.retrace([], &mut fb);
+            assert!(!screens.mission.view_covered(), "{what}");
+            assert!(
+                on(&screens).iter().all(|&a| a),
+                "{what}: restarted on leaving"
+            );
+        }
     }
 
     /// The user's files: the screens' pictures and the assets of the log-in, the map

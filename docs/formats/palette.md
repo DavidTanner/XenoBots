@@ -273,8 +273,16 @@ Contents are the user's to read, never committed; this is the shape only.
     out over 32 retraces, then releases them. The port (T-125):
     `xeno_app::mission::view_records`, started by `xeno-app` with the tint once no fade
     is pending or running, turned off as the view is left, all off when the mission is
-    left. It starts them on showing a view only: the original restarts them whenever
-    the picture widget is drawn again, which the port does not trace (T-180).
+    left. **When the picture is drawn again** (T-180): only when its widget set is
+    opened, which marks every widget for a redraw; nothing else marks the picture
+    widget. In a mission that is a view switch (`ui_open_view_of_object`, the same
+    object included), the end of a file dialog opened over the situation room
+    (Ctrl+Alt+P's save, the editor's orders and sky dialogs), and leaving the
+    terrain editor; opening either of those closes the view's set first, so its
+    records are off while they run. F1's pause is not one. The list and the mechanism
+    are in `docs/screens.md`, "When a view's widgets are drawn again (T-180)"; the
+    port turns the records off as a dialog or the terrain editor opens over the view
+    and starts them again as it closes.
   T-037 missed the views' records (it saw only direct callers: the views call
   `1000:140b` near, not through slot `0x316`). Nothing in the `1fe6` segment calls
   through the word slots `0x30e`..`0x320` (a search of its code for each slot word
