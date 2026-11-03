@@ -1066,6 +1066,27 @@ built afresh for the frame rather than kept from the main view's last; the probe
 nothing, so clicks on the display do nothing (T-208); the noise draws from the
 displays' own random word, as the second display's. Not checked in DOSBox (T-168).
 
+### The scorpion's third display (T-170)
+
+From a Ghidra pass over the scorpion's draw handler (`1000:833a`) and frame routine
+(`1fe6:7bdb`). The draw handler is the humanoid's byte for byte but for its region
+(`DS:0x6558`) and probe word (`DS:0x65e7`): it too calls the frame routine only when
+`DS:0x1450` is 0, so the two take their chances alike. The frame routine is the
+humanoid's with four differences: the countdown is reloaded with 5, not 8 (the same
+counter, `DS:0x62ed`, which only the open console's routine steps); the dots are 0x57
+over sprite 0x8c8 (`msprite3`'s, in the scorpion console's bank); the camera's heading
+is the robot's less 0x11c6, about 25 degrees, so the display is turned and the robot's
+heading is not straight up; and the rest is the same: the radar is +0xf6 bit 3, with it
+damaged view mode 0x18 in colours from 0x10 through the same region, otherwise view
+mode 0x12, zoom 8, shift 1, the robot as the viewer, its x, y and z plus its eye height
+(+0x1c, unused by list 0x12). The mouse (`8370`) is the second display's with flag 3
+in `DS:0x65e9`; clicks are T-208's, as the humanoid's.
+
+**In the port**: `Mission::draw_third` draws it as the humanoid's, the kind's `Radar`
+from `xeno_formats::radar` and the background from the scorpion console's bank, a
+frame every 5 ticks of the sim (the same shortcut as the humanoid's, T-209). Not
+checked in DOSBox (T-171).
+
 ### The scorpion console's instruments (T-131)
 
 From a Ghidra pass over the draw and mouse handlers of the scorpion's widgets (set
@@ -1087,7 +1108,7 @@ own (below).
 | `0xd2` x2 | (144, 220, 153, 236), (144, 237, 153, 252) | `8a91` | Weapon `n` (state's second byte): `DS:0x65be[n]` (0x730, 0x740) when selected (+0xdd), else `DS:0x65c2[n]` (0x728, 0x738), opaque, one pixel right | `8ac1`: the frame XOR (`dfd5`); a release selects weapon `n` (`98a9`, F5 and F6's) |
 | `0xd4` x4 | (101, 219, 110, 246) and on, to (124, 219, 133, 246) | `8ae6` | Drop `n` (state's second byte): `DS:0x65c6[n]` (0x6e8, 0x6f8, 0x708, 0x718) + look, opaque at the corner | `8b06`: marks itself, flips the look; a release runs `d5d5` with `n`: through `CS:0xd5df`, `n` 0 to 3 are keys 1, 4, 3 and 2 (a mine, a decoy, an alarm buoy, an ECM buoy). In the port since T-137 |
 | `0xd6` | (137, 62, 175, 100) | `87d6` | The compass: dial 0x910 keyed in `DS:0x669a`; the needle as the humanoid's (the same table, `DS:0x66a2`) from sprite 0x918, every quadrant's blit in the dial's rectangle; then at (0x4c, 0xa0) `DS:0x70db` in 0x74 and the heading in degrees, three digits, in 0x0e, transparent | `887f` (T-169): a release over it (0x80, not a move) sets +0x2a to the bearing from the centre (0x50, 0x9b) to the pointer, y up (`1000:04eb`), the pilot (`d446`), +0x23 bits 4 and 5 cleared |
-| `0xd8` | (3, 2, 52, 89) | `833a` | The third display (colour 253, region `DS:0x6558`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7bdb`; once it is done (bit 7, mode 3) the copy through the region and the probe into `DS:0x65e7`. T-170 | `8370`: as the second display's, flag 3 in `DS:0x65e9` |
+| `0xd8` | (3, 2, 52, 89) | `833a` | The third display (colour 253, region `DS:0x6558`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7bdb`; once it is done (bit 7, mode 3) the copy through the region and the probe into `DS:0x65e7`. Below, "The scorpion's third display (T-170)" | `8370`: as the second display's, flag 3 in `DS:0x65e9` |
 | `0xda` | (155, 245, 166, 255) | `89ec` | The lock button: 0x758, 0x760 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque, one pixel up | `8a26`: as the humanoid's `a3f1` (+0x22 bits 3 and 7; a left release `d812`, a right one `d7f8`; +0x22 cleared) |
 | `0xdc` | (137, 223, 142, 228) | `8a71` | The lock warning light: 0x9a0, 0x9a8 while +0xed is not 0 and +0xee bit 2 is set; opaque at the corner | none |
 | `0xde` | (103, 84, 124, 91) | `8760` | The speed lever, opaque at the corner: forward the word `DS:0x6630` at `(speed >> 2) & 0x1e` bytes, in reverse `DS:0x6644` at `(-speed >> 2) & 0x0e` (both from the speed's low byte): a look every 8 of speed | `8798` (T-169): a release over it, the pilot, then +0x28 by the pointer's row less 0x71 with the low bit dropped, a byte offset into a word table: `DS:0x6656` below the row (reverse: 0, -21, -42), `0x6662` above it (forward: 21, 42, 63), 0 on it. The column is not looked at; the velocity is left for the speed's next step |
