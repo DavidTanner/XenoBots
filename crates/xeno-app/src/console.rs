@@ -371,46 +371,6 @@ pub fn count(out: &[u8], n: u8) -> Vec<u8> {
     text
 }
 
-/// How often the tick table's entry 4 (humanoid `1000:b318`, scorpion `9a14`) ran in
-/// the `passes` object passes since the load: on each pass whose stepped +0x1a has
-/// `& 0x1e` = 8.
-// shortcut: the sim does not keep +0xee, +0xfa or +0x10a; this assumes the robot ticked
-// on every pass since the load, and goes wrong once `World::ticks` wraps (T-167).
-pub fn calls(loaded_tick: u8, passes: u16) -> u16 {
-    // The `j`th pass steps +0x1a to `loaded_tick + 2j`: entry 4 when `j` is `r` mod 16.
-    let r = match 4u16.wrapping_sub(u16::from(loaded_tick >> 1)) & 15 {
-        0 => 16,
-        r => r,
-    };
-    if passes >= r {
-        (passes - r) / 16 + 1
-    } else {
-        0
-    }
-}
-
-/// The status panel's page `passes` object passes after the load, of `pages`: each call
-/// of entry 4 steps the page (humanoid +0x10a, scout +0x108) when +0xfa's low five bits
-/// are 0, then +0xfa. The humanoid's panel cuts its page by 3 when 3 or more; the
-/// scout's goes round all four (`1000:caf5`).
-// shortcut: with the humanoid's console open the draw cuts 3 to 0 before the next step,
-// so its pages go round in threes; closed, the original's +0x10a runs 0 to 3 (T-167).
-pub fn page(loaded_tick: u8, loaded_clock: u8, loaded_page: u8, passes: u16, pages: u8) -> u8 {
-    let calls = calls(loaded_tick, passes);
-    let first = u16::from(loaded_clock.wrapping_neg() & 0x1f);
-    let steps = if calls > first {
-        (calls - 1 - first) / 32 + 1
-    } else {
-        0
-    };
-    ((u16::from(loaded_page) + steps) % u16::from(pages)) as u8
-}
-
-/// +0xee as it stands `passes` object passes after the load: 2 a call of entry 4.
-pub fn blink(loaded_tick: u8, loaded_blink: u8, passes: u16) -> u8 {
-    loaded_blink.wrapping_add((calls(loaded_tick, passes) as u8).wrapping_mul(2))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,30 +436,6 @@ mod tests {
         assert_eq!(turn(q[1], 1, &s), (Orientation::FlipVertical, 2, 1));
         assert_eq!(turn(q[2], 2, &s), (Orientation::Rotate180, 0, 1));
         assert_eq!(turn(q[3], 3, &s), (Orientation::Mirror, 0, 0));
-    }
-
-    #[test]
-    fn the_blink_steps_on_one_pass_in_16() {
-        // +0x1a loaded at 2: the 3rd pass steps it to 8.
-        assert_eq!(blink(2, 0, 2), 0);
-        assert_eq!(blink(2, 0, 3), 2);
-        assert_eq!(blink(2, 0, 18), 2);
-        assert_eq!(blink(2, 0, 19), 4);
-        // Loaded at 8: the 16th pass; an odd +0x1a counts the same.
-        assert_eq!((blink(8, 1, 15), blink(9, 1, 16)), (1, 3));
-        assert_eq!(blink(0, 0xff, 4), 1);
-    }
-
-    #[test]
-    fn the_pages_turn_every_512_passes() {
-        // +0x1a loaded at 6: entry 4 on pass 1, then every 16; +0xfa at 31 steps the
-        // page on the second call (pass 17), then every 32 calls.
-        assert_eq!((page(6, 31, 0, 16, 3), page(6, 31, 0, 17, 3)), (0, 1));
-        assert_eq!((page(6, 31, 0, 528, 3), page(6, 31, 0, 529, 3)), (1, 2));
-        assert_eq!(page(6, 31, 2, 17, 3), 0);
-        // The humanoid's page of 3 is cut to 0 by the first draw; the scout's shows.
-        assert_eq!((page(6, 0, 3, 0, 3), page(6, 0, 3, 0, 4)), (0, 3));
-        assert_eq!(page(6, 31, 3, 17, 4), 0);
     }
 
     #[test]

@@ -968,9 +968,7 @@ robot over as F2 and F3; the lock button's left and right releases `Pilot::NextT
 and `DropTarget` (T-162's humanoid half). The console keeps one shared look and fire
 button for whichever robot is viewed (`Mission::look`, `firing`). Shortcuts, each
 named in the code: a target's serial is the
-scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); +0xee and the status page are worked out from
-the passes since the load (`World::ticks`) and the robot's +0x1a, +0xfa and +0x10a
-as loaded (T-167), the pages going round in threes as while the console is open; the
+scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
 +0x22; the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
 the turn buttons answer the mouse: `xeno_formats::humancon` reads the lever's gear
@@ -979,8 +977,11 @@ rectangles, notches and messages and the compass's centre; the sim's `Pilot::Gea
 to share them, T-169, T-172) and `Movement::held` (+0x1b, loaded, saved and hashed;
 the humanoid's tick runs 10 and 11). Shortcuts: the lever goes by its own capture,
 not +0x22 (which the shared look and the lock button also set); a turn button's leave
-is taken at the release, as the fire button's. Not ported: the status panel's press
-(T-167). The third display is below (T-166). Still to check
+is taken at the release, as the fire button's. Since T-167 the warning light's blink
+and the status page are the sim's (+0xee, +0x10a); the panel's press and S are
+`Pilot::StatusClock`, and with the console open the app sends `Pilot::StatusShown`
+before each tick, the draw's cut (a shortcut: the original cuts in the frame after the
+step). The press goes by its capture, not +0x22, as the lever does. The third display is below (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
 
 ### The third display (T-166)
@@ -1124,9 +1125,9 @@ half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy` (and since T-149 C, D
 with the key their number picks (T-137; the shared look while held); the weapon
 buttons and the relay panel show their frame XORed while held. Not ported: the speed
 buttons, lever, compass and turn buttons (T-169), the
-fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code (the signal is the sim's since T-148): +0xee and +0xfa bit 7 are worked
-out from the passes since the load (T-167); the gauges are worked out each frame from
-the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
+fire release's clearing of +0xfd bit 5. Since T-167 the warning light, the damage
+panel (+0xfa bit 7) and the cargo gauges (+0x11a, +0x11b) are drawn from the sim.
+Shortcuts, each named in the code (the signal is the sim's since T-148): the damage panel draws its cover under the lights (the
 original leaves the picture there when the console opens with bit 7 set). Still to
 check in DOSBox: every widget's look and the blink timing.
 
@@ -1186,14 +1187,15 @@ button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added)
 weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
 each named in the code: a target's serial is the
 scenario's as loaded (the signal, the cloaks and ECM charges since T-136 and the drops since T-137 are the sim's); +0xee and the status
-page are worked out from the passes since the load (T-167). In part 3 the fire button
+page are the sim's since T-167. In part 3 the fire button
 held sends `Pilot::Fire` every retrace (as the other kinds'), the weapon buttons
 `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock button's left
 and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scout half), the stance
 buttons `Pilot::Stance` (as E, W and Q; the look flipped while held), the drop buttons
 `Pilot::Drop` (T-137, as the scorpion's). Not ported: the compass's, gear lever's and
-turn buttons' mouse (T-172), the third display (T-173), the status panel's press
-(T-167). Still to check in DOSBox (T-174): every widget's look and the blink and page
+turn buttons' mouse (T-172), the third display (T-173). The status panel's press is
+`Pilot::StatusClock` (T-167), but only on the panel's top rows: the rest overlaps the
+3D view's region, which the port's hit test takes first (T-210). Still to check in DOSBox (T-174): every widget's look and the blink and page
 timing.
 
 ### The situation room's main view (T-103)

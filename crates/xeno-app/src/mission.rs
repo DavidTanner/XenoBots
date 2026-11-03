@@ -156,8 +156,9 @@ mod handler {
     /// `docs/sim.md`, "The cockpit keys"), F7 and F8, the ECM and the cloak
     /// (`d92d`, `d95e`; "The ECM and the cloak (T-136)"), and the scorpion's and
     /// scout's keys 1 to 4, the drops (`d5e7`, `d609`, `d62b`, `d64d`; "Mines and
-    /// buoys (T-137)"), and the scorpion's L, C and D (`9b2d`, `8d7f`, `9ab8`; T-149).
-    pub const PILOT: [(u16, Pilot); 32] = [
+    /// buoys (T-137)"), the scorpion's L, C and D (`9b2d`, `8d7f`, `9ab8`; T-149), and
+    /// the humanoid's and scout's S, the status clock (`ddb0`; T-167).
+    pub const PILOT: [(u16, Pilot); 33] = [
         (0xd131, Pilot::Weapon(0)),
         (0xd142, Pilot::Weapon(1)),
         (0xb20c, Pilot::OtherWeapon),
@@ -190,16 +191,17 @@ mod handler {
         (0x9b2d, Pilot::Load),
         (0x8d7f, Pilot::Cargo),
         (0x9ab8, Pilot::Dump),
+        (0xddb0, Pilot::StatusClock),
     ];
 }
 
 /// The consoles' buttons whose mouse handlers the port runs: the humanoid's fire,
-/// weapon, pilot, program, lock, cloak and ECM buttons, gear lever, compass and turn
-/// buttons (left, straight, right), then the scorpion's first five,
+/// weapon, pilot, program, lock, cloak and ECM buttons, gear lever, compass, turn
+/// buttons (left, straight, right) and status panel, then the scorpion's first five,
 /// its stop, cargo, dump, load and deploy buttons, its relay panel (which only shows its frame XORed
 /// while held) and its drop buttons, then the scout's first five, its three stance
-/// buttons, cloak, ECM and drop buttons.
-const INSTRUMENTS: [u16; 35] = [
+/// buttons, cloak, ECM and drop buttons and status panel.
+const INSTRUMENTS: [u16; 37] = [
     crate::humancon::FIRE_TYPE,
     crate::humancon::WEAPON_TYPE,
     crate::humancon::PILOT_TYPE,
@@ -212,6 +214,7 @@ const INSTRUMENTS: [u16; 35] = [
     crate::humancon::LEFT_TYPE,
     crate::humancon::AHEAD_TYPE,
     crate::humancon::RIGHT_TYPE,
+    crate::humancon::STATUS_TYPE,
     crate::scorpcon::FIRE_TYPE,
     crate::scorpcon::WEAPON_TYPE,
     crate::scorpcon::PILOT_TYPE,
@@ -235,6 +238,7 @@ const INSTRUMENTS: [u16; 35] = [
     crate::scoutcon::CLOAK_TYPE,
     crate::scoutcon::ECM_TYPE,
     crate::scoutcon::DROP_TYPE,
+    crate::scoutcon::STATUS_TYPE,
 ];
 const FIRE_TYPES: [u16; 3] = [
     crate::humancon::FIRE_TYPE,
@@ -246,6 +250,8 @@ const LOCK_TYPES: [u16; 3] = [
     crate::scorpcon::LOCK_TYPE,
     crate::scoutcon::LOCK_TYPE,
 ];
+/// The humanoid's and scout's status panels, pressed (`1000:dd7f`).
+const STATUS_TYPES: [u16; 2] = [crate::humancon::STATUS_TYPE, crate::scoutcon::STATUS_TYPE];
 /// The humanoid's turn buttons, held (`1000:a77d`, `a82b`).
 const TURN_TYPES: [u16; 2] = [crate::humancon::LEFT_TYPE, crate::humancon::RIGHT_TYPE];
 /// Buttons that flip the shared look on a press and back on a release.
@@ -1400,6 +1406,11 @@ impl Mission {
         if let (true, Viewed::Robot(slot)) = (self.firing, self.viewed) {
             self.pilot(slot, Pilot::Fire);
         }
+        // The open console's status panel is drawn (`1000:a96f`): a humanoid's page cut.
+        // shortcut: cut before the next tick, not as the frame after the step draws.
+        if let (Run::Running(sim), Viewed::Robot(slot)) = (&mut self.run, self.viewed) {
+            sim.pilot(EntityId(slot), Pilot::StatusShown);
+        }
         // `ui_run_map_editor`'s and `ui_run_file_dialog`'s loops never tick the mission.
         // Nor does F1's (the game clock is put back after it).
         let (Run::Running(sim), None, None, false) =
@@ -2414,9 +2425,9 @@ impl Mission {
         .or_else(|| {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
             let kinds: &[u16] = match view {
-                View::Humanoid => &INSTRUMENTS[..12],
-                View::Scorpion => &INSTRUMENTS[12..24],
-                View::Scout => &INSTRUMENTS[24..],
+                View::Humanoid => &INSTRUMENTS[..13],
+                View::Scorpion => &INSTRUMENTS[13..25],
+                View::Scout => &INSTRUMENTS[25..],
                 _ => &[],
             };
             tables
@@ -2485,6 +2496,13 @@ impl Mission {
             }
             Target::Instrument(w) if SHARED_LOOK_TYPES.contains(&w.kind) => {
                 self.look.pressed = !self.look.pressed;
+            }
+            // `1000:dd7f`: a press on the humanoid's or scout's status panel restarts its
+            // clock. shortcut: the original goes by +0x22 being 0, as the gear lever.
+            Target::Instrument(w) if STATUS_TYPES.contains(&w.kind) => {
+                if let Viewed::Robot(slot) = self.viewed {
+                    self.pilot(slot, Pilot::StatusClock);
+                }
             }
             // `1000:a77d`, `a82b`: a turn button held (+0x1b), and the look.
             Target::Instrument(w) if TURN_TYPES.contains(&w.kind) => {
@@ -3564,32 +3582,6 @@ impl Mission {
         let (xeno_sim::Damage::Robot(c), State::Robot(m)) = (&e.damage, &e.state) else {
             return None;
         };
-        // shortcut: +0xee, the status page and a scorpion's +0xfa bit 7 are worked out from the passes since the load
-        // (`console::blink`, `console::page`, T-167).
-        let loaded = self.loaded_robot(slot);
-        let passes = world.ticks;
-        let (blink, page) = loaded.map_or((0, 0), |r| {
-            // The humanoid's three pages of +0x10a, the scout's four of +0x108.
-            let (light, pages) = match &r.parts {
-                usg::Parts::Humanoid(p) => (p.light, 3),
-                usg::Parts::Scout(p) => (p.light, 4),
-                usg::Parts::Scorpion(_) => (0, 1),
-            };
-            (
-                crate::console::blink(r.tick, r.blink, passes),
-                crate::console::page(r.tick, r.clock, light, passes, pages),
-            )
-        });
-        // The tick table's entry 4 flips +0xfa bit 7 (`1000:9a14`); +0x119 is the
-        // scenario's (nothing changes it).
-        let (damage_shown, extra) = loaded.map_or((false, 0), |r| {
-            let flips = crate::console::calls(r.tick, passes) % 2 == 1;
-            let extra = match &r.parts {
-                usg::Parts::Scorpion(p) => p.unknown_119,
-                _ => 0,
-            };
-            ((r.clock & 0x80 != 0) != flips, extra)
-        });
         // `1fe6:7f38`: a robot's letters, `-` and its serial's last three digits; a
         // base's name. shortcut: a robot's serial (+0x18) is the scenario's as loaded,
         // and other kinds (never locked in the stock scenarios) get no name.
@@ -3615,7 +3607,7 @@ impl Mission {
             signal: m.signal,
             energy: m.guns.energy,
             locked_on: m.locked_on,
-            blink,
+            blink: m.blink,
             target,
             target_distance: m.target_distance,
             target_bearing: m.target_bearing.wrapping_sub(e.heading),
@@ -3632,12 +3624,12 @@ impl Mission {
                 .book()
                 .get(slot)
                 .is_some_and(|r| r.orders.program_drives),
-            page,
+            page: m.page,
             relays: m.relays,
             rounds: m.guns.rounds,
-            gauges: crate::scorpcon::gauges(m.relays, extra),
+            gauges: m.gauges,
             deployer_damaged: c.equipment & usg::Robot::DEPLOYER_DAMAGED != 0,
-            damage_shown,
+            damage_shown: m.clock & 0x80 != 0,
             stance: m.stance,
             drops: m.guns.drops,
         })
@@ -6401,7 +6393,11 @@ pub mod tests {
                 });
                 let mut looks: Vec<_> = (0..64)
                     .map(|t| {
-                        m.world_mut().ticks = t;
+                        if let Some(State::Robot(r)) =
+                            m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+                        {
+                            r.blink = 2 * t as u8;
+                        }
                         pixels(&draw(m), warning)
                     })
                     .collect();
@@ -6485,6 +6481,7 @@ pub mod tests {
                 e.heading = 0;
                 if let State::Robot(r) = &mut e.state {
                     (r.speed, r.guns.energy, r.locked_on, r.relays, r.signal) = (0, 0, 0, 0, 0);
+                    r.gauges = [0; 2];
                 }
             });
             let before = draw(&m);
@@ -6492,6 +6489,7 @@ pub mod tests {
                 e.heading = 0x8000;
                 if let State::Robot(r) = &mut e.state {
                     (r.speed, r.guns.energy, r.relays, r.signal) = (40, 0xff, 12, 0xff);
+                    r.gauges = [0x60, 0x30];
                 }
             });
             let after = draw(&m);
@@ -6508,17 +6506,21 @@ pub mod tests {
             // The energy bar and the signal's (the sim's) fill.
             assert_ne!(pixels(&before, con.bars[1]), pixels(&after, con.bars[1]));
             assert_ne!(pixels(&before, con.bars[0]), pixels(&after, con.bars[0]));
-            // The cargo gauges follow the relays.
+            // The cargo gauges follow the sim's +0x11a, +0x11b.
             for kind in s::GAUGE_TYPES {
                 assert_ne!(pixels(&before, area(kind)), pixels(&after, area(kind)));
             }
-            // The damage panel shows a light every other 16 ticks once the helm is low;
-            // undamaged, it only blinks the cover off and on.
+            // The damage panel shows a light while +0xfa bit 7 is set once the helm is
+            // low; undamaged, it only blinks the cover off and on.
             let damage = area(s::DAMAGE_TYPE);
             let looks = |m: &mut Mission| {
                 let mut looks: Vec<_> = (0..64)
                     .map(|t| {
-                        m.world_mut().ticks = t;
+                        if let Some(State::Robot(r)) =
+                            m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+                        {
+                            r.clock = (t as u8 & 1) << 7;
+                        }
                         pixels(&draw(m), damage)
                     })
                     .collect();
@@ -6543,7 +6545,11 @@ pub mod tests {
                 });
                 let mut looks: Vec<_> = (0..64)
                     .map(|t| {
-                        m.world_mut().ticks = t;
+                        if let Some(State::Robot(r)) =
+                            m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+                        {
+                            r.blink = 2 * t as u8;
+                        }
                         pixels(&draw(m), warning)
                     })
                     .collect();
@@ -6656,7 +6662,11 @@ pub mod tests {
                 });
                 let mut looks: Vec<_> = (0..64)
                     .map(|t| {
-                        m.world_mut().ticks = t;
+                        if let Some(State::Robot(r)) =
+                            m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+                        {
+                            r.blink = 2 * t as u8;
+                        }
                         pixels(&draw(m), warning)
                     })
                     .collect();
@@ -6665,14 +6675,17 @@ pub mod tests {
             };
             assert_eq!(blinks(&mut m, 0), 1, "{name}");
             assert!(blinks(&mut m, 0xff) > 2, "{name}: the light never blinks");
-            // The target panel in 0x60 on 0x01; the status panel turns its four pages
-            // every 512 passes.
+            // The target panel in 0x60 on 0x01; the status panel shows its four pages.
             let shown = draw(&m);
             assert!(count(&shown, area(0x11e), 0x60) > 100, "{name}");
             let status = area(c::STATUS_TYPE);
             let mut pages: Vec<_> = (0..4)
                 .map(|p| {
-                    m.world_mut().ticks = 512 * p;
+                    if let Some(State::Robot(r)) =
+                        m.world_mut().get_mut(EntityId(robot)).map(|e| &mut e.state)
+                    {
+                        r.page = p as u8;
+                    }
                     pixels(&draw(&m), status)
                 })
                 .collect();
@@ -6786,6 +6799,16 @@ pub mod tests {
         assert!(m.firing && m.look.pressed);
         m.mouse_up(LEFT, None, &assets);
         assert!(!m.firing && !m.look.pressed);
+        // The status panel's press restarts +0xfa; the scout's page 3 is not cut.
+        robot_state_mut(&mut m, robot).clock = 9;
+        robot_state_mut(&mut m, robot).page = 3;
+        // Above the 3D view's region (0x106), which overlaps the panel's lower part.
+        let a = find(c::STATUS_TYPE).area.unwrap();
+        m.mouse_down(LEFT, Some(((a.left + a.right) / 2, a.top + 2)), &assets);
+        assert_eq!(state(&m).clock, 0);
+        robot_state_mut(&mut m, robot).clock = 5;
+        m.tick(&[]);
+        assert_eq!(state(&m).page, 3);
     }
 
     /// The scorpion's buttons act on the robot through the sim: the weapon buttons
@@ -7028,6 +7051,19 @@ pub mod tests {
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(robot_state(&m).target_heading, heading);
         assert_eq!(robot_state(&m).mode & 0x30, 0);
+        // The status panel's press restarts +0xfa; S is in the key table as `ddb0`;
+        // with the console open a page of 3 is cut to 0 before the next tick.
+        (
+            robot_state_mut(&mut m, robot).clock,
+            robot_state_mut(&mut m, robot).page,
+        ) = (9, 3);
+        m.mouse_down(LEFT, centre(find(h::STATUS_TYPE)), &assets);
+        m.mouse_up(LEFT, centre(find(h::STATUS_TYPE)), &assets);
+        assert_eq!(robot_state(&m).clock, 0);
+        assert!(tables.keys.iter().any(|&(_, k)| k == 0xddb0));
+        robot_state_mut(&mut m, robot).clock = 5;
+        m.tick(&[]);
+        assert_eq!(robot_state(&m).page, 0);
     }
 
     fn robot_state_mut(m: &mut Mission, slot: u16) -> &mut xeno_sim::Movement {

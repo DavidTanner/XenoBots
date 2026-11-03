@@ -859,7 +859,7 @@ it the recall's program (`Tables::recall_program`) and its program takes over, b
 it moves. U is `Pilot::Deploy` (T-113), A and R `Pilot::NextTarget` and `Pilot::DropTarget`
 (T-138, "Sensing"). F7 and F8 are `Pilot::Ecm` and `Pilot::Cloak` (T-136). Keys 1 to 4
 are `Pilot::Drop` (T-137), Ctrl+P `Pilot::Charge` (T-139, below), L, C and D
-`Pilot::Load`, `Cargo` and `Dump` (T-149). The key still to port is S (T-167).
+`Pilot::Load`, `Cargo` and `Dump` (T-149), S `Pilot::StatusClock` (T-167).
 
 ## The developer and leftover keys (T-139)
 
