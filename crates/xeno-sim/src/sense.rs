@@ -387,14 +387,10 @@ fn keep_lock(world: &mut World, id: EntityId, window: (u16, u16), tables: &Table
         }
         return;
     };
-    // `1000:d685`: the target's `GONE`.
-    // shortcut: the original's lock holds the target's pointer and no reference
-    // (T-154), so a freed target's slot can be taken by a new object; the port keeps
-    // the slot, so an empty one, or one a new object that is not targetable took, is
-    // the target gone too. Upgrade if the sim keeps the pools' memory.
-    let gone = world
-        .get(target)
-        .is_none_or(|t| t.flags & (flag::GONE | flag::TARGETABLE) != flag::TARGETABLE);
+    // `1000:d685`: the target's `GONE`. The lock is a pointer (T-203): a freed target
+    // left `GONE` in its memory, and whatever object is made there next is followed,
+    // whatever it is.
+    let gone = world.get(target).is_none_or(|t| t.flags & flag::GONE != 0);
     let range = RobotKind::of(kind).map_or(0, |k| tables.sensing.lock_range[k.index()]);
     let damaged = parts(world, id).is_some_and(|c| c.targeting & TARGETING_DAMAGED != 0);
     // `1000:d6a6`: a robot target's ECM running (+0xdf, not the status bit) loses it.

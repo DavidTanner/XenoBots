@@ -7917,10 +7917,18 @@ pub mod tests {
             if retrace < 30_000 {
                 return;
             }
-            // The alien robots taken out, so the drive does not hang on a fight that
-            // any change in slot use reshuffles (T-154).
+            // The alien robots and the scorpion's own side's other robots taken out, so
+            // the drive does not hang on a fight that any change in slot use (T-154) or
+            // in what a lock reads (T-203) reshuffles, or bump a robot of its own.
             if retrace == 30_000 {
-                for id in m.world().units(Side::Alien).to_vec() {
+                let mut gone = m.world().units(Side::Alien).to_vec();
+                gone.extend(
+                    m.world()
+                        .units(Side::Human)
+                        .iter()
+                        .filter(|&&id| id != EntityId(robot)),
+                );
+                for id in gone {
                     xeno_sim::damage::destroy(m.world_mut(), id, &assets.motion, &mut Vec::new());
                 }
             }

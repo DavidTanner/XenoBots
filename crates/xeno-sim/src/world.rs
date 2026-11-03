@@ -699,6 +699,8 @@ pub struct World {
     /// object in it and one for each reference held on the slot (`docs/sim.md`,
     /// "Reference counts (T-154)"). A slot is reused only when empty with a count of 0.
     pub(crate) refs: BTreeMap<EntityId, u16>,
+    /// The pools' memory each object lives in, and what freed objects left there.
+    pools: Pools,
     pub orders: OrderBook,
     pub terrain: Terrain,
     pub paths: Paths,
@@ -735,6 +737,66 @@ pub struct World {
     /// The string segment's bytes the scorpion's status lines rewrote (`1000:9153`
     /// on, `log::status`); the rest are the image's. Not saved, as the original's.
     pub strings: BTreeMap<u16, u8>,
+}
+
+/// A place in one of the pools objects live in (`DS:0x7f64`, 200 of 0x34 bytes, and
+/// `DS:0xa8cc`, 40 of 0x172: robots and bases, `DS:0xe7c7` bit 0), which a lock's
+/// pointer (+0xe6) names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Memory {
+    big: bool,
+    index: u16,
+}
+
+impl Memory {
+    /// The id a lock on this freed memory holds: past the 240 slots, so no slot's.
+    const GHOST: u16 = 0x8000;
+
+    fn ghost(self) -> EntityId {
+        EntityId(Self::GHOST | u16::from(self.big) << 8 | self.index)
+    }
+
+    fn of_ghost(id: EntityId) -> Option<Memory> {
+        (id.0 & Self::GHOST != 0).then_some(Memory {
+            big: id.0 & 0x100 != 0,
+            index: id.0 & 0xff,
+        })
+    }
+}
+
+/// The pools' bookkeeping (`DS:0xa804`, `0xe29c`: a byte for each place in use).
+/// Not hashed or saved: as in the original, a loaded world lays its objects out anew.
+#[derive(Debug, Clone, Default)]
+struct Pools {
+    at: BTreeMap<EntityId, Memory>,
+    /// The bytes freed objects left, until their memory is taken again.
+    freed: BTreeMap<Memory, Entity>,
+}
+
+// The layout is not part of the state a world is compared by (see `Pools`).
+impl PartialEq for Pools {
+    fn eq(&self, _: &Pools) -> bool {
+        true
+    }
+}
+
+impl Eq for Pools {}
+
+impl Pools {
+    /// `1000:f4ee`: the lowest free place in `kind`'s pool, for slot `id`; none when
+    /// the pool is full.
+    // shortcut: the loader overwrites +0x02 with the file's index and `f5cd` frees the
+    // place that names, so a file whose indices are not its load order (scen06a's small
+    // pool) frees places still in use; the port frees where the object lives. T-213.
+    fn alloc(&mut self, id: EntityId, kind: ObjectKind) -> Option<Memory> {
+        let big = crate::orders::RobotKind::of(kind).is_some() || kind == ObjectKind::Base;
+        let size = if big { 40 } else { 200 };
+        let index =
+            (0..size).find(|&i| !self.at.values().any(|m| *m == Memory { big, index: i }))?;
+        let m = Memory { big, index };
+        self.at.insert(id, m);
+        Some(m)
+    }
 }
 
 /// How many objects of each kind one side has. The units are the robots: the kinds a
@@ -832,9 +894,15 @@ impl World {
                 units[side].push(EntityId(o.slot));
             }
         }
+        // `1000:f47d` takes each object's memory (`f4ee`) in file order.
+        let mut pools = Pools::default();
+        for o in scenario.objects.iter().flatten() {
+            pools.alloc(EntityId(o.slot), o.kind);
+        }
         World {
             entities,
             refs: world.refs,
+            pools,
             orders: OrderBook::from_scenario(scenario),
             terrain: Terrain::from_scenario(scenario),
             paths: Paths::from_scenario(scenario),
@@ -927,9 +995,17 @@ impl World {
     /// Puts `entity` in slot `id`, returning the one it replaces. Into an empty slot
     /// it is a new object, which counts a reference on the slot (`1000:f4b1`).
     pub fn insert(&mut self, id: EntityId, entity: Entity) -> Option<Entity> {
+        let kind = entity.kind;
         let old = self.entities.insert(id, entity);
         if old.is_none() {
             self.take(id);
+            // `f4ee`: the lowest free memory of its pool; `f4b1` clears the bytes a
+            // freed object left there, so a lock still on them now has this object.
+            if let Some(m) = self.pools.alloc(id, kind)
+                && self.pools.freed.remove(&m).is_some()
+            {
+                self.retarget(m.ghost(), id);
+            }
         }
         old
     }
@@ -938,10 +1014,34 @@ impl World {
     /// and drops its own reference; the slot stays taken while others hold one.
     pub fn remove(&mut self, id: EntityId) -> Option<Entity> {
         let old = self.entities.remove(&id);
-        if old.is_some() {
+        if let Some(e) = &old {
             self.release(id);
+            // Its memory is free, its bytes still there with `GONE` (`f5dc`): a lock
+            // (a pointer, `docs/sim.md`, "The lock's pointer (T-203)") stays on them.
+            if let Some(m) = self.pools.at.remove(&id) {
+                let mut left = e.clone();
+                left.flags |= usg::flag::GONE;
+                self.pools.freed.insert(m, left);
+                self.retarget(id, m.ghost());
+            }
         }
         old
+    }
+
+    /// Every lock on `from` now on `to`: the same memory, another way to name it.
+    fn retarget(&mut self, from: EntityId, to: EntityId) {
+        for e in self.entities.values_mut() {
+            if let State::Robot(m) = &mut e.state
+                && m.target == Some(from)
+            {
+                m.target = Some(to);
+            }
+        }
+    }
+
+    /// `1000:f656` on a lock's pointer: the slot it is in, none for freed memory.
+    pub fn slot_of(&self, target: EntityId) -> Option<EntityId> {
+        self.entities.contains_key(&target).then_some(target)
     }
 
     /// Slot `id`'s reference count (`DS:0xe2c6`).
@@ -983,8 +1083,13 @@ impl World {
             .find(|&id| self.get(id).is_none() && self.refs(id) == 0)
     }
 
+    /// The object in slot `id`; for a lock's `id` on freed memory, the bytes the freed
+    /// object left there (`GONE` set).
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
-        self.entities.get(&id)
+        match Memory::of_ghost(id) {
+            Some(m) => self.pools.freed.get(&m),
+            None => self.entities.get(&id),
+        }
     }
 
     pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {

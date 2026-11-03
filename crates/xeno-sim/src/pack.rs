@@ -316,8 +316,9 @@ fn robot(
     let g = &m.guns;
     r.put(0xde, &[g.ecm, g.ecm_time, g.cloaks, g.cloak_time]);
     r.put(0xe2, &g.drops);
-    // `1000:f656`: the target's pointer to its slot (the pack also counts a reference).
-    r.u16(0xe6, slot(m.target));
+    // `1000:f656`: the target's pointer to its slot, 0xffff for freed memory (the
+    // pack also counts a reference).
+    r.u16(0xe6, slot(m.target.and_then(|t| world.slot_of(t))));
     r.u16(0xe8, m.target_distance);
     r.u16(0xea, m.target_bearing);
     r.put(0xed, &[m.locked_on, m.blink]);

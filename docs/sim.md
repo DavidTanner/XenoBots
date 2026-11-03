@@ -2300,8 +2300,8 @@ longer patches single bits). They replace the copies the sim kept before:
 `Entity::side` stays as the side's convenient form; the relay's tick sets `ALIEN` with
 it. The readers read the bits where the original does: the scan counts units by `UNIT`
 and spots them, the searches and the A key take `SCANNED`, the lock `TARGETABLE` and
-marks its target `SPOTTED` (a base too), the upkeep drops a target that is `GONE` (or
-no longer `TARGETABLE`, its slot freed and taken), shots, blasts and contacts see
+marks its target `SPOTTED` (a base too), the upkeep drops a target that is `GONE` (since T-203
+on the target's memory, not its slot), shots, blasts and contacts see
 `IN_FIELD`, which the take-in clears and the launch sets, the mines' and buoys' search
 looks for `UNIT`, the signal for linked relays and bases. The makers set the
 original's bytes: shots, explosions and sparkles 0 (and the port's side human, as the
@@ -2451,7 +2451,7 @@ slot. Every reader and writer of the count was found by a byte search for the op
 
 The lock itself holds a pointer (+0xe6) and **no** reference, so a locked target's slot
 can be freed and reused while locked; the upkeep drops it on `GONE` (`d685`), a bit the
-next object made in the same pool memory clears. Destroying a robot releases only its
+next object made in the same pool memory clears ("The lock's pointer (T-203)", below). Destroying a robot releases only its
 object goal: a scorpion's reference on its missile stays, and the missile's slot is
 never free again.
 
@@ -2487,9 +2487,9 @@ ground included. Retired shortcuts: `spawn_explosion`'s and every maker's immedi
 of a freed slot, L's immediate free (L's `World::remove` is now `f5cd`), the save's
 loaded counts, and the shots' check for a target slot holding a shot or explosion (an
 empty slot is the target gone). Kept: the lock's check (`sense.rs`: an empty slot or one
-a new object that is not targetable took is the target gone, since the port has no
-pool memory) and the tail missile's removal freeing its slot at once rather than two
-ticks later.
+a new object that is not targetable took is the target gone, since the port had no
+pool memory; retired by T-203) and the tail missile's removal freeing its slot at once
+rather than two ticks later (retired by T-202).
 
 Tests: `world`'s `a_slot_is_reused_only_when_empty_and_unreferenced`, the console's
 object goal taking and releasing in `script`'s tests, `pack`'s round trip (an empty slot's
@@ -2500,6 +2500,91 @@ loaded one, plus objects made less freed, plus exactly the references held. The 
 part of `xeno-app`'s `real_assets_a_training_mission_is_won_and_lost_by_play` now takes
 the alien robots out when the drive starts: slots blocked at 0xffff move where shots are
 made, and the fight the scorpion survived with seed 1 went the other way.
+
+### The lock's pointer (T-203)
+
+A T-090 pass read how objects get their memory and what the lock does when that memory
+is freed.
+
+**The pools.** `f4b1` first calls `1000:f4ee`, which takes the lowest place not in use
+in the kind's pool (`DS:0xe7c7` bit 0: kinds 0 to 3, the robots and the base, use the
+big pool): the small pool is 200 places of 0x34 bytes at `DS:0x7f64` with a byte each at
+`DS:0xa804`, the big one 40 of 0x172 at `DS:0xa8cc` with bytes at `DS:0xe29c`. It counts
+the pool's objects (`DS:0xe684` small, `0xe686` big, both refused at 200, though the big
+pool has 40 places; only the editor makes big objects in play) and keeps high-water marks
+(`0xe688`, `0xe68a`, `0xe68c`). It writes the kind at +0 and the place's index at +2;
+`f4b1` then clears every byte from +4 (`GONE` included). Freeing (`f5cd`) sets `GONE`,
+clears the slot's pointer and the place's byte by the index at +2, and leaves the bytes:
+until another object is made in that place, freed memory still reads as the object, with
+`GONE`. The loader (`f47d`) takes the memory the same way in file order, then reads the
+file's bytes from +2 on, so +2 becomes the file's index, not the place taken.
+
+**The upkeep and the lock.** +0xe6 is that memory's address. The upkeep (`d66f`) tests
+only +0xe6 being 0 and the memory's `GONE` (`d685`): freed memory is dropped with the
+"destroyed" message; memory a new object took (its `GONE` cleared) is a live target,
+whatever its kind: the upkeep works out its bearing and distance, and the ECM and the
+warning apply when it has `UNIT`. Nothing checks `TARGETABLE` after the lock. Until the
+upkeep runs (every 16 ticks), every reader of the target (the scripts' 0x6b and 0x6c,
+the aim of shells and missiles) reads the memory as it stands.
+
+**In play.** Nothing makes a big-pool object in play except the editor (unlock word 9),
+so a destroyed robot's memory is never taken again: a lock on it is dropped at the next
+upkeep, having aimed at where the robot stood. A base is never freed. A relay (lockable
+only by the console's pointer, T-133: the A key and opcode 0x71 take `SCANNED` objects,
+robots and bases) is small-pool memory; destroyed (its explosion is made before the
+free, so elsewhere), loaded with L or removed by Ctrl+Alt+R, its place is usually the
+lowest free, so the next shot, explosion or sparkle anyone makes is put there and the
+lock follows that object until it is freed in turn. In the port before T-203 the lock
+kept the slot, which the next object made usually takes (the lowest free slot), so a
+dead robot's lock aimed at a new shot until the upkeep dropped it, and one on a relay was
+dropped at once.
+
+**The tail missile's set-up** (`1000:e08e`, from the launch `97d4`) turns +0xe6 into a
+slot with `f656` (which gives the carry for a pointer in no slot) and, on the carry,
+`e0e1` calls `f656` and `f5cd` with DI, which the `pop di` before the test has made the
+**launching robot** again: the scorpion is freed, not the new missile. The homing
+shot's set-up (`e3bf`) moves the shot into DI first, so this is a bug. The launch then
+goes on (`97d7`: the sound, the missile camera, "missile launched", a missile fewer, the
+reload) on the freed scorpion, whose missile (+0x123, referenced) keeps its target slot
+0 (`f4b1`'s zeros) and heading 0, and its end releases slot 0's count. It is reached
+when the scorpion's lock is on freed memory nobody took again: its target destroyed (or a
+relay freed) after its upkeep (entry 6) and before the next, with a tail missile requested
+at a weapon step in between (entries 12 and 1). The launch checks only +0xe6 is not 0
+(`97a2`). The stock programs as the port runs them never request the tail missile (every stock
+scenario run 60,000 ticks: no request), so in practice a player reaches it, firing the
+tail missile within 16 ticks of the target's death. The scorpion then leaves the object
+table with no explosion, kill, loss or message: it is no longer ticked or
+saved, but stays in its unit list; nothing frees its call sign. Whether the console on
+view shows anything odd was not checked in DOSBox (T-155). It may be one source of
+scen06a's 0xfff2 on slot 0 (each such missile releases slot 0 once), not confirmed.
+
+**The port.** `World` keeps where each object lives (`Pools`: the lowest free place in
+its pool for an object put in an empty slot, file order at load) and, for a freed
+object, its last state with `GONE`. A robot's `target` names a slot while the target
+lives; `World::remove` moves every lock on the slot to the freed memory (an id past the
+240 slots that `World::get` reads as the freed object), and an object made in that
+memory takes those locks to its slot. `World::slot_of` is `f656` (none for freed
+memory): the homing shot's and tail missile's set-ups and the save's pack use it (a lock
+on freed memory is saved as 0xffff). The upkeep drops on `GONE` alone. Not hashed or
+compared: the layout (a loaded world lays it out anew, as the original's loader does).
+Deliberate deviation: `e0e1`'s free of the scorpion. The port drops the missile, as the
+homing shot's set-up does, and the launch is counted as the original counts it; a
+player's robot vanishing with no explosion is a bug, not a rule, and the state it leaves
+(a unit in the list with no object) is one the port cannot show the way DOSBox would
+without guessing. Shortcut: the loader's +2 is the file's index, and `f5cd` frees the
+place +2 names; in scen06a's small pool (+2 not the load order) a freed relay frees
+another object's place, so the next object is made over a live one. The port frees where
+the object lives (T-213).
+
+Tests: `sense`'s `the_lock_is_on_its_target_s_memory_not_its_slot` (a destroyed robot's
+slot taken by a relay: the lock is dropped, not moved to the relay; a freed relay's
+memory taken by a shot: the lock follows the shot, then drops it when it goes) and
+`weapons`' `a_tail_missile_on_a_freed_target_is_dropped_and_the_scorpion_kept`. The
+ntrain drive of `xeno-app`'s `real_assets_a_training_mission_is_won_and_lost_by_play`
+now takes out the driven scorpion's own side's other robots too: in the ntrain fight
+before the drive, a human scorpion whose target died now steers to where it stood (the
+port read no target before), the fight goes another way, and the driven scorpion
+bumped its own side's scorpion and lost its tail missile.
 
 ## The mission clock (T-102)
 
