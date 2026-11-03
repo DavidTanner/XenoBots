@@ -322,6 +322,7 @@ fn robot(
     r.u8(0xfa, m.clock);
     r.u8(0xf7, m.contacts);
     r.u8(0xfb, m.bump_wait);
+    r.u8(0xfc, m.repair_count);
     let g = &m.guns;
     match RobotKind::of(kind) {
         Some(RobotKind::Humanoid) => {

@@ -13,7 +13,7 @@ use crate::motion::Tables;
 use crate::orders::RobotKind;
 use crate::script::bearing;
 use crate::terrain::approx_distance;
-use crate::world::{Damage, EntityId, State, World};
+use crate::world::{Components, Damage, EntityId, State, World};
 
 /// A link's [`Relay::links`] states.
 const FED: u8 = usg::Link::FED;
@@ -331,6 +331,49 @@ pub fn signal_step(world: &mut World, id: EntityId, tables: &Tables) {
     if ticks & t.recharge == 0 {
         up(&mut m.guns.energy);
     }
+}
+
+/// Robot `id`'s repair on the net, at its kind's entry of its tick table (`1000:df79`,
+/// `2000:7f10`): under the signal level or undamaged the count restarts; else it
+/// counts, and at the period restarts and clears the first damaged part's bit, with a
+/// message to the robot's panel. The damage total follows at the tick's end.
+pub fn repair_step(world: &mut World, id: EntityId, tables: &Tables) {
+    let r = &tables.relays.repair;
+    let Some(e) = world.get_mut(id) else {
+        return;
+    };
+    let (State::Robot(m), Damage::Robot(c)) = (&mut e.state, &mut e.damage) else {
+        return;
+    };
+    let Some(k) = RobotKind::of(e.kind) else {
+        return;
+    };
+    if (m.tick & 0x1e) >> 1 != r.steps[k.index()] {
+        return;
+    }
+    if m.signal < r.signal || c.total == 0 {
+        m.repair_count = 0;
+        return;
+    }
+    m.repair_count = m.repair_count.wrapping_add(1);
+    if m.repair_count < r.period {
+        return;
+    }
+    m.repair_count = 0;
+    let set = |c: &mut Components, (offset, bits): (u16, u8)| {
+        c.byte(offset).is_some_and(|b| *b & bits != 0)
+    };
+    let Some(part) = r
+        .parts
+        .iter()
+        .find(|p| !p.unless.is_some_and(|u| set(c, u)) && set(c, (p.offset, p.bit)))
+    else {
+        return;
+    };
+    if let Some(b) = c.byte(part.offset) {
+        *b &= !part.bit;
+    }
+    m.panel.post(r.message);
 }
 
 #[cfg(test)]

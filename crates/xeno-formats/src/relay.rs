@@ -70,6 +70,43 @@ pub(crate) const SIGNAL_STEPS: [usize; 3] = [0xb2fc, 0x99f8, 0xcad9];
 const SIGNAL_STEP: &str =
     "9a ?? ?? ?? ?? c6 85 ?? 01 03 f7 06 c6 62 ?? ?? 75 09 80 7d 50 ff 74 03 fe 45 50";
 
+/// Entry 14 of each kind's tick table (`1000:df79`): `call far` the repair, `jnc`,
+/// `mov si, message`, `call 1000:d53f` (the robot's panel), `ret`.
+pub(crate) const REPAIR_STEP_AT: usize = 0xdf79;
+const REPAIR_STEP: &str = "9a ?? ?? ?? ?? 73 06 be ?? ?? e8 ?? ?? c3";
+const SAY: usize = 0xd53f;
+/// The repair (`2000:7f10`): under the signal (`cmp byte [di + 0x4f], signal`, `jc`)
+/// or with no damage (`cmp byte [di + 0xf9], 0`, `jz`) +0xfc back to 0; else
+/// `inc byte [di + 0xfc]`, and under `cmp byte [di + 0xfc], period` (`jnc`) nothing
+/// more; at it, +0xfc back to 0 and the parts follow.
+const REPAIR: &str = "80 7d 4f ?? 72 14 80 bd f9 00 00 74 0d fe 85 fc 00 80 bd fc 00 ?? 73 09 \
+                      f8 cb c6 85 fc 00 00 f8 cb c6 85 fc 00 00";
+/// Parts end with `clc`, `retf` (nothing mended) and `stc`, `retf` (one was).
+const REPAIR_END: &[u8] = &[0xf8, 0xcb, 0xf9, 0xcb];
+
+/// One part the repair mends: when `unless` (a byte's offset and bits) is clear and
+/// `bit` of the byte at `offset` is set, the bit is cleared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mend {
+    pub unless: Option<(u16, u8)>,
+    pub offset: u16,
+    pub bit: u8,
+}
+
+/// The repair on the net (`docs/sim.md`, "The repair on the net (T-179)").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repair {
+    /// It counts while the signal is this or over and the damage total is not 0.
+    pub signal: u8,
+    /// At this count it restarts and mends the first damaged of `parts`.
+    pub period: u8,
+    pub parts: Vec<Mend>,
+    /// The message (a string-segment offset) to the robot's panel when one is mended.
+    pub message: u16,
+    /// The entry of each kind's tick table (humanoid, scorpion, scout) that runs it.
+    pub steps: [u8; 3],
+}
+
 /// The relays' and the signal's numbers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relays {
@@ -102,6 +139,7 @@ pub struct Relays {
     /// The entry of each kind's tick table (humanoid, scorpion, scout) that runs the
     /// signal.
     pub signal_steps: [u8; 3],
+    pub repair: Repair,
 }
 
 /// The image offset of the `call far` at `at` (segment and offset as the image keeps
@@ -123,6 +161,77 @@ fn byte(image: &[u8], at: usize) -> Result<u8, FormatError> {
         .get(at)
         .copied()
         .ok_or_else(|| invalid(at, "past the end of the image"))
+}
+
+/// The entry of each kind's tick table that holds `routine`, which must be there once.
+fn entries(image: &[u8], ds: usize, routine: usize) -> Result<[u8; 3], FormatError> {
+    let mut out = [0; 3];
+    for (k, n) in out.iter_mut().enumerate() {
+        let ticks = ds + usize::from(word(image, TICKS_AT[k] + 2)?);
+        let found: Vec<usize> = (0..crate::sensing::TICKS)
+            .filter(|&n| word(image, ticks + 2 * n).is_ok_and(|w| usize::from(w) == routine))
+            .collect();
+        *n = match *found {
+            [n] => n as u8,
+            _ => return Err(invalid(TICKS_AT[k], "a routine not once in its tick table")),
+        };
+    }
+    Ok(out)
+}
+
+/// The repair (`REPAIR_STEP`, `REPAIR`): the parts are tests of a byte's bit
+/// (`test byte [di + offset], bit`, `jz` the next, `and byte [di + offset], !bit`, `jmp`
+/// the end), each maybe after a guard (`test byte [di + offset], bits`, `jnz` the next).
+fn repair(image: &[u8], ds: usize) -> Result<Repair, FormatError> {
+    shape(image, REPAIR_STEP_AT, REPAIR_STEP, "repair's step")?;
+    if callee(image, REPAIR_STEP_AT + 10)? != SAY {
+        return Err(invalid(REPAIR_STEP_AT, "not the repair's message"));
+    }
+    let at = far(image, REPAIR_STEP_AT)?;
+    shape(image, at, REPAIR, "repair")?;
+    let (mut p, mut parts, mut unless) = (at + 0x26, Vec::new(), None);
+    let bad = |p| invalid(p, "not a repaired part");
+    loop {
+        match image.get(p..p + 14).ok_or_else(|| bad(p))? {
+            [0xf6, 0x85, o0, o1, bits, 0x75, 0x0e, ..] if unless.is_none() => {
+                unless = Some((u16::from_le_bytes([*o0, *o1]), *bits));
+                p += 7;
+            }
+            [
+                0xf6,
+                0x85,
+                o0,
+                o1,
+                bit,
+                0x74,
+                0x07,
+                0x80,
+                0xa5,
+                a0,
+                a1,
+                mask,
+                0xeb,
+                _,
+            ] if [o0, o1] == [a0, a1] && *mask == !*bit => {
+                let offset = u16::from_le_bytes([*o0, *o1]);
+                parts.push(Mend {
+                    unless: unless.take(),
+                    offset,
+                    bit: *bit,
+                });
+                p += 14;
+            }
+            b if b.starts_with(REPAIR_END) && unless.is_none() && !parts.is_empty() => break,
+            _ => return Err(bad(p)),
+        }
+    }
+    Ok(Repair {
+        signal: byte(image, at + 3)?,
+        period: byte(image, at + 0x15)?,
+        parts,
+        message: operand(image, REPAIR_STEP_AT + 7, &[0xbe])?,
+        steps: entries(image, ds, REPAIR_STEP_AT)?,
+    })
 }
 
 /// Reads the numbers from a load image whose data segment starts at `ds`.
@@ -220,6 +329,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Relays, FormatError> {
         drive_masks,
         recharge: recharge.unwrap_or(0),
         signal_steps,
+        repair: repair(image, ds)?,
     })
 }
 
@@ -246,6 +356,20 @@ mod tests {
         assert_eq!((r.folder, r.fold_reach, r.link_reach), (1, 0x32, 0x640));
         assert_eq!((r.full, r.none, r.battery), (0x578, 0x5b8, 0x40));
         assert_eq!((r.recharge, r.signal_steps), (0x1f0, [3, 4, 2]));
+        let p = &r.repair;
+        assert_eq!(
+            (p.signal, p.period, p.message, p.steps),
+            (0x90, 0x30, 0x1234, [10, 0, 14])
+        );
+        assert_eq!(p.parts.len(), 3);
+        assert_eq!(
+            p.parts[0],
+            Mend {
+                unless: Some((0xf6, 0x20)),
+                offset: 0xdc,
+                bit: 2
+            }
+        );
         insta::assert_debug_snapshot!(r);
     }
 
@@ -262,6 +386,11 @@ mod tests {
             (0x1_7d16 + 0x6b, 0x00),
             (DISTANCE_AT, 0x90),
             (SIGNAL_STEPS[1] + 0xe, 0xf1),
+            (REPAIR_STEP_AT + 5, 0x72),
+            (REPAIR_STEP_AT + 11, 0xba),
+            (0x1_7f10 + 0x10, 0xfd),
+            (0x1_7f10 + 0x26 + 7 + 11, 0xfe),
+            (0x1_7f10 + 0x26 + 35, 0xf9),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -293,6 +422,27 @@ mod tests {
             (0x578, 0x5b8, 0x40, 0x1f0)
         );
         assert_eq!(r.signal_steps, [3; 3]);
+        // `docs/sim.md`, "The repair on the net (T-179)".
+        let p = &r.repair;
+        assert_eq!((p.signal, p.period, p.steps), (0x80, 0xf0, [14; 3]));
+        let parts: Vec<_> = p
+            .parts
+            .iter()
+            .map(|m| (m.unless, m.offset, m.bit))
+            .collect();
+        let f6 = |bit| Some((0xf6, bit));
+        assert_eq!(
+            parts,
+            [
+                (f6(0x40), 0xdc, 1),
+                (f6(0x80), 0xdc, 2),
+                (None, 0xec, 1),
+                (None, 0xf6, 1),
+                (None, 0xf6, 2),
+                (None, 0xf6, 4),
+                (None, 0xf6, 8),
+            ]
+        );
         // Full power keeps the whole drive.
         assert_eq!(r.drive_masks[100 >> 4], 0xff);
     }

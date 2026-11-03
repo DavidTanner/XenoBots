@@ -280,7 +280,7 @@ expression: "&objects[..3]"
                 damage: 210,
                 clock: 6,
                 bump_wait: 77,
-                unknown_fc: 57,
+                repair_count: 57,
                 equipment: 192,
                 parts: Humanoid(
                     HumanoidParts {

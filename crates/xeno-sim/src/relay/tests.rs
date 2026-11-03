@@ -357,6 +357,71 @@ fn the_signal_step_runs_the_battery_and_the_drive() {
 }
 
 #[test]
+fn the_repair_on_the_net_mends_a_part_a_period_in_order() {
+    // The synthetic repair: from signal 0x90, every 0x30 runs, the humanoid's entry 10
+    // (its tick counter 20); +0xdc bit 1 unless +0xf6 bit 5, +0xec bit 0, +0xf6 bit 2.
+    let tables = synthetic_tables();
+    let mut world = World::default();
+    world.insert(
+        EntityId(1),
+        robot(ObjectKind::Humanoid, Side::Human, 100, 100),
+    );
+    let set = |world: &mut World, tick: u8, signal: u8, total: u8| {
+        let e = world.get_mut(EntityId(1)).unwrap();
+        if let (State::Robot(m), Damage::Robot(c)) = (&mut e.state, &mut e.damage) {
+            (m.tick, m.signal, c.total) = (tick, signal, total);
+        }
+    };
+    let read = |world: &World| {
+        let e = world.get(EntityId(1)).unwrap();
+        match (e.state, e.damage) {
+            (State::Robot(m), Damage::Robot(c)) => (
+                m.repair_count,
+                (c.weapons, c.targeting, c.systems),
+                m.panel.queue[0],
+            ),
+            _ => unreachable!(),
+        }
+    };
+    let step = |world: &mut World, n: usize| {
+        for _ in 0..n {
+            repair_step(world, EntityId(1), &tables);
+        }
+    };
+    let e = world.get_mut(EntityId(1)).unwrap();
+    if let Damage::Robot(c) = &mut e.damage {
+        (c.weapons, c.targeting, c.systems) = (2, 1, 0x24);
+    }
+    set(&mut world, 20, 0x90, 5);
+    step(&mut world, 0x2f);
+    assert_eq!(read(&world), (0x2f, (2, 1, 0x24), 0));
+    // The weapon is skipped (+0xf6 bit 5), so the targeting computer is first.
+    step(&mut world, 1);
+    assert_eq!(read(&world), (0, (2, 0, 0x24), 0x1234));
+    step(&mut world, 0x30);
+    assert_eq!(read(&world), (0, (2, 0, 0x20), 0x1234));
+    // Nothing left to mend: the count restarts with no message.
+    if let Some(State::Robot(m)) = world.get_mut(EntityId(1)).map(|e| &mut e.state) {
+        m.panel.queue = [0; 5];
+    }
+    step(&mut world, 0x30);
+    assert_eq!(read(&world), (0, (2, 0, 0x20), 0));
+    // Another entry does nothing; under the signal or undamaged the count restarts.
+    step(&mut world, 3);
+    set(&mut world, 22, 0x90, 5);
+    step(&mut world, 1);
+    assert_eq!(read(&world).0, 3);
+    set(&mut world, 20, 0x8f, 5);
+    step(&mut world, 1);
+    assert_eq!(read(&world).0, 0);
+    set(&mut world, 20, 0x90, 5);
+    step(&mut world, 3);
+    set(&mut world, 20, 0x90, 0);
+    step(&mut world, 1);
+    assert_eq!(read(&world).0, 0);
+}
+
+#[test]
 fn a_file_s_relay_loads_with_its_state() {
     let link = |state| usg::Link {
         state,
