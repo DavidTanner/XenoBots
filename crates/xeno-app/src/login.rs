@@ -225,7 +225,12 @@ pub fn test_assets() -> Assets {
         font: fonts[0].clone(),
         anims: list(&records).bytes().to_vec(),
         save_dir: PathBuf::from("no saves here"),
-        campaign: crate::maproom::tests::test_campaign().table,
+        campaign: {
+            // A new campaign's table, as the stock one: nothing won yet.
+            let mut table = crate::maproom::tests::test_campaign().table;
+            table.scenarios[1].state = 0;
+            table
+        },
         farewell: Some(Farewell {
             prefix: "SEE YOU, ".into(),
             close: '!',

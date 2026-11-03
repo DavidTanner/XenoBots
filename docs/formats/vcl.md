@@ -256,7 +256,8 @@ points are the bonus alone (1000 in the stock game). Without music the counter s
 0 with the cutscene (`TRIUMPH`: one retrace later, where `BIGWIN3` would start). One
 difference: the 15 ticks the routines wait after leaving the mode are waited before
 it, still in the 320x240 mode (the screen is black either way). `--screen won`, `lost` and `triumph` play one alone, then the map room; a base
-destroyed in play, or Ctrl+C, ends a mission in one.
+destroyed in play ends a mission in one (`TRIUMPH` when it wins the campaign's last
+scenario).
 
 With the stock entries the chain lasts about 7,690 retraces (2 min 8 s) when not
 aborted: `PRESENTS` is held until counter 7,640.

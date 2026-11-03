@@ -155,10 +155,10 @@ const TRAINING_KEYS: &[(KeyWord, Action)] = &[];
 /// The review's keys are read from the user's `xeno.exe` (`DS:0x6244`, in
 /// `maproom::Assets::review`).
 const REVIEW_KEYS: &[(KeyWord, Action)] = &[];
-/// The port's own key (no view's table binds it): Ctrl+C ends the mission with the
-/// campaign won. The views' own keys are read from the user's `xeno.exe` (`mission`);
-/// a mission is won or lost when a base is destroyed (T-150).
-const MISSION_KEYS: &[(KeyWord, Action)] = &[(KeyWord(CTRL | 0x2e), End(Ending::Triumph))];
+/// The views' own keys are read from the user's `xeno.exe` (`mission`); a mission is
+/// won or lost when a base is destroyed (T-150), and the campaign when its last
+/// scenario is won (T-176).
+const MISSION_KEYS: &[(KeyWord, Action)] = &[];
 /// A cutscene's keys go to the player (`intro::Cutscene`): any key but P skips it.
 const CUTSCENE_KEYS: &[(KeyWord, Action)] = &[];
 
@@ -199,7 +199,7 @@ impl Screen {
             Training => "Training menu: click or H/N/S/C train, ESC back",
             Review => "Review: Tab/Alt+Tab or the next button turn the page, ESC/Alt+Q back",
             Mission(View::SitRoom) => {
-                "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end, Ctrl+C campaign"
+                "Mission, situation room: click/Tab select, Space view unit, O orders, Alt+Q end"
             }
             Mission(View::Humanoid) => {
                 "Mission, humanoid console: click program (L next, R previous), F4 next, F2 pilot, F3 program, Tab unit, ESC back"
@@ -1214,10 +1214,6 @@ impl Screens {
                             self.numbers = shown;
                             self.map.set_selection(next);
                         }
-                        // Ctrl+C: the port's stand-in for the campaign's last win.
-                        if ending == Ending::Triumph && campaign.result == 1 {
-                            campaign.won = true;
-                        }
                     }
                 }
                 log::info!("mission: {ending:?}, {}", summary(campaign));
@@ -1473,7 +1469,6 @@ pub(crate) mod tests {
     /// Ctrl with a key, for [`presses`].
     const CTRL_KEY: u16 = 0x1000;
     const CTRL_W: u16 = CTRL_KEY | 0x11;
-    const CTRL_C: u16 = CTRL_KEY | 0x2e;
     /// Not keys: [`presses`] codes for a mission ended by play, which [`step`] carries
     /// out by destroying the alien or the player's base through the sim (T-150).
     const WIN: u16 = 0xff01;
@@ -1575,14 +1570,15 @@ pub(crate) mod tests {
             Mission(View::SitRoom)
         );
         // A mission's end fades to its cutscene, then back to the map room, where P
-        // plays again.
-        for (key, ending) in [
-            (WIN, Ending::Won),
-            (LOSE, Ending::Lost),
-            (CTRL_C, Ending::Triumph),
+        // plays again. The campaign is won by winning its last scenario: Ctrl+W wins
+        // four of the five first.
+        let won = [0x1c, 0x0f, CTRL_W, CTRL_W, CTRL_W, CTRL_W, 0x19, WIN];
+        for (codes, ending) in [
+            (&[0x1c, 0x0f, 0x19, WIN][..], Ending::Won),
+            (&[0x1c, 0x0f, 0x19, LOSE], Ending::Lost),
+            (&won, Ending::Triumph),
         ] {
-            let codes = [0x1c, 0x0f, 0x19, key];
-            let (_, seen) = run(&presses(&codes), Login, span(&codes));
+            let (_, seen) = run(&presses(codes), Login, span(codes));
             let at = seen.iter().position(|&s| s == Cutscene(ending)).unwrap();
             assert_eq!(seen[at - 1], Mission(View::SitRoom));
             assert_eq!(seen.last(), Some(&MapRoom));
@@ -2414,15 +2410,20 @@ pub(crate) mod tests {
     fn real_assets_every_screen_loads_and_shows() {
         // Enter, R, ESC, T, ESC (back), Tab, P (the mission's situation room), Space
         // (the first unit's console), ESC (back), the alien base destroyed (won, then
-        // the map room), P (play the next scenario), the player's lost, P, Ctrl+C, N.
-        let codes = [
-            0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, WIN, 0x19, LOSE, 0x19, CTRL_C,
-            0x31,
+        // the map room), P (play the next scenario), the player's lost; then Tab and
+        // Ctrl+W eleven times win every other scenario, so P and the alien base
+        // destroyed win the campaign's last one (the campaign won); N.
+        let mut codes = vec![
+            0x1c, 0x13, 0x01, 0x14, 0x01, 0x0f, 0x19, 0x39, 0x01, WIN, 0x19, LOSE,
         ];
+        codes.extend([0x0f, CTRL_W].repeat(11));
+        codes.extend([0x19, WIN, 0x31]);
         let log = presses(&codes);
         let Some(mut screens) = real_screens(Login) else {
             return;
         };
+        // Ctrl+W is a developer key: as with `XENO.KEY`'s unlock word 8.
+        screens.map_assets.developer = true;
         let mut fb = Framebuffer::new(Size::MODE_13H);
         let mut seen = vec![Login];
         let mut blink = Vec::new();
@@ -2438,9 +2439,11 @@ pub(crate) mod tests {
                 seen.push(screens.screen());
             }
         }
-        // Tab stays on the map room; every other key changes the screen, and each
+        // Tab and Ctrl+W stay on the map room; every other key changes the screen, and each
         // ending goes through its cutscene to the map room.
-        assert_eq!(seen.len(), codes.len() + 3, "{seen:?}");
+        assert_eq!(seen.len(), codes.len() - 22 + 3, "{seen:?}");
+        assert!(screens.campaign().won);
+        assert!(seen.contains(&Cutscene(Ending::Triumph)), "{seen:?}");
         assert!(seen.contains(&Mission(View::Humanoid)), "{seen:?}");
         // The win moved the selection to the next scenario, which P then played.
         assert_eq!(screens.scenario(), Some(1));
