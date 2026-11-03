@@ -340,7 +340,7 @@ impl MapState {
     }
 
     /// Moves the selection to `i` if the campaign accepts it; otherwise the original
-    /// beeps (`1000:0270`, not traced) and keeps the old one.
+    /// beeps (`1000:0270`, T-211) and keeps the old one.
     fn select(&mut self, i: usize, campaign: &Campaign) -> bool {
         if !campaign.accepts(i) {
             log::debug!("map room: scenario {i} refused while a mission has no result");

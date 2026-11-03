@@ -413,11 +413,12 @@ const DISPLAY_SOUND: u8 = 10;
 const NOISE_SOUND: u8 = 28;
 
 /// A sound event to play, or to stop (`1000:eeb1`: the event's voice given silence
-/// with the event's flags).
+/// with the event's flags), or the PC speaker's beep (`1000:0261`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sound {
     Play(u8),
     Stop(u8),
+    Beep,
 }
 
 /// The situation room's main view (widget type 0x50) and its orders mode, and how
@@ -1556,6 +1557,15 @@ impl Mission {
         std::mem::take(&mut self.sounds)
     }
 
+    /// The beep (`1000:0261`). The original sounds it only while the game clock is not
+    /// 0, which it is only before the timer starts and one count in 65,536.
+    // shortcut: the original stops the game for the beep's on and off counts (a busy
+    // wait on the clock); the port beeps without stalling. Stall if a DOSBox capture
+    // (T-194) shows the lost time matters.
+    pub fn beep(&mut self) {
+        self.sounds.push(Sound::Beep);
+    }
+
     /// Robot `slot`'s console display.
     fn display(&self, slot: u16) -> Display {
         self.displays.get(&slot).copied().unwrap_or_default()
@@ -1769,6 +1779,7 @@ impl Mission {
             (_, handler::PAUSE) => {
                 self.paused = true;
                 self.dirty = true;
+                self.beep();
                 None
             }
             (_, handler::SHOTS) => {
@@ -1778,6 +1789,7 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::CHARGE) if assets.developer_unlocked => {
                 self.pilot(slot, Pilot::Charge);
+                self.beep();
                 None
             }
             (Viewed::Robot(_), handler::BASE) => Some(self.base()),
@@ -5460,8 +5472,10 @@ pub mod tests {
         }
         let mut m = mission(&assets);
         let ticks = |m: &Mission| m.world().ticks;
+        let beeped = |m: &mut Mission| m.take_sounds().contains(&Sound::Beep);
         assert_eq!(m.key(f1, &assets), None);
         assert!(m.paused());
+        assert!(beeped(&mut m), "F1 beeps");
         let before = ticks(&m);
         assert_eq!(m.tick([]), None);
         assert_eq!(ticks(&m), before, "the world stands still");
@@ -5489,11 +5503,14 @@ pub mod tests {
         if let Some(State::Robot(r)) = m.world_mut().get_mut(EntityId(5)).map(|e| &mut e.state) {
             r.guns.energy = 1;
         }
+        beeped(&mut m);
         m.key(charge, &assets);
         assert_eq!(energy(&m), 1, "locked");
+        assert!(!beeped(&mut m), "no beep without the word");
         assets.developer_unlocked = true;
         m.key(charge, &assets);
         assert_eq!(energy(&m), 0xff);
+        assert!(beeped(&mut m), "Ctrl+P beeps");
     }
 
     #[test]

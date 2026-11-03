@@ -958,9 +958,8 @@ only, and S in the humanoid's and scout's.
   press. That event is used up. It then puts the pixels back (`0x512`), marks the
   view for a redraw (`DS:0x6ff0` |= 0x22), releases the records (`1000:13fe`) and pops
   the clock, so no game time passes. Nothing ticks while it waits.
-- **The beep** (`1000:0261`, far `1fe6:4329` → `1fe6:439a`): only while the game clock
-  is not 0, the PC speaker at PIT divisor 0x4b0 (1,193,182 / 1200, about 994 Hz) for 4
-  ticks of the clock, then 4 ticks of silence. F1 and Ctrl+P both call it.
+- **The beep** (`1000:0261`; "The beep (T-193)", below): the PC speaker at about
+  994 Hz for 4 counts of the game clock, then 4 silent, the game stopped meanwhile.
 - **S** (`1000:ddb0`): +0xfa = 0, the same as a press on the status panel (`1000:dd7f`).
   The tick's entry 4 steps the status page (humanoid +0x10a, scout +0x108) when
   +0xfa's low five bits are 0, then steps +0xfa (T-130, T-132), so the page turns at
@@ -990,10 +989,62 @@ sends it on Ctrl+P only with unlock word 8 from the user's `XENO.KEY`
 app: no ticks, the briefing stops typing, the colour records are held, the box and
 its text (`xeno_formats::sitroom::SitRoom::pause_box`, `pause_text`, read from the
 user's `xeno.exe`) are drawn over the view, and the next key or button press only
-ends it. Ctrl+Alt+S flips `MapState::shots`. Not ported: the beep (no PC speaker in
-`xeno-audio`; T-193). S and the status panel's press are `Pilot::StatusClock`
+ends it. Ctrl+Alt+S flips `MapState::shots`. The beep is played since T-193. S and the status panel's press are `Pilot::StatusClock`
 (+0xfa = 0) since T-167.
 The shots flag is kept by the mission, not the run (a shortcut).
+
+## The beep (T-193)
+
+Traced with Ghidra. `1000:0261` is one of five far-jump thunks in a row, each to a
+`call` in segment `1fe6` and a far jump back to a near `ret` at `1000:0000`:
+
+| Thunk | Routine | Divisor | Tone | On | Off | Clock test |
+|---|---|---|---|---|---|---|
+| `1000:0261` | `1fe6:439a` | 0x4b0 | about 994 Hz | 4 | 4 | yes |
+| `1000:0266` | `1fe6:43b9` | 0x960 | about 497 Hz | 4 | 4 | yes |
+| `1000:026b` | `1fe6:43d8` | 0x12c0 | about 249 Hz | 4 | 4 | yes |
+| `1000:0270` | `1fe6:43f7` | 0x960 | about 497 Hz | 1 | 1 | no |
+| `1000:0275` | `1fe6:440d` | `AX` | | `BX` | 0 | no |
+
+(A sixth routine of the same shape, `1fe6:437b`, divisor 0x258, about 1988 Hz, has no
+thunk here.) The beep `1fe6:439a` keeps the flags and registers. If the game clock
+(`DS:0x374`, read through `SS`) is 0 it returns at once; else it calls the tone
+(`1fe6:440d`) with the divisor and 4, then the wait (`1fe6:4351`) with 4. The tone sets
+port 0x61's bits 0 and 1 (the speaker gated to PIT channel 2), programs channel 2 with
+0xb6 (mode 3, a square wave) and the divisor, low byte then high, waits its count and
+clears the two bits. The wait busy-waits for that many changes of the clock (each
+`1fe6:435a` spins until the word changes). So a beep is **one** tone and its silence,
+and the game stands still for all 8 counts (about 133 ms of the 60 Hz chain): nothing
+draws or ticks, while the interrupt hooks (the retrace, the music, the clock) go on.
+The clock is zeroed only where the timer hook is installed (`1fe6:2fc5`), so it is 0
+only before the timer starts (the wait would never end) and for one count every
+65,536 (about 18 minutes).
+
+Every caller of `1000:0261` (near calls in segment `1000`; an `e8` byte pair at
+`1000:cfd4` is inside other instructions, not a call):
+
+| Caller | What | In the port |
+|---|---|---|
+| `1000:cffa` | F1's pause, after the clock is pushed (so the beep's 8 counts are put back) | beeps |
+| `1000:d1ac` | Ctrl+P with unlock word 8, after the charge | beeps |
+| `1000:eef8` | `ui_load_scenario_with_dialog`: the reader failed (Alt+L) | beeps |
+| `1000:6ac4` | The editor's Ctrl+D, after `0266` | not yet (T-211) |
+| `1000:6ad4` | The editor's Ctrl+Alt+R, after `026b` and `0266` | not yet (T-211) |
+| `1000:6c2f`, `6c45`, `6c61` | Placing a unit, base or relay in the editor, after `0266` | not yet (T-211) |
+| `1000:6c9b` | Placing an obstacle, before `0266` | not yet (T-211) |
+| `1000:6ccd` | Placing a path point | not yet (T-211) |
+| `1000:7d21`, `7d2b`, `7d35` | The developer clock keys (widget `0x146`: Ctrl+Alt+M five minutes, D a day, H an hour) | not ported |
+| `1000:7d4e` | The screenshot key (`0x148`), after the screenshot slot `0x1558` | not ported |
+
+**In the port.** `xeno_formats::sounds::read_beep` follows the thunk at `0x261` and
+its `call`, checks the routine's shape and reads the divisor and the two counts from
+the user's `xeno.exe`. `xeno_audio::Speaker` is a square wave at 1,193,182 Hz over the
+divisor at 48 kHz, gated for the counts (800 samples a count of the chain at exactly
+60 Hz) and queued, so beeps follow each other as the waits make them; `Output` plays
+it beside the mixer and the music. `Mission::beep` raises `Sound::Beep`, which the
+window hands to `Jukebox::beep`. Shortcuts: the port does not stop the game for the
+beep's 8 counts, and it does not test the clock (the port's clock is not the
+original's from start-up). Not checked in DOSBox (T-194).
 
 ## The ECM and the cloak (T-136)
 
