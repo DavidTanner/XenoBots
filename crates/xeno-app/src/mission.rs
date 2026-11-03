@@ -42,7 +42,9 @@ use xeno_formats::views::{
 use xeno_formats::{
     editor, filedialog, humancon, lzexe, map, mapdvr, mgavideo, motion, scorpcon, scoutcon, sitroom,
 };
-use xeno_render::{BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{
+    Anchor, BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode,
+};
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
 
@@ -404,11 +406,8 @@ const CAMERA_VIEW: u8 = 6;
 const THERMAL_VIEW: u8 = 0xa;
 const MISSILE_VIEW: u8 = 8;
 const MAP_VIEW: u8 = 0xc;
-/// The second display's clear colour, the base of its noise (`DS:0x1456`), and the
-/// zoom name's font and colour (the text state `DS:0x6a52`, as T-104 read it).
+/// The second display's clear colour, the base of its noise (`DS:0x1456`).
 const DISPLAY_CLEAR: u8 = 0x20;
-const LABEL_FONT: u16 = 2;
-const LABEL_COLOUR: u8 = 0x0f;
 /// The sound events of a display mode key (10) and of a damaged display (28).
 const DISPLAY_SOUND: u8 = 10;
 const NOISE_SOUND: u8 = 28;
@@ -602,15 +601,21 @@ pub fn load(files: &GameFiles, campaign_records: usize) -> Result<Assets, String
     let video_bytes = read("mgavideo.dvr")?;
     let video = mgavideo::parse(&video_bytes).map_err(|e| format!("mgavideo.dvr: {e}"))?;
     let mut fonts = BTreeMap::new();
-    for id in views.program_panel.iter().map(|s| s.font).chain([
-        UNIT_FONT,
-        ORDERS_FONT,
-        mainview::LOG_FONT,
-        panels::PANEL_FONT,
-        panels::DETAIL_FONT,
-        status::FONT,
-        LABEL_FONT,
-    ]) {
+    let overlays = views.second_display.text_style.map(|(font, _)| font);
+    for id in views
+        .program_panel
+        .iter()
+        .map(|s| s.font)
+        .chain(overlays)
+        .chain([
+            UNIT_FONT,
+            ORDERS_FONT,
+            mainview::LOG_FONT,
+            panels::PANEL_FONT,
+            panels::DETAIL_FONT,
+            status::FONT,
+        ])
+    {
         let font = video
             .font(id)
             .ok_or(format!("mgavideo.dvr: no font {id}"))?;
@@ -3250,21 +3255,69 @@ impl Mission {
                 (None, None)
             }
         };
-        if let (Some((at, name)), Some(font)) = (
-            zoom_name(robot.kind, mode, d, tables),
-            assets.fonts.get(&LABEL_FONT),
-        ) {
-            let mut cursor = TextCursor::at(at.0.into(), at.1.into(), LABEL_COLOUR);
-            // shortcut: the names' bit-7 codes in the same colour (T-189 checks the
-            // text state).
-            cursor.high_colour = LABEL_COLOUR;
-            buffer.draw_text(font, &mut cursor, name, TextMode::Transparent);
-        }
+        self.draw_overlays(&mut buffer, assets, slot, robot.kind, mode);
         let [main, _] = self.probed.get();
         self.probed.set([main, under]);
         self.map_point.set(point);
         review::copy_through_colour(fb, &buffer, (left, top), SECOND_DISPLAY);
         true
+    }
+
+    /// The overlays of the open console's second display (`docs/screens.md`, "The
+    /// display's other modes (T-134)", "Overlays"), in the kind's text state: the
+    /// tracking text blinking with the game clock (`DS:0x374` bit 5), the zoom's
+    /// name, and in the missile camera its label blinking with the passes
+    /// (`DS:0x62c6` bit 4) while the zoom's name would show, then the sight.
+    fn draw_overlays(
+        &self,
+        buffer: &mut Framebuffer,
+        assets: &Assets,
+        slot: u16,
+        kind: RobotKind,
+        mode: u8,
+    ) {
+        let (tables, d, world) = (
+            &assets.views.second_display,
+            self.display(slot),
+            self.world(),
+        );
+        let (font, colour) = tables.text_style[kind.index()];
+        let tracked = world.get(EntityId(slot)).is_some_and(|e| {
+            matches!(&e.state, State::Robot(m) if m.target.is_some())
+                && e.status & usg::status::TRACKING != 0
+        });
+        let missile = kind == RobotKind::Scorpion && mode == MISSILE_DISPLAY;
+        let texts = [
+            (tracked && world.game_clock & 0x20 != 0 && tracking_mode(kind, mode)).then(|| {
+                (
+                    tables.tracking[kind.index()].0,
+                    &tables.tracking[kind.index()].1[..],
+                )
+            }),
+            zoom_name(kind, mode, d, tables),
+            (missile && d.label != 0 && world.ticks & 0x10 != 0)
+                .then(|| (tables.missile_label.0, &tables.missile_label.1[..])),
+        ];
+        if let Some(font) = assets.fonts.get(&font) {
+            for (at, text) in texts.into_iter().flatten() {
+                let mut cursor = TextCursor::at(at.0.into(), at.1.into(), colour);
+                // shortcut: bit-7 codes in the same colour; no overlay text has one.
+                cursor.high_colour = colour;
+                buffer.draw_text(font, &mut cursor, text, TextMode::Transparent);
+            }
+        }
+        // Slot `0x5e8`: keyed, centred on the display's buffer.
+        let sight = assets.scorpcon.as_ref().and_then(|con| {
+            crate::console::lookup(&assets.scorpcon_sprites, con.bank, tables.missile_sight)
+        });
+        if let (true, Some(sight)) = (missile, sight) {
+            let blit = SpriteBlit {
+                mode: BlitMode::Keyed,
+                anchor: Anchor::SurfaceCentre,
+                ..SpriteBlit::default()
+            };
+            buffer.blit_sprite(sight, 0, 0, blit);
+        }
     }
 
     /// A frame of list 0x18's noise from the display's own random word.
@@ -4038,6 +4091,16 @@ fn zoom_name(
     };
     let at = t.zoom_name_at[kind.index()][usize::from(map)];
     Some((at, names.get(usize::from(zoom))?))
+}
+
+/// Whether display mode `mode` shows the tracking text: the humanoid's and the
+/// scorpion's in modes 0 and 1 (`1000:9e79`, `81d6`), the scout's in every mode but
+/// the map (`b5f6`).
+fn tracking_mode(kind: RobotKind, mode: u8) -> bool {
+    match kind {
+        RobotKind::Scout => mode != MAP_DISPLAY,
+        _ => mode < MAP_DISPLAY,
+    }
 }
 
 /// Slot `0x526` (`mgavideo.dvr` 0x0f34): the rectangle's pixels XORed with `value`.
@@ -5172,6 +5235,15 @@ pub mod tests {
             Some(((0x49, 0x29), &b"bx"[..]))
         );
         assert_eq!(name(RobotKind::Scout, 1, Display { label: 0, ..d }), None);
+        // The tracking text: the scout's in every mode but the map, the others' in 0, 1.
+        let shown = |kind| {
+            (0..8)
+                .filter(|&m| tracking_mode(kind, m))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(RobotKind::Humanoid), [0, 1]);
+        assert_eq!(shown(RobotKind::Scorpion), [0, 1]);
+        assert_eq!(shown(RobotKind::Scout), [0, 1, 3, 4, 5, 6, 7]);
     }
 
     #[test]
@@ -6388,6 +6460,97 @@ pub mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// T-189: on each kind's training mission, the tracking text shows with a tracked
+    /// target only while the game clock's bit 5 is set; the scorpion's missile camera
+    /// shows its label only on passes with bit 4 set, and its sight keyed in the middle.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_tracking_text_blinks_and_the_missile_camera_has_its_sight() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        for (kind, name) in [
+            (RobotKind::Humanoid, "htrain.usg"),
+            (RobotKind::Scorpion, "ctrain.usg"),
+            (RobotKind::Scout, "strain.usg"),
+        ] {
+            let mut m = Mission::new(
+                name.into(),
+                &assets.scenarios[name],
+                Random::seeded(1),
+                &assets.motion,
+            );
+            let robot = m
+                .robots()
+                .into_iter()
+                .find(|&s| m.book().get(s).unwrap().kind == kind)
+                .unwrap();
+            let other = m.world().iter().map(|(id, _)| id).find(|id| id.0 != robot);
+            let view = m.view_robot(robot).unwrap();
+            let file = crate::screens::Screen::Mission(view).file().unwrap();
+            let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+            let draw = |m: &Mission| {
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                fb.pixels_mut().copy_from_slice(&picture.pixels);
+                let region = review::region_of(&fb, SECOND_DISPLAY).unwrap();
+                assert!(m.draw_second(&mut fb, &assets, region));
+                (fb, region)
+            };
+            robot_state_mut(&mut m, robot).target = other;
+            m.world_mut().get_mut(EntityId(robot)).unwrap().status |= usg::status::TRACKING;
+            let mut frames = Vec::new();
+            for clock in [0x20, 0x1f, 0x60] {
+                m.world_mut().game_clock = clock;
+                frames.push(draw(&m).0.pixels().to_vec());
+            }
+            assert_ne!(frames[0], frames[1], "{kind:?}: no tracking text");
+            assert_eq!(frames[0], frames[2], "{kind:?}");
+            if kind != RobotKind::Scorpion {
+                continue;
+            }
+            robot_state_mut(&mut m, robot).guns.missile = other;
+            let d = m.displays.entry(robot).or_default();
+            (d.mode, d.label) = (MISSILE_DISPLAY, 1);
+            let mut frames = Vec::new();
+            for ticks in [0x10, 0x0f] {
+                m.world_mut().ticks = ticks;
+                frames.push(draw(&m));
+            }
+            assert_ne!(frames[0].0.pixels(), frames[1].0.pixels(), "no label");
+            let con = assets.scorpcon.as_ref().unwrap();
+            let sight = crate::console::lookup(
+                &assets.scorpcon_sprites,
+                con.bank,
+                assets.views.second_display.missile_sight,
+            )
+            .unwrap();
+            let (fb, (left, top, width, height)) = &frames[1];
+            let (x0, y0) = (
+                left + (width - sight.width()) / 2,
+                top + (height - sight.height()) / 2,
+            );
+            let mut seen = 0;
+            for y in 0..sight.height() {
+                for x in (0..sight.width()).filter(|&x| sight.covers(x, y)) {
+                    let colour = sight.pixels[y * sight.width() + x];
+                    let at = (y0 + y) * 320 + x0 + x;
+                    if colour != 0 && picture.pixels[at] == SECOND_DISPLAY {
+                        assert_eq!(fb.pixels()[at], colour, "({x}, {y})");
+                        seen += 1;
+                    }
+                }
+            }
+            assert!(seen > 10, "{seen}");
         }
     }
 

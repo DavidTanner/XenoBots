@@ -13,7 +13,7 @@
 use crate::FormatError;
 use crate::farewell::operand;
 use crate::lzexe::Unpacked;
-use crate::maproom::{Rect, invalid, rect, segment, string, word};
+use crate::maproom::{Rect, STRINGS_SEGMENT, invalid, rect, segment, string, word};
 use crate::orders::RobotKind;
 use crate::sequence;
 
@@ -73,6 +73,17 @@ pub(crate) const DISPLAY_ZOOM_NAME_AT: [[usize; 2]; 3] =
 pub(crate) const DISPLAY_PAN_COLOURS: [(usize, &[u8]); 2] =
     [(0xdae9, &[0x8a, 0x87]), (0xdb07, &[0x8a, 0x87])];
 pub(crate) const DISPLAY_PAN_UNLIT: (usize, &[u8]) = (0xdaf2, &[0xbe]);
+/// Per robot kind, the opener's text state for the display (`mov ax, font` here, then
+/// `mov ax, colour` 8 bytes on, humanoid `1000:9cfc`).
+pub(crate) const DISPLAY_TEXT_STYLE: [usize; 3] = [0x9cfc, 0x7ff8, 0xb4b8];
+/// Per robot kind, the overlay's tracking text (`1000:9e8e`, `81eb`, `b612`): `mov ax,
+/// y; mov bx, x`, the cursor call, then `mov si, text` in the string segment.
+pub(crate) const DISPLAY_TRACKING: [usize; 3] = [0x9e8e, 0x81eb, 0xb612];
+/// The scorpion's missile camera overlay (`1000:8253`): the label the same way as the
+/// tracking text but from DS (`1000:8262`), and the sight (`mov ax, sprite` at
+/// `1000:827d`).
+pub(crate) const DISPLAY_MISSILE_LABEL: usize = 0x8262;
+pub(crate) const DISPLAY_MISSILE_SIGHT: (usize, &[u8]) = (0x827d, &[0xb8]);
 /// The zoom steps, 0 to 4.
 pub const ZOOMS: usize = 5;
 const SET_MAP_CLEAR: [u8; 4] = [0xc6, 0x06, 0x57, 0x14];
@@ -252,6 +263,15 @@ pub struct SecondDisplay {
     /// degrees' colour; the unlit digits.
     pub pan_colours: [[u8; 2]; 3],
     pub pan_unlit: Vec<u8>,
+    /// By robot kind: the overlays' font and colour (the opener's text state).
+    pub text_style: [(u16, u8); 3],
+    /// By robot kind: where the tracking text goes (x, y) and the text, shown blinking
+    /// while a target is tracked.
+    pub tracking: [((u16, u16), Vec<u8>); 3],
+    /// The scorpion's missile camera: its label's place (x, y) and text, and the
+    /// sight's sprite handle (`msprite3`'s), keyed and centred.
+    pub missile_label: ((u16, u16), Vec<u8>),
+    pub missile_sight: u16,
 }
 
 /// How a console's message panel looks (`docs/screens.md`, "The message panel
@@ -486,7 +506,28 @@ impl Exe<'_> {
             self.image,
             self.ds + usize::from(self.op(DISPLAY_PAN_UNLIT)?),
         )?;
+        let mut text_style = [(0, 0); 3];
+        for (style, at) in text_style.iter_mut().zip(DISPLAY_TEXT_STYLE) {
+            let colour = operand(self.image, at + 8, &[0xb8])?;
+            *style = (operand(self.image, at, &[0xb8])?, colour.to_le_bytes()[0]);
+        }
+        // `mov ax, y; mov bx, x; call far; mov si, text` from `at`.
+        let text_at = |at: usize, base: usize| -> Result<((u16, u16), Vec<u8>), FormatError> {
+            let y = operand(self.image, at, &[0xb8])?;
+            let x = operand(self.image, at + 3, &[0xbb])?;
+            let text = operand(self.image, at + 11, &[0xbe])?;
+            Ok(((x, y), string(self.image, base + usize::from(text))?))
+        };
+        let strings = segment(self.image, STRINGS_SEGMENT, self.relocated)?;
+        let mut tracking: [((u16, u16), Vec<u8>); 3] = Default::default();
+        for (t, at) in tracking.iter_mut().zip(DISPLAY_TRACKING) {
+            *t = text_at(at, strings)?;
+        }
         Ok(SecondDisplay {
+            text_style,
+            tracking,
+            missile_label: text_at(DISPLAY_MISSILE_LABEL, self.ds)?,
+            missile_sight: self.op(DISPLAY_MISSILE_SIGHT)?,
             view_modes: table(DISPLAY_VIEW_MODES, 8)?.try_into().expect("8 bytes"),
             devices: table(DISPLAY_DEVICES, 4)?.try_into().expect("4 bytes"),
             map_colours,
@@ -744,6 +785,11 @@ mod tests {
         assert!(corrupt(DISPLAY_PAN_COLOURS[1].0, 0x90).0);
         assert!(corrupt(DISPLAY_PAN_UNLIT.0, 0x90).0);
         assert!(corrupt(DISPLAY_ZOOM_NAME_AT[2][0] + 3, 0x90).0);
+        assert!(corrupt(DISPLAY_TEXT_STYLE[1] + 8, 0x90).0);
+        assert!(corrupt(DISPLAY_TRACKING[2] + 11, 0x90).0);
+        assert!(corrupt(DISPLAY_MISSILE_LABEL + 3, 0x90).0);
+        assert!(corrupt(DISPLAY_MISSILE_SIGHT.0, 0x90).0);
+        assert!(corrupt(STRINGS_SEGMENT.0, 0x90).0);
         assert!(corrupt(MAIN_VIEW_SHAPES.0, 0x90).0);
         assert!(corrupt(CONSOLE_SHAPES[3], 0x90).0);
         for (at, _) in [
@@ -822,6 +868,17 @@ mod tests {
                 .chain(&d.map_zoom_names)
                 .all(|n| !n.is_empty())
         );
+        // T-189: the openers' text state (T-104 read the humanoid's), the one tracking
+        // text at (0x1f, 2) on the humanoid and (0x21, 2) on the others, the missile
+        // camera's label at (0x1c, 0x2d).
+        assert_eq!(d.text_style[0], (2, 0x0f));
+        assert!(d.text_style.iter().all(|&(font, _)| font == 2));
+        let at: Vec<(u16, u16)> = d.tracking.iter().map(|t| t.0).collect();
+        assert_eq!(at, [(0x1f, 2), (0x21, 2), (0x21, 2)]);
+        assert!(!d.tracking[0].1.is_empty());
+        assert!(d.tracking.iter().all(|t| t.1 == d.tracking[0].1));
+        assert_eq!(d.missile_label.0, (0x1c, 0x2d));
+        assert!(!d.missile_label.1.is_empty());
         // The message panel: one of the four fonts (0, 2, 4, 6).
         assert!(views.message_panel.font <= 6 && views.message_panel.font.is_multiple_of(2));
         // Six buttons and three rows of left and right arrows.
