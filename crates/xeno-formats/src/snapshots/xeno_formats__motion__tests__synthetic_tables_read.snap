@@ -2374,6 +2374,150 @@ Motion {
             186,
         ],
         name_length: 6,
+        status: [
+            StatusLine {
+                rect: Rect {
+                    top: 0,
+                    left: 0,
+                    bottom: 5,
+                    right: 5,
+                },
+                fields: [
+                    Flag {
+                        at: 96,
+                        offset: 220,
+                        bit: 1,
+                        ok: [
+                            71,
+                            79,
+                            32,
+                        ],
+                        out: [
+                            66,
+                            65,
+                            68,
+                        ],
+                    },
+                ],
+                message: 256,
+                alternate: None,
+            },
+            StatusLine {
+                rect: Rect {
+                    top: 10,
+                    left: 10,
+                    bottom: 15,
+                    right: 15,
+                },
+                fields: [
+                    Number {
+                        at: 112,
+                        offset: 36,
+                        mask: 127,
+                    },
+                ],
+                message: 257,
+                alternate: None,
+            },
+            StatusLine {
+                rect: Rect {
+                    top: 20,
+                    left: 20,
+                    bottom: 25,
+                    right: 25,
+                },
+                fields: [],
+                message: 258,
+                alternate: Some(
+                    (
+                        253,
+                        128,
+                        512,
+                    ),
+                ),
+            },
+            StatusLine {
+                rect: Rect {
+                    top: 30,
+                    left: 30,
+                    bottom: 35,
+                    right: 35,
+                },
+                fields: [
+                    Flag {
+                        at: 108,
+                        offset: 220,
+                        bit: 8,
+                        ok: [
+                            71,
+                            79,
+                            32,
+                        ],
+                        out: [
+                            66,
+                            65,
+                            68,
+                        ],
+                    },
+                ],
+                message: 259,
+                alternate: None,
+            },
+            StatusLine {
+                rect: Rect {
+                    top: 40,
+                    left: 40,
+                    bottom: 45,
+                    right: 45,
+                },
+                fields: [
+                    Flag {
+                        at: 112,
+                        offset: 220,
+                        bit: 16,
+                        ok: [
+                            71,
+                            79,
+                            32,
+                        ],
+                        out: [
+                            66,
+                            65,
+                            68,
+                        ],
+                    },
+                ],
+                message: 260,
+                alternate: None,
+            },
+            StatusLine {
+                rect: Rect {
+                    top: 50,
+                    left: 50,
+                    bottom: 55,
+                    right: 55,
+                },
+                fields: [
+                    Flag {
+                        at: 116,
+                        offset: 220,
+                        bit: 32,
+                        ok: [
+                            71,
+                            79,
+                            32,
+                        ],
+                        out: [
+                            66,
+                            65,
+                            68,
+                        ],
+                    },
+                ],
+                message: 261,
+                alternate: None,
+            },
+        ],
     },
     strings: Strings(8192 bytes),
 }

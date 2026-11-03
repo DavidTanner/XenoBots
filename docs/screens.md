@@ -706,9 +706,18 @@ time):
   buoys triggered by an enemy; `log::alert`) and the drops' own (`d605` to `d66b`,
   `e5b1` to `e647`), ported with T-137 (`docs/sim.md`, "Mines and buoys (T-137)"); the
   ECM's and cloak's with T-136.
-- Not ported (T-186), where the port has no such routine yet: the field repair's
-  (`1000:df79`), the cargo's (`8d8c`, `9ac7`, `9ad3`, `9ae7`, `9b28`, `9b82`), the
-  jump's (`7ee3`) and the console's status lines (`9177` to `9268`).
+- Checked by T-186, each already sent by the port: the repair on the net's (from
+  tick-table entry `1000:df79`, `2000:7f10`; T-179), the cargo's (C `8d8c`, D `9ac7`
+  and `9ad3`, deploying's refusal `9b28`, L's four `9b82`; T-149) and the relay
+  deployer's damage part (`9ad7`, its message at `9ae7`; `damage::Part`, T-129).
+- The scorpion's damage panel's status lines (`1000:9153` to `926c`, from its release
+  `90f9`): below, "The damage panel's status lines (T-186)".
+- Never sent in play: the console jump's refusal (`7ee3`, in `7eac`). It goes to the
+  viewed object's panel when the object clicked is in the human side's unit list but
+  not of the viewed object's side (`1000:d6d8`, +0x16 bit 3). The viewed object is
+  always the human base or a robot from that list, and a side's list holds only its
+  own side's robots (the loader and the editor's `sim_add_unit_to_side_list` add a
+  robot to its side's), so the sides always match. Not ported.
 
 **In the port**: `xeno_formats::messages` reads the names, letters, the base's two
 texts, the interval and the header's bytes (and writes the header into the string
@@ -1124,6 +1133,34 @@ built afresh for the frame rather than kept from the main view's last; the probe
 nothing, so clicks on the display do nothing (T-208); the noise draws from the
 displays' own random word, as the second display's. Not checked in DOSBox (T-168).
 
+### The damage panel's status lines (T-186)
+
+The scorpion's damage panel's mouse handler (`1000:90f9`) takes its own events (`AX`
+bit 0x80, else carry), ignores moves (bit 0) and acts on a left or right release
+(0x4, 0x10). It tests the pointer against six of the lights' rectangles in turn
+(`1000:cfdc`: every edge included; the first hit wins), in this order: the tail
+missile's (`DS:0x66fa`), the first barrel's (`0x66f2`), the second barrel's
+(`0x66ea`), the deployer's (`0x6702`), the systems' (`0x670a`) and the helm's
+(`0x66e2`), which holds most of the others, last. Whether the panel shows its lights
+(+0xfa bit 7) or the light is lit does not matter. Each hit runs a routine that
+writes its fields into the string segment and then posts one message to the robot's
+panel (`1000:d53f`):
+
+- The tail missile (`9244`), the first barrel (`921b`) and the second (`9153`): one
+  field, three bytes written as a word and a byte: an all-right word, or an out-of-order
+  one while +0xdc bit 2, 0 or 1 is set; then the line.
+- The deployer (`917c`): no field; one line, or another while +0xfd bit 7 is set.
+- The systems (`91b0`): three fields, by +0xf6 bits 0, 2 and 3 (the light also counts
+  bit 1, which the line leaves out).
+- The helm (`918e`): +0x24 with bit 7 masked off, formatted as `02b7`'s five digits,
+  the last three written into the line.
+
+The words are immediates in the routines, so they are read from the user's `xeno.exe`
+with the rest (`xeno_formats::messages::StatusLine`, read through the handler's tests
+and each routine's instructions, `jmp`s followed). The text is in the string segment
+itself, so a line still being typed (a byte a tick) when another press rewrites its
+fields shows the new bytes from there on. Not checked in DOSBox (T-187).
+
 ### The scorpion's third display (T-170)
 
 From a Ghidra pass over the scorpion's draw handler (`1000:833a`) and frame routine
@@ -1174,7 +1211,7 @@ own (below).
 | `0xe4` | (178, 119, 185, 187) | `8c36` | The relays carried, opaque in 0x77 at the rectangle's corner plus (2, 1): with any, `02b7` of +0x118 and its last two digits written over the first two bytes of `DS:0x6609`, which is drawn; with none `DS:0x661a` | `8c88`: the frame XOR, nothing else |
 | `0xe6`, `0xe8`, `0xea` | (102, 94, 109, 101), (109, 94, 116, 101), (116, 94, 123, 101) | `8dd9`, `8e28`, `8e6e` | Faster, stop, slower: 0x7b8, 0x7c8, 0x7d8 + look, opaque at +1 | Flip the look. Faster and slower (`8df6`, `8e8b`, T-169): a press (any event over it but a move, release or leave) sets +0x1b = 8 or 9 and the pilot; at the end of each tick (`DS:0x6752`, after entry `+0x1a` of the counters' table) +0x28 goes up by one unless at 63 (`9c28`) or down by one unless at -42 (`9c32`), the gear keys' limits; a release or leave clears +0x1b (the turn bits are left). Stop (`8e45`): a release sets +0x28 to 0 and the pilot |
 | `0xec` | (1, 137, 12, 182) | `8fb9` | The power panel: 0x878 in `DS:0x6672` on the battery (+0xfd bit 0), else 0x880; the signal's bar (+0x4f) in `0x6682`; 0x890 in `0x667a` on the battery, else 0x888; the energy's bar (+0x50) in `0x668a`. A bar (`9004`) as the humanoid's: lit 0x870, dark 0x868 | `9064`: nothing |
-| `0xee` | (3, 235, 53, 314) | `9065` | The damage panel. While +0xfa bit 7 is clear, the cover 0x908 opaque at the corner; while it is set, keyed lights over it: 0x8d8 in `DS:0x66e2` while the helm (+0x24) is 75 or under, 0x8e0 in `0x66ea` for +0xdc bit 1, 0x8e8 in `0x66f2` for bit 0, 0x8f0 in `0x66fa` for bit 2, 0x8f8 in `0x6702` for +0xfd bit 7 (the deployer), 0x900 in `0x670a` for any of +0xf6 bits 0 to 3 | `90f9`: nothing |
+| `0xee` | (3, 235, 53, 314) | `9065` | The damage panel. While +0xfa bit 7 is clear, the cover 0x908 opaque at the corner; while it is set, keyed lights over it: 0x8d8 in `DS:0x66e2` while the helm (+0x24) is 75 or under, 0x8e0 in `0x66ea` for +0xdc bit 1, 0x8e8 in `0x66f2` for bit 0, 0x8f0 in `0x66fa` for bit 2, 0x8f8 in `0x6702` for +0xfd bit 7 (the deployer), 0x900 in `0x670a` for any of +0xf6 bits 0 to 3 | `90f9`: a release, a status line to the robot's panel (below, "The damage panel's status lines (T-186)") |
 | `0xf0`, `0xf2` | (163, 1, 173, 59), (175, 1, 185, 59) | `8b31`, `8b9c` | The pilot and program switches in `DS:0x658a` and `0x6592`: 0x6e0 (lit) for the pilot's while the pilot drives (+0x23 bit 7 clear) and for the program's while it drives, else 0x6d8; while one is pressed (`DS:0x652e` its state's offset, +0x149 or +0x14a), 0x6d8 plus the look `DS:0x6530`. Opaque | `8b5f`, `8bc9`: `DS:0x6530` XOR 8 and `DS:0x652e` set; a release (without 0x100) the pilot (`d446`) or the program (`d42c`), then both cleared and `9b87` (redraws) |
 | `0xf4`, `0xf6`, `0xf8` | (154, 68, 160, 77), (153, 78, 159, 84), (154, 85, 160, 94) | `8ebd`, `8f1d`, `8f5d` | Turn left, straight, right: 0x898, 0x8a8, 0x8b8 + look, opaque at the corner | As the humanoid's turn buttons (`8ed0`, `8f30`, `8f70`; T-169), held codes 0xa and 0xb (`9c3c`, `9c4b`: +0x2a the heading less or plus 0x40): a left release or leave clears +0x1b and bits 4, 5; a right release sets bit 4 or 5 |
 | `0xfa`, `0xfc`, `0xfe`, `0x100` | (192, 118, 199, 152), (192, 153, 199, 187), (186, 118, 193, 152), (186, 153, 193, 187) | `8d36`, `8d90`, `8ca2`, `8cee` | C, D, L, U: 0x960, 0x970, 0x980, 0x990 + look, opaque at +1 | Flip the look; a release runs the key's routine: C `8d7f` (a message on the cargo), D `9ab8` (the dump), L `9b34` (load), U `9b01` (deploy; `sim_deploy_relay`), the last two then `9bbe` (the cargo redrawn). Ported by T-149 (`docs/sim.md`, "Relay nets") |

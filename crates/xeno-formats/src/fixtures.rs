@@ -2517,6 +2517,68 @@ pub fn synthetic_messages(image: &mut [u8], ds: usize) {
         &[&op(&[0x26, 0xc6, 0x87], 0x51)[..], &[0xba]].concat(),
     );
     put(HEADER_AT, &op(&[0xbe], 0x50));
+    synthetic_status_lines(image, ds);
+}
+
+/// The damage panel's release (`messages::STATUS_TESTS_AT`): six tests, each through a
+/// `jmp` to its line at 0x100 + 0x40 n, the rectangles at `DS:0x9f00`: lines 0, 3, 4
+/// and 5 a flag (+0xdc bit `1 << n` at string 0x60 + 4 n, `GO ` or `BAD`), 1 the helm's
+/// number at 0x70, 2 a message or, with +0xfd bit 7, another.
+fn synthetic_status_lines(image: &mut [u8], ds: usize) {
+    use crate::messages::*;
+    let w = |v: u16| v.to_le_bytes();
+    let near = |op: u8, at: usize, target: usize| {
+        let [lo, hi] = w((target.wrapping_sub(at + 3)) as u16);
+        [op, lo, hi]
+    };
+    for i in 0..STATUS_LINES {
+        let at = STATUS_TESTS_AT + 8 * i;
+        let stub = STATUS_TESTS_AT + 8 * STATUS_LINES + 3 * i;
+        let line = 0x100 + 0x40 * i;
+        let mut test = vec![0xbe];
+        test.extend(w(0x9f00 + 8 * i as u16));
+        test.extend(near(0xe8, at + 3, 0xcfdc));
+        test.extend([0x72, (stub - (at + 8)) as u8]);
+        image[at..at + 8].copy_from_slice(&test);
+        image[stub..stub + 3].copy_from_slice(&near(0xe9, stub, line));
+        let r = 10 * i as u16;
+        for (k, v) in [r, r, r + 5, r + 5].into_iter().enumerate() {
+            image[ds + 0x9f00 + 8 * i + 2 * k..][..2].copy_from_slice(&w(v));
+        }
+        let message = 0x100 + i as u16;
+        let mut code = Vec::new();
+        match i {
+            1 => {
+                code.extend([0x8a, 0x45, 0x24, 0x24, 0x7f, 0x98, 0xbe, 0xfe, 0x1b]);
+                code.extend(near(0xe8, line + 9, 0x02b7));
+                code.extend([0xa0, 0x00, 0x1c, 0x26, 0xa2, 0x70, 0x00]);
+                code.extend([0xa1, 0x01, 0x1c, 0x26, 0xa3, 0x71, 0x00]);
+                code.push(0xbe);
+                code.extend(w(message));
+            }
+            2 => {
+                code.push(0xbe);
+                code.extend(w(message));
+                code.extend([0xf6, 0x85, 0xfd, 0x00, 0x80, 0x74, 0x03, 0xbe]);
+                code.extend(w(0x200));
+            }
+            _ => {
+                let a = 0x60 + 4 * i as u16;
+                let [a0, a1] = w(a);
+                let [c0, c1] = w(a + 2);
+                code.extend([0x26, 0xc7, 0x06, a0, a1, b'G', b'O']);
+                code.extend([0x26, 0xc6, 0x06, c0, c1, b' ']);
+                code.extend([0xf6, 0x85, 0xdc, 0x00, 1 << i, 0x74, 0x0d]);
+                code.extend([0x26, 0xc7, 0x06, a0, a1, b'B', b'A']);
+                code.extend([0x26, 0xc6, 0x06, c0, c1, b'D']);
+                code.push(0xbe);
+                code.extend(w(message));
+            }
+        }
+        let call = line + code.len();
+        code.extend(near(0xe8, call, 0xd53f));
+        image[line..line + code.len()].copy_from_slice(&code);
+    }
 }
 
 /// The made-up message tables of [`synthetic_messages`].
