@@ -2837,13 +2837,11 @@ impl Mission {
             }
             // Without the situation room's tables, its main view (T-103); without the
             // 3D view's, a console's views (T-101); without the radars' (T-166), the
-            // humanoid's and scorpion's third displays; the scout's T-173.
+            // third displays.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-103",
                 (_, 255 | SECOND_DISPLAY) => "T-101",
-                (View::Humanoid, _) => "T-166",
-                (View::Scorpion, _) => "T-170",
-                _ => "T-173",
+                _ => "T-166",
             };
             hatch(fb, colour, font, task);
         }
@@ -3151,12 +3149,13 @@ impl Mission {
         noise(buffer.pixels_mut(), word, DISPLAY_CLEAR);
     }
 
-    /// The humanoid's and scorpion's third displays (the colour-253 region, `1000:9f96`
-    /// and `1fe6:7cff`, `833a` and `7bdb`): every `frames` passes a frame of view mode 0x12, the main view's
+    /// The consoles' third displays (the colour-253 region; the humanoid's `1000:9f96`
+    /// and `1fe6:7cff`, the scorpion's `833a` and `7bdb`, the scout's `b738` and
+    /// `7e2b`): every `frames` passes a frame of view mode 0x12, the main view's
     /// render list as dots around the robot, heading up, or with the radar damaged
     /// list 0x18's noise; the last frame is copied through the region in between.
-    /// The scorpion's is the humanoid's turned by its heading offset, in its own dots and
-    /// background. `false` (nothing drawn) for the scout (T-173) and without the tables.
+    /// Each kind's has its own dots, background and heading offset (the scorpion's
+    /// turned). `false` (nothing drawn) without the tables.
     fn draw_third(&self, fb: &mut Framebuffer, assets: &Assets, region: Region) -> bool {
         let Viewed::Robot(slot) = self.viewed else {
             return false;
@@ -3167,7 +3166,7 @@ impl Mission {
         else {
             return false;
         };
-        // The background sprite is in the console's own bank (`msprite2`, `msprite3`).
+        // The background sprite is in the console's own bank (`msprite2`, `3`, `4`).
         let (sprites, bank) = match robot.kind {
             RobotKind::Humanoid => (
                 &assets.humancon_sprites,
@@ -3177,7 +3176,10 @@ impl Mission {
                 &assets.scorpcon_sprites,
                 assets.scorpcon.as_ref().map(|c| c.bank),
             ),
-            _ => return false,
+            RobotKind::Scout => (
+                &assets.scoutcon_sprites,
+                assets.scoutcon.as_ref().map(|c| c.bank),
+            ),
         };
         let Some(bank) = bank else {
             return false;
@@ -6243,6 +6245,13 @@ pub mod tests {
         third_display_shows_what_is_near(RobotKind::Scorpion, "scorpcon.m@l", "ctrain.usg");
     }
 
+    /// The scout's (T-173), the same on `strain`'s first scout.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_scout_radar_shows_what_is_near() {
+        third_display_shows_what_is_near(RobotKind::Scout, "scoutcon.m@l", "strain.usg");
+    }
+
     fn third_display_shows_what_is_near(kind: RobotKind, picture: &str, name: &str) {
         use crate::game_dir::{ENV_VAR, GameDir};
         let Some(path) = std::env::var_os(ENV_VAR) else {
@@ -6259,9 +6268,13 @@ pub mod tests {
                 &assets.humancon_sprites,
                 assets.humancon.as_ref().unwrap().bank,
             ),
-            _ => (
+            RobotKind::Scorpion => (
                 &assets.scorpcon_sprites,
                 assets.scorpcon.as_ref().unwrap().bank,
+            ),
+            RobotKind::Scout => (
+                &assets.scoutcon_sprites,
+                assets.scoutcon.as_ref().unwrap().bank,
             ),
         };
         let background = crate::console::lookup(sprites, bank, radar.background);
