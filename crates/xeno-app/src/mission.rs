@@ -202,7 +202,7 @@ mod handler {
 /// while held), its drop buttons, speed buttons, speed lever, compass and turn buttons, then the scout's first five, its three stance
 /// buttons, cloak, ECM and drop buttons, status panel, gear lever, compass and turn
 /// buttons.
-const INSTRUMENTS: [u16; 49] = [
+const INSTRUMENTS: [u16; 50] = [
     crate::humancon::FIRE_TYPE,
     crate::humancon::WEAPON_TYPE,
     crate::humancon::PILOT_TYPE,
@@ -235,6 +235,7 @@ const INSTRUMENTS: [u16; 49] = [
     crate::scorpcon::LEFT_TYPE,
     crate::scorpcon::AHEAD_TYPE,
     crate::scorpcon::RIGHT_TYPE,
+    crate::scorpcon::DAMAGE_TYPE,
     crate::scoutcon::FIRE_TYPE,
     crate::scoutcon::WEAPON_TYPE,
     crate::scoutcon::PILOT_TYPE,
@@ -2483,8 +2484,8 @@ impl Mission {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
             let kinds: &[u16] = match view {
                 View::Humanoid => &INSTRUMENTS[..13],
-                View::Scorpion => &INSTRUMENTS[13..32],
-                View::Scout => &INSTRUMENTS[32..],
+                View::Scorpion => &INSTRUMENTS[13..33],
+                View::Scout => &INSTRUMENTS[33..],
                 _ => &[],
             };
             // The last widget over the point, or in a group (0x04) the last member
@@ -2749,6 +2750,18 @@ impl Mission {
                     (w.kind, &assets.scorpcon, at)
                 {
                     self.pilot(slot, Pilot::Speed(crate::scorpcon::lever_speed(con, y)));
+                    return None;
+                }
+                // `90f9`: the damage panel's first status line under the pointer,
+                // every edge included (`1000:cfdc`).
+                if let (crate::scorpcon::DAMAGE_TYPE, Some((x, y))) = (w.kind, at) {
+                    let lines = &assets.motion.messages.status;
+                    if let Some(i) = lines.iter().position(|l| {
+                        let r = l.rect;
+                        (r.left..=r.right).contains(&x) && (r.top..=r.bottom).contains(&y)
+                    }) {
+                        self.pilot(slot, Pilot::Status(i as u8));
+                    }
                     return None;
                 }
                 self.instrument(slot, w, right, assets);
@@ -6997,6 +7010,70 @@ pub mod tests {
         let heading = m.world().get(EntityId(robot)).unwrap().heading;
         assert_eq!(state(&m).target_heading, heading);
         assert_eq!(state(&m).mode & 0x30, 0);
+    }
+
+    /// T-186: a left or right release on the scorpion's damage panel sends the status
+    /// line of the first light under the pointer to the robot's panel: the second
+    /// barrel's with its field rewritten as damaged, the deployer's other line, the
+    /// helm's digits.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_scorpion_damage_panel_reports() {
+        use xeno_formats::messages::Field;
+        let Some((assets, mut m, robot)) = console_of(RobotKind::Scorpion, "ctrain.usg") else {
+            return;
+        };
+        if let Some(xeno_sim::world::Damage::Robot(c)) = m
+            .world_mut()
+            .get_mut(EntityId(robot))
+            .map(|e| &mut e.damage)
+        {
+            (c.weapons, c.equipment, c.helm) = (2, c.equipment | 0x80, 57);
+        }
+        let lines = &assets.motion.messages.status;
+        for (i, l) in lines.iter().enumerate() {
+            let r = l.rect;
+            // A point of this light's that no light tested before covers.
+            let at = (r.top..=r.bottom)
+                .flat_map(|y| (r.left..=r.right).map(move |x| (x, y)))
+                .find(|&(x, y)| {
+                    !lines[..i].iter().any(|e| {
+                        let e = e.rect;
+                        (e.left..=e.right).contains(&x) && (e.top..=e.bottom).contains(&y)
+                    })
+                })
+                .unwrap();
+            robot_state_mut(&mut m, robot).panel.queue = [0; 5];
+            let button = if i % 2 == 0 { LEFT } else { RIGHT };
+            m.mouse_down(button, Some(at), &assets);
+            m.mouse_up(button, Some(at), &assets);
+            let expected = match l.alternate {
+                Some((0xfd, 0x80, other)) => other,
+                _ => l.message,
+            };
+            assert_eq!(
+                robot_state_mut(&mut m, robot).panel.queue[0],
+                expected,
+                "{i}"
+            );
+        }
+        let strings = &m.world().strings;
+        let bytes = |at: u16| [0, 1, 2].map(|i| strings[&(at + i)]);
+        for l in lines {
+            for f in &l.fields {
+                match *f {
+                    Field::Number { at, .. } => assert_eq!(&bytes(at), b"057"),
+                    Field::Flag {
+                        at,
+                        offset: 0xdc,
+                        bit,
+                        ok,
+                        out,
+                    } => assert_eq!(bytes(at), if bit == 2 { out } else { ok }),
+                    Field::Flag { at, ok, .. } => assert_eq!(bytes(at), ok),
+                }
+            }
+        }
     }
 
     /// The scorpion's buttons act on the robot through the sim: the weapon buttons

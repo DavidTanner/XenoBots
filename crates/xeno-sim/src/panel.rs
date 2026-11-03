@@ -2,8 +2,6 @@
 //! (T-104)"): the messages waiting, typed one character a tick into a text of up to
 //! six lines that scrolls up a line when a seventh begins.
 
-use xeno_formats::motion::Strings;
-
 /// The text's bytes (+0x5e up to the call sign at +0xdb).
 pub const TEXT_LEN: usize = 0x7d;
 /// +0x52: the lines after the first (bits 0 to 3), a line just ended (bit 6), and
@@ -96,7 +94,7 @@ impl Panel {
     /// `1fe6:826d`, every tick after the robot moves: the next character of the
     /// first message waiting. `true` when something was typed (the console then
     /// redraws the panel).
-    pub fn type_one(&mut self, strings: &Strings) -> bool {
+    pub fn type_one(&mut self, strings: impl Fn(u16) -> u8) -> bool {
         let Some(&at) = self.queue.first().filter(|&&a| a != 0) else {
             return false;
         };
@@ -105,7 +103,7 @@ impl Panel {
             self.new_line();
             i = usize::from(self.length);
         }
-        match strings.byte(at) {
+        match strings(at) {
             0 => {
                 // The message ends with a new line.
                 if i >= LAST {
@@ -137,6 +135,7 @@ impl Panel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xeno_formats::motion::Strings;
 
     fn strings() -> Strings {
         // Offsets 1 "AB", 4 "C\rD", 8 a line of one character.
@@ -145,7 +144,7 @@ mod tests {
 
     fn typed(p: &mut Panel) -> usize {
         let s = strings();
-        (0..).take_while(|_| p.type_one(&s)).count()
+        (0..).take_while(|_| p.type_one(|a| s.byte(a))).count()
     }
 
     #[test]
@@ -153,7 +152,7 @@ mod tests {
         let mut p = Panel::default();
         p.post(1);
         p.post(4);
-        assert!(p.type_one(&strings()));
+        assert!(p.type_one(|a| strings().byte(a)));
         assert_eq!(p.shown(), b"A");
         // Two characters and the closing new line, then the second message.
         assert_eq!(typed(&mut p), 2 + 4);
@@ -175,7 +174,7 @@ mod tests {
         assert_eq!(p.flags, MAX_LINES | LINE_ENDED);
         // The seventh line's first character pushes the first out.
         p.post(1);
-        p.type_one(&strings());
+        p.type_one(|a| strings().byte(a));
         assert_eq!(p.shown(), b"E\x0cE\x0cE\x0cE\x0cE\x0cA");
         assert_eq!(p.flags, MAX_LINES | REDRAW);
         assert_eq!(p.length, 11);

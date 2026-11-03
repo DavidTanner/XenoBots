@@ -711,7 +711,7 @@ time):
   and `9ad3`, deploying's refusal `9b28`, L's four `9b82`; T-149) and the relay
   deployer's damage part (`9ad7`, its message at `9ae7`; `damage::Part`, T-129).
 - The scorpion's damage panel's status lines (`1000:9153` to `926c`, from its release
-  `90f9`): below, "The damage panel's status lines (T-186)".
+  `90f9`), ported with T-186: below, "The damage panel's status lines (T-186)".
 - Never sent in play: the console jump's refusal (`7ee3`, in `7eac`). It goes to the
   viewed object's panel when the object clicked is in the human side's unit list but
   not of the viewed object's side (`1000:d6d8`, +0x16 bit 3). The viewed object is
@@ -1159,7 +1159,14 @@ The words are immediates in the routines, so they are read from the user's `xeno
 with the rest (`xeno_formats::messages::StatusLine`, read through the handler's tests
 and each routine's instructions, `jmp`s followed). The text is in the string segment
 itself, so a line still being typed (a byte a tick) when another press rewrites its
-fields shows the new bytes from there on. Not checked in DOSBox (T-187).
+fields shows the new bytes from there on.
+
+**In the port** (T-186 part 2): the damage panel is one of the console's instruments;
+a left or right release over it sends `Pilot::Status` with the first line whose
+rectangle holds the pointer, and `xeno_sim::log::status` writes the fields as the
+robot's parts stand into `World::strings` (the string segment's rewritten bytes,
+hashed, not saved, as the original's) and sends the message through `log::say`. The
+panels type through those bytes (`World::type_panel`). Not checked in DOSBox (T-187).
 
 ### The scorpion's third display (T-170)
 
