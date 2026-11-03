@@ -761,6 +761,10 @@ traced the rest. In order:
      the walk **stops**, with no ahead test and no event 9 for that object;
    - else, if what is left is at most 0x6400 (about 0.4 units; inclusive), it is a
      contact, and one **ahead** (below) posts **event 9**; the walk goes on.
+
+   A walk that reaches the end of the table with nothing touching clears `BUMPED`,
+   as the in-base branch does (the same code, `1000:d46b`), whether or not it posted
+   event 9.
 4. A bump: if `BUMPED` is already set, only `bump_wait` becomes 4. Otherwise `BUMPED`
    is set, the speed is negated and the speed asked for set to 0 (the velocity waits
    for the speed's next step, as for a hill), the kind's bounce routine runs
@@ -768,10 +772,13 @@ traced the rest. In order:
    event 7 and the hit's sound) and `bump_wait` becomes 4, so the next four checks (64
    ticks) are skipped.
 
-So a robot backs off only from its first bump on a trip out of its base: until it is
-taken in (or set up anew: `1000:d2b6`, which also sets the helm, +0x24, to 100, clears +0x23; not traced further), touching again
-only re-arms the wait. Nothing else in `xeno.exe` clears +0x23 bit 1 (the other
-writers of a +0x23 byte are the bases' and relays' own fields). Only robots run the
+So `BUMPED` stands for "still touching since the last bump": a robot that bumps,
+waits its four checks and then touches nothing is re-armed, and its next bump backs
+it off again; one still touching on the check after its wait only waits again, with
+no reversing and no hit. Besides the check (in its base or with nothing touching),
+only `1000:d2b6` clears +0x23 (it also sets the helm, +0x24, to 100, so it looks like
+a robot's set-up; not traced further); the other writers of a +0x23 byte are the
+bases' and relays' own fields. Only robots run the
 check, so the other object bumps on its own check.
 
 **Ahead** (`1000:45f2`, `sim_test_closing_ahead`) is a closing test, not a bearing. It
@@ -800,15 +807,21 @@ user's `xeno.exe` through the instructions that hold them
 `xeno_sim::contact::step`, after the sensing step in the robot's tick; `Movement::
 bump_wait` is loaded from and saved to +0xfb and hashed; a first bump reports
 `Event::Bumped` (`xeno-tool simulate` prints "bumped into"; a bump while `BUMPED`
-reports nothing, as it does nothing but wait). It follows the trace above. One
+reports nothing, as it does nothing but wait), and a check touching nothing clears
+`BUMPED`. It follows the trace above. One
 shortcut, named in the code: a base's +0x1e word (`usg::Base::unknown_1e`) is not
 kept in the world and is taken as 0, as it is in every stock file.
 
 T-141's port took ahead as the coarse bearing within a quarter turn of the heading,
-posted event 9 for a touching object ahead too, and bumped every time; T-183 replaced
-all three. No `real_assets` number moved: `xeno-app`'s
-`real_assets_a_training_mission_is_won_and_lost_by_play` (T-141 moved its take-over
-to 60,000 retraces) and the fight tests pass unchanged.
+posted event 9 for a touching object ahead too, and backed off on every bump, even one
+still touching after the wait; T-183 replaced all three. The play test
+(`xeno-app`'s `real_assets_a_training_mission_is_won_and_lost_by_play`) changed: on
+`ntrain`, the piloted scorpion now bumps into its own side's other scorpion on the way
+and stops (the bump sets the speed asked for to 0), where before an earlier bump left
+`BUMPED` set and it drove on. The test's pilot now presses Up again whenever the
+scorpion is stopped short of the base; the mission is won at about 71,700 retraces
+(17 minutes) instead of 31 minutes. The fight tests and every other `real_assets`
+number pass unchanged.
 
 ## The cockpit keys (T-105)
 

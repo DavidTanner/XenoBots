@@ -77,11 +77,13 @@ pub fn step(
     if ahead_of {
         post(m, EVENT_CONTACT);
     }
+    // A walk that touches nothing ends as the in-base branch does (`1000:d46b`).
     let Some(other) = bump else {
+        m.mode &= !Robot::BUMPED;
         return;
     };
     m.bump_wait = c.wait;
-    // A robot already bumped (and not yet back in its base) only waits again.
+    // A robot still touching since its last bump only waits again.
     if m.mode & Robot::BUMPED != 0 {
         return;
     }
@@ -249,6 +251,29 @@ mod tests {
         assert!(check(&mut world).is_empty());
         let r = m(&world, 1);
         assert_eq!((r.speed, r.bump_wait, r.script.events), (40, 3, 0));
+    }
+
+    #[test]
+    fn a_check_touching_nothing_rearms_the_bump() {
+        let mut world = field(-0x100, 0x60);
+        check(&mut world);
+        movement(&mut world, EntityId(1)).unwrap().bump_wait = 0;
+        // Backed off out of reach, though still closing ahead: event 9, and re-armed.
+        world.insert(EntityId(2), scout(0x4000));
+        let m1 = movement(&mut world, EntityId(1)).unwrap();
+        (m1.speed, m1.script.events) = (40, 0);
+        assert!(check(&mut world).is_empty());
+        let r = m(&world, 1);
+        assert_eq!(
+            (r.mode & Robot::BUMPED, r.script.events),
+            (0, 1 << EVENT_CONTACT)
+        );
+        // So the next touch backs it off again, with the hit.
+        world.insert(EntityId(2), scout(-0x100));
+        assert_eq!(check(&mut world).len(), 2);
+        let r = m(&world, 1);
+        assert_eq!((r.speed, r.bump_wait), (-40, 3));
+        assert_ne!(r.mode & Robot::BUMPED, 0);
     }
 
     #[test]
