@@ -2228,7 +2228,7 @@ copy (`1000:f565`), which copy whole objects.
 | 2 `SCANNED` | made robots and bases (as bit 1) | nothing | the nearest-enemy searches (`1000:d797`, far `2000:8005`), the A key (`d85b`) |
 | 3 `ALIEN` | the editor's new robot (`7e9f`, the side byte), the new scenario's alien base (`7c0d`), a drop takes its maker's (`e83f`), a relay follows its power's side (`ce40`, `ce48`); `sim_damage_base` flips it around a message to the other side (`62d3`, `62da`) | as set | every side check (dozens: scans, searches, contact, unit lists, kills, paths, the map) |
 | 4 `RELAY_LINKED` | an up relay with power (`cd61`); an alarm buoy while its level is not 0 (`e61f`) | a relay's states (`cd25`, `cd3d`, `cd57`, `cd75`); the alarm buoy's look (`e615`) | the signal (`2000:7d16`: relays and bases of the side; nothing sets a base's), the relay's look (`ccf2`), the map's colours (`fa1e`, `fa38`, `fa5e`) |
-| 5 `UNIT` | made robots (`f812`) | nothing | the loader (`7c6b`, `7c84`: the unit list and the program), the scan (`dd1c`), the lock's upkeep (`d6a0`: the warning and the ECM apply to units), the lead (`4551`: a unit's velocity is led), the mines' and buoys' search (`1000:e84f`, at `e875`), and `57aa` on the object at `DS:0x594a` (not traced) |
+| 5 `UNIT` | made robots (`f812`) | nothing | the loader (`7c6b`, `7c84`: the unit list and the program), the scan (`dd1c`), the lock's upkeep (`d6a0`: the warning and the ECM apply to units), the lead (`4551`: a unit's velocity is led), the mines' and buoys' search (`1000:e84f`, at `e875`), and the situation room map's left press (`1000:57aa`, below) |
 | 6 `IN_FIELD` | made robots (`f812`), bases (`6237`), the editor's obstacle (`e9c8`), an up relay (`cd53`), a launch (`673d`) | the take-in (`645c`), a folded relay (`cd25`) | the contact check (`d4a0`), the hit search (`e8c0`), the blast (`e90a`) |
 | 7 | nothing | | nothing |
 
@@ -2245,7 +2245,21 @@ has `TARGETABLE` alone until it rises.
 | 1 `ECM` | F7 (`d945`) | the weapon steps at the ECM's end (`b097`, `973b`, `c8b8`) | nothing: the upkeep reads the time (+0xdf) instead |
 | 2 `SPOTTED` | the scan on units of the other side in range (`dd47`), the lock on its target, whatever it is (`d8e7`) | nothing | the map (`f983`) |
 | 3, 4, 5, 7 `SCAN_COUNT` | the scan's count (`dcc0` to `dce2`) | the same | the same |
-| 6 `TRACKING` | the lock (`d8b6`) | the consoles' pan keys and buttons (humanoid `b384`, `b396`, `b3af`, `b3c8`; scorpion `9bd7`, `9be9`, `9c02`, `9c1b`; scout `cb5c`, `cb6e`, `cb87`, `cba0`) and the second display's zoom (`da5b`) | the camera's pan in each kind's tick (`9352`, `b2d7`, `c4d0`); `9e80`, `81dd` and `b604` (with the target, on the clock's bit 5: a blink, not traced) |
+| 6 `TRACKING` | the lock (`d8b6`) | the consoles' pan keys and buttons (humanoid `b384`, `b396`, `b3af`, `b3c8`; scorpion `9bd7`, `9be9`, `9c02`, `9c1b`; scout `cb5c`, `cb6e`, `cb87`, `cba0`) and the second display's zoom (`da5b`) | the camera's pan in each kind's tick (`9352`, `b2d7`, `c4d0`); the second display's tracking text (`9e80` humanoid, `81dd` scorpion, `b604` scout: with a target, `TRACKING` and the game clock's bit 5; drawn since T-189, `docs/screens.md`, "In the port (T-189)") |
+
+**The map's press (T-201).** `DS:0x594a` is the object the situation room's main view
+probed in its last frame (`1000:5619`, `1000:41b7`'s result, written before each
+redraw; its only writer). The main view's mouse handler (`1000:571f`) on a left press
+with the pointer over the view's region (`DS:0x594c`) and no Ctrl-in-mode-M placing
+reads it at `1000:57aa`: an object with `UNIT` and the base's side bit (`57b0` to
+`57bd`) clears the base's +0x32 bit 15 and is selected (`2000:6d91`, `6d18`); a unit
+of the **other** side does nothing at all; no object, or one without `UNIT`, sets bit
+15 and moves the map's centre to the pointer (`1000:57d2`). It acts on the base's map
+fields and selection, which `xeno-app` keeps (`Mission::map_press`, T-128), not on the
+sim's state. T-128's port took the roster's robots for the unit test and recentred on
+an alien unit; since T-201 it reads the sim's `UNIT` and side and passes an alien unit
+over. The same handler's right release (`1000:576a`) opens the probed object's console
+through `1000:7eac`, and the press is not limited to mode M (T-212).
 
 Removal (`1000:f5a4`) sets a kind-15 object's +0x17 to 2 and its tick (`f5c1`) counts
 it down to free the slot.

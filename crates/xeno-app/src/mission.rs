@@ -2198,8 +2198,9 @@ impl Mission {
     }
 
     /// A left press on the situation room's map in mode M with no widget there
-    /// (`1000:5781`): on one of the player's units probed in the last frame it clears
-    /// the map's bit 15 and selects it (`1fe6:6f31`); otherwise it sets bit 15 and
+    /// (`1000:5781`): on a unit (+0x16 `UNIT`, `1000:57aa`) probed in the last frame
+    /// (`DS:0x594a`), one of the player's is selected and the map's bit 15 cleared
+    /// (`1fe6:6f31`) and an alien one is passed over; otherwise it sets bit 15 and
     /// moves the centre (+0x4f, +0x53) to the point under the pointer
     /// (`ui_map_pointer_to_world`).
     fn map_press(&mut self, at: (u16, u16), assets: &Assets) {
@@ -2207,11 +2208,16 @@ impl Mission {
         if self.viewed != Viewed::Base || self.mode != MAP_MODE || !view.contains(at.0, at.1) {
             return;
         }
-        // The roster's robots are the objects with +0x16 bit 5 on the player's side.
-        let unit = self.probed.get()[0].filter(|s| self.robots().contains(s));
-        if unit.is_some() {
-            self.map.overlays &= !usg::Base::MAP_FREE;
-            self.select_unit(unit);
+        let unit = self.probed.get()[0].and_then(|s| {
+            let e = self.world().get(EntityId(s))?;
+            (e.flags & usg::flag::UNIT != 0).then_some((s, e.side))
+        });
+        if let Some((slot, side)) = unit {
+            // `1000:57bd`: the unit's side bit against the base's.
+            if side == Side::Human {
+                self.map.overlays &= !usg::Base::MAP_FREE;
+                self.select_unit(Some(slot));
+            }
         } else if let Some(camera) = self.map_camera(assets) {
             self.map.overlays |= usg::Base::MAP_FREE;
             self.map.centre = mainview::pointer_to_world(&camera, view, at);
@@ -4672,6 +4678,17 @@ pub mod tests {
         press(&mut m, (165, 67));
         assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
         assert_eq!(m.selected, Some(robot));
+        // An alien unit (`1000:57bd`): passed over, the map left as it is.
+        let alien = m
+            .world()
+            .iter()
+            .find(|(_, e)| e.flags & usg::flag::UNIT != 0 && e.side == Side::Alien)
+            .map(|(id, _)| id.0)
+            .expect("the test mission has an alien robot");
+        let before = m.map;
+        m.probed.set([Some(alien), None]);
+        press(&mut m, (100, 50));
+        assert_eq!((m.map, m.selected), (before, Some(robot)));
         // Off the main view, or in another mode, nothing.
         let before = m.map;
         press(&mut m, (10, 10));
