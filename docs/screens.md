@@ -1183,7 +1183,7 @@ lever's drag uses +0x22 too (1 while dragging).
 | `0x11e` | (112, 263, 144, 317) | `c02e` | The target panel, opaque in 0x0160 (0x01ff for a warning) at (0x122, 0x71): with a target its name (`1fe6:7f38`), its distance (+0xe8 through `02b7` and `0301`, then `M`, a **space** and a new line; 0xff while +0xec bit 1 is clear) and its bearing less the heading in degrees (glyph 0x17, a new line; 0xff while +0xec bit 2 is clear); without one `DS:0x6d31` (three lines). Then at (0x122, 0x86) in 0x0160 each weapon's state: `DS:0x71d6` (+0xdc bit 0 or 1), else `0x6d46` while its cool-down (+0x105, +0x106) is not 0, else `0x6d4f` | none |
 | `0x120`, `0x122` | (112, 1, 119, 9), (112, 9, 119, 17) | `ba74`, `baa9` | The pilot and program switches: 0xa68 and 0xa58 (lit) for the one that drives (+0x23 bit 7), else 0xa60 and 0xa50; opaque at the corner | `ba8c`, `bac1`: the frame XOR (`dfd5`); a release the pilot (`d446`) or the program (`d42c`), as F2 and F3 |
 | `0x124` | (171, 0, 200, 53) | `c13e` | The gear lever: 0xb70 + 4 * the gear (+0x109, twice an index), opaque at the corner | `c156` (T-172): the humanoid's `a88c` instruction for instruction, the gear at +0x109 and the mark +0x132: drag through the gear rectangles `DS:0x6d80` (+0x22 = 1 while dragging; six gears, the drag scanning five and the last taking the rows below), or press a notch `DS:0x6dbc` (on the gear's own rectangle a drag starts): the gear, its speed (`DS:0x6df8`, the gear keys' table), the velocity (`d41c`), then the pilot (`d446`; the humanoid's calls them the other way round, which changes nothing); on the release the gear's message (`DS:0x6e04`, `d53f`), +0x22 cleared |
-| `0x126` | (155, 152, 197, 208) | `b738` | The third display (colour 253, region `DS:0x6bd4`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7c8b`; once it is done (mode 3) the copy through the region and the probe into `DS:0x6e14`. T-173 | `b76e`: as the second display's, flag 3 in `DS:0x6e16` |
+| `0x126` | (155, 152, 197, 208) | `b738` | The third display (colour 253, region `DS:0x6bd4`): marks itself every pass; when `DS:0x1450` is 0 a frame starts through `1fe6:7c8b`; once it is done (mode 3) the copy through the region and the probe into `DS:0x6e14`. Below, "The scout's third display (T-173)" | `b76e`: as the second display's, flag 3 in `DS:0x6e16` |
 | `0x128` | (133, 226, 143, 238) | `bdc1` | The lock button: 0xa70, 0xa78 while the robot has a target; while +0x22 bit 7 the other one when bit 3 is set (as the humanoid's). Opaque at +1 | `be01`: as the humanoid's `a3f1` (a left release `d812`, which also marks the target panel; a right one `d7f8`; +0x22 cleared) |
 | `0x12a` | (105, 71, 114, 100) | `bee8` | The lock warning light: 0xa88, 0xa90 while +0xed is not 0 and +0xee bit 2 is set; opaque at the corner | none |
 | `0x12c` | (190, 59, 195, 66) | `c208` | The speed: cursor (0x3b, 0xbe), `DS:0x70e2` in 0x68, then in 0x60 the speed table `DS:0x7003` by +0x26 (negated if negative) through `02b7`, the third digit a space or `-` but drawn from the fourth: two digits, no sign. Transparent | none |
@@ -1227,11 +1227,29 @@ buttons `Pilot::Stance` (as E, W and Q; the look flipped while held), the drop b
 (T-172) are the humanoid's `Pilot::Gear`, `Say`, `Toward`, `HoldTurn`, `ReleaseTurn`
 and `Straight`, with `xeno_formats::scoutcon` reading the lever's rectangles, notches
 and messages (through the humanoid's reader, the code being the same) and the
-compass's centre. Not ported: the third display (T-173). The status panel's press is
+compass's centre. The third display is T-173's (below). The status panel's press is
 `Pilot::StatusClock` (T-167), on all its rows: the panel comes after the 3D view's
 region (`0x106`) in the set, so the last widget over the pointer (T-169) is the panel
 (T-210, tested by a press over both). Still to check in DOSBox (T-174): every widget's look and the blink and page
 timing.
+
+### The scout's third display (T-173)
+
+From a Ghidra pass over the scout's draw handler (`1000:b738`), frame routine
+(`1fe6:7e2b`) and mouse handler (`b76e`). The draw handler is the humanoid's but for
+its region (`DS:0x6bd4`) and probe word (`DS:0x6e14`), and like it sets `DS:0x1450`
+to 0 after the copy. The frame routine is the humanoid's with three differences: the
+countdown (`DS:0x62ed`) is reloaded with 5, as the scorpion's; the dots are 0x63 over
+sprite 0xba0 (`msprite4`'s, in the scout console's bank); and the viewer's z is the
+robot's own, with no eye height added (list 0x12 does not read it). The heading is the
+robot's with no offset, so the display is heading up as the humanoid's; the radar is
++0xf6 bit 3, damaged view mode 0x18 in colours from 0x10, zoom 8, shift 1. The mouse
+is the second display's with flag 3 in `DS:0x6e16`; a left release with the probe
+set calls the lock (`d8a7`), a right one `7eac`, as the other kinds' (T-208).
+
+**In the port**: `Mission::draw_third` draws it as the others', the kind's `Radar`
+from `xeno_formats::radar` and the background from the scout console's bank, a frame
+every 5 ticks of the sim (the same shortcut, T-209). Not checked in DOSBox (T-174).
 
 ### The situation room's main view (T-103)
 
