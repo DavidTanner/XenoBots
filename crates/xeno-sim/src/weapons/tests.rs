@@ -207,6 +207,28 @@ fn a_scorpion_launches_one_tail_missile_and_reloads() {
 }
 
 #[test]
+fn a_tail_missile_on_a_freed_target_is_dropped_and_the_scorpion_kept() {
+    let (tables, mut random) = (synthetic_tables(), Random::seeded(1));
+    let mut world = armed(ObjectKind::Scorpion);
+    let (m, _) = robot_parts(&mut world, EntityId(4)).unwrap();
+    (m.weapon, m.guns.missiles) = (1, 2);
+    // The target destroyed before the upkeep drops it, its slot taken by a relay:
+    // the lock's pointer is in no slot (`1000:e0e1`).
+    world.remove(EntityId(6));
+    let mut relay = world.get(EntityId(4)).unwrap().clone();
+    (relay.kind, relay.state, relay.damage) = (ObjectKind::Relay, State::None, Damage::None);
+    world.insert(EntityId(6), relay);
+    trigger(&mut world, EntityId(4), &tables);
+    step_at(&mut world, 1, &mut random);
+    // Deliberately not the original's: it frees the scorpion; the port drops the
+    // missile, and the launch is counted as the original's goes on to count it.
+    assert!(world.get(EntityId(4)).is_some());
+    assert_eq!(shots(&world), 0);
+    let (m, _) = parts(&mut world);
+    assert_eq!((m.guns.missiles, m.guns.cooldown[1]), (1, 400));
+}
+
+#[test]
 fn a_scorpion_s_cannons_turn_flash_and_break_and_its_tail_shows_a_ready_missile() {
     let mut m = Movement::default();
     let mut c = parts(&mut armed(ObjectKind::Scorpion)).1;

@@ -170,8 +170,10 @@ fn aim_height(tables: &Tables, t: &Entity) -> i32 {
 /// Robot `id` fires `gun` (each gun's routine from the shot's allocation on). Returns
 /// the slot it took, none if none was free; the set-up may still drop the shot (a
 /// homing shot or tail missile whose target is gone), as the original frees it.
-// shortcut: the tail missile's set-up frees the launching robot instead (`1000:e0e1`
-// pops the robot before `f656`); the port drops the shot. T-203.
+// Deviation: with the lock on freed memory (in no slot), the tail missile's set-up
+// frees the launching robot (`1000:e0e1` pops the robot before `f656`, where the
+// homing shot's `e3bf` frees the shot); the port drops the shot, as meant
+// (`docs/sim.md`, "The lock's pointer (T-203)").
 pub fn fire(
     world: &mut World,
     id: EntityId,
@@ -193,7 +195,8 @@ pub fn fire(
     }
     let base = height(me);
     let mut z;
-    let target = m.target.filter(|&t| world.get(t).is_some());
+    // `f656`: the slot the lock's pointer is in.
+    let target = m.target.and_then(|t| world.slot_of(t));
     let mut shot = Shot {
         flight: Flight::Shell,
         velocity: [0; 3],

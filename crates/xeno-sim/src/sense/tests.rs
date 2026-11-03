@@ -315,6 +315,57 @@ fn the_upkeep_loses_a_far_target_and_drops_a_destroyed_one() {
     assert_eq!(parts_of(&world, 1).targeting, 4);
 }
 
+/// An object of `kind` with flags `flags` at (`x`, 100), of the small pool.
+fn small(kind: u16, flags: u8, x: i16) -> Entity {
+    Entity {
+        kind: ObjectKind::from(kind),
+        damage: Damage::None,
+        flags,
+        state: State::None,
+        ..robot(ObjectKind::Scout, Side::Alien, x, 100)
+    }
+}
+
+#[test]
+fn the_lock_is_on_its_target_s_memory_not_its_slot() {
+    let t = synthetic_tables();
+    let text = t.sensing.messages;
+    // A destroyed robot's slot taken by a relay: the lock stays on the robot's memory,
+    // `GONE`, and is dropped (the port followed the slot to the relay before T-203).
+    let mut world = world();
+    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    world.remove(EntityId(2));
+    world.insert(EntityId(2), small(4, flag::TARGETABLE, 102));
+    let ghost = m(&world, 1).target.unwrap();
+    assert_ne!(ghost, EntityId(2));
+    assert_eq!(world.slot_of(ghost), None);
+    assert_eq!(
+        world.get(ghost).map(|e| e.flags & flag::GONE),
+        Some(flag::GONE)
+    );
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, None);
+    assert!(m(&world, 1).panel.queue.contains(&text.destroyed));
+
+    // A locked relay freed: the next small object takes its memory, and the lock
+    // follows it, a shot that is not targetable, bearing and distance worked out.
+    let mut world = self::world();
+    world.insert(EntityId(5), small(4, flag::TARGETABLE | flag::ALIEN, 102));
+    lock(&mut world, EntityId(1), EntityId(5), &t, &mut Vec::new());
+    world.remove(EntityId(5));
+    world.insert(EntityId(9), small(7, 0, 104));
+    assert_eq!(m(&world, 1).target, Some(EntityId(9)));
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, Some(EntityId(9)));
+    let to = world.get(EntityId(9)).unwrap().position;
+    let at = world.get(EntityId(1)).unwrap().position;
+    assert_eq!(m(&world, 1).target_distance, lock_distance(at, to));
+    // That object freed in turn, the lock is dropped.
+    world.remove(EntityId(9));
+    step_at(&mut world, 10);
+    assert_eq!(m(&world, 1).target, None);
+}
+
 #[test]
 fn a_target_s_running_ecm_loses_the_lock() {
     let t = synthetic_tables();
