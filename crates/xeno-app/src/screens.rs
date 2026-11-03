@@ -939,8 +939,10 @@ impl Screens {
             .and_then(|bytes| usg::parse(&bytes).map_err(|e| e.to_string()));
         let scenario = match scenario {
             Ok(scenario) => scenario,
-            // shortcut: the beep (`1000:0261`) is silent until T-193.
-            Err(e) => return log::warn!("{:?}: cannot load {}: {e}", self.screen, path.display()),
+            Err(e) => {
+                log::warn!("{:?}: cannot load {}: {e}", self.screen, path.display());
+                return self.mission.beep();
+            }
         };
         let file = path
             .file_name()
@@ -1765,6 +1767,7 @@ pub(crate) mod tests {
         choose(&mut screens, &mut fb, "a.usg");
         let back = screens.mission().saved(&screens.mission_assets).unwrap();
         assert_eq!(back.objects, a.objects);
+        screens.take_sounds();
         file_keys(&mut screens, &mut fb, true, &[0x26]);
         choose(&mut screens, &mut fb, "none.usg");
         assert_eq!(
@@ -1772,6 +1775,7 @@ pub(crate) mod tests {
             "A.USG",
             "a failed load changes nothing"
         );
+        assert_eq!(screens.take_sounds(), [mission::Sound::Beep], "but beeps");
 
         // P plays the selection; it is the loaded record, so the file loaded resumes.
         file_keys(&mut screens, &mut fb, false, &[0x19]);

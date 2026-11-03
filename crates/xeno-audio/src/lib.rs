@@ -1,9 +1,10 @@
 //! Sound for the Xenobots port: a pure [`Mixer`] modelled on `sounddvr.dvr`'s, its
-//! `.ms3` [`Music`] driver on an emulated OPL2, and an [`Output`] that plays both on the
-//! default audio device through `rodio`.
+//! `.ms3` [`Music`] driver on an emulated OPL2, the PC [`Speaker`]'s beeps, and an
+//! [`Output`] that plays them on the default audio device through `rodio`.
 
 mod mixer;
 mod music;
+mod speaker;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -13,6 +14,7 @@ use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, Sample, SampleRate
 pub use mixer::{FULL_STEP, MIX_RATE, Mixer, VOICES};
 pub use music::{Driver, Music, OPL_RATE, Opl};
 pub use rodio::DeviceSinkError;
+pub use speaker::{PIT_HZ, SPEAKER_RATE, Speaker};
 
 /// A `dsounds.bin` block as [`Mixer::play`] takes it: its samples, then the byte at its
 /// `end`, which the driver mixes once.
@@ -24,13 +26,14 @@ pub fn block_data(sound: &xeno_formats::dsounds::Sound) -> Arc<[u8]> {
 }
 
 /// The default audio device, fed by a [`Mixer`] at [`MIX_RATE`] and, once given a bank,
-/// [`Music`] at [`OPL_RATE`]: two sources that rodio resamples and sums, so the
-/// effects and the music keep their own rates as on the original's two devices.
+/// [`Music`] at [`OPL_RATE`], and the [`Speaker`] at [`SPEAKER_RATE`]: sources that
+/// rodio resamples and sums, so each keeps its own rate as on the original's devices.
 /// Sound stops when dropped.
 pub struct Output {
     _sink: MixerDeviceSink,
     mixer: Arc<Mutex<Mixer>>,
     music: Arc<Mutex<Option<Music>>>,
+    speaker: Arc<Mutex<Speaker>>,
 }
 
 impl Output {
@@ -50,10 +53,13 @@ impl Output {
             buf: [0; MUSIC_BATCH],
             at: MUSIC_BATCH,
         });
+        let speaker = Arc::new(Mutex::new(Speaker::default()));
+        sink.mixer().add(SpeakerSource(Arc::clone(&speaker)));
         Ok(Self {
             _sink: sink,
             mixer,
             music,
+            speaker,
         })
     }
 
@@ -71,6 +77,46 @@ impl Output {
     /// The mixer the device is playing, to start and stop voices.
     pub fn mixer(&self) -> MutexGuard<'_, Mixer> {
         self.mixer.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The PC speaker the device is playing, to beep.
+    pub fn speaker(&self) -> MutexGuard<'_, Speaker> {
+        self.speaker.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Endless mono stream of the PC speaker.
+struct SpeakerSource(Arc<Mutex<Speaker>>);
+
+impl Iterator for SpeakerSource {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Sample> {
+        // shortcut: one lock a sample, as the mixer's; batch if it shows up in profiles.
+        let s = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .next_sample();
+        Some(Sample::from(s) / 32768.0)
+    }
+}
+
+impl Source for SpeakerSource {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        ChannelCount::MIN
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        SampleRate::new(SPEAKER_RATE).expect("non-zero rate")
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
     }
 }
 
