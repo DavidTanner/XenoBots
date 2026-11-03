@@ -295,7 +295,7 @@ fn button(
     // panel or the gear lever is held the shared-look buttons show another sprite; they
     // are not drawn again until marked then.
     if let Some(&(_, base, dx, dy)) = SHARED.iter().find(|b| b.0 == kind) {
-        return Some((base + lit(look.pressed), dx, dy));
+        return Some((base + lit(look.pressed()), dx, dy));
     }
     match kind {
         k if MODE_TYPES.contains(&k) => {
@@ -313,7 +313,7 @@ fn button(
             Some((base + lit(held && !selected), -1, -1))
         }
         LOCK_TYPE => {
-            let on = robot.target.is_some() != (look.lock_held && look.pressed);
+            let on = robot.target.is_some() != (look.lock_held() && look.pressed());
             Some((LOCK + lit(on), 1, 1))
         }
         PILOT_TYPE => Some((PILOT + lit(!robot.program_drives), 0, 0)),
@@ -443,12 +443,12 @@ mod tests {
         robot.program_drives = true;
         assert_eq!(at(PILOT_TYPE, 0, &robot, look, false), Some((PILOT, 0, 0)));
         // Pressed: the shared look; the lock button held shows the other light.
-        look.pressed = true;
+        look.0 |= 8;
         assert_eq!(
             at(LEFT_TYPE, 0, &robot, look, false),
             Some((0xb50 + NEXT, 0, 0))
         );
-        look.lock_held = true;
+        look.0 |= 0x80;
         assert_eq!(
             at(LOCK_TYPE, 0, &robot, look, false),
             Some((LOCK + NEXT, 1, 1))

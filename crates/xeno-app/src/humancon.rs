@@ -305,7 +305,7 @@ fn button(
     robot: &Robot,
     look: Look,
 ) -> Option<(u16, i16, i16)> {
-    let pressed = if look.pressed { NEXT } else { 0 };
+    let pressed = if look.pressed() { NEXT } else { 0 };
     // shortcut: the original adds all of +0x22, so while the lock button or the
     // program panel is held the shared-look buttons show another sprite; they are not
     // drawn again until marked then.
@@ -332,7 +332,7 @@ fn button(
         PILOT_TYPE => Some((PILOT[usize::from(robot.program_drives)], -1, -1)),
         PROGRAM_TYPE => Some((PROGRAM[usize::from(!robot.program_drives)], -1, -1)),
         LOCK_TYPE => {
-            let lit = robot.target.is_some() != (look.lock_held && look.pressed);
+            let lit = robot.target.is_some() != (look.lock_held() && look.pressed());
             Some((LOCK + if lit { NEXT } else { 0 }, 0, 0))
         }
         _ => None,
@@ -340,11 +340,11 @@ fn button(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::console::IN_ARC;
 
-    fn con() -> HumanCon {
+    pub(crate) fn con() -> HumanCon {
         let r = |top, left, bottom, right| Rect {
             top,
             left,
@@ -506,13 +506,13 @@ mod tests {
             (0x540, 0x550)
         );
         // Pressed: the shared look; the lock button held shows the other light.
-        look.pressed = true;
+        look.0 |= 8;
         assert_eq!(handle(&robot, look, AHEAD_TYPE, 0), 0x5d8 + NEXT);
         assert_eq!(
             button(&con, AHEAD_TYPE, 0, &robot, look).map(|b| (b.1, b.2)),
             Some((0, 1))
         );
-        look.lock_held = true;
+        look.0 |= 0x80;
         assert_eq!(handle(&robot, look, LOCK_TYPE, 0), LOCK + NEXT);
         robot.target = Some(Vec::new());
         assert_eq!(handle(&robot, look, LOCK_TYPE, 0), LOCK);
