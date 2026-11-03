@@ -887,6 +887,14 @@ scout's codes 8 and 9 do nothing (`DS:0x6edf` points both at a bare `ret`), so
 `motion::held` runs the turn codes for every kind and the speed codes for the
 scorpion alone.
 
+The second display's pan buttons (T-188; `docs/screens.md`, "The display's buttons
+(T-188)") held set +0x1b to 1 or 2 (no pilot switch), and every kind's tick then runs
+Z's or X's routine at its end: the pan less or plus the zoom's step, `TRACKING`
+cleared. The pan is the display's, kept by `xeno-app`, so `motion::held` clears
+`TRACKING` and `Mission::step_displays` steps the pan after the tick. The pan readout's
+codes 3 and 4 (the pan to 0 or 0x8000, run once) are done by `xeno-app` at the release.
+`Sim::pilot` takes the buttons as `Pilot::HoldPan` and `ReleasePan`.
+
 The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
 Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).
 

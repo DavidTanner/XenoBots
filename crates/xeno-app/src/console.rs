@@ -64,6 +64,34 @@ pub struct Robot {
     /// can drop (+0xe2 to +0xe5).
     pub stance: u8,
     pub drops: [u8; 4],
+    /// The second display's mode (+0xef, bit 2 while its device is damaged) and pan
+    /// (+0xf4), from `xeno-app`'s display.
+    pub display_mode: u8,
+    pub pan: u16,
+}
+
+/// Every console's pan readout (`docs/screens.md`, "The display's buttons (T-188)"),
+/// between its pan buttons.
+pub const PAN_TYPE: u16 = 0x150;
+/// The display's map mode: the pan buttons and the readout decline, and the readout
+/// shows only its unlit digits.
+pub const MAP_MODE: u8 = 2;
+
+/// The pan readout (`1000:dacc`): the unlit digits, then (but in the map mode) the pan
+/// in degrees, from one right and one down of the corner.
+pub fn draw_pan(
+    fb: &mut Framebuffer,
+    font: &Font,
+    area: Rect,
+    (unlit, colours): (&[u8], [u8; 2]),
+    robot: &Robot,
+) {
+    let at = (i32::from(area.left) + 1, i32::from(area.top) + 1);
+    let degrees = match robot.display_mode {
+        MAP_MODE => Vec::new(),
+        _ => digits(crate::editor::degrees(robot.pan), 3),
+    };
+    lit_number(fb, font, at, unlit, colours.into(), &degrees);
 }
 
 /// What the console keeps of a press: +0x22 bit 3, the buttons' shared look, and bit

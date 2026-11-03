@@ -166,9 +166,11 @@ pub struct Movement {
     /// less or plus 0x40 (`DS:0x6aef`'s `1000:b3d5`, `b3df`; `DS:0x6752`'s `9c3c`,
     /// `9c4b`; `DS:0x6edf`'s `cbad`, `cbb7`), and the scorpion's faster and slower
     /// buttons 8 and 9, which step its speed asked for by one within its limits
-    /// (`9c28`, `9c32`; the scout's 8 and 9 do nothing); others do nothing here.
-    // shortcut: the fire buttons' 7 is sent as `Pilot::Fire` (`xeno-app`); the pan
-    // codes 1 to 4 are T-188's.
+    /// (`9c28`, `9c32`; the scout's 8 and 9 do nothing), and every kind's pan buttons
+    /// 1 and 2, which clear `TRACKING` (`xeno-app` pans the display, which it keeps);
+    /// others do nothing here.
+    // shortcut: the fire buttons' 7 is sent as `Pilot::Fire` (`xeno-app`), and the pan
+    // readout's 3 and 4 (run once) are done by `xeno-app` at the release.
     pub held: u8,
     /// +0x1c: the eye height, the 3D view's camera above `z` (`docs/render.md`, "The
     /// camera"), in 1/65,536ths of a unit.
@@ -315,6 +317,9 @@ impl Movement {
     pub const RECALL: u8 = usg::Robot::RECALL;
     /// [`Movement::mode`]: the turn keys' bits (+0x23 bits 4 and 5, left and right).
     pub const TURNING: u8 = 0x30;
+    /// [`Movement::held`]: every kind's pan less and more buttons.
+    pub const HELD_PAN_LESS: u8 = 1;
+    pub const HELD_PAN_MORE: u8 = 2;
     /// [`Movement::held`]: the scorpion's faster and slower buttons.
     pub const HELD_FASTER: u8 = 8;
     pub const HELD_SLOWER: u8 = 9;

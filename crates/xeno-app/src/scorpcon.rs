@@ -38,6 +38,11 @@ pub const RIGHT_TYPE: u16 = 0xf8;
 pub const CARGO_TYPE: u16 = 0xfa;
 pub const DUMP_TYPE: u16 = 0xfc;
 pub const LOAD_TYPE: u16 = 0xfe;
+/// The second display's pan less and more, zoom and mode (camera, thermal, map)
+/// buttons (T-188).
+pub const PAN_TYPES: [u16; 2] = [0xc0, 0xc2];
+pub const ZOOM_TYPE: u16 = 0xc4;
+pub const MODE_TYPES: [u16; 3] = [0xc6, 0xc8, 0xca];
 pub const DEPLOY_TYPE: u16 = 0x100;
 /// `1000:86f4`, `87d6`: the unlit digits in 0x74, the number in 0x0e, transparent; the
 /// speed at (0x55, 0x7c), the heading at (0x4c, 0xa0).
@@ -233,7 +238,10 @@ fn relays_text(con: &ScorpCon, relays: u8) -> Vec<u8> {
 
 /// `1000:89a5` to `8d90`: the shared-look buttons' sprites and where each goes from its
 /// rectangle's corner.
-const SHARED: [(u16, u16, i16, i16); 12] = [
+const SHARED: [(u16, u16, i16, i16); 15] = [
+    (PAN_TYPES[0], 0x678, 0, -1),
+    (PAN_TYPES[1], 0x688, 0, -1),
+    (ZOOM_TYPE, 0x698, 0, -1),
     (FIRE_TYPE, 0x748, 0, 0),
     (FASTER_TYPE, 0x7b8, 1, 1),
     (STOP_TYPE, 0x7c8, 1, 1),
@@ -250,6 +258,8 @@ const SHARED: [(u16, u16, i16, i16); 12] = [
 /// The lock button (one pixel up), and the switches' look off and lit.
 const LOCK: u16 = 0x758;
 const SWITCH: u16 = 0x6d8;
+/// `1000:85c9`: the first mode button, one pixel up (16 handles a mode).
+const MODE: u16 = 0x6a8;
 
 /// A button (`kind`, its rectangle and its state's second byte: a weapon's or a drop's
 /// number) as its draw handler draws it; `held` while the pointer holds it.
@@ -318,6 +328,20 @@ fn button(
             let i = usize::from(kind == PROGRAM_TYPE);
             let on = held || robot.program_drives == (kind == PROGRAM_TYPE);
             Some(Place::In(SWITCH + lit(on), con.switches[i]))
+        }
+        // `85c9`, `862a`, `868f`: held, the look `+0x22 & 0x7f`; else lit in its mode.
+        k if MODE_TYPES.contains(&k) => {
+            let mode = MODE_TYPES.iter().position(|&t| t == k)? as u8;
+            let on = if held {
+                look.pressed
+            } else {
+                robot.display_mode == mode
+            };
+            Some(Place::At(
+                MODE + 2 * NEXT * u16::from(mode) + lit(on),
+                0,
+                -1,
+            ))
         }
         _ => None,
     }
@@ -448,6 +472,27 @@ mod tests {
         let mut robot = Robot::default();
         let mut look = Look::default();
         let at = |kind, n, robot: &Robot, look, held| button(&con, kind, n, robot, (look, held));
+        // T-188: a mode button is lit in its mode; held, by the look alone.
+        robot.display_mode = 1;
+        let mode = |robot: &Robot, look, held| at(MODE_TYPES[1], 0, robot, look, held);
+        assert_eq!(
+            mode(&robot, look, false),
+            Some(Place::At(0x6b8 + NEXT, 0, -1))
+        );
+        assert_eq!(mode(&robot, look, true), Some(Place::At(0x6b8, 0, -1)));
+        robot.display_mode = 0;
+        let pressed = Look {
+            pressed: true,
+            ..look
+        };
+        assert_eq!(
+            mode(&robot, pressed, true),
+            Some(Place::At(0x6b8 + NEXT, 0, -1))
+        );
+        assert_eq!(
+            at(PAN_TYPES[1], 0, &robot, pressed, false),
+            Some(Place::At(0x688 + NEXT, 0, -1))
+        );
         assert_eq!(
             at(FIRE_TYPE, 0, &robot, look, false),
             Some(Place::At(0x748, 0, 0))
