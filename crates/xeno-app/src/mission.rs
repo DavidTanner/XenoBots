@@ -19,7 +19,7 @@
 //! from the user's `xeno.exe`, `msprite1.b@n` and `mgavideo.dvr`; what a key does is
 //! chosen by the original handler it calls.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -832,6 +832,37 @@ enum Target {
     Instrument(views::Widget),
 }
 
+/// A redraw mark on the view's widgets (T-205; `docs/screens.md`, "Only the marked
+/// widgets are drawn again (T-205)"): drawn at the next pass with the look as it is
+/// then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    /// The view's widget set opened (`1000:2343`): every widget.
+    All,
+    /// One widget, by its state offset: its own handler's press or release.
+    Widget(u16),
+    /// The situation room's map controls and mode buttons (`1000:676e`, a mode set).
+    Controls,
+    /// The console's display mode buttons (a display mode set).
+    Modes,
+}
+
+/// The look (the situation room's +0x40, a console's +0x22) each widget was last drawn
+/// with. The original draws a widget only when marked, so the others keep their old
+/// pixels; the port draws every widget every frame, each with the look it was marked
+/// with.
+// shortcut: only the look is kept per widget, and two more marks are not ported: a
+// target change marks the lock button (`1000:ac1e`, `9345` and the others) and a log
+// line the C mode button (`65a6`), which matter only while another button holds a
+// look; upgrade if DOSBox shows the difference.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Marks {
+    pending: Vec<Mark>,
+    /// By state offset; a widget not here was last drawn when the set opened.
+    drawn: BTreeMap<u16, u8>,
+    opened: u8,
+}
+
 /// The mission's sim: running, with the run's random word, or parked without it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Run {
@@ -873,6 +904,7 @@ pub struct Mission {
     unit_pressed: bool,
     /// The situation room's buttons' shared pressed look (base +0x40).
     button_look: bool,
+    marks: RefCell<Marks>,
     /// The console's fire button held (+0x1b = 7).
     // shortcut: one for every console, put back when a view opens; the original keeps
     // +0x1b in each robot.
@@ -1000,6 +1032,7 @@ impl Mission {
             roster_top: 0,
             unit_pressed: false,
             button_look: false,
+            marks: RefCell::default(),
             firing: false,
             orders: Vec::new(),
             mode: ORDERS_MODE,
@@ -1206,6 +1239,7 @@ impl Mission {
     }
 
     fn reset_looks(&mut self) {
+        self.mark_all();
         self.unit_pressed = false;
         self.firing = false;
         self.capture = None;
@@ -1599,14 +1633,98 @@ impl Mission {
         crate::console::Look(self.console())
     }
 
-    /// The console byte as the port draws it.
-    // shortcut: the port draws every widget every frame, the original only those
-    // marked; the status panel's press (0xff) marks no button, so it is drawn as 0
-    // while the panel holds the pointer. Upgrade with T-205's marks.
-    fn drawn_console(&self) -> u8 {
-        match self.capture {
-            Some((Target::Instrument(w), _)) if STATUS_TYPES.contains(&w.kind) => 0,
-            _ => self.console(),
+    /// The view's look as it stands: the situation room's +0x40 (8 or 0), a console's
+    /// +0x22.
+    fn look_now(&self) -> u8 {
+        match self.viewed {
+            Viewed::Base => 8 * u8::from(self.button_look),
+            Viewed::Robot(_) => self.console(),
+        }
+    }
+
+    fn mark(&self, mark: Mark) {
+        self.marks.borrow_mut().pending.push(mark);
+    }
+
+    /// The view's widget set opened again (a file dialog's or the terrain editor's end,
+    /// T-180): every widget is drawn at the next pass.
+    pub fn mark_all(&self) {
+        self.mark(Mark::All);
+    }
+
+    /// The draw pass (`1000:26cd`): each widget marked takes the look as it is now.
+    fn draw_marked(&self, assets: &Assets) {
+        let look = self.look_now();
+        let tables = match self.viewed {
+            Viewed::Base => &assets.views.situation,
+            Viewed::Robot(slot) => match self.book().get(slot) {
+                Some(robot) => assets.console_tables(robot.kind),
+                None => return,
+            },
+        };
+        let mut marks = self.marks.borrow_mut();
+        for mark in std::mem::take(&mut marks.pending) {
+            let widgets: Box<dyn Iterator<Item = &views::Widget>> = match mark {
+                Mark::All => {
+                    marks.drawn.clear();
+                    marks.opened = look;
+                    continue;
+                }
+                Mark::Widget(state) => {
+                    marks.drawn.insert(state, look);
+                    continue;
+                }
+                Mark::Controls if self.viewed == Viewed::Base => Box::new(tables.nested.iter()),
+                Mark::Modes if self.viewed != Viewed::Base => Box::new(
+                    tables
+                        .widgets
+                        .iter()
+                        .chain(&tables.nested)
+                        .filter(|w| mode_button(w.kind).is_some()),
+                ),
+                Mark::Controls | Mark::Modes => continue,
+            };
+            for w in widgets {
+                marks.drawn.insert(w.state, look);
+            }
+        }
+    }
+
+    /// The look the widget at `state` was last drawn with.
+    fn drawn_look(&self, state: u16) -> u8 {
+        let marks = self.marks.borrow();
+        marks.drawn.get(&state).copied().unwrap_or(marks.opened)
+    }
+
+    /// The state offset of the widget `target` is, where its handler marks it.
+    fn target_state(&self, target: Target, assets: &Assets) -> Option<u16> {
+        match target {
+            Target::Button(i) => assets.views.situation_buttons.get(i).map(|b| b.state),
+            Target::Control(i) => assets.views.situation.nested.get(i).map(|w| w.state),
+            Target::Instrument(w) => Some(w.state),
+            Target::Panel => {
+                let Viewed::Robot(slot) = self.viewed else {
+                    return None;
+                };
+                let kind = self.book().get(slot)?.kind;
+                assets
+                    .console_tables(kind)
+                    .find(PROGRAM_PANEL_TYPE)
+                    .map(|w| w.state)
+            }
+            _ => None,
+        }
+    }
+
+    /// Every handler that changes the look marks its own widget (and its group), and
+    /// nothing else but a mode set (`Mark::Controls`, `Mark::Modes`) and the set's
+    /// opening: so only the pressed button shows the pressed look.
+    fn mark_changed(&self, target: Option<Target>, before: (Viewed, u8), assets: &Assets) {
+        if (self.viewed, self.look_now()) != before
+            && self.viewed == before.0
+            && let Some(state) = target.and_then(|t| self.target_state(t, assets))
+        {
+            self.mark(Mark::Widget(state));
         }
     }
 
@@ -1661,6 +1779,10 @@ impl Mission {
     /// mode set, the zoom's name shown and the mode's sound played (heard whichever
     /// console is open, as `1000:ee90` plays it), whatever the mode was.
     fn set_display_mode(&mut self, slot: u16, mode: u8) {
+        // `1000:b3ed`, `99d0`, `cbc5`: the mode set marks the mode buttons.
+        if self.viewed == Viewed::Robot(slot) {
+            self.mark(Mark::Modes);
+        }
         let d = self.displays.entry(slot).or_default();
         (d.mode, d.label, d.static_time) = (mode, LABEL_TIME, 0);
         self.sounds.push(Sound::Play(DISPLAY_SOUND));
@@ -1931,6 +2053,8 @@ impl Mission {
     /// The situation room's main view mode (`ui_sitroom_set_view_mode`).
     fn set_mode(&mut self, mode: u8) {
         log::debug!("situation room: main view mode {mode}");
+        // `1000:676e` marks the map controls and the mode buttons.
+        self.mark(Mark::Controls);
         self.mode = mode;
         self.typed = 0;
         self.tint = None;
@@ -2640,6 +2764,12 @@ impl Mission {
 
     /// A mouse button went down at `at` (`None` off the picture).
     pub fn mouse_down(&mut self, button: MouseButton, at: Option<(u16, u16)>, assets: &Assets) {
+        let before = (self.viewed, self.look_now());
+        self.press(button, at, assets);
+        self.mark_changed(self.capture.map(|c| c.0), before, assets);
+    }
+
+    fn press(&mut self, button: MouseButton, at: Option<(u16, u16)>, assets: &Assets) {
         if self.unpause() || self.capture.is_some() || button == MouseButton::Middle {
             return;
         }
@@ -2754,6 +2884,19 @@ impl Mission {
 
     /// A mouse button went up with the pointer at `at`.
     pub fn mouse_up(
+        &mut self,
+        button: MouseButton,
+        at: Option<(u16, u16)>,
+        assets: &Assets,
+    ) -> Option<Request> {
+        let before = (self.viewed, self.look_now());
+        let target = self.capture.map(|c| c.0);
+        let request = self.release(button, at, assets);
+        self.mark_changed(target, before, assets);
+        request
+    }
+
+    fn release(
         &mut self,
         button: MouseButton,
         at: Option<(u16, u16)>,
@@ -2990,6 +3133,7 @@ impl Mission {
 
     /// Draws the view's own parts over its picture, which `fb` already shows.
     pub fn draw(&self, fb: &mut Framebuffer, assets: &Assets) {
+        self.draw_marked(assets);
         self.draw_under_dialog(fb, assets);
         self.draw_dialog(fb, assets);
         if let (true, Some(room)) = (self.paused, &assets.sitroom) {
@@ -3502,7 +3646,8 @@ impl Mission {
 
     fn draw_situation(&self, fb: &mut Framebuffer, assets: &Assets) {
         for button in &assets.views.situation_buttons {
-            let handle = button.handle + if self.button_look { HANDLE_STEP } else { 0 };
+            let pressed = self.drawn_look(button.state) != 0;
+            let handle = button.handle + if pressed { HANDLE_STEP } else { 0 };
             match assets.sprite(handle) {
                 Some(sprite) => {
                     let blit = SpriteBlit {
@@ -3529,7 +3674,7 @@ impl Mission {
             |w| self.mode_of(w),
             &self.map,
             self.mode,
-            self.button_look,
+            |w| self.drawn_look(w.state) != 0,
             room,
             sprite,
         );
@@ -3654,15 +3799,16 @@ impl Mission {
             return;
         };
         let tables = assets.console_tables(robot.kind);
-        if let Some(area) = tables.find(PROGRAM_PANEL_TYPE).and_then(|w| w.area) {
+        if let Some((area, state)) = tables
+            .find(PROGRAM_PANEL_TYPE)
+            .and_then(|w| Some((w.area?, w.state)))
+        {
             let style = assets.views.program_panel[robot.kind.index()];
-            // `1000:d319`: pressed while +0x22 bit 7 is set, bit 0 which way.
-            // shortcut: shown only while no other widget holds the pointer (the lock
-            // button and the scorpion's mode buttons set bit 7 but do not mark the
-            // panel); upgrade with T-205's marks.
-            let byte = self.display(slot).console;
-            let others = matches!(self.capture, Some((t, _)) if t != Target::Panel);
-            if byte & 0x80 != 0 && !others {
+            // `1000:d319`: pressed while +0x22 bit 7 is set, bit 0 which way, as it was
+            // when the panel was last marked (the lock button and the scorpion's mode
+            // buttons set bit 7 but mark only themselves).
+            let byte = self.drawn_look(state);
+            if byte & 0x80 != 0 {
                 // `gfx_recolour_rect`: one pressed colour becomes the other.
                 let [a, b] = style.pressed;
                 let (from, to) = if byte & 1 != 0 { (b, a) } else { (a, b) };
@@ -3751,10 +3897,10 @@ impl Mission {
             let colours = assets.views.message_panel.colours[RobotKind::Humanoid.index()];
             h::draw_status(fb, a, font, con, colours, &robot);
         }
-        let look = crate::console::Look(self.drawn_console());
         let widgets = tables.widgets.iter().chain(&tables.nested);
         for w in widgets {
             let Some(a) = w.area else { continue };
+            let look = crate::console::Look(self.drawn_look(w.state));
             let weapon = self.widget_byte(slot, w).unwrap_or(0);
             h::draw_button(fb, sprites, con, (w.kind, a, weapon), &robot, look);
             // `1000:dfd5`: a switch held shows its frame XORed.
@@ -3811,9 +3957,9 @@ impl Mission {
         if let Some(a) = area(s::RELAYS_TYPE) {
             s::draw_relays(fb, a, font, con, robot.relays);
         }
-        let look = crate::console::Look(self.drawn_console());
         for w in tables.widgets.iter().chain(&tables.nested) {
             let Some(a) = w.area else { continue };
+            let look = crate::console::Look(self.drawn_look(w.state));
             let n = self.widget_byte(slot, w).unwrap_or(0);
             let held = self
                 .capture
@@ -3869,9 +4015,9 @@ impl Mission {
             let texts = (&human.ok[..], &human.out[..]);
             c::draw_status(fb, (a, font), con, texts, colours, &robot);
         }
-        let look = crate::console::Look(self.drawn_console());
         for w in tables.widgets.iter().chain(&tables.nested) {
             let Some(a) = w.area else { continue };
+            let look = crate::console::Look(self.drawn_look(w.state));
             let n = self.widget_byte(slot, w).unwrap_or(0);
             let held = self
                 .capture
@@ -5419,7 +5565,12 @@ pub mod tests {
             area: Some(area),
         });
         let handle = 0x3f8;
-        let arrow = views::SpriteButton { kind, area, handle };
+        let arrow = views::SpriteButton {
+            kind,
+            state,
+            area,
+            handle,
+        };
         assets.views.situation_buttons.insert(0, arrow);
         if let Some(usg::Body::Base(b)) = m
             .scenario
@@ -5838,6 +5989,32 @@ pub mod tests {
         let saved = m.saved(&assets).unwrap();
         let robot = saved.objects.iter().flatten().find(|o| o.slot == 2);
         assert_eq!(robot.and_then(|o| o.robot()).unwrap().program_panel, 0x88);
+    }
+
+    /// T-205: a widget takes the look as it is at the pass after it is marked, and
+    /// keeps it until marked again; opening the set marks every widget.
+    #[test]
+    fn only_a_marked_widget_takes_the_look() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        m.view_robot(2);
+        m.displays.get_mut(&2).unwrap().console = 0;
+        m.draw_marked(&assets);
+        m.set_console(|b| b ^ 8);
+        m.mark(Mark::Widget(5));
+        m.draw_marked(&assets);
+        assert_eq!((m.drawn_look(5), m.drawn_look(6)), (8, 0));
+        // The status panel's press (0xff) marks no button.
+        m.set_console(|_| 0xff);
+        m.draw_marked(&assets);
+        assert_eq!((m.drawn_look(5), m.drawn_look(6)), (8, 0));
+        m.mark_all();
+        m.draw_marked(&assets);
+        assert_eq!((m.drawn_look(5), m.drawn_look(6)), (0xff, 0xff));
+        // The base's view: its own look, every widget drawn as the set opens.
+        m.base();
+        m.draw_marked(&assets);
+        assert_eq!(m.drawn_look(5), 0);
     }
 
     #[test]
@@ -7554,6 +7731,115 @@ pub mod tests {
                     Field::Flag { at, ok, .. } => assert_eq!(bytes(at), ok),
                 }
             }
+        }
+    }
+
+    /// The pixels of `w`'s rectangle in `fb`.
+    fn widget_pixels(fb: &Framebuffer, w: &views::Widget) -> Vec<Option<u8>> {
+        pixels(w.area.unwrap()).map(|(x, y)| fb.get(x, y)).collect()
+    }
+
+    /// T-205, the user's first case: a mode button pressed shows the pressed look, and
+    /// no other button does (the original marks only the pressed one and its group).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_only_the_pressed_mode_button_looks_pressed() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let name = "scen00a.usg";
+        let mut m = Mission::new(
+            name.into(),
+            &assets.scenarios[name],
+            Random::seeded(1),
+            &assets.motion,
+        );
+        let draw = |m: &Mission| {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            m.draw(&mut fb, &assets);
+            fb
+        };
+        let tables = &assets.views.situation;
+        let modes: Vec<_> = tables.all(mainview::MODE_BUTTON_TYPE).copied().collect();
+        let zoom = *tables.all(mainview::ZOOM_TYPE).next().unwrap();
+        let launch = assets.views.situation_buttons[0];
+        let launch = views::Widget {
+            kind: launch.kind,
+            state: launch.state,
+            area: Some(launch.area),
+        };
+        let pressed = modes[modes.len() - 1];
+        let others: Vec<_> = modes[..modes.len() - 1]
+            .iter()
+            .copied()
+            .chain([zoom, launch])
+            .collect();
+        let before = draw(&m);
+        let a = pressed.area.unwrap();
+        let centre = Some(((a.left + a.right) / 2, (a.top + a.bottom) / 2));
+        m.mouse_down(LEFT, centre, &assets);
+        let held = draw(&m);
+        assert_ne!(
+            widget_pixels(&before, &pressed),
+            widget_pixels(&held, &pressed)
+        );
+        for w in &others {
+            assert_eq!(widget_pixels(&before, w), widget_pixels(&held, w), "{w:?}");
+        }
+        // Let go over it: the look back, the mode set, every control drawn again.
+        m.mouse_up(LEFT, centre, &assets);
+        let after = draw(&m);
+        assert_eq!(
+            widget_pixels(&after, &launch),
+            widget_pixels(&before, &launch)
+        );
+        assert_eq!(widget_pixels(&after, &zoom), widget_pixels(&before, &zoom));
+    }
+
+    /// T-205, the user's second case: the scorpion's lock button held shows its other
+    /// sprite, and the other buttons keep theirs (`1000:8a26` marks only itself).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_only_the_scorpion_lock_button_looks_pressed() {
+        use crate::scorpcon as s;
+        let Some((assets, mut m, _)) = console_of(RobotKind::Scorpion, "ctrain.usg") else {
+            return;
+        };
+        let draw = |m: &Mission| {
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            m.draw(&mut fb, &assets);
+            fb
+        };
+        let tables = &assets.views.scorpion;
+        let find = |kind| *tables.all(kind).next().unwrap();
+        let lock = find(s::LOCK_TYPE);
+        let others = [
+            s::FIRE_TYPE,
+            s::STOP_TYPE,
+            s::LEFT_TYPE,
+            s::DROP_TYPE,
+            s::DEPLOY_TYPE,
+        ]
+        .map(find);
+        let before = draw(&m);
+        let a = lock.area.unwrap();
+        let centre = Some(((a.left + a.right) / 2, (a.top + a.bottom) / 2));
+        m.mouse_down(LEFT, centre, &assets);
+        let held = draw(&m);
+        assert_ne!(widget_pixels(&before, &lock), widget_pixels(&held, &lock));
+        for w in &others {
+            assert_eq!(widget_pixels(&before, w), widget_pixels(&held, w), "{w:?}");
+        }
+        m.mouse_up(LEFT, centre, &assets);
+        let after = draw(&m);
+        for w in &others {
+            assert_eq!(widget_pixels(&before, w), widget_pixels(&after, w), "{w:?}");
         }
     }
 

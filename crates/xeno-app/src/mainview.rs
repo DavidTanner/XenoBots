@@ -123,14 +123,15 @@ pub fn draw_controls<'a>(
     modes: impl Fn(&Widget) -> Option<u8>,
     map: &MapState,
     mode: u8,
-    pressed: bool,
+    pressed: impl Fn(&Widget) -> bool,
     room: &SitRoom,
     sprite: impl Fn(u16) -> Option<&'a Sprite>,
 ) {
     let live = mode == MAP_MODE;
-    let look = if pressed { HANDLE_STEP } else { 0 };
     for w in widgets {
         let Some(area) = w.area else { continue };
+        // Each with the look it was last marked with (T-205).
+        let look = if pressed(w) { HANDLE_STEP } else { 0 };
         let (x, y) = (i32::from(area.left), i32::from(area.top));
         let toggle = TOGGLES.iter().find(|t| t.0 == w.kind);
         let handle = match (w.kind, toggle) {
@@ -1460,6 +1461,7 @@ pub(crate) mod tests {
         let draw = |mode, pressed| {
             let mut fb = Framebuffer::new(xeno_render::Size::new(60, 20));
             let modes = |w: &Widget| Some(if w.state == 3 { 4 } else { 8 });
+            let pressed = |_: &Widget| pressed;
             draw_controls(&mut fb, &widgets, modes, &map, mode, pressed, &room, sprite);
             fb
         };

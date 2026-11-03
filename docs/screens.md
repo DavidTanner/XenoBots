@@ -614,6 +614,61 @@ view switch's do. The port does not set the picture's palette again on the reope
 (the original's draw does, slot `0x494`); the restarted records write their own
 first frames.
 
+### Only the marked widgets are drawn again (T-205)
+
+From a Ghidra pass over every `mov byte [di+offset], 3` in the situation room's and
+the three consoles' code (each offset turned into a widget through the view's set and
+its state offset), the self-marks (`mov si, [bx+2]`, then 3 at `[bp+si]`), the draw
+pass and the group's draw handler.
+
+**Groups.** The draw pass (`1000:26cd`) walks only the top-level widgets; a group's
+draw handler (type 4, `1000:26e8`) walks its members with the same test. So a member
+is drawn only when both it and its group are marked, and every handler of a member
+marks both.
+
+**Who marks a button.** Every handler that flips a shared look marks **its own
+widget** (and its group), and nothing else:
+
+- The situation room's launch, recall and end buttons (`1000:5b94`, `5bda`, `5c19`),
+  the power rows' arrows (`5f8c`, `5ff3`: the routine they call marks the arrow itself,
+  not the row's bar), the zoom (`5c99`, with the first group) and the mode buttons
+  (`5f63`: itself and the second group). A mode button's left release then sets the
+  mode (`ui_sitroom_set_view_mode`, `1000:676e`), which marks the main view, both
+  groups, all five mode buttons and all six map controls: so they are all drawn again
+  at the release, with the look as it is then. The overlay switches (`5d3e` and the
+  others) mark themselves and the group but use no look. The O, S, M, R and C keys
+  set the mode through the same routine.
+- On a console, every shared-look button's handler (fire, the turn, speed, cargo,
+  drop, cloak and ECM buttons, the pan and zoom buttons) and the lock button (`1000:a3f1`,
+  scorpion `8a26`, scout `be01`: on the press and on the release) mark themselves. The
+  lock's left release marks the target panel too. The display mode setters (humanoid
+  `1000:b3ed`, scorpion `99d0`, scout `cbc5`) mark the three mode buttons, their group
+  and the pan readout; only the scorpion's mode buttons draw a look (`base + (+0x22 &
+  0x7f)`). The program panel is marked by its own press and release and by a program
+  change (with the switches: `b365`, `9b87`, `cb3d`).
+- The status panel's press (+0x22 = 0xff) and the gear lever's (1) mark no button.
+
+**Other marks** on a look-drawing button: a target change marks the lock button and the
+target panel (`1000:ac19`, `b2a6`; scorpion `9340`, `9971`; scout `c4be`, `cab4`),
+and a log line (`1000:65a6`) the C mode button and its group.
+
+So while a button is held only it shows the pressed look; the others keep the pixels
+of their last draw (at the set's opening, as a rule, with the look 0). Released off
+the button, the look stays flipped and the button stays pressed until something marks
+it; the next button pressed then shows its frame unpressed while held. The draw pass
+is the main loop's, so a widget takes the look as it is at the next pass after its
+mark.
+
+**The port** draws every widget every frame, so it keeps, for each widget of the open
+view, the look as it was at the frame after its last mark (`Mission::marks` in
+`xeno-app`): the opening of the view's set (a view switch, the end of a file dialog or
+the terrain editor) marks every widget; a press or release that changes the look marks
+the widget pressed; a mode set marks the situation room's map controls and mode
+buttons, or the console's mode buttons. The buttons, the program panel and the lock
+button draw that look. Not ported (a shortcut in the code): the target change's mark
+of the lock button and the log line's of the C button, which differ only while another
+button holds a look. Not checked in DOSBox (T-164, T-168, T-171, T-174).
+
 ### The message panel (T-104)
 
 Every robot has a panel of text (object +0x52 to +0xda, `usg::Robot::panel` and the
@@ -1079,7 +1134,8 @@ release on any of them flips +0x22 bit 3, so all show their pressed sprite (the 
 one) together, as the situation room's +0x40. +0x22 is also the program panel's byte
 (bit 7 while a program is picked, bit 0 its half; T-043) and the lock button's and the
 status panel's press (below), so while those are held the other buttons' sum is off;
-they are not drawn again until marked.
+they are not drawn again until marked, and each handler marks only its own widget
+(below, "Only the marked widgets are drawn again (T-205)").
 
 **The console's byte (T-204).** +0x22 is one byte in the robot (saved in the `.usg`
 as `program_panel`; 0 for every robot of the stock files), and every console handler
@@ -1152,7 +1208,7 @@ T-204. Shortcuts, each
 named in the code: a target's serial is the
 scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
-+0x22 (T-205); the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
++0x22 (a button marked while bits 0 or 7 are left set would show another sprite); the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
 the turn buttons answer the mouse: `xeno_formats::humancon` reads the lever's gear
 rectangles, notches and messages and the compass's centre; the sim's `Pilot::Gear`,
 `Say`, `Toward`, `Straight`, `HoldTurn` and `ReleaseTurn` (the scorpion's and scout's
@@ -1161,10 +1217,10 @@ the humanoid's tick runs 10 and 11). Shortcut: a turn button's leave
 is taken at the release, as the fire button's. Since T-204 the lever, the status panel,
 the lock button, the program panel and every shared-look button read and write one
 byte per robot (`Display::console` in `xeno-app`, loaded from and saved to the robot's
-+0x22), so the lever goes by +0x22 as the original does. The port draws every widget
-every frame, so until T-205 the buttons draw the byte as 0 while the status panel
-holds the pointer and the program panel shows its pressed look only while no other
-widget holds it. Since T-167 the warning light's blink
++0x22), so the lever goes by +0x22 as the original does. Since T-205 each widget draws
+the byte as it was when last marked ("Only the marked widgets are drawn again
+(T-205)"), so the status panel's press and the lock button's leave the other buttons
+and the program panel as they were. Since T-167 the warning light's blink
 and the status page are the sim's (+0xee, +0x10a); the panel's press and S are
 `Pilot::StatusClock`, and with the console open the app sends `Pilot::StatusShown`
 before each tick, the draw's cut (a shortcut: the original cuts in the frame after the
@@ -1673,9 +1729,9 @@ plus the buttons' shared look (+0x40) at its corner (slot `0x5c4`). Its mouse ha
 (`1000:5f8c`, `5ff3`) takes events for itself (`AX` bit 0x80; otherwise carry, not
 handled), ignores moves (bit 0), and otherwise flips the shared look, reads the row
 (its state's second byte in the base's view state: 0, 2 and 4 in every stock base) and
-calls the row's routine from a word table in the code: the left arrows mark the row's
-bar for a redraw (+0xcf, +0xd4, +0xd9 = 3) and give 1, 3 or 5, the right arrows (+0xd2,
-+0xd7, +0xdc) 2, 4 or 6. A release (0x4 or 0x10) or the pointer leaving (0x400) sets
+calls the row's routine from a word table in the code: the left arrows mark themselves
+for a redraw (+0xcf, +0xd4, +0xd9 = 3: the arrows' own states, not the bars'; T-205)
+and give 1, 3 or 5, the right arrows (+0xd2, +0xd7, +0xdc) 2, 4 or 6. A release (0x4 or 0x10) or the pointer leaving (0x400) sets
 +0x2d to 0; any other event (a press) sets it to that number. While +0x2d is not 0 the
 base's tick runs that slider routine every tick (`DS:0x5b0a`; `docs/sim.md`, "The
 bases' phases").
