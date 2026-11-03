@@ -111,26 +111,25 @@ fn within(area: &Rect, (x, y): (u16, u16)) -> bool {
     (area.left..=area.right).contains(&x) && (area.top..=area.bottom).contains(&y)
 }
 
-/// The gear lever's press at `at` (`1000:a88c`) with the robot in `gear`: on the
-/// lever's own rectangle nothing (a drag starts); else the gear of the notch under the
-/// pointer, if any (twice its index).
-pub fn lever_press(con: &HumanCon, gear: u8, at: (u16, u16)) -> Option<u8> {
-    if con
-        .gears
+/// A gear lever's press at `at` (humanoid `1000:a88c`, scout `c156`) with the robot
+/// in `gear`: on the lever's own rectangle nothing (a drag starts); else the gear of
+/// the notch under the pointer, if any (twice its index).
+pub fn lever_press(gears: &[Rect], notches: &[Rect], gear: u8, at: (u16, u16)) -> Option<u8> {
+    if gears
         .get(usize::from(gear / 2))
         .is_some_and(|r| within(r, at))
     {
         return None;
     }
-    let i = con.notches.iter().position(|r| within(r, at))?;
+    let i = notches.iter().position(|r| within(r, at))?;
     Some(2 * i as u8)
 }
 
 /// The lever dragged to row `y`: the first gear whose rectangle's top is at or above
 /// it, the last below them all (its own top is never compared).
-pub fn lever_drag(con: &HumanCon, y: u16) -> u8 {
-    let last = con.gears.len().saturating_sub(1);
-    let i = con.gears[..last].iter().position(|r| y >= r.top);
+pub fn lever_drag(gears: &[Rect], y: u16) -> u8 {
+    let last = gears.len().saturating_sub(1);
+    let i = gears[..last].iter().position(|r| y >= r.top);
     2 * i.unwrap_or(last) as u8
 }
 
@@ -368,14 +367,14 @@ mod tests {
         let con = con();
         // On the lever's own gear a press only starts the drag; a notch picks its gear,
         // its edges included.
-        assert_eq!(lever_press(&con, 2, (5, 25)), None);
-        assert_eq!(lever_press(&con, 2, (12, 32)), Some(0));
-        assert_eq!(lever_press(&con, 0, (10, 10)), Some(4));
-        assert_eq!(lever_press(&con, 0, (13, 10)), None);
+        assert_eq!(lever_press(&con.gears, &con.notches, 2, (5, 25)), None);
+        assert_eq!(lever_press(&con.gears, &con.notches, 2, (12, 32)), Some(0));
+        assert_eq!(lever_press(&con.gears, &con.notches, 0, (10, 10)), Some(4));
+        assert_eq!(lever_press(&con.gears, &con.notches, 0, (13, 10)), None);
         // The drag goes by the row alone.
-        assert_eq!(lever_drag(&con, 35), 0);
-        assert_eq!(lever_drag(&con, 20), 2);
-        assert_eq!(lever_drag(&con, 0), 4);
+        assert_eq!(lever_drag(&con.gears, 35), 0);
+        assert_eq!(lever_drag(&con.gears, 20), 2);
+        assert_eq!(lever_drag(&con.gears, 0), 4);
         assert_eq!(crate::console::compass_offset(con.centre, (53, 56)), (3, 4));
     }
 

@@ -1,8 +1,9 @@
 //! What the port reads from the user's `xeno.exe` for the scout console's instruments
 //! (`docs/screens.md`, "The scout console's instruments (T-132)"): the sprite bank's
 //! handle, the panels' texts, the compass's needle table and rectangles, the power
-//! panel's rectangles and the weapon buttons' sprites. Game data, read at run time
-//! through the instructions that use it.
+//! panel's rectangles, the weapon buttons' sprites, and the gear lever's rectangles
+//! and messages and the compass's centre the mouse handlers use. Game data, read at
+//! run time through the instructions that use it.
 
 use crate::FormatError;
 use crate::farewell::operand;
@@ -35,6 +36,12 @@ pub(crate) const BARS_AT: [usize; 2] = [0xc37f, 0xc3a4];
 /// and selected.
 pub(crate) const WEAPON_OFF_AT: usize = 0xb7f0;
 pub(crate) const WEAPON_ON_AT: usize = 0xb7f8;
+/// The gear lever's mouse handler (`1000:c156`, the humanoid's code): `mov si, [bx +
+/// table]` for the gears' rectangles, the notches' and the messages, `cmp bl, last`
+/// closing the drag's scan and the notches'.
+pub(crate) const LEVER_AT: [usize; 5] = [0xc16f, 0xc1e4, 0xc1d0, 0xc17a, 0xc1fe];
+/// The compass's mouse handler (`1000:b95f`): `mov bx, x`, `mov cx, y`, the centre.
+pub(crate) const CENTRE_AT: [usize; 2] = [0xb974, 0xb977];
 
 /// The compass's headings, a 64th of a turn each.
 pub const NEEDLES: usize = 64;
@@ -67,6 +74,14 @@ pub struct ScoutCon {
     pub bars: [Rect; 2],
     /// The weapon buttons' sprites by weapon: not selected, selected.
     pub weapon_sprites: [[u16; 2]; 2],
+    /// The gear lever, by gear index: the rectangle whose top the drag compares the
+    /// pointer's row with, a notch a press picks the gear by, and the message a
+    /// release sends the robot (a string-segment offset).
+    pub gears: Vec<Rect>,
+    pub notches: Vec<Rect>,
+    pub gear_messages: Vec<u16>,
+    /// The compass's centre (x, y), the bearings to the pointer are taken from.
+    pub centre: (u16, u16),
 }
 
 /// Reads the tables from a load image whose data segment starts at `ds`.
@@ -84,6 +99,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<ScoutCon, FormatError> {
         let w = words(at, 2)?;
         Ok([w[0], w[1]])
     };
+    let (gears, notches, gear_messages) = crate::humancon::lever(image, ds, LEVER_AT)?;
     Ok(ScoutCon {
         bank: operand(image, BANK_AT, &[0xba])?,
         speed_unlit: text(SPEED_UNLIT_AT)?,
@@ -111,6 +127,13 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<ScoutCon, FormatError> {
         lights: [area(LIGHTS_AT[0])?, area(LIGHTS_AT[1])?],
         bars: [area(BARS_AT[0])?, area(BARS_AT[1])?],
         weapon_sprites: [pair(WEAPON_OFF_AT)?, pair(WEAPON_ON_AT)?],
+        gears,
+        notches,
+        gear_messages,
+        centre: (
+            operand(image, CENTRE_AT[0], &[0xbb])?,
+            operand(image, CENTRE_AT[1], &[0xb9])?,
+        ),
     })
 }
 
@@ -127,7 +150,9 @@ mod tests {
 
     /// Made-up tables: bank 0x100; texts "t0".."t9" at DS + 0x100 on; needles 0..63;
     /// rectangles (n, n + 1, n + 2, n + 3) for the dial (1), quadrants (2..5), lights
-    /// (6, 7) and bars (8, 9); weapon sprites 0x10, 0x11 and 0x20, 0x21.
+    /// (6, 7) and bars (8, 9); weapon sprites 0x10, 0x11 and 0x20, 0x21; two gears
+    /// (rectangles 0x10 + n.., notches 0x20 + n.., messages 0x30 + n); the centre
+    /// (0x41, 0x42).
     fn synthetic() -> Vec<u8> {
         let mut image = vec![0u8; DS + 0x1000];
         let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -167,6 +192,21 @@ mod tests {
         put(WEAPON_OFF_AT, &op(&[0x8b, 0x87], 0x400));
         put(WEAPON_ON_AT, &op(&[0x8b, 0x87], 0x404));
         put(DS + 0x400, &[0x10, 0, 0x11, 0, 0x20, 0, 0x21, 0]);
+        let [gears, notches, messages, drag_last, notch_last] = LEVER_AT;
+        put(drag_last, &[0x80, 0xfb, 0]);
+        put(notch_last, &[0x80, 0xfb, 2]);
+        for (at, list, base) in [(gears, 0x500u16, 0x10), (notches, 0x540, 0x20)] {
+            put(at, &op(&[0x8b, 0xb7], list));
+            for n in 0..2u16 {
+                let r = list + 8 + 8 * n;
+                put(DS + usize::from(list + 2 * n), &r.to_le_bytes());
+                put(DS + usize::from(r), &table(base + n, 4));
+            }
+        }
+        put(messages, &op(&[0x8b, 0xb7], 0x600));
+        put(DS + 0x600, &[0x30, 0, 0x31, 0]);
+        put(CENTRE_AT[0], &op(&[0xbb], 0x41));
+        put(CENTRE_AT[1], &op(&[0xb9], 0x42));
         image
     }
 
@@ -181,6 +221,11 @@ mod tests {
         assert_eq!((con.needles[63], con.quadrants[3].top), (63, 5));
         assert_eq!((con.lights[1].left, con.bars[1].right), (8, 12));
         assert_eq!(con.weapon_sprites, [[0x10, 0x11], [0x20, 0x21]]);
+        assert_eq!((con.gears[1].top, con.notches[1].left), (0x11, 0x22));
+        assert_eq!(
+            (&con.gear_messages[..], con.centre),
+            (&[0x30, 0x31][..], (0x41, 0x42))
+        );
         insta::assert_debug_snapshot!(con);
     }
 
@@ -197,6 +242,13 @@ mod tests {
             LIGHTS_AT[1],
             BARS_AT[0],
             WEAPON_ON_AT + 1,
+            LEVER_AT[0] + 1,
+            LEVER_AT[1],
+            LEVER_AT[2] + 1,
+            LEVER_AT[3] + 2,
+            LEVER_AT[4] + 1,
+            CENTRE_AT[0],
+            CENTRE_AT[1],
         ];
         for at in checked {
             let mut image = synthetic();
@@ -237,5 +289,14 @@ mod tests {
         assert!(con.bars.iter().all(|r| r.bottom - r.top == 32));
         assert_eq!(con.weapon_sprites, [[0xa10, 0xa20], [0xa18, 0xa28]]);
         assert!(con.pages.iter().all(|p| p.len() > 20 && p.is_ascii()));
+        // Six gears as the humanoid's, the drag's rectangles going up the lever and
+        // starting in its widget (171, 0, 200, 53), as the notches do; the compass's
+        // centre inside its widget (121, 1, 163, 59); its own messages.
+        assert_eq!((con.gears.len(), con.notches.len()), (6, 6));
+        assert!(con.gears.windows(2).all(|g| g[0].top > g[1].top));
+        let inside = |r: &Rect| r.top >= 171 && r.left < 53;
+        assert!(con.gears.iter().chain(&con.notches).all(inside));
+        assert!((1..59).contains(&con.centre.0) && (121..163).contains(&con.centre.1));
+        assert_ne!(con.gear_messages, human.gear_messages);
     }
 }

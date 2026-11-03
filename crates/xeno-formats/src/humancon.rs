@@ -106,38 +106,26 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<HumanCon, FormatError> {
     };
     let text = |at| string(image, at_ds(at, &[0xbe])?);
     let area = |at| rect(image, at_ds(at, &[0xbb])?);
-    // `mov ax, [bx + table]` or, `si`, `mov si, [bx + table]`.
-    let table = |at, n: usize, si: bool| -> Result<Vec<u16>, FormatError> {
-        let table = at_ds(at, &[0x8b, if si { 0xb7 } else { 0x87 }])?;
+    // `mov ax, [bx + table]`.
+    let words = |at, n: usize| -> Result<Vec<u16>, FormatError> {
+        let table = at_ds(at, &[0x8b, 0x87])?;
         (0..n).map(|i| word(image, table + 2 * i)).collect()
     };
-    let words = |at, n| table(at, n, false);
     let pair = |at| -> Result<[u16; 2], FormatError> {
         let w = words(at, 2)?;
         Ok([w[0], w[1]])
     };
-    // The notches' scan ends at its last gear; the drag's checks one fewer, the last
-    // gear taking the rows below them all.
-    let imm8 = |at: usize| -> Result<u8, FormatError> {
-        match image.get(at..at + 3) {
-            Some([0x80, 0xfb, n]) if n % 2 == 0 => Ok(*n),
-            _ => Err(invalid(at, "not the expected cmp bl")),
-        }
-    };
-    let last = imm8(NOTCH_LAST_AT)?;
-    if imm8(DRAG_LAST_AT)?.wrapping_add(2) != last {
-        return Err(invalid(
+    let (gears, notches, gear_messages) = lever(
+        image,
+        ds,
+        [
+            GEARS_AT,
+            NOTCHES_AT,
+            GEAR_MESSAGES_AT,
             DRAG_LAST_AT,
-            "the drag scans another count of gears",
-        ));
-    }
-    let count = usize::from(last / 2) + 1;
-    let gear_rects = |at| -> Result<Vec<Rect>, FormatError> {
-        table(at, count, true)?
-            .into_iter()
-            .map(|r| rect(image, ds + usize::from(r)))
-            .collect()
-    };
+            NOTCH_LAST_AT,
+        ],
+    )?;
     let mut base_name = [0; 6];
     for (i, op) in BASE_NAME_OPS.iter().enumerate() {
         let w = operand(image, BASE_NAME_AT + 6 * i, op)?;
@@ -167,14 +155,65 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<HumanCon, FormatError> {
         weapon_sprites: [pair(WEAPON_OFF_AT)?, pair(WEAPON_ON_AT)?],
         lights: [area(LIGHTS_AT[0])?, area(LIGHTS_AT[1])?],
         bars: [area(BARS_AT[0])?, area(BARS_AT[1])?],
-        gears: gear_rects(GEARS_AT)?,
-        notches: gear_rects(NOTCHES_AT)?,
-        gear_messages: table(GEAR_MESSAGES_AT, count, true)?,
+        gears,
+        notches,
+        gear_messages,
         centre: (
             operand(image, CENTRE_AT[0], &[0xbb])?,
             operand(image, CENTRE_AT[1], &[0xb9])?,
         ),
     })
+}
+
+/// A gear lever's gears' rectangles, notches and messages, by gear.
+pub(crate) type Lever = (Vec<Rect>, Vec<Rect>, Vec<u16>);
+
+/// A gear lever's mouse handler (the humanoid's `1000:a88c`, the scout's `c156`, the
+/// same code), from the places of its `mov si, [bx + table]` for the gears'
+/// rectangles, the notches' and the messages, and its `cmp bl, last` closing the
+/// drag's scan and the notches': the gears' rectangles, notches and messages by gear.
+pub(crate) fn lever(
+    image: &[u8],
+    ds: usize,
+    [
+        gears_at,
+        notches_at,
+        messages_at,
+        drag_last_at,
+        notch_last_at,
+    ]: [usize; 5],
+) -> Result<Lever, FormatError> {
+    let table = |at, n: usize| -> Result<Vec<u16>, FormatError> {
+        let table = ds + usize::from(operand(image, at, &[0x8b, 0xb7])?);
+        (0..n).map(|i| word(image, table + 2 * i)).collect()
+    };
+    // The notches' scan ends at its last gear; the drag's checks one fewer, the last
+    // gear taking the rows below them all.
+    let imm8 = |at: usize| -> Result<u8, FormatError> {
+        match image.get(at..at + 3) {
+            Some([0x80, 0xfb, n]) if n % 2 == 0 => Ok(*n),
+            _ => Err(invalid(at, "not the expected cmp bl")),
+        }
+    };
+    let last = imm8(notch_last_at)?;
+    if imm8(drag_last_at)?.wrapping_add(2) != last {
+        return Err(invalid(
+            drag_last_at,
+            "the drag scans another count of gears",
+        ));
+    }
+    let count = usize::from(last / 2) + 1;
+    let rects = |at| -> Result<Vec<Rect>, FormatError> {
+        table(at, count)?
+            .into_iter()
+            .map(|r| rect(image, ds + usize::from(r)))
+            .collect()
+    };
+    Ok((
+        rects(gears_at)?,
+        rects(notches_at)?,
+        table(messages_at, count)?,
+    ))
 }
 
 /// Reads the tables from an unpacked `xeno.exe`.

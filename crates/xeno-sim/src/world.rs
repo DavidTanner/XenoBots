@@ -161,14 +161,14 @@ impl Depot {
 pub struct Movement {
     /// +0x1a: the tick counter, stepping by 2.
     pub tick: u8,
-    /// +0x1b: the button held, picking a routine at the end of the robot's tick: a
-    /// humanoid's and scorpion's turn buttons 10 (left) and 11 (right), which ask for
-    /// the heading less or plus 0x40 (`DS:0x6aef`'s `1000:b3d5`, `b3df`; `DS:0x6752`'s
-    /// `9c3c`, `9c4b`), and the scorpion's faster and slower buttons 8 and 9, which step
-    /// its speed asked for by one within its limits (`9c28`, `9c32`); others do nothing
-    /// here.
-    // shortcut: the fire buttons' 7 is sent as `Pilot::Fire` (`xeno-app`); the scout's
-    // codes are T-172.
+    /// +0x1b: the button held, picking a routine at the end of the robot's tick: the
+    /// turn buttons 10 (left) and 11 (right) of every kind, which ask for the heading
+    /// less or plus 0x40 (`DS:0x6aef`'s `1000:b3d5`, `b3df`; `DS:0x6752`'s `9c3c`,
+    /// `9c4b`; `DS:0x6edf`'s `cbad`, `cbb7`), and the scorpion's faster and slower
+    /// buttons 8 and 9, which step its speed asked for by one within its limits
+    /// (`9c28`, `9c32`; the scout's 8 and 9 do nothing); others do nothing here.
+    // shortcut: the fire buttons' 7 is sent as `Pilot::Fire` (`xeno-app`); the pan
+    // codes 1 to 4 are T-188's.
     pub held: u8,
     /// +0x1c: the eye height, the 3D view's camera above `z` (`docs/render.md`, "The
     /// camera"), in 1/65,536ths of a unit.
@@ -316,7 +316,7 @@ impl Movement {
     /// [`Movement::held`]: the scorpion's faster and slower buttons.
     pub const HELD_FASTER: u8 = 8;
     pub const HELD_SLOWER: u8 = 9;
-    /// [`Movement::held`]: the humanoid's and scorpion's left and right turn buttons.
+    /// [`Movement::held`]: every kind's left and right turn buttons.
     pub const HELD_LEFT: u8 = 10;
     pub const HELD_RIGHT: u8 = 11;
     /// [`Movement::goal`]: heading for [`Movement::destination`].

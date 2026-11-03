@@ -829,6 +829,17 @@ table by the pointer's row (21 a step, three steps each way). Neither touches th
 velocity, which follows at the speed's next step (every 16 ticks for the scorpion).
 `Sim::pilot` takes them as `Pilot::HoldSpeed`, `ReleaseSpeed` and `Speed`.
 
+The scout console's (T-172; `docs/screens.md`, "The scout console's instruments
+(T-132)") are the humanoid's code again, byte for byte but for the fields and marks:
+the lever (`1000:c156`; its gear at +0x109, the speeds `DS:0x6df8`, the gear keys'
+table; the velocity worked out before the pilot takes over, which changes nothing),
+the compass (`b95f`, centre (0x1e, 0x8d)), the turn buttons (`b9a6`, `ba2b`) and their
+held codes 10 and 11 (`DS:0x6edf`, `cbad`, `cbb7`, the humanoid's `b3d5`, `b3df`). Its
+straight button (`b9f4`) has no look and no mark: a release over it does the rest. The
+scout's codes 8 and 9 do nothing (`DS:0x6edf` points both at a bare `ret`), so
+`motion::held` runs the turn codes for every kind and the speed codes for the
+scorpion alone.
+
 The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
 Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).
 
