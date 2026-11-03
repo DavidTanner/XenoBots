@@ -1473,8 +1473,8 @@ and y even and `x = y` mod 4, drawn after the clear and under everything else;
 `docs/render.md`, "The grid step (T-143)"); clear colour 0x43
 (`DS:0x1457`), hill colour 0x42 (`DS:0x1458`); zoom `1 << +0x36`; heading 0; the
 camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left press on the map
-off a unit sets it and moves the centre to the pointer, `1000:57d2`; every stock base
-has it set), else on the selected unit unless it is at its base, else on the base. The
+off a unit sets it and moves the centre to the pointer, `1000:57d2`; one on an alien
+unit does nothing, `1000:57bd`, T-201 in `docs/sim.md`; every stock base has it set), else on the selected unit unless it is at its base, else on the base. The
 steps (`DS:0x395a`): the camera with the focal factor `DS:0x4d32` (327, exponent -16),
 the clear, the pointer probe and `1000:3877`, which asks the producers for one node at
 a time (no sorting) and draws each through `DS:0x39ae` by type, with the sprite anchor
