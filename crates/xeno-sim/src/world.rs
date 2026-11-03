@@ -221,6 +221,8 @@ pub struct Movement {
     pub contacts: u8,
     /// +0xfb: contact checks to skip after a bump (`crate::contact`).
     pub bump_wait: u8,
+    /// +0xfc: the repair on the net's count (`crate::relay::repair_step`).
+    pub repair_count: u8,
     /// +0xe6: the target, locked (the loader clears it); +0xe8 and +0xea its
     /// distance (8.8) and bearing when the lock was last kept.
     pub target: Option<EntityId>,
@@ -406,6 +408,7 @@ impl Movement {
             legs,
             contacts: r.contacts,
             bump_wait: r.bump_wait,
+            repair_count: r.repair_count,
             target: None,
             target_distance: r.target_distance,
             target_bearing: r.target_bearing,
@@ -485,7 +488,7 @@ impl StateHash for State {
                 h.bytes(&[m.relays, m.dump_wait]);
                 h.u8(m.stride);
                 h.bytes(&m.legs);
-                h.bytes(&[m.contacts, m.locked_on, m.bump_wait]);
+                h.bytes(&[m.contacts, m.locked_on, m.bump_wait, m.repair_count]);
                 h.bytes(&[m.blink, m.clock, m.page, m.gauge_bias]);
                 h.bytes(&m.gauges);
                 h.u16(m.target.map_or(0xffff, |t| t.0));

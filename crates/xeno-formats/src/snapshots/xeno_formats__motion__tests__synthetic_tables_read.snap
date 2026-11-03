@@ -1555,6 +1555,38 @@ Motion {
             4,
             2,
         ],
+        repair: Repair {
+            signal: 144,
+            period: 48,
+            parts: [
+                Mend {
+                    unless: Some(
+                        (
+                            246,
+                            32,
+                        ),
+                    ),
+                    offset: 220,
+                    bit: 2,
+                },
+                Mend {
+                    unless: None,
+                    offset: 236,
+                    bit: 1,
+                },
+                Mend {
+                    unless: None,
+                    offset: 246,
+                    bit: 4,
+                },
+            ],
+            message: 4660,
+            steps: [
+                10,
+                0,
+                14,
+            ],
+        },
     },
     weapons: Weapons {
         steps: [

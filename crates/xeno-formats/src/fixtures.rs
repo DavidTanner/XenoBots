@@ -2138,7 +2138,32 @@ pub fn synthetic_relays(image: &mut [u8], ds: usize) {
             ds + usize::from(table) + 2 * entry,
             &(at as u16).to_le_bytes(),
         );
+        // The repair's step, at entries 10, 0 and 14.
+        put(
+            ds + usize::from(table) + 2 * [10, 0, 14][kind],
+            &(crate::relay::REPAIR_STEP_AT as u16).to_le_bytes(),
+        );
     }
+    let mut hex = |at: usize, text: &str| {
+        for (i, b) in text.split_whitespace().enumerate() {
+            image[at + i] = u8::from_str_radix(b, 16).expect("hex");
+        }
+    };
+    // The repair at image 0x1_7f10 (0fe6:80b0), from signal 0x90, every 0x30 runs,
+    // mending +0xdc bit 1 unless +0xf6 bit 5, +0xec bit 0, +0xf6 bit 2; message 0x1234.
+    hex(
+        crate::relay::REPAIR_STEP_AT,
+        "9a b0 80 e6 0f 73 06 be 34 12 e8 b9 f5 c3",
+    );
+    hex(
+        0x1_7f10,
+        "80 7d 4f 90 72 14 80 bd f9 00 00 74 0d fe 85 fc 00 80 bd fc 00 30 73 09
+         f8 cb c6 85 fc 00 00 f8 cb c6 85 fc 00 00
+         f6 85 f6 00 20 75 0e f6 85 dc 00 02 74 07 80 a5 dc 00 fd eb 1c
+         f6 85 ec 00 01 74 07 80 a5 ec 00 fe eb 0e
+         f6 85 f6 00 04 74 07 80 a5 f6 00 fb eb 00
+         f8 cb f9 cb",
+    );
 }
 
 /// The made-up numbers of [`synthetic_relays`].

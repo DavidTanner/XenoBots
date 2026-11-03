@@ -1,4 +1,4 @@
-# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-146, T-147, T-148, T-177)
+# The simulation (T-050, T-051, T-052, T-053, T-054, T-055, T-058, T-059, T-102, T-105, T-112, T-113, T-114, T-115, T-116, T-119, T-136, T-137, T-138, T-140, T-146, T-147, T-148, T-177, T-179)
 
 `crates/xeno-sim` holds the game's rules. It has no window, audio or clock, so it is
 tested headless in CI. It depends only on `xeno-formats`.
@@ -1407,7 +1407,7 @@ faithful:
   total +0xf9 not 0, +0xfc counts each run; at 0xf0 it restarts and mends the first of
   the first weapon (+0xdc bit 0, unless +0xf6 bit 6), the second (bit 1, unless bit 7),
   the targeting computer (+0xec bit 0) and +0xf6 bits 0 to 3, with a message
-  (`DS:0x18b3`). The port has no such step (T-179).
+  (`DS:0x18b3`). Ported by T-179 (below).
 
 So in `htrain` with nothing pressed the alien attackers fight the human units on the
 human net, run their batteries dry and lose, and the port's mission is never lost; the
@@ -1420,7 +1420,35 @@ taking it to the alien base (its tail missiles cost 1 energy each, so the batter
 never runs low; won at retrace 129,912; waits from 80,000 to 140,000 win, and 40,000
 to 60,000, but not 70,000 or under 40,000).
 
-## Damage (T-054)
+### The repair on the net (T-179)
+
+Entry 14 of every robot kind's tick table is `1000:df79`: `call far 2000:7f10`, and on
+the carry `mov si, 0x18b3`, `call 1000:d53f` (a message to the robot's panel, saying a
+subsystem was repaired). The tick table runs one entry a tick (+0x1a steps by 2), so
+the repair runs every 16 ticks. `2000:7f10`, read in Ghidra:
+
+- With the signal (+0x4f) under 0x80 (`jc`) or the damage total (+0xf9) at 0, +0xfc
+  is set back to 0 and nothing else happens (clear carry). So the count must run
+  unbroken on the net while damaged.
+- Else +0xfc goes up one; under 0xf0 nothing more. At 0xf0 (240 runs, 3,840 ticks,
+  about 55 seconds at 70 Hz) it goes back to 0 and the first of these whose bit is set
+  has it cleared, then the carry is set (the message): the first weapon (+0xdc bit 0)
+  unless +0xf6 bit 6 (destroyed), the second (+0xdc bit 1) unless +0xf6 bit 7, the
+  targeting computer (+0xec bit 0), then +0xf6 bits 0, 1, 2 and 3. With none set
+  (the total from the helm or power only, or a destroyed weapon), the count restarts
+  with no message.
+- Nothing else changes: the damage total is not touched (the end of the tick adds it up
+  again, "The damage total (T-140)"), the helm and power (+0x24, +0x4e) are not mended,
+  and there is no sound. Nothing else in `xeno.exe` reads or writes +0xfc.
+
+The port: `xeno_formats::relay::Repair` reads the entry (`1000:df79`, checked once in
+each kind's table and calling `d53f`), the signal level, the period, the message and
+each part (its byte, bit and guard) from the routine's instructions, after checking
+them. `xeno_sim::relay::repair_step` runs it in the robot's tick after the signal step;
+`Movement::repair_count` (+0xfc, `usg::Robot::repair_count`) is loaded, hashed and
+saved, so the state hash changes. T-150's play test passes unchanged (it pins no
+retrace), as do the other `real_assets` tests. The DOSBox check is T-178's.
+
 
 A T-090 pass on `xeno.exe` read the damage routines, the destruction of robots and
 relays, the explosions they leave and, as a survey for T-114, the humanoid's weapons
