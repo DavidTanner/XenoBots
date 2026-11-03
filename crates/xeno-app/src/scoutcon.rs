@@ -14,6 +14,7 @@ use crate::panels::digits;
 
 /// The widgets drawn at their rectangles, by type; the compass (0x10a), the speed
 /// (0x12c) and the power (0x13c) draw at fixed places.
+pub const COMPASS_TYPE: u16 = 0x10a;
 pub const WARNING_TYPE: u16 = 0x12a;
 pub const GEAR_TYPE: u16 = 0x124;
 pub const STANCE_TYPE: u16 = 0x13a;
@@ -30,6 +31,7 @@ pub const CLOAK_TYPE: u16 = 0x130;
 pub const ECM_TYPE: u16 = 0x132;
 pub const STANCE_TYPES: [u16; 3] = [0x134, 0x136, 0x138];
 pub const LEFT_TYPE: u16 = 0x13e;
+pub const AHEAD_TYPE: u16 = 0x140;
 pub const RIGHT_TYPE: u16 = 0x142;
 /// `1000:c208`, `b8b8`: the unlit digits in 0x68, transparent; the speed in 0x60 at
 /// (0x3b, 0xbe), the heading in 0x0e at (0x19, 0x8b).
@@ -328,6 +330,10 @@ mod tests {
             lights: [r; 2],
             bars: [r; 2],
             weapon_sprites: [[1, 2], [3, 4]],
+            gears: Vec::new(),
+            notches: Vec::new(),
+            gear_messages: Vec::new(),
+            centre: (0, 0),
         }
     }
 

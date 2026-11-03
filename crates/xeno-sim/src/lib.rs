@@ -484,21 +484,21 @@ pub enum Pilot {
     /// no longer follows the target (`docs/screens.md`, "The display's other modes
     /// (T-134)").
     Untrack,
-    /// The humanoid's gear lever (`1000:a88c`; the gear twice its index): a new gear
+    /// The humanoid's and scout's gear levers (`1000:a88c`, `c156`; the gear twice its index): a new gear
     /// gives its speed asked for, the pilot takes over and the velocity is worked out
     /// again from the speed (`1000:d41c`); the gear it has does nothing.
     Gear(u8),
     /// A console sends the robot message `text` (`1000:d53f`, `log::say`): the gear
     /// lever's release, its gear's.
     Say(u16),
-    /// The compass's release (`1000:a6c0`, scorpion `887f`): the pilot takes over and the heading asked
+    /// The compass's release (`1000:a6c0`, scorpion `887f`, scout `b95f`): the pilot takes over and the heading asked
     /// for is the fine bearing (`1000:04eb`) of `(x, y)`, the pointer less the
     /// compass's centre with y up; the turn keys' bits (+0x23 bits 4, 5) are cleared.
     Toward(i32, i32),
-    /// The straight button's release (`1000:a7e1`, scorpion `8f30`): the pilot takes over, the heading
+    /// The straight button's release (`1000:a7e1`, scorpion `8f30`, scout `b9f4`): the pilot takes over, the heading
     /// asked for is the heading, the turn keys' bits cleared.
     Straight,
-    /// A turn button's press (`1000:a77d`, `a82b`; scorpion `8ed0`, `8f70`): the pilot takes over and the button
+    /// A turn button's press (`1000:a77d`, `a82b`; scorpion `8ed0`, `8f70`; scout `b9a6`, `ba2b`): the pilot takes over and the button
     /// is held (+0x1b 10 or 11): at the end of each of its ticks the robot asks for its
     /// heading less or plus 0x40.
     HoldTurn {
@@ -858,6 +858,42 @@ mod tests {
             let (m, heading) = robot(&sim);
             assert_eq!(m.target_heading, heading.wrapping_add(0x40));
         }
+    }
+
+    /// The scout's turn buttons held run `1000:cbad` and `cbb7` (the humanoid's code);
+    /// its codes 8 and 9 do nothing (`DS:0x6edf`).
+    #[test]
+    fn the_scout_s_turn_buttons_steer_it() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        // Slot 7 is a scout.
+        let id = EntityId(7);
+        let robot = |sim: &Sim| match sim.world.get(id) {
+            Some(Entity {
+                state: State::Robot(m),
+                heading,
+                ..
+            }) => (*m, *heading),
+            other => panic!("{other:?}"),
+        };
+        sim.pilot(id, Pilot::HoldTurn { right: false });
+        for _ in 0..3 {
+            sim.tick(&[]);
+            let (m, heading) = robot(&sim);
+            assert_eq!(m.target_heading, heading.wrapping_sub(0x40));
+        }
+        sim.pilot(
+            id,
+            Pilot::ReleaseTurn {
+                right: false,
+                keep: false,
+            },
+        );
+        motion::movement(&mut sim.world, id).unwrap().held = Movement::HELD_FASTER;
+        let speed = robot(&sim).0.target_speed;
+        sim.tick(&[]);
+        assert_eq!(robot(&sim).0.target_speed, speed);
     }
 
     #[test]

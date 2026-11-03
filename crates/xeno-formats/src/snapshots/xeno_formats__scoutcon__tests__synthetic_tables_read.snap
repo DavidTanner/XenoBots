@@ -182,4 +182,40 @@ ScoutCon {
             33,
         ],
     ],
+    gears: [
+        Rect {
+            top: 16,
+            left: 17,
+            bottom: 18,
+            right: 19,
+        },
+        Rect {
+            top: 17,
+            left: 18,
+            bottom: 19,
+            right: 20,
+        },
+    ],
+    notches: [
+        Rect {
+            top: 32,
+            left: 33,
+            bottom: 34,
+            right: 35,
+        },
+        Rect {
+            top: 33,
+            left: 34,
+            bottom: 35,
+            right: 36,
+        },
+    ],
+    gear_messages: [
+        48,
+        49,
+    ],
+    centre: (
+        65,
+        66,
+    ),
 }
