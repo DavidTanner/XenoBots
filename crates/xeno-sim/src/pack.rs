@@ -257,7 +257,9 @@ fn pack(r: &mut Record, world: &World, id: EntityId, e: &Entity, program_table: 
                 r.u8(0x23 + 4 * n, l);
             }
         }
-        State::None => {}
+        // shortcut: the removed object's bytes past +0x17 are zeros (or as loaded); the
+        // original keeps the tail missile's, which nothing reads. Upgrade with T-155.
+        State::Removed | State::None => {}
     }
 }
 
@@ -476,7 +478,8 @@ fn layout(flight: Flight) -> &'static [(usize, Field)] {
 }
 
 /// The objects of `scenario` made during play that the sim keeps, read back after
-/// [`World::from_scenario`]: shots (kinds 5 to 8), explosions, sparkles, mines and buoys. A missile's damage is
+/// [`World::from_scenario`]: shots (kinds 5 to 8), explosions, sparkles, mines, buoys and
+/// removed objects. A missile's damage is
 /// the kind's (`1000:e587`), not the object's.
 pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Tables) {
     for o in scenario.objects.iter().flatten() {
@@ -501,6 +504,8 @@ pub(crate) fn unpack_made(world: &mut World, scenario: &Scenario, tables: &Table
                 age: at(0x1a),
                 stage: (word(0x1b) / 2) as u8,
             }
+        } else if kind == tables.weapons.tail.removed {
+            State::Removed
         } else if kind == tables.damage.explosion_kind {
             State::Explosion {
                 frame: at(0x18),

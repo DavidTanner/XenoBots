@@ -390,3 +390,45 @@ fn real_assets_reference_counts_follow_the_references_held() {
     }
     assert!(references > 0, "no reference was held");
 }
+
+#[test]
+fn a_removed_object_saved_in_its_last_ticks_loads_back_and_frees_on_time() {
+    let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+    let tables = synthetic_tables();
+    let mut sim = Sim::load(&scenario, Random::seeded(3), tables.clone());
+    let slot = sim.world.free_slot().unwrap();
+    let removed = Entity {
+        kind: tables.weapons.tail.removed.into(),
+        side: usg::Side::Human,
+        position: Position {
+            x: Fixed(0x12_3400),
+            y: Fixed(-0x5_6700),
+        },
+        z: Fixed(0x2_0000),
+        model_height: 0,
+        heading: 0x4321,
+        radius: 0,
+        damage: Damage::None,
+        flags: flag::GONE,
+        status: 2,
+        state: State::Removed,
+    };
+    sim.world.insert(slot, removed.clone());
+    let (_, back, mut again) = round_trip(&sim, &scenario, tables.scripts.start);
+    let o = back
+        .objects
+        .iter()
+        .flatten()
+        .find(|o| o.slot == slot.0)
+        .unwrap();
+    assert_eq!(
+        (u16::from(o.kind), o.size),
+        (tables.weapons.tail.removed, Object::SMALL)
+    );
+    assert_eq!(again.world.get(slot), Some(&removed));
+    assert_eq!(again.world.refs(slot), 1);
+    again.tick(&[]);
+    assert_eq!(again.world.get(slot).map(|e| e.status), Some(1));
+    again.tick(&[]);
+    assert_eq!((again.world.get(slot), again.world.refs(slot)), (None, 0));
+}

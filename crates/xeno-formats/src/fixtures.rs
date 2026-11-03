@@ -1918,7 +1918,8 @@ pub fn synthetic_weapons(image: &mut [u8], ds: usize) {
         (
             &TAIL,
             &[
-                0x19c0, 0x16c, 0x16, 20, 0x100, 0x80, 0x800, 0x16c, 20, 0x3c, 0xe38, 100, 100,
+                0x19c0, 0x16c, 0x16, 20, 0x100, 0x80, 0x800, 0x16c, 20, 0x3c, 0xe38, 100, 100, 15,
+                3,
             ],
         ),
     ];

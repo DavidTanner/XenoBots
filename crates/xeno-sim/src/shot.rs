@@ -627,7 +627,7 @@ fn tick_tail(
             }
             if world.terrain.below_ground(at, Fixed(z)) {
                 burst(world, id, t.explosion, false, tables, events);
-                return free(world, id, &s);
+                return remove(world, id, &s, tables);
             }
             let hit = find_hit(world, id, at, z, tables).is_some();
             if !hit {
@@ -641,9 +641,30 @@ fn tick_tail(
         blast(world, at, z, (t.points, t.radius), tables, random, events);
     }
     burst(world, id, t.explosion, false, tables, events);
-    // shortcut: removal makes the original's kind 15 for two ticks (`1000:f5a4`); the
-    // port frees the slot at once. Upgrade if a slot's reuse in those ticks matters.
-    free(world, id, &s);
+    remove(world, id, &s, tables);
+}
+
+/// The tail missile's end (`1000:e210`): its target released, then removal
+/// (`1000:f5a4`): the object stays in its slot as the removed kind, `GONE`, with its
+/// last ticks in +0x17, and the rest of it as it was.
+fn remove(world: &mut World, id: EntityId, s: &Shot, tables: &Tables) {
+    if let Some(t) = s.target {
+        world.release(t);
+    }
+    let t = &tables.weapons.tail;
+    if let Some(e) = world.get_mut(id) {
+        e.kind = t.removed.into();
+        e.flags |= flag::GONE;
+        e.status = t.removed_ticks;
+        e.state = State::Removed;
+    }
+}
+
+/// The removed object's tick (`1000:f5c1`): one tick fewer in +0x17; returns whether
+/// that was the last, when the slot is freed.
+pub(crate) fn tick_removed(e: &mut Entity) -> bool {
+    e.status = e.status.wrapping_sub(1);
+    e.status == 0
 }
 
 #[cfg(test)]

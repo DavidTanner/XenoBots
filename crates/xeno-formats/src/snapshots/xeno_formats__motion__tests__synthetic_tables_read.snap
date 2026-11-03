@@ -1875,6 +1875,8 @@ Motion {
                 ticks: 7,
                 heading: 0,
             },
+            removed: 15,
+            removed_ticks: 3,
         },
         blast_sound: 4,
         hits: [

@@ -382,3 +382,58 @@ fn a_missile_flies_straight_and_ends_with_its_life() {
     tick_shots(&mut world, &mut random);
     assert!(world.get(EntityId(0)).is_none());
 }
+
+#[test]
+fn a_tail_missile_s_slot_stays_taken_for_the_removed_ticks_then_frees() {
+    let (tables, mut random) = (synthetic_tables(), Random::seeded(5));
+    let t = tables.weapons.tail;
+    let mut world = World::default();
+    // Homing on slot 9, which is gone: the next pass blasts and removes it.
+    world.take(EntityId(9));
+    let s = Shot {
+        flight: Flight::Tail,
+        velocity: [0; 3],
+        speed: t.top,
+        climb: 0,
+        age: 0,
+        arming: 0,
+        life: 0,
+        damage: 0,
+        target: Some(EntityId(9)),
+        turn: t.turn,
+        phase: 4,
+        frame: 0,
+    };
+    let missile = Entity {
+        kind: TAIL.into(),
+        side: Side::Human,
+        position: at(10, 10),
+        z: Fixed(0x10_0000),
+        model_height: 0,
+        heading: 0,
+        radius: 0,
+        damage: Damage::None,
+        flags: 0,
+        status: 0,
+        state: State::Shot(s),
+    };
+    world.insert(EntityId(0), missile);
+    crate::motion::tick(&mut world, &tables, &mut random);
+    let e = world.get(EntityId(0)).unwrap();
+    assert_eq!(
+        (u16::from(e.kind), e.flags, e.status, e.state),
+        (t.removed, flag::GONE, t.removed_ticks, State::Removed)
+    );
+    assert_eq!((world.refs(EntityId(0)), world.refs(EntityId(9))), (1, 0));
+    // Its explosion took the next slot; an object made meanwhile takes another.
+    assert!(world.get(EntityId(1)).is_some());
+    assert_eq!(world.free_slot(), Some(EntityId(2)));
+    for _ in 1..t.removed_ticks {
+        crate::motion::tick(&mut world, &tables, &mut random);
+        assert!(world.get(EntityId(0)).is_some());
+        assert_ne!(world.free_slot(), Some(EntityId(0)));
+    }
+    crate::motion::tick(&mut world, &tables, &mut random);
+    assert_eq!((world.get(EntityId(0)), world.refs(EntityId(0))), (None, 0));
+    assert_eq!(world.free_slot(), Some(EntityId(0)));
+}

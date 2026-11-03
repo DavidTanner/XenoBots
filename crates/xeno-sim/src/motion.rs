@@ -777,6 +777,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             State::Shot(_) => shot = true,
             State::Relay(_) => relay = true,
             State::Drop(_) => dropped = true,
+            State::Removed => gone = crate::shot::tick_removed(e),
             State::None => {}
         }
         if dropped {

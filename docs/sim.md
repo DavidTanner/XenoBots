@@ -1817,7 +1817,7 @@ scorpion's rounds or missiles, or the scout's shells, at 0. Opcode 0x78 ignores 
   0x3c (8.8) of it the climb becomes the climb to it clamped to ±0xe38. On the ground
   it explodes (`0x7338`, sound 4); on a hit, or with its target gone, a **blast** of
   100 points in radius 100 (0x64, 8.8), then the explosion. It is removed as kind 15
-  (`1000:f5a4`).
+  (`1000:f5a4`; below, "The removed object (T-202)").
 
 **The lead** (`1000:4549`, with the shot's speed): no target, the robot's heading; a
 target not a unit, the lock's bearing (+0xea); a unit: the offset to it in 8.8 (the
@@ -2263,6 +2263,32 @@ through `1000:7eac`, and the press is not limited to mode M (T-212).
 
 Removal (`1000:f5a4`) sets a kind-15 object's +0x17 to 2 and its tick (`f5c1`) counts
 it down to free the slot.
+
+### The removed object (T-202)
+
+Removal (`1000:f5a4`) has one caller, the tail missile's end (`1000:e219`), which
+every end reaches (the ground, a hit, the target gone): after the explosion and the
+sound it releases the target (`f6bb`) and calls removal with the missile's slot. Removal
+writes three things and nothing else: the kind word becomes 15, +0x16 gets `GONE`, and
++0x17 becomes 2. Every other byte stays as the missile left it, and the slot keeps its
+pointer and its own reference. The object pass (`1000:f631`) ticks every slot with a
+pointer by the kind's routine, with no `GONE` test; kind 15's (`DS:0xe6e8` entry 15,
+`f5c1`) decrements +0x17 and at 0 frees the slot (`f656`, `f5cd`), which drops the
+object's reference and frees its small-pool entry (`DS:0xe7c7` is 0 for kinds 5 and 15
+alike). The missile ends in pass `n`; kind 15 first ticks in pass `n + 1`, and the slot
+is free after pass `n + 2`, so an object made in between takes another slot. Nothing
+else makes kind 15. The other kind tables skip it: no 3D node (`DS:0xe7d8` entry 15 is
+`stc; ret`, as for the mines), nothing on the maps (`DS:0xe7fa`, the same), the hit
+tests' "never", and the pack and unpack routines (`DS:0xe81c`, `0xe83e`) a bare
+`ret`. A save writes it like any object, as a small record of kind 15.
+
+The port: `xeno_formats::weapons::Tail` reads the kind and the ticks from removal's
+two `mov`s; `shot::tick_tail` ends every way through `remove` (the target released,
+kind, `GONE` and +0x17 set, `State::Removed`), the object pass ticks it with
+`shot::tick_removed`, and `Sim::load` reads a saved kind-15 object back as
+`State::Removed` with its count in `Entity::status`. A save writes its header; the
+bytes past +0x17 are zeros (or as loaded) where the original keeps the missile's,
+which nothing reads.
 
 ### The port (T-147)
 
