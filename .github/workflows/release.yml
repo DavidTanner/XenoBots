@@ -111,7 +111,7 @@ jobs:
             *) cp "target/$TARGETS/release/xeno-app" "$dir/" ;;
           esac
           # Smoke test: the packaged binary runs and reports the release version.
-          "$dir/xeno-app" | grep -Fx "xeno-app $VERSION"
+          "$dir/xeno-app" --version | grep -Fx "xeno-app $VERSION"
           if [ "$RUNNER_OS" = Windows ]; then
             7z a -tzip "$dir.zip" "$dir"
             echo "asset=$dir.zip" >> "$GITHUB_OUTPUT"
