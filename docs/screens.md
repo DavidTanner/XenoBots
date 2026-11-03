@@ -2300,10 +2300,11 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Map room | `maproom.m@l`, the boxes, panels, buttons, hover label and campaign-won box (T-042, T-046) | Click or Tab/Right/Down, Alt+Tab/Left/Up: select. P, Enter, Space: play the selection. Ctrl+Space: run the mission again. T: training. R: review. N: log-in. Q, Alt+Q: quit (the original's keys); the buttons as their keys. With the user's `XENO.KEY`: `=`, `-` progress, Ctrl+W won, Ctrl+L lost |
 | Training menu | `trainmen.m@l`, the buttons' pressed frames (T-043) | The user's key table and buttons: H, N, S, C and the first four buttons: training mission; ESC, Alt+Q and the last button: map room |
 | Review | `review.m@l`, the page's text panels, the walking and turning robot (T-044, T-047) | The user's key table and buttons: Tab and the next button the next page, Alt+Tab the previous; ESC, Alt+Q and the exit button: map room |
-| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); a base destroyed by play ends the mission won or lost after its end script (T-055, T-150); the port's Ctrl+C: campaign won (a placeholder) |
+| Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); a base destroyed by play ends the mission won or lost after its end script (T-055, T-150); winning the campaign's last scenario plays the campaign won (T-176) |
 | Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
-Keys that only the port uses: Ctrl+C in a mission, for the campaign's last win. Ctrl+W
+No key in a mission is the port's own: its stand-in Ctrl+C (campaign won) is gone
+(T-176), and the campaign is won by winning its last scenario. Ctrl+W
 and Ctrl+L are the map room's developer keys only; in a mission no view's table binds
 them, and the port's stand-ins that destroyed a base there are gone (T-150): bases fall
 to shots, and no developer key of the original ends a mission. A mission ends with a
@@ -2388,8 +2389,8 @@ original.
   the scenario to 12. A mission that ends won or lost (its sim's
   `MissionOver`, T-055) runs the won or lost routine with the player's base's kills and
   losses, which score the points and fill the `WIN` caption; the cutscene is then chosen as `ui_map_room_run_mission` does (campaign won, lost, won,
-  else none). Ctrl+C, the port's stand-in for the last win, wins the scenario and sets
-  the campaign-won flag. The training menu sets the result to 3 and clears the
+  else none): the campaign is won once every scenario has been, so the mission that
+  wins the last one plays `TRIUMPH` (T-176). The training menu sets the result to 3 and clears the
   selection and the loaded scenario. The developer keys (`=`, `-`, Ctrl+W, Ctrl+L in
   the map room) work only when the user's `XENO.KEY` gives unlock word 8 the value the
   user's `xeno.exe` checks; Alt+F1 with word 9 logs that it toggles a flag nothing
