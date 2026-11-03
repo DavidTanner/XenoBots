@@ -294,10 +294,13 @@ mod tests {
             (0x7f, 0x670, 8, 1)
         );
         assert_eq!((h.heading_offset, h.noise), (0, 0x10));
-        // The scorpion's and scout's (T-170, T-173): every 5, their own dots and
-        // backgrounds, the scorpion's heading turned.
+        // The scorpion's (`1fe6:7bdb`, T-170): the humanoid's but every 5 chances, its
+        // own dots and background, and the heading turned about 25 degrees.
         assert_eq!((s.frames, s.dot, s.background), (5, 0x57, 0x8c8));
-        assert_ne!(s.heading_offset, 0);
+        assert_eq!((s.device, s.view_mode, s.damaged_mode), (8, 0x12, 0x18));
+        assert_eq!((s.zoom, s.zoom_shift, s.noise), (8, 1, 0x10));
+        assert_eq!(s.heading_offset, 0x11c6);
+        // The scout's (T-173): every 5, its own dots and background.
         assert_eq!((c.frames, c.dot, c.background), (5, 0x63, 0xba0));
     }
 }

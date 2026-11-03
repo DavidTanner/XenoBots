@@ -2812,7 +2812,7 @@ impl Mission {
             }
             // Without the situation room's tables, its main view (T-103); without the
             // 3D view's, a console's views (T-101); without the radars' (T-166), the
-            // humanoid's third display; the others' T-170 and T-173.
+            // humanoid's and scorpion's third displays; the scout's T-173.
             let task = match (view, colour) {
                 (View::SitRoom, _) => "T-103",
                 (_, 255 | SECOND_DISPLAY) => "T-101",
@@ -3126,29 +3126,38 @@ impl Mission {
         noise(buffer.pixels_mut(), word, DISPLAY_CLEAR);
     }
 
-    /// The humanoid console's third display (the colour-253 region, `1000:9f96` and
-    /// `1fe6:7cff`): every `frames` passes a frame of view mode 0x12, the main view's
+    /// The humanoid's and scorpion's third displays (the colour-253 region, `1000:9f96`
+    /// and `1fe6:7cff`, `833a` and `7bdb`): every `frames` passes a frame of view mode 0x12, the main view's
     /// render list as dots around the robot, heading up, or with the radar damaged
     /// list 0x18's noise; the last frame is copied through the region in between.
-    /// `false` (nothing drawn) for the other kinds (T-170, T-173) and without the
-    /// tables.
+    /// The scorpion's is the humanoid's turned by its heading offset, in its own dots and
+    /// background. `false` (nothing drawn) for the scout (T-173) and without the tables.
     fn draw_third(&self, fb: &mut Framebuffer, assets: &Assets, region: Region) -> bool {
         let Viewed::Robot(slot) = self.viewed else {
             return false;
         };
         let (left, top, width, height) = region;
-        let (Some(view), Some(radars), Some(robot), Some(con)) = (
-            &assets.view3d,
-            &assets.radars,
-            self.book().get(slot),
-            &assets.humancon,
-        ) else {
+        let (Some(view), Some(radars), Some(robot)) =
+            (&assets.view3d, &assets.radars, self.book().get(slot))
+        else {
             return false;
         };
-        if robot.kind != RobotKind::Humanoid {
+        // The background sprite is in the console's own bank (`msprite2`, `msprite3`).
+        let (sprites, bank) = match robot.kind {
+            RobotKind::Humanoid => (
+                &assets.humancon_sprites,
+                assets.humancon.as_ref().map(|c| c.bank),
+            ),
+            RobotKind::Scorpion => (
+                &assets.scorpcon_sprites,
+                assets.scorpcon.as_ref().map(|c| c.bank),
+            ),
+            _ => return false,
+        };
+        let Some(bank) = bank else {
             return false;
-        }
-        let radar = &radars[RobotKind::Humanoid.index()];
+        };
+        let radar = &radars[robot.kind.index()];
         let world = self.world();
         let Some(e) = world.get(EntityId(slot)) else {
             return false;
@@ -3182,8 +3191,7 @@ impl Mission {
                 let nodes = main
                     .map(|c| scene::nodes(world, view, &c, &assets.motion, terrain))
                     .unwrap_or_default();
-                let background =
-                    crate::console::lookup(&assets.humancon_sprites, con.bank, radar.background);
+                let background = crate::console::lookup(sprites, bank, radar.background);
                 let points = nodes.iter().map(|n| (n.position[0], n.position[1]));
                 mainview::draw_radar(&mut buffer, &camera, points, background, radar.dot);
             }
@@ -6199,6 +6207,18 @@ pub mod tests {
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_the_humanoid_radar_shows_what_is_near() {
+        third_display_shows_what_is_near(RobotKind::Humanoid, "humancon.m@l", "htrain.usg");
+    }
+
+    /// The scorpion's (T-170), the same on `ctrain`'s first scorpion, turned by its
+    /// heading offset.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_scorpion_radar_shows_what_is_near() {
+        third_display_shows_what_is_near(RobotKind::Scorpion, "scorpcon.m@l", "ctrain.usg");
+    }
+
+    fn third_display_shows_what_is_near(kind: RobotKind, picture: &str, name: &str) {
         use crate::game_dir::{ENV_VAR, GameDir};
         let Some(path) = std::env::var_os(ENV_VAR) else {
             return;
@@ -6208,14 +6228,24 @@ pub mod tests {
             .check()
             .unwrap();
         let assets = load(&files, 13).unwrap();
-        let radar = assets.radars.unwrap()[RobotKind::Humanoid.index()];
+        let radar = assets.radars.unwrap()[kind.index()];
+        let (sprites, bank) = match kind {
+            RobotKind::Humanoid => (
+                &assets.humancon_sprites,
+                assets.humancon.as_ref().unwrap().bank,
+            ),
+            _ => (
+                &assets.scorpcon_sprites,
+                assets.scorpcon.as_ref().unwrap().bank,
+            ),
+        };
+        let background = crate::console::lookup(sprites, bank, radar.background);
+        assert!(
+            background.is_some(),
+            "the radar's sprite is in the console's bank"
+        );
         let pictures = crate::screens::load(&files).unwrap();
-        let picture = &pictures
-            .iter()
-            .find(|(n, _)| *n == "humancon.m@l")
-            .unwrap()
-            .1;
-        let name = "htrain.usg";
+        let picture = &pictures.iter().find(|(n, _)| *n == picture).unwrap().1;
         let mut m = Mission::new(
             name.into(),
             &assets.scenarios[name],
@@ -6225,7 +6255,7 @@ pub mod tests {
         let robot = m
             .robots()
             .into_iter()
-            .find(|&s| m.book().get(s).unwrap().kind == RobotKind::Humanoid)
+            .find(|&s| m.book().get(s).unwrap().kind == kind)
             .unwrap();
         m.view_robot(robot).unwrap();
         let picture_fb = || {
@@ -6263,7 +6293,7 @@ pub mod tests {
             .map(|(x, y)| (left + x as usize, top + y as usize))
             .filter(|&(x, y)| region[y * 320 + x])
             .collect();
-        assert!(near.len() > 1, "something near the robot on htrain");
+        assert!(near.len() > 1, "something near the robot on {name}");
         for (x, y) in near {
             assert_eq!(fb.get(x, y), Some(radar.dot), "{x}, {y}");
         }
