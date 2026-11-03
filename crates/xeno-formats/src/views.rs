@@ -67,6 +67,12 @@ pub(crate) const DISPLAY_ZOOM_NAMES: [(usize, &[u8]); 2] =
 /// `mov ax, y; mov bx, x` before the cursor call (the scout uses one for both).
 pub(crate) const DISPLAY_ZOOM_NAME_AT: [[usize; 2]; 3] =
     [[0x9ea8, 0x9ecc], [0x8205, 0x8236], [0xb639, 0xb639]];
+/// The pan readout (`0x150`, `1000:dacc`): its unlit digits' and its degrees' colour
+/// by robot kind (`mov al, [bx + table]` at `1000:dae9`, `db07`), and the unlit digits
+/// (`mov si, text` at `1000:daf2`).
+pub(crate) const DISPLAY_PAN_COLOURS: [(usize, &[u8]); 2] =
+    [(0xdae9, &[0x8a, 0x87]), (0xdb07, &[0x8a, 0x87])];
+pub(crate) const DISPLAY_PAN_UNLIT: (usize, &[u8]) = (0xdaf2, &[0xbe]);
 /// The zoom steps, 0 to 4.
 pub const ZOOMS: usize = 5;
 const SET_MAP_CLEAR: [u8; 4] = [0xc6, 0x06, 0x57, 0x14];
@@ -242,6 +248,10 @@ pub struct SecondDisplay {
     /// By robot kind: where the zoom's name goes (x, y) in the camera modes and in
     /// the map mode.
     pub zoom_name_at: [[(u16, u16); 2]; 3],
+    /// By robot kind: the pan readout's (`0x150`) unlit digits' colour and its
+    /// degrees' colour; the unlit digits.
+    pub pan_colours: [[u8; 2]; 3],
+    pub pan_unlit: Vec<u8>,
 }
 
 /// How a console's message panel looks (`docs/screens.md`, "The message panel
@@ -466,6 +476,16 @@ impl Exe<'_> {
                 *at = (operand(self.image, code + 3, &[0xbb])?, y);
             }
         }
+        let mut pan_colours = [[0; 2]; 3];
+        for (i, entry) in DISPLAY_PAN_COLOURS.into_iter().enumerate() {
+            for (colours, &c) in pan_colours.iter_mut().zip(table(entry, 3)?) {
+                colours[i] = c;
+            }
+        }
+        let pan_unlit = string(
+            self.image,
+            self.ds + usize::from(self.op(DISPLAY_PAN_UNLIT)?),
+        )?;
         Ok(SecondDisplay {
             view_modes: table(DISPLAY_VIEW_MODES, 8)?.try_into().expect("8 bytes"),
             devices: table(DISPLAY_DEVICES, 4)?.try_into().expect("4 bytes"),
@@ -476,6 +496,8 @@ impl Exe<'_> {
             zoom_names: names(DISPLAY_ZOOM_NAMES[0])?,
             map_zoom_names: names(DISPLAY_ZOOM_NAMES[1])?,
             zoom_name_at,
+            pan_colours,
+            pan_unlit,
         })
     }
 
@@ -719,6 +741,8 @@ mod tests {
             assert!(corrupt(at, 0x90).0, "{at:#x}");
         }
         assert!(corrupt(DISPLAY_ZOOM_NAMES[1].0, 0x90).0);
+        assert!(corrupt(DISPLAY_PAN_COLOURS[1].0, 0x90).0);
+        assert!(corrupt(DISPLAY_PAN_UNLIT.0, 0x90).0);
         assert!(corrupt(DISPLAY_ZOOM_NAME_AT[2][0] + 3, 0x90).0);
         assert!(corrupt(MAIN_VIEW_SHAPES.0, 0x90).0);
         assert!(corrupt(CONSOLE_SHAPES[3], 0x90).0);
@@ -788,6 +812,10 @@ mod tests {
         assert_eq!(d.records[4..], [d.records[4]; 4]);
         assert_eq!(d.ranges[4], 0xffff);
         assert!(d.pan_steps.windows(2).all(|w| w[1] == w[0] / 2));
+        // T-188: the pan readout's three unlit digits and the cursor back over them,
+        // and each kind's two colours.
+        assert_eq!(d.pan_unlit[3..], [8, 8, 8]);
+        assert!(d.pan_colours.iter().all(|[unlit, lit]| unlit != lit));
         assert!(
             d.zoom_names
                 .iter()

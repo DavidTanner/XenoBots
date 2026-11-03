@@ -1303,6 +1303,15 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
             put(at, &[op(&[0xb8], 0x20 + k), op(&[0xbb], 0x40 + k)].concat());
         }
     }
+    for (entry, table) in DISPLAY_PAN_COLOURS.into_iter().zip([0x6f0, 0x6f3]) {
+        put(entry.0, &op(entry.1, table));
+        put(
+            ds + usize::from(table),
+            &[table as u8, table as u8 + 1, table as u8 + 2],
+        );
+    }
+    put(DISPLAY_PAN_UNLIT.0, &op(DISPLAY_PAN_UNLIT.1, 0x6f8));
+    put(ds + 0x6f8, b"8\x08\0");
     put(MAIN_VIEW_SHAPES.0, &op(MAIN_VIEW_SHAPES.1, 0x6e0));
     put(ds + 0x6e0, &words(&[0, 0, 3, 3, 0]));
     for (at, shape) in CONSOLE_SHAPES.into_iter().zip([3, 4, 6, 4]) {

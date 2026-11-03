@@ -942,8 +942,8 @@ so a held button pans every tick. `0x8c` (sprite 0x4d0 plus the look) zooms in o
 left release and out on a right one (`da0e`, `da37`). The mode buttons `0x8e`, `0x90`,
 `0x92` draw 0x4e0, 0x4f0, 0x500 (the next sprite while +0xef is exactly their mode)
 opaque at (-1, +1); a press or release XORs their frame (`1000:dfd5`), a release sets
-the mode (`b3e9`). The scorpion's (types `0xc0` on, draw `1000:84ca` on) and the
-scout's (`0x10a` on, `b8b8` on) are not traced (T-188).
+the mode (`b3e9`). Every kind's buttons, with the pan readout between the pan
+buttons: below, "The display's buttons (T-188)".
 
 **Colour records** (`1000:d9ca`, after each frame): the record `DS:0x70b6[+0xef]` (7,
 8, 9, 0xe for modes 0 to 3; 0xf for every damaged mode) replaces the one running
@@ -968,6 +968,61 @@ replay; a missile camera whose missile is gone draws the noise until the next 16
 step (the original reads slot 0xffff's object then); the names' bit-7 codes are drawn
 in the same colour. Not ported: the buttons (T-188), the target's name and the missile
 camera's string and sight (T-189); none of it is checked in DOSBox (T-190).
+
+### The display's buttons (T-188)
+
+From a Ghidra pass over the draw and mouse handlers (the host's tables `DS:0x3328` and
+`DS:0x3608` by type) of each console's first group, and the held-button tables
+`DS:0x6aef`, `0x6752` and `0x6edf`. Each console has, left to right: pan less, the
+pan readout, pan more, zoom, and three mode buttons (0 camera, 1 thermal, 2 map). The
+scorpion has no button for its missile camera (mode 3). All sprites are opaque
+(slot `0x5c4`); "up 1" is the rectangle's top less one, "right 1" its left plus one.
+
+| | Humanoid | Scorpion | Scout |
+|---|---|---|---|
+| Pan less | `0x88`: `a14b`, `a162`; 0x4b0 + look, up 1 | `0xc0`: `84ca`, `84e9`; 0x678 + look, up 1 | `0x10c`: `bbf4`, `bc07`; 0x9b0 + look, at the corner |
+| Pan readout | `0x150`: `dacc`, `db26` | the same | the same |
+| Pan more | `0x8a`: `a19d`, `a1ba`; 0x4c0 + look, up 1 right 1 | `0xc2`: `8524`, `8543`; 0x688 + look, up 1 | `0x10e`: `bc42`, `bc55`; 0x9c0 + look, at the corner |
+| Zoom | `0x8c`: `a1f5`, `a212`; 0x4d0 + look, up 1 right 1 | `0xc4`: `857e`, `8595`; 0x698 + look, up 1 | `0x110`: `bc90`, `bca3`; 0x9d0 + look, at the corner |
+| Modes 0, 1, 2 | `0x8e`, `0x90`, `0x92`: 0x4e0, 0x4f0, 0x500, up 1 right 1 | `0xc6`, `0xc8`, `0xca`: 0x6a8, 0x6b8, 0x6c8, up 1 | `0x112`, `0x114`, `0x116`: 0x9e0, 0x9f0, 0xa00, at the corner |
+| Mode routine | `b3e9` | `99c7` | `cbc1` |
+
+"+ look" is the shared look (`base + (signed) +0x22`; "The shared look" under T-130,
+below). The scorpion's pan buttons also widen their rectangle's bottom by 2 around the
+blit (no change to where the sprite goes). Every mouse handler takes only events over
+it (`test ax, 0x80`) and ignores moves (`test ax, 1`).
+
+- **Pan less and more.** Nothing in the map mode (+0xef exactly 2: the handler
+  declines). Otherwise any press, release or leave flips the shared look (+0x22 bit
+  3) and marks the widgets; a release (0x14) or leave (0x400) sets +0x1b to 0, a press
+  to 1 (less) or 2 (more).
+- **Zoom.** Any press or release flips the look; a left release zooms in (`da0e`), a
+  right one out (`da37`), as the zoom keys.
+- **Modes.** The humanoid's and scout's draw `base + 8` while +0xef is exactly the
+  button's mode, else `base`; a press or release XORs the frame with 9 (`1000:dfd5`);
+  a release sets the mode through the kind's mode routine (the one the mode keys use:
+  +0xef, widget marks, +0xf3 = 6, `db5c`, the mode's sound). The scorpion's instead
+  XOR +0x22 with 0x88 (the look and bit 7) on a press or release and draw `base +
+  (+0x22 & 0x7f)` while bit 7 is set (so `base + 8` while held from a clear +0x22),
+  else as the others; a release clears +0x22 and sets the mode (`99c7`).
+- **The pan readout** (`0x150`, one routine for all three kinds). The draw: font 2,
+  the cursor one right and one down of the rectangle's corner, the unlit digits
+  (`DS:0x70db`, three `8`s and three backspaces) in the kind's colour
+  `DS:0x709f[kind]`, then, unless the mode is exactly 2, the pan (+0xf4) in degrees
+  (`1000:0320`, as the compass's heading) as the last three of `02b7`'s five digits in
+  `DS:0x70a2[kind]`; both transparent. The mouse (`db26`): nothing in the map mode;
+  any press or release XORs the frame with 9; a left release sets +0x1b to 3, a right
+  one to 4.
+- **Held** (+0x1b, at the end of the robot's tick; the same four routines in all
+  three tables): 1 is Z's (`db7e`: the pan less the zoom's step), 2 X's (`db8f`: plus
+  it), 3 the pan to 0 (Y's), 4 the pan to 0x8000 (behind the robot); each marks the
+  widgets and clears `TRACKING` (+0x17 bit 6), and 3 and 4 clear +0x1b, so they run
+  once. Humanoid `b377`, `b389`, `b39b`, `b3b4`; scorpion `9bca`, `9bdc`, `9bee`,
+  `9c07`; scout `cb4f`, `cb61`, `cb73`, `cb8c`.
+
+The colours and the unlit digits are read from the user's `xeno.exe`
+(`views::SecondDisplay::pan_colours`, `pan_unlit`); the sprite handles and offsets
+are the handlers' immediates, kept as constants with the other buttons'.
 
 ### The humanoid console's instruments (T-130)
 
