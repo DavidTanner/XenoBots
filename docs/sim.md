@@ -442,7 +442,8 @@ by nothing traced.
 - the missile's launch climb (`1000:e98d` through `1000:0519`: the fine angle of the
   target's height over the true distance);
 - the three consoles' compasses (`1000:04eb`, the fine bearing between two 16-bit
-  points: `889c`, `a6dd`, `b97c`), not yet ported (T-165, T-169, T-172).
+  points: `889c`, `a6dd`, `b97c`; the humanoid's and scorpion's ported by T-165 and
+  T-169, the scout's still to do, T-172).
 
 `1000:0545`'s sibling `057c` (with the climb), the bare `04da`, `03a8` and `042a` are
 called by nothing found. Everything else (the scripts' steering, the scan, the
@@ -815,6 +816,18 @@ heading), clearing the turn keys' bits 4 and 5; a turn button held sets +0x1b to
 right release over the button sets bit 4 or 5 instead, so it keeps turning as the
 keys' bits do. No key reaches these handlers. `Sim::pilot` takes them as `Pilot::Gear`,
 `Say`, `Toward`, `Straight`, `HoldTurn` and `ReleaseTurn`.
+
+The scorpion console's (T-169; `docs/screens.md`, "The scorpion console's instruments
+(T-131)") share them: its compass (centre (0x50, 0x9b)), straight and turn buttons act
+as the humanoid's, its tick running codes 10 and 11 at its end too (`DS:0x6752`,
+`1000:9c3c`, `9c4b`). Its faster and slower buttons held set +0x1b to 8 or 9 (the pilot
+taking over), and its tick then moves the speed asked for by one, up to 63 or down to
+-42 (`9c28`, `9c32`; the gear keys' limits, so the port uses `Gears::scorpion_top` and
+`scorpion_bottom` and the reader checks they agree): from a stop, the top speed in 63
+ticks. Its speed lever's release takes the pilot and sets the speed asked for from a
+table by the pointer's row (21 a step, three steps each way). Neither touches the
+velocity, which follows at the speed's next step (every 16 ticks for the scorpion).
+`Sim::pilot` takes them as `Pilot::HoldSpeed`, `ReleaseSpeed` and `Speed`.
 
 The V, T, M, `=` and `-` keys are the second display's (`docs/screens.md`, T-104);
 Tab, Alt+Tab, ESC and Alt+Q switch views (T-043).

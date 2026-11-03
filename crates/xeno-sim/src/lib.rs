@@ -272,7 +272,9 @@ impl Sim {
             | Pilot::Slower
             | Pilot::Toward(..)
             | Pilot::Straight
-            | Pilot::HoldTurn { .. } => true,
+            | Pilot::HoldTurn { .. }
+            | Pilot::HoldSpeed { .. }
+            | Pilot::Speed(_) => true,
             // The lever takes over only when the gear changes.
             Pilot::Gear(gear) => world
                 .get(id)
@@ -286,6 +288,7 @@ impl Sim {
             | Pilot::Weapon(_)
             | Pilot::OtherWeapon
             | Pilot::ReleaseTurn { .. }
+            | Pilot::ReleaseSpeed
             | Pilot::StatusClock
             | Pilot::StatusShown => false,
             _ => return events,
@@ -330,6 +333,11 @@ impl Sim {
                     m.mode |= if right { 0x20 } else { 0x10 };
                 }
             }
+            Pilot::HoldSpeed { faster } => {
+                m.held = Movement::HELD_SLOWER - u8::from(faster);
+            }
+            Pilot::ReleaseSpeed => m.held = 0,
+            Pilot::Speed(speed) => m.target_speed = speed,
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
                     Pilot::Weapon(w) => w,
@@ -483,14 +491,14 @@ pub enum Pilot {
     /// A console sends the robot message `text` (`1000:d53f`, `log::say`): the gear
     /// lever's release, its gear's.
     Say(u16),
-    /// The compass's release (`1000:a6c0`): the pilot takes over and the heading asked
+    /// The compass's release (`1000:a6c0`, scorpion `887f`): the pilot takes over and the heading asked
     /// for is the fine bearing (`1000:04eb`) of `(x, y)`, the pointer less the
     /// compass's centre with y up; the turn keys' bits (+0x23 bits 4, 5) are cleared.
     Toward(i32, i32),
-    /// The straight button's release (`1000:a7e1`): the pilot takes over, the heading
+    /// The straight button's release (`1000:a7e1`, scorpion `8f30`): the pilot takes over, the heading
     /// asked for is the heading, the turn keys' bits cleared.
     Straight,
-    /// A turn button's press (`1000:a77d`, `a82b`): the pilot takes over and the button
+    /// A turn button's press (`1000:a77d`, `a82b`; scorpion `8ed0`, `8f70`): the pilot takes over and the button
     /// is held (+0x1b 10 or 11): at the end of each of its ticks the robot asks for its
     /// heading less or plus 0x40.
     HoldTurn {
@@ -503,6 +511,19 @@ pub enum Pilot {
         right: bool,
         keep: bool,
     },
+    /// The scorpion's faster or slower button pressed (`1000:8df6`, `8e8b`): the pilot
+    /// takes over and the button is held (+0x1b 8 or 9): at the end of each of its
+    /// ticks the speed asked for steps by one within its range.
+    HoldSpeed {
+        faster: bool,
+    },
+    /// The speed button let go or left (+0x1b 0).
+    ReleaseSpeed,
+    /// The scorpion's speed lever released (`1000:8798`): the pilot takes over and the
+    /// speed asked for (+0x28) is the lever's, by the pointer's row
+    /// (`xeno_formats::scorpcon::ScorpCon::lever_speed`). The velocity follows when the
+    /// speed next steps.
+    Speed(i16),
     /// Ctrl+P (`1000:d193`), which the caller lets through only with unlock word 8
     /// (`docs/formats/key.md`): power (+0x4e) 100, the signal (+0x4f), the battery
     /// (+0x50) and the drive (+0x51) 0xff. The original then beeps (`1000:0261`).
@@ -783,6 +804,60 @@ mod tests {
         };
         sim.pilot(id, stop);
         assert_eq!(robot(&sim).0.mode & Movement::TURNING, 0);
+    }
+
+    #[test]
+    fn the_scorpion_s_speed_buttons_lever_and_turn_buttons_steer_it() {
+        use xeno_formats::fixtures::synthetic_mission_usg;
+        let scenario = xeno_formats::usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut tables = motion::synthetic_tables();
+        (tables.gears.scorpion_top, tables.gears.scorpion_bottom) = (3, -2);
+        let mut sim = Sim::load(&scenario, Random::seeded(1), tables);
+        // Slot 5 is a scorpion.
+        let id = EntityId(5);
+        let robot = |sim: &Sim| match sim.world.get(id) {
+            Some(Entity {
+                state: State::Robot(m),
+                heading,
+                ..
+            }) => (*m, *heading),
+            other => panic!("{other:?}"),
+        };
+        let drives = |sim: &Sim| sim.world.orders.get(5).unwrap().orders.program_drives;
+        // The lever: the pilot takes over and the speed asked for is the lever's.
+        motion::movement(&mut sim.world, id).unwrap().target_speed = 0;
+        script::switch(&mut sim.world, id, true, &mut Vec::new());
+        assert!(drives(&sim));
+        sim.pilot(id, Pilot::Speed(1));
+        assert!(!drives(&sim));
+        assert_eq!(robot(&sim).0.target_speed, 1);
+        // Faster held: a step a tick at the end of the tick, up to the top.
+        sim.pilot(id, Pilot::HoldSpeed { faster: true });
+        assert_eq!(robot(&sim).0.held, Movement::HELD_FASTER);
+        let mut asked = Vec::new();
+        for _ in 0..4 {
+            sim.tick(&[]);
+            asked.push(robot(&sim).0.target_speed);
+        }
+        assert_eq!(asked, [2, 3, 3, 3]);
+        // Slower held steps down to the bottom; the release stops it.
+        sim.pilot(id, Pilot::HoldSpeed { faster: false });
+        assert_eq!(robot(&sim).0.held, Movement::HELD_SLOWER);
+        for _ in 0..6 {
+            sim.tick(&[]);
+        }
+        assert_eq!(robot(&sim).0.target_speed, -2);
+        sim.pilot(id, Pilot::ReleaseSpeed);
+        sim.pilot(id, Pilot::Speed(0));
+        sim.tick(&[]);
+        assert_eq!((robot(&sim).0.held, robot(&sim).0.target_speed), (0, 0));
+        // A turn button held asks for the heading plus 0x40 at the end of each tick.
+        sim.pilot(id, Pilot::HoldTurn { right: true });
+        for _ in 0..3 {
+            sim.tick(&[]);
+            let (m, heading) = robot(&sim);
+            assert_eq!(m.target_heading, heading.wrapping_add(0x40));
+        }
     }
 
     #[test]

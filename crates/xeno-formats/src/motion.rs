@@ -50,6 +50,9 @@ pub(crate) const GEAR_OPS: [usize; 2] = [0xd094, 0xd09c];
 /// `sub ax, turn` in the humanoid's left arrow (`1000:acc0`: the pilot takes over,
 /// then the heading asked for is the heading less `turn`).
 pub(crate) const KEY_TURN: (usize, &[u8]) = (0xacc6, &[0x2d]);
+/// The scorpion's faster and slower buttons held (`1000:9c28`, `9c32`):
+/// `cmp word [di + 0x28], limit` (a byte, sign-extended), then `jge` or `jle`.
+pub(crate) const HELD_SPEED_AT: [(usize, u8); 2] = [(0x9c28, 0x7d), (0x9c32, 0x7e)];
 /// `jmp cs:[bx + table]` in F5's handler (`1000:d137`): each kind's routine that
 /// selects a weapon (F6 and the humanoid's F9 reach the same routines).
 pub(crate) const WEAPON_KEYS: (usize, &[u8]) = (0xd137, &[0x2e, 0xff, 0xa7]);
@@ -503,6 +506,16 @@ fn gears(image: &[u8], ds: usize) -> Result<Gears, FormatError> {
             "the scorpion steps down by another step",
         ));
     }
+    // The held speed buttons step to the same limits as the keys; the sim uses one pair.
+    for ((at, jump), limit) in HELD_SPEED_AT
+        .into_iter()
+        .zip([scorpion_top, scorpion_bottom])
+    {
+        match *bytes(image, at, 5)? {
+            [0x83, 0x7d, 0x28, n, j] if j == jump && i16::from(n as i8) == limit => {}
+            _ => return Err(invalid(at, "not the held speed button's step")),
+        }
+    }
     Ok(Gears {
         humanoid: gear_table(0)?,
         scout: gear_table(2)?,
@@ -759,6 +772,8 @@ mod tests {
             (0x8450 + 9, 0x2d),
             (0x8460 + 9, 4),
             (KEY_TURN.0, 0x05),
+            (HELD_SPEED_AT[0].0 + 3, 0x40),
+            (HELD_SPEED_AT[1].0 + 4, 0x7d),
             (WEAPON_KEYS.0 + 2, 0xa6),
             (0x8490 + 3, 0x85),
             (0x84c0 + 0x08 + 7, 0xb9),

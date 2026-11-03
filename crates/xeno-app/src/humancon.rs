@@ -134,12 +134,6 @@ pub fn lever_drag(con: &HumanCon, y: u16) -> u8 {
     2 * i.unwrap_or(last) as u8
 }
 
-/// The compass's release at `at` (`1000:a6c0`): the pointer from the centre, y up.
-pub fn compass_offset(con: &HumanCon, (x, y): (u16, u16)) -> (i32, i32) {
-    let (cx, cy) = con.centre;
-    (i32::from(x) - i32::from(cx), i32::from(cy) - i32::from(y))
-}
-
 /// The power panel (`0xb0`): the battery lights and the signal's and energy's bars.
 pub fn draw_power(fb: &mut Framebuffer, con: &HumanCon, sprites: Sprites, robot: &Robot) {
     let handles = if robot.on_battery {
@@ -382,7 +376,7 @@ mod tests {
         assert_eq!(lever_drag(&con, 35), 0);
         assert_eq!(lever_drag(&con, 20), 2);
         assert_eq!(lever_drag(&con, 0), 4);
-        assert_eq!(compass_offset(&con, (53, 56)), (3, 4));
+        assert_eq!(crate::console::compass_offset(con.centre, (53, 56)), (3, 4));
     }
 
     #[test]

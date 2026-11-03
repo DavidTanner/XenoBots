@@ -78,6 +78,12 @@ pub struct Look {
 pub type Sprites<'a> = &'a dyn Fn(u16) -> Option<&'a Sprite>;
 
 /// The sprite at `handle` in a bank loaded from handle `first`, 8 handles a sprite.
+/// A compass's release at `at` (humanoid `1000:a6c0`, scorpion `887f`): the pointer
+/// from the compass's centre, y up.
+pub fn compass_offset((cx, cy): (u16, u16), (x, y): (u16, u16)) -> (i32, i32) {
+    (i32::from(x) - i32::from(cx), i32::from(cy) - i32::from(y))
+}
+
 pub fn lookup(bank: &[Sprite], first: u16, handle: u16) -> Option<&Sprite> {
     let offset = handle.checked_sub(first)?;
     offset

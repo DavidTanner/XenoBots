@@ -14,6 +14,7 @@ use crate::panels::digits;
 
 /// The widgets drawn at their rectangles, by type; the speed (0xce), the compass
 /// (0xd6) and the power (0xec) draw at fixed places.
+pub const COMPASS_TYPE: u16 = 0xd6;
 pub const WARNING_TYPE: u16 = 0xdc;
 pub const LEVER_TYPE: u16 = 0xde;
 pub const DAMAGE_TYPE: u16 = 0xee;
@@ -66,6 +67,20 @@ const GAUGE: u16 = 0x7e8;
 pub fn draw_speed(fb: &mut Framebuffer, font: &Font, con: &ScorpCon, speeds: &[u8], speed: i16) {
     let text = &crate::console::speed_text(speeds, speed)[1..];
     crate::console::lit_number(fb, font, SPEED_AT, &con.speed_unlit, NUMBER_COLOURS, text);
+}
+
+/// The speed lever released on row `y` (`1000:8798`): the speed asked for, 0 on the
+/// middle row, else from the reverse table below it or the forward one above it, by
+/// half the rows away (the low bit dropped).
+// shortcut: rows past the lever's would read past the tables; the port takes the last
+// speed. The handler only sees rows over the lever.
+pub fn lever_speed(con: &ScorpCon, y: u16) -> i16 {
+    let rows = i32::from(y) - i32::from(con.lever_row);
+    let table = &con.lever_speeds[usize::from(rows < 0)];
+    match rows {
+        0 => 0,
+        _ => table[(rows.unsigned_abs() as usize / 2).min(table.len() - 1)],
+    }
 }
 
 /// The compass (`0xd6`): the dial, the heading's needle turned in the dial, the
@@ -339,7 +354,27 @@ mod tests {
             switches: [r; 2],
             weapon_sprites: [[0; 2]; 2],
             drops: [0; 4],
+            lever_row: 20,
+            lever_speeds: [
+                std::array::from_fn(|i| -(i as i16)),
+                std::array::from_fn(|i| 10 + i as i16),
+            ],
+            centre: (0, 0),
         }
+    }
+
+    #[test]
+    fn the_lever_s_speed_by_the_pointer_s_row() {
+        let con = con();
+        // The middle row stops; two rows a speed each way; past the tables the last.
+        assert_eq!(
+            [20, 21, 22, 25, 40].map(|y| lever_speed(&con, y)),
+            [0, 0, -1, -2, -5]
+        );
+        assert_eq!(
+            [19, 18, 15, 0].map(|y| lever_speed(&con, y)),
+            [10, 11, 12, 15]
+        );
     }
 
     #[test]
