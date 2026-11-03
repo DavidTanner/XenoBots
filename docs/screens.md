@@ -882,9 +882,13 @@ height), its heading (+0x10), zoom 1, zoom shift 1, and its own node left out
   (event 10 again). So the picture breaks up for five periods of 16 ticks once the
   missile is gone (the first may be short), then the display goes back.
 - Mode 3's overlay (`1000:8253`): while +0xf3 is not 0 and `DS:0x62c6` bit 4 is set, a
-  string (`DS:0x65fc`) at (0x1c, 0x2d); then sprite 0x8d0 (`msprite3`'s) keyed and
-  centred on the buffer (slot `0x5e8` in the descriptor's clip rectangle,
-  `DS:0x1476`). Mode 7 has no overlay.
+  string (`DS:0x65fc`, through `1fe6:4b87`, transparent from DS) at (0x1c, 0x2d);
+  then sprite 0x8d0 (`msprite3`'s) keyed and centred on the buffer (slot `0x5e8` in
+  the descriptor's clip rectangle, `DS:0x1476`, with slot `0x484` pointing the
+  drawing at the descriptor `DS:0x1470` around it). `DS:0x62c6` is the pass count
+  (`inc` at `1000:f631`, before the objects' ticks; the sim's `World::ticks`), so the
+  label blinks 16 passes on and 16 off, and only for the +0xf3 time a switch to mode
+  3 starts (6 steps of 16 ticks). Mode 7 has no overlay.
 
 **A damaged device (modes 4 to 7, view mode 0x18).** List 0x18 is one step,
 `1000:3c20`, then the end: the whole buffer is noise. With `N` the buffer's width
@@ -910,13 +914,23 @@ so the map draws a frame every pass, like the camera.
 
 **Overlays** (drawn into the display's buffer after the frame, before the copy through
 the region, with the text state `DS:0x6a52` (scorpion `0x6564`, scout `0x6be0`) pointed
-at the buffer; T-104 read it as font 2, colour 0x0f). By mode: the humanoid's table
+at the buffer). The openers fill each state (humanoid `1000:9cf4`, scorpion `7ff0`,
+scout `b4b0`: `mov ax, font` then `mov ax, colour`): font 2 in all three, colour 0x0f
+on the humanoid (as T-104 read it), **0x0e on the scorpion and 0x0d on the scout**
+(T-189; the zoom's name was drawn in 0x0f on every kind before). By mode: the humanoid's table
 `DS:0x6abf` (modes 0 and 1 `1000:9e79`, 2 `9ec5`, 3 to 7 nothing), the scorpion's
 `DS:0x6712` (0 and 1 `81d6`, 2 `8222`, 3 `8253`, 4 to 7 nothing); the scout runs
 `b5f6` in every mode, testing for mode 2 itself.
-- The target's name (the buffer `DS:0x18aa`), with a target (+0xe6), `TRACKING`
-  (+0x17 bit 6) and `DS:0x374` bit 5 (a blink), at (0x1f, 2) on the humanoid and
-  (0x21, 2) on the others; the scout's in every mode but 2.
+- The tracking text, with a target (+0xe6), `TRACKING` (+0x17 bit 6) and the game
+  clock `DS:0x374` bit 5 (a blink: 32 counts of the 60 Hz chain on, 32 off), at (0x1f,
+  2) on the humanoid and (0x21, 2) on the others; the scout's in every mode but 2
+  (exactly 2: its damaged modes show it). T-134 read `0x18aa` as a DS buffer filled by
+  `1fe6:7f38`; it is not. The `mov si, 0x18aa` (`1000:9e99`, `81f6`, `b61d`) goes to
+  `1fe6:4be7`, which loads `ES` with the string segment (the relocated `mov ax, seg`
+  at `1fe6:4bed`, the one `xeno_formats::maproom` reads) and types `ES:SI`
+  transparently: a fixed string there, the same for all three kinds, not the target's
+  name. (`1fe6:7f38` fills `DS:0x1bfe` to `0x1c05`, the target panel's name: by the
+  target's kind and call sign, or fixed texts for kinds 3, 4 and 0xa.)
 - The zoom's name while +0xf3 is not 0: in the camera modes the string at
   `DS:0x70e7[+0xf1]`, in the map mode `DS:0x7105[+0xf2]`, at (x, y) (0x4c, 0x2c) and
   (0x4a, 0x2c) on the humanoid, (0x58, 0x2d) and (0x52, 0x2d) on the scorpion, (0x52,
@@ -966,8 +980,17 @@ in place of the last, turned off as the console is left. Shortcuts: the noise dr
 from a random word of its own (seed 0), not the sim's, so drawing never changes a
 replay; a missile camera whose missile is gone draws the noise until the next 16-tick
 step (the original reads slot 0xffff's object then); the names' bit-7 codes are drawn
-in the same colour. Not ported: the target's name and the missile camera's string and
-sight (T-189); none of it is checked in DOSBox (T-190). The buttons are T-188's, below.
+in the same colour. None of it is checked in DOSBox (T-190).
+
+**In the port (T-189)**: `views::SecondDisplay` reads each kind's text state (`text_style`),
+the tracking text's place and text (`tracking`, from the string segment), the missile
+camera's label (`missile_label`, from DS) and the sight's handle (`missile_sight`),
+each from its instruction with a byte check. `draw_second`'s overlays draw, in the
+kind's font and colour, the tracking text (a target, `TRACKING` and
+`World::game_clock` bit 5), the zoom's name, and in mode 3 the label (+0xf3 and
+`World::ticks` bit 4) and the sight (`msprite3`, keyed, `Anchor::SurfaceCentre`).
+Shortcuts: the game clock is the sim's as of its last tick, not read as the frame
+is drawn; bit-7 codes still in the one colour (none of these texts has one). The buttons are T-188's, below.
 
 ### The display's buttons (T-188)
 

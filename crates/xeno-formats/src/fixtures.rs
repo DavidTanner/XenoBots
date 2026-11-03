@@ -1312,6 +1312,33 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
     }
     put(DISPLAY_PAN_UNLIT.0, &op(DISPLAY_PAN_UNLIT.1, 0x6f8));
     put(ds + 0x6f8, b"8\x08\0");
+    for (kind, at) in DISPLAY_TEXT_STYLE.into_iter().enumerate() {
+        let k = kind as u16;
+        put(at, &op(&[0xb8], (4 + 2 * k) % 8));
+        put(at + 8, &op(&[0xb8], 0x31 + k));
+    }
+    // The tracking texts in the map room's string segment, the label in DS.
+    let strings = crate::fixtures::SYNTHETIC_MAP_ROOM_STRINGS;
+    let text_at = |x: u16, text: u16| {
+        [
+            op(&[0xb8], 3),
+            op(&[0xbb], x),
+            vec![0x9a; 5],
+            op(&[0xbe], text),
+        ]
+        .concat()
+    };
+    for (kind, at) in DISPLAY_TRACKING.into_iter().enumerate() {
+        put(at, &text_at(0x10 + kind as u16, 0x180));
+    }
+    put(strings + 0x180, b"FOLLOW\0");
+    put(DISPLAY_MISSILE_LABEL, &text_at(0x18, 0x6d0));
+    put(ds + 0x6d0, b"AIM\0");
+    put(DISPLAY_MISSILE_SIGHT.0, &op(DISPLAY_MISSILE_SIGHT.1, 0x6a0));
+    put(
+        crate::maproom::STRINGS_SEGMENT.0,
+        &op(&[0xb8], (strings / 16) as u16),
+    );
     put(MAIN_VIEW_SHAPES.0, &op(MAIN_VIEW_SHAPES.1, 0x6e0));
     put(ds + 0x6e0, &words(&[0, 0, 3, 3, 0]));
     for (at, shape) in CONSOLE_SHAPES.into_iter().zip([3, 4, 6, 4]) {
@@ -1335,6 +1362,8 @@ pub fn synthetic_views(image: &mut [u8], ds: usize) -> Vec<usize> {
             ],
         );
     }
+
+    relocated.push(crate::maproom::STRINGS_SEGMENT.0 + 1);
 
     // The training menu.
     let (set, template) = (0x1a800, 0x1a900);
@@ -1474,7 +1503,8 @@ pub fn synthetic_endings(image: &mut [u8], ds: usize) -> Vec<usize> {
 /// starts at `ds`: every kind destroyed over 0x50; chance tables at `DS:0x9b00` (the
 /// humanoid's: 0x80 wear the helm by 7, then 0xff the weapon bit 0 or else systems
 /// bit 0x40), `0x9b10` (the scorpion's: 0x40 nothing, 0xc0 wear the power by 0xf) and
-/// `0x9b20` (the scout's: 0x10 nothing, 0xff wear the power); component routines at 0x8000 to 0x8070
+/// `0x9b20` (the scout's: 0x10 nothing, 0xff wear the power); component routines at 0x8010 to 0x8070 (0x8000 is
+/// [`synthetic_views`]'s)
 /// (messages 0x61 to 0x64);
 /// a base destroyed at 300, a relay at 20, explosions of kind 13 from templates at
 /// `DS:0x9b40` (frames 0 to 9, 10 ticks each) and `0x9b45` (8 ticks each).
@@ -1482,7 +1512,6 @@ pub fn synthetic_damage(image: &mut [u8], ds: usize) {
     use crate::damage::*;
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
-    put(0x8000, &[0xc3]);
     // Each sends message 0x60 + its routine's number.
     let wear = |mask: u8, offset: u8, message: u8| {
         let jnc = [0x73, 0x04, 0xc6, 0x45, offset, 0x00];
@@ -1506,8 +1535,8 @@ pub fn synthetic_damage(image: &mut [u8], ds: usize) {
     put(0x8050, &[0xc3]);
     let tables: [&[(u8, u16)]; 3] = [
         &[(0x80, 0x8010), (0xff, 0x8030)],
-        &[(0x40, 0x8000), (0xc0, 0x8060)],
-        &[(0x10, 0x8000), (0xff, 0x8060)],
+        &[(0x40, 0x8050), (0xc0, 0x8060)],
+        &[(0x10, 0x8050), (0xff, 0x8060)],
     ];
     for (kind, table) in tables.into_iter().enumerate() {
         let at = 0x9b00 + 0x10 * kind as u16;
