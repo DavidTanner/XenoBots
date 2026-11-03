@@ -244,11 +244,26 @@ fn recall(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Eve
     crate::script::switch(world, id, true, events);
 }
 
-/// `1000:b3d5`, `b3df`: a turn button held asks for the heading less or plus 0x40.
-fn held_turn(heading: u16, m: &mut Movement) {
-    match m.held {
-        Movement::HELD_LEFT => m.target_heading = heading.wrapping_sub(0x40),
-        Movement::HELD_RIGHT => m.target_heading = heading.wrapping_add(0x40),
+/// A console button held (+0x1b) at the end of the robot's tick: a turn button asks
+/// for the heading less or plus 0x40 (humanoid `1000:b3d5`, `b3df`; scorpion `9c3c`,
+/// `9c4b`), the scorpion's faster and slower buttons step the speed asked for by one
+/// up to the top or down to the bottom of its range (`9c28`, `9c32`). The velocity
+/// follows when the speed next steps.
+fn held(tables: &Tables, kind: ObjectKind, heading: u16, m: &mut Movement) {
+    let g = &tables.gears;
+    match (kind, m.held) {
+        (ObjectKind::Humanoid | ObjectKind::Scorpion, Movement::HELD_LEFT) => {
+            m.target_heading = heading.wrapping_sub(0x40)
+        }
+        (ObjectKind::Humanoid | ObjectKind::Scorpion, Movement::HELD_RIGHT) => {
+            m.target_heading = heading.wrapping_add(0x40)
+        }
+        (ObjectKind::Scorpion, Movement::HELD_FASTER) if m.target_speed < g.scorpion_top => {
+            m.target_speed += 1
+        }
+        (ObjectKind::Scorpion, Movement::HELD_SLOWER) if m.target_speed > g.scorpion_bottom => {
+            m.target_speed -= 1
+        }
         _ => {}
     }
 }
@@ -815,12 +830,12 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
                     _ => {}
                 }
             }
-            // The humanoid's turn button held (+0x1b, `DS:0x6aef`), then the last call
-            // of the kind's tick.
+            // The button held (+0x1b, `DS:0x6aef`, `0x6752`), then the last call of the
+            // kind's tick.
             if let Some(e) = world.get_mut(id)
-                && let (ObjectKind::Humanoid, State::Robot(m)) = (e.kind, &mut e.state)
+                && let State::Robot(m) = &mut e.state
             {
-                held_turn(e.heading, m);
+                held(tables, e.kind, e.heading, m);
             }
             crate::damage::total(world, id, tables, &mut events);
         }

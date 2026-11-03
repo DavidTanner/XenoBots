@@ -1,8 +1,9 @@
 //! What the port reads from the user's `xeno.exe` for the scorpion console's
 //! instruments (`docs/screens.md`, "The scorpion console's instruments (T-131)"): the
 //! sprite bank's handle, the panels' texts, the compass's needle table and the speed
-//! lever's sprites, the rectangles the handlers draw in, and the weapon and drop
-//! buttons' sprites. Game data, read at run time through the instructions that use it.
+//! lever's sprites, the rectangles the handlers draw in, the weapon and drop
+//! buttons' sprites, and the speed lever's speeds and the compass's centre the mouse
+//! handlers use. Game data, read at run time through the instructions that use it.
 
 use crate::FormatError;
 use crate::farewell::operand;
@@ -42,7 +43,17 @@ pub(crate) const SWITCHES_AT: [usize; 2] = [0x8b31, 0x8b9c];
 pub(crate) const WEAPON_OFF_AT: usize = 0x8aa6;
 pub(crate) const WEAPON_ON_AT: usize = 0x8aae;
 pub(crate) const DROPS_AT: usize = 0x8af9;
+/// The speed lever's mouse handler (`1000:8798`): `sub bx, row` (a byte), then `mov ax,
+/// [bx + table]` below the row (reverse) and above it (forward).
+pub(crate) const LEVER_ROW_AT: usize = 0x87b1;
+pub(crate) const LEVER_SPEEDS_AT: [usize; 2] = [0x87bb, 0x87c6];
+/// The compass's mouse handler (`1000:887f`): `mov bx, x`, `mov cx, y`, the centre.
+pub(crate) const CENTRE_AT: [usize; 2] = [0x8894, 0x8897];
 
+/// The speed lever's speeds each way, one for every two rows from its middle row.
+// shortcut: the count is what the lever's 22 rows reach (the reverse table runs up to
+// the forward one); a longer lever would need more.
+pub const LEVER_SPEEDS: usize = 6;
 /// The speed lever's looks each way: a look for every 8 of speed.
 pub const LEVER_LOOKS: usize = 8;
 /// The damage panel's lights.
@@ -85,6 +96,12 @@ pub struct ScorpCon {
     pub weapon_sprites: [[u16; 2]; 2],
     /// The drop buttons' sprites by drop.
     pub drops: [u16; DROPS],
+    /// The speed lever's release: the middle row (speed 0), and the speeds by half the
+    /// rows below it (reverse) and above it (forward).
+    pub lever_row: u16,
+    pub lever_speeds: [[i16; LEVER_SPEEDS]; 2],
+    /// The compass's centre (x, y), the bearings to the pointer are taken from.
+    pub centre: (u16, u16),
 }
 
 /// Reads the tables from a load image whose data segment starts at `ds`.
@@ -106,6 +123,14 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<ScorpCon, FormatError> {
         words(at, &[0x8b, 0x87], LEVER_LOOKS)?
             .try_into()
             .map_err(|_| invalid(at, "short table"))
+    };
+    let speeds = |at| -> Result<[i16; LEVER_SPEEDS], FormatError> {
+        let w = words(at, &[0x8b, 0x87], LEVER_SPEEDS)?;
+        Ok(std::array::from_fn(|i| w[i] as i16))
+    };
+    let lever_row = match image.get(LEVER_ROW_AT..LEVER_ROW_AT + 3) {
+        Some(&[0x83, 0xeb, row]) => u16::from(row),
+        _ => return Err(invalid(LEVER_ROW_AT, "not the lever's sub bx")),
     };
     let damage = DAMAGE_AT
         .map(area)
@@ -137,6 +162,12 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<ScorpCon, FormatError> {
         drops: words(DROPS_AT, &[0x03, 0x87], DROPS)?
             .try_into()
             .map_err(|_| invalid(DROPS_AT, "short table"))?,
+        lever_row,
+        lever_speeds: [speeds(LEVER_SPEEDS_AT[0])?, speeds(LEVER_SPEEDS_AT[1])?],
+        centre: (
+            operand(image, CENTRE_AT[0], &[0xbb])?,
+            operand(image, CENTRE_AT[1], &[0xb9])?,
+        ),
     })
 }
 
@@ -154,7 +185,8 @@ mod tests {
     /// Made-up tables: bank 0x100; texts "t0".."t5" at DS + 0x100 on; needles 0..31;
     /// lever sprites 0x10.. and 0x20..; rectangles (n, n + 1, n + 2, n + 3) for the
     /// dial (1), lights (2, 3), bars (4, 5), damage lights (6..11) and switches (12,
-    /// 13); weapon sprites 0x30, 0x31 and 0x40, 0x41; drops 0x50..0x53.
+    /// 13); weapon sprites 0x30, 0x31 and 0x40, 0x41; drops 0x50..0x53; the lever's
+    /// row 0x20, its speeds -1.. and 1..; the centre (0x41, 0x42).
     fn synthetic() -> Vec<u8> {
         let mut image = vec![0u8; DS + 0x1000];
         let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -200,6 +232,18 @@ mod tests {
         put(DS + 0x400, &[0x30, 0, 0x31, 0, 0x40, 0, 0x41, 0]);
         put(DROPS_AT, &op(&[0x03, 0x87], 0x410));
         put(DS + 0x410, &table(0x50, 4));
+        put(LEVER_ROW_AT, &[0x83, 0xeb, 0x20]);
+        for (i, at) in LEVER_SPEEDS_AT.into_iter().enumerate() {
+            let value = 0x420 + 0x10 * i as u16;
+            put(at, &op(&[0x8b, 0x87], value));
+            let sign = if i == 0 { -1 } else { 1 };
+            let speeds: Vec<u8> = (1..=LEVER_SPEEDS as i16)
+                .flat_map(|n| (sign * n).to_le_bytes())
+                .collect();
+            put(DS + usize::from(value), &speeds);
+        }
+        put(CENTRE_AT[0], &op(&[0xbb], 0x41));
+        put(CENTRE_AT[1], &op(&[0xb9], 0x42));
         image
     }
 
@@ -212,6 +256,8 @@ mod tests {
         assert_eq!((con.damage[5].top, con.switches[1].right), (11, 16));
         assert_eq!(con.weapon_sprites, [[0x30, 0x31], [0x40, 0x41]]);
         assert_eq!(con.drops, [0x50, 0x51, 0x52, 0x53]);
+        assert_eq!((con.lever_row, con.centre), (0x20, (0x41, 0x42)));
+        assert_eq!((con.lever_speeds[0][5], con.lever_speeds[1][0]), (-6, 1));
         insta::assert_debug_snapshot!(con);
     }
 
@@ -226,6 +272,12 @@ mod tests {
             BARS_AT[0],
         ]);
         checked.extend([DAMAGE_AT[5], SWITCHES_AT[0], WEAPON_ON_AT + 1, DROPS_AT]);
+        checked.extend([
+            LEVER_ROW_AT + 1,
+            LEVER_SPEEDS_AT[1],
+            CENTRE_AT[0],
+            CENTRE_AT[1],
+        ]);
         for at in checked {
             let mut image = synthetic();
             image[at] ^= 0x01;
@@ -263,5 +315,19 @@ mod tests {
         // Every light is inside the damage panel's widget (3, 235, 53, 314).
         assert!(con.damage.iter().all(|r| r.top >= 3 && r.left >= 235));
         assert!(con.relays.len() > 2 && con.relays.iter().all(u8::is_ascii));
+        // The lever's middle row and the compass's centre are inside their widgets
+        // (103, 84, 124, 91) and (137, 62, 175, 100); speed 0 next to the middle, the
+        // speeds growing away from it within the keys' limits.
+        assert!((103..=124).contains(&con.lever_row));
+        assert!((62..=100).contains(&con.centre.0) && (137..=175).contains(&con.centre.1));
+        let gears = crate::motion::read(&exe).unwrap().gears;
+        let [reverse, forward] = con.lever_speeds;
+        assert_eq!((reverse[0], forward[0] > 0), (0, true));
+        assert!(reverse.windows(2).all(|w| w[0] >= w[1]));
+        assert!(forward.windows(2).all(|w| w[0] <= w[1]));
+        assert_eq!(
+            (reverse[5], forward[5]),
+            (gears.scorpion_bottom, gears.scorpion_top)
+        );
     }
 }

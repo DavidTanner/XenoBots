@@ -2188,7 +2188,7 @@ pub fn synthetic_weapon_keys(image: &mut [u8], ds: usize) {
 /// 10, 20; scout gears -30, 0, 30; a scorpion step of 5 within -15..=25 (its up
 /// routine after an `int 3`, as the stock build's); turns of 0x80.
 pub fn synthetic_gears(image: &mut [u8], ds: usize) {
-    use crate::motion::{GEAR_OPS, KEY_TURN};
+    use crate::motion::{GEAR_OPS, HELD_SPEED_AT, KEY_TURN};
     let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
     let op = |op: &[u8], value: u16| [op, &value.to_le_bytes()[..]].concat();
     let words = |w: &[i16]| w.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<_>>();
@@ -2229,6 +2229,9 @@ pub fn synthetic_gears(image: &mut [u8], ds: usize) {
         &[0x8b, 0x45, 0x28, 0x3d, 0xf1, 0xff, 0x7e, 0x10, 0x2d, 5, 0],
     );
     put(KEY_TURN.0, &op(KEY_TURN.1, 0x80));
+    // The held speed buttons' limits, the keys' 25 and -15.
+    put(HELD_SPEED_AT[0].0, &[0x83, 0x7d, 0x28, 25, 0x7d]);
+    put(HELD_SPEED_AT[1].0, &[0x83, 0x7d, 0x28, 0xf1, 0x7e]);
 }
 
 /// A synthetic `mapdvr.dvr`: an MZ file whose init hands the host its data segment

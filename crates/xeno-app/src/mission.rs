@@ -199,9 +199,9 @@ mod handler {
 /// weapon, pilot, program, lock, cloak and ECM buttons, gear lever, compass, turn
 /// buttons (left, straight, right) and status panel, then the scorpion's first five,
 /// its stop, cargo, dump, load and deploy buttons, its relay panel (which only shows its frame XORed
-/// while held) and its drop buttons, then the scout's first five, its three stance
+/// while held), its drop buttons, speed buttons, speed lever, compass and turn buttons, then the scout's first five, its three stance
 /// buttons, cloak, ECM and drop buttons and status panel.
-const INSTRUMENTS: [u16; 37] = [
+const INSTRUMENTS: [u16; 44] = [
     crate::humancon::FIRE_TYPE,
     crate::humancon::WEAPON_TYPE,
     crate::humancon::PILOT_TYPE,
@@ -227,6 +227,13 @@ const INSTRUMENTS: [u16; 37] = [
     crate::scorpcon::DEPLOY_TYPE,
     crate::scorpcon::RELAYS_TYPE,
     crate::scorpcon::DROP_TYPE,
+    crate::scorpcon::FASTER_TYPE,
+    crate::scorpcon::SLOWER_TYPE,
+    crate::scorpcon::LEVER_TYPE,
+    crate::scorpcon::COMPASS_TYPE,
+    crate::scorpcon::LEFT_TYPE,
+    crate::scorpcon::AHEAD_TYPE,
+    crate::scorpcon::RIGHT_TYPE,
     crate::scoutcon::FIRE_TYPE,
     crate::scoutcon::WEAPON_TYPE,
     crate::scoutcon::PILOT_TYPE,
@@ -252,15 +259,24 @@ const LOCK_TYPES: [u16; 3] = [
 ];
 /// The humanoid's and scout's status panels, pressed (`1000:dd7f`).
 const STATUS_TYPES: [u16; 2] = [crate::humancon::STATUS_TYPE, crate::scoutcon::STATUS_TYPE];
-/// The humanoid's turn buttons, held (`1000:a77d`, `a82b`).
-const TURN_TYPES: [u16; 2] = [crate::humancon::LEFT_TYPE, crate::humancon::RIGHT_TYPE];
+/// The humanoid's and scorpion's turn buttons, held (`1000:a77d`, `a82b`; `8ed0`,
+/// `8f70`), left then right.
+const TURN_TYPES: [u16; 4] = [
+    crate::humancon::LEFT_TYPE,
+    crate::scorpcon::LEFT_TYPE,
+    crate::humancon::RIGHT_TYPE,
+    crate::scorpcon::RIGHT_TYPE,
+];
+/// The scorpion's faster and slower buttons, held (`1000:8df6`, `8e8b`).
+const SPEED_TYPES: [u16; 2] = [crate::scorpcon::FASTER_TYPE, crate::scorpcon::SLOWER_TYPE];
 /// Buttons that flip the shared look on a press and back on a release.
-const SHARED_LOOK_TYPES: [u16; 15] = [
+const SHARED_LOOK_TYPES: [u16; 16] = [
     crate::scorpcon::DROP_TYPE,
     crate::scoutcon::DROP_TYPE,
     crate::humancon::CLOAK_TYPE,
     crate::humancon::ECM_TYPE,
     crate::humancon::AHEAD_TYPE,
+    crate::scorpcon::AHEAD_TYPE,
     crate::scoutcon::CLOAK_TYPE,
     crate::scoutcon::ECM_TYPE,
     crate::scorpcon::STOP_TYPE,
@@ -314,6 +330,8 @@ const THIRD_DISPLAY: u8 = 253;
 /// Per robot kind, the widgets whose mouse handlers test the 3D view's, the second
 /// display's and the third display's regions (humanoid `1000:9d83`, `9eea`, `9fcc`;
 /// scorpion `8081`, `828e`, `8370`; scout `b540`, `b68c`, `b76e`; T-106).
+/// A widget group: its members are the set's nested widgets.
+const GROUP_TYPE: u16 = 0x04;
 const REGION_WIDGETS: [[u16; 3]; 3] = [
     [0x84, 0x86, 0xaa],
     [0xbc, 0xbe, 0xd8],
@@ -1346,7 +1364,7 @@ impl Mission {
                     self.pilot(slot, Pilot::Drop(key));
                 }
             }
-            h::AHEAD_TYPE => self.pilot(slot, Pilot::Straight),
+            h::AHEAD_TYPE | s::AHEAD_TYPE => self.pilot(slot, Pilot::Straight),
             h::CLOAK_TYPE | c::CLOAK_TYPE => self.pilot(slot, Pilot::Cloak),
             h::ECM_TYPE | c::ECM_TYPE => self.pilot(slot, Pilot::Ecm),
             h::LOCK_TYPE | s::LOCK_TYPE | c::LOCK_TYPE => {
@@ -2410,32 +2428,38 @@ impl Mission {
                 .map(|r| REGION_WIDGETS[r.kind.index()]),
             Viewed::Base => None,
         };
+        // A region answers only as the last widget over the point (`1000:2509`): the
+        // speed lever and buttons lie over the scorpion's 3D view's bottom rows.
+        let over = |w: &&views::Widget| w.area.is_some_and(|a| a.contains(x, y));
+        let top = tables.widgets.iter().rev().find(over);
         [
             (CONSOLE_CORNER_TYPE, Target::Corner),
             (PROGRAM_PANEL_TYPE, Target::Panel),
             (UNIT_BUTTON_TYPE, Target::UnitButton),
         ]
         .into_iter()
-        .chain(
-            regions
-                .into_iter()
-                .flat_map(|r| [(r[0], Target::Region(0)), (r[1], Target::Region(1))]),
-        )
         .find_map(|(kind, target)| hit(kind).then_some(target))
+        .or_else(|| {
+            let [first, second, _] = regions?;
+            [(first, Target::Region(0)), (second, Target::Region(1))]
+                .into_iter()
+                .find_map(|(kind, target)| (top?.kind == kind).then_some(target))
+        })
         .or_else(|| {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
             let kinds: &[u16] = match view {
                 View::Humanoid => &INSTRUMENTS[..13],
-                View::Scorpion => &INSTRUMENTS[13..25],
-                View::Scout => &INSTRUMENTS[25..],
+                View::Scorpion => &INSTRUMENTS[13..32],
+                View::Scout => &INSTRUMENTS[32..],
                 _ => &[],
             };
-            tables
-                .widgets
-                .iter()
-                .chain(&tables.nested)
-                .find(|w| kinds.contains(&w.kind) && w.area.is_some_and(|a| a.contains(x, y)))
-                .map(|&w| Target::Instrument(w))
+            // The last widget over the point, or in a group (0x04) the last member
+            // over it (the groups do not overlap).
+            let w = match top? {
+                w if w.kind == GROUP_TYPE => tables.nested.iter().rev().find(over)?,
+                w => w,
+            };
+            kinds.contains(&w.kind).then_some(Target::Instrument(*w))
         })
     }
 
@@ -2504,12 +2528,20 @@ impl Mission {
                     self.pilot(slot, Pilot::StatusClock);
                 }
             }
-            // `1000:a77d`, `a82b`: a turn button held (+0x1b), and the look.
+            // `1000:a77d`, `a82b`: a turn button held (+0x1b), and the look; the
+            // scorpion's speed buttons the same (`8df6`, `8e8b`).
             Target::Instrument(w) if TURN_TYPES.contains(&w.kind) => {
                 self.look.pressed = !self.look.pressed;
                 if let Viewed::Robot(slot) = self.viewed {
-                    let right = w.kind == crate::humancon::RIGHT_TYPE;
+                    let right = TURN_TYPES[2..].contains(&w.kind);
                     self.pilot(slot, Pilot::HoldTurn { right });
+                }
+            }
+            Target::Instrument(w) if SPEED_TYPES.contains(&w.kind) => {
+                self.look.pressed = !self.look.pressed;
+                if let Viewed::Robot(slot) = self.viewed {
+                    let faster = w.kind == SPEED_TYPES[0];
+                    self.pilot(slot, Pilot::HoldSpeed { faster });
                 }
             }
             // `1000:a88c`: a press on a notch takes its gear; the drag follows (`hover`).
@@ -2577,9 +2609,16 @@ impl Mission {
                 self.look.pressed = !self.look.pressed;
                 self.dirty = true;
                 let over = at.and_then(|at| self.target(assets, at)) == Some(target);
-                let right = w.kind == crate::humancon::RIGHT_TYPE;
+                let right = TURN_TYPES[2..].contains(&w.kind);
                 let keep = over && by == MouseButton::Right;
                 self.pilot(slot, Pilot::ReleaseTurn { right, keep });
+                return None;
+            }
+            // A speed button let go or left (the same shortcut).
+            if SPEED_TYPES.contains(&w.kind) {
+                self.look.pressed = !self.look.pressed;
+                self.dirty = true;
+                self.pilot(slot, Pilot::ReleaseSpeed);
                 return None;
             }
             if w.kind == crate::humancon::GEAR_TYPE {
@@ -2658,12 +2697,22 @@ impl Mission {
                 let Viewed::Robot(slot) = self.viewed else {
                     return None;
                 };
-                // `1000:a6c0`: the compass asks for the bearing to the pointer.
-                if let (crate::humancon::COMPASS_TYPE, Some(con), Some(at)) =
-                    (w.kind, &assets.humancon, at)
-                {
-                    let (x, y) = crate::humancon::compass_offset(con, at);
+                // `1000:a6c0`, `887f`: the compass asks for the bearing to the pointer.
+                let centre = match w.kind {
+                    crate::humancon::COMPASS_TYPE => assets.humancon.as_ref().map(|c| c.centre),
+                    crate::scorpcon::COMPASS_TYPE => assets.scorpcon.as_ref().map(|c| c.centre),
+                    _ => None,
+                };
+                if let (Some(centre), Some(at)) = (centre, at) {
+                    let (x, y) = crate::console::compass_offset(centre, at);
                     self.pilot(slot, Pilot::Toward(x, y));
+                    return None;
+                }
+                // `8798`: the scorpion's lever asks for the speed by the pointer's row.
+                if let (crate::scorpcon::LEVER_TYPE, Some(con), Some((_, y))) =
+                    (w.kind, &assets.scorpcon, at)
+                {
+                    self.pilot(slot, Pilot::Speed(crate::scorpcon::lever_speed(con, y)));
                     return None;
                 }
                 self.instrument(slot, w, right, assets);
@@ -6911,6 +6960,65 @@ pub mod tests {
         assert!(m.firing && m.look.pressed);
         m.mouse_up(LEFT, None, &assets);
         assert!(!m.firing && !m.look.pressed);
+        // T-169: faster held steps the speed asked for one a tick, the pilot driving;
+        // let go it stops; slower steps it down.
+        let con = assets.scorpcon.as_ref().unwrap();
+        let gears = &assets.motion.gears;
+        click(&mut m, find(s::PROGRAM_TYPE), LEFT);
+        robot_state_mut(&mut m, robot).target_speed = gears.scorpion_top - 1;
+        let faster = find(s::FASTER_TYPE);
+        m.mouse_down(LEFT, centre(faster), &assets);
+        assert!(m.look.pressed && !drives(&m));
+        m.tick(&[]);
+        m.tick(&[]);
+        assert_eq!(state(&m).target_speed, gears.scorpion_top);
+        m.mouse_up(LEFT, None, &assets);
+        assert!(!m.look.pressed);
+        assert_eq!(state(&m).held, 0);
+        let slower = find(s::SLOWER_TYPE);
+        m.mouse_down(LEFT, centre(slower), &assets);
+        m.tick(&[]);
+        m.mouse_up(LEFT, centre(slower), &assets);
+        m.tick(&[]);
+        assert_eq!(state(&m).target_speed, gears.scorpion_top - 1);
+        // The lever: its middle row stops, the top row asks for its top speed, the
+        // last its fastest reverse (the hit test leaves the bottom edge out).
+        let lever = find(s::LEVER_TYPE);
+        let area = lever.area.unwrap();
+        let at = |y| Some((area.left, y));
+        click(&mut m, find(s::PROGRAM_TYPE), LEFT);
+        for (y, speed) in [
+            (area.top, gears.scorpion_top),
+            (con.lever_row, 0),
+            (area.bottom - 1, gears.scorpion_bottom),
+        ] {
+            m.mouse_down(LEFT, at(y), &assets);
+            m.mouse_up(LEFT, at(y), &assets);
+            assert_eq!(state(&m).target_speed, speed, "row {y}");
+            assert!(!drives(&m));
+        }
+        // The compass: a release below its centre asks for a half turn.
+        click(&mut m, find(s::PROGRAM_TYPE), LEFT);
+        let (cx, cy) = con.centre;
+        m.mouse_down(LEFT, Some((cx, cy + 5)), &assets);
+        m.mouse_up(LEFT, Some((cx, cy + 5)), &assets);
+        assert_eq!(state(&m).target_heading, 0x8000);
+        assert!(!drives(&m));
+        // The turn buttons: right held asks for the heading plus 0x40 each tick; a right
+        // release over it keeps it turning (+0x23 bit 5); straight asks for the heading.
+        let right = find(s::RIGHT_TYPE);
+        m.mouse_down(RIGHT, centre(right), &assets);
+        assert!(m.look.pressed);
+        m.tick(&[]);
+        let heading = m.world().get(EntityId(robot)).unwrap().heading;
+        assert_eq!(state(&m).target_heading, heading.wrapping_add(0x40));
+        m.mouse_up(RIGHT, centre(right), &assets);
+        assert_eq!((state(&m).held, state(&m).mode & 0x30), (0, 0x20));
+        click(&mut m, find(s::AHEAD_TYPE), LEFT);
+        assert!(!m.look.pressed);
+        let heading = m.world().get(EntityId(robot)).unwrap().heading;
+        assert_eq!(state(&m).target_heading, heading);
+        assert_eq!(state(&m).mode & 0x30, 0);
     }
 
     /// The humanoid's buttons act on the robot through the sim, as their mouse handlers
