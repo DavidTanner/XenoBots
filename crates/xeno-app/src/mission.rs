@@ -7334,11 +7334,12 @@ pub mod tests {
 
     /// A training mission is won and lost by play alone, through the keys (T-150, T-177,
     /// T-141). On `ntrain`, the first scorpion is left to its program for 30,000
-    /// retraces (about 7 minutes), then its console: Up for speed, F6 (the tail gun),
+    /// retraces (about 7 minutes), then its console: Up for speed (again after a bump),
+    /// F6 (the tail gun),
     /// steered at the alien base by Left and Right, stopped by `.` near it; A only near
     /// the base, until the base is locked; Space fires at the base. (Since the fine aim,
     /// T-146, the escort's shots land where they did not, and a scorpion that locks and
-    /// fights robots on the way loses its targeting computer.) Won about 31 minutes in.
+    /// fights robots on the way loses its targeting computer.) Won about 17 minutes in (31 before T-183).
     /// On `htrain`, each of the player's units in turn is steered by its
     /// console's keys to stand just behind the player's base, away from the aliens, and
     /// stopped with `.`: the aliens' shots at them hit the base, which falls about 15
@@ -7411,8 +7412,11 @@ pub mod tests {
             reloading |= r.guns.frames[2] == 1 && r.guns.missiles != 0;
             let mut press = |word| _ = m.key(word, &assets);
             if retrace == 30_000 {
-                (0..5).for_each(|_| press(0x48));
                 press(0x40);
+            }
+            // Under way again after a bump (into its own side's scorpion, T-183).
+            if units >= 5.0 && r.target_speed == 0 {
+                (0..5).for_each(|_| press(0x48));
             }
             if off > 0x100 {
                 press(0x4d);

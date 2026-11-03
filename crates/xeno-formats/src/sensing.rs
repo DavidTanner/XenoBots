@@ -26,6 +26,15 @@ pub(crate) const KEEP_LOCK: usize = 0xd66f;
 pub(crate) const LOCKED_ON: (usize, &[u8]) = (0xdc95, &[0xd0, 0xad, 0xed, 0x00]);
 /// The contact check (`1000:d464`, T-141), found in the tick tables by its address.
 pub(crate) const CONTACT: usize = 0xd464;
+/// The contact check's numbers (T-183): `cmp ax, near` after both radii are taken
+/// off the distance; `mov byte [di + 0xfb], wait` after a bump; and the call to the
+/// ahead test (`1000:45f2`, first bytes `push di`, `mov ax, [si + 4]`).
+pub(crate) const NEAR_AT: usize = 0xd4d5;
+pub(crate) const BUMP_WAIT_AT: (usize, &[u8]) = (0xd508, &[0xc6, 0x85, 0xfb, 0x00]);
+pub(crate) const AHEAD_CALL_AT: usize = 0xd4da;
+pub(crate) const AHEAD: (usize, &[u8]) = (0x45f2, &[0x57, 0x8b, 0x44, 0x04]);
+/// In the ahead test: `mov ax, reach`, `mov dx, back`, `mov di, steps + 1`.
+pub(crate) const AHEAD_BOX_AT: usize = 0x4627;
 /// Each kind's console counters (humanoid `1000:b318`, scorpion `9a14`, scout `caf5`;
 /// T-167), found by address, and where in each its two `inc byte [di + 0xee]` start.
 pub(crate) const COUNTERS: [(usize, usize); 3] = [(0xb318, 5), (0x9a14, 0), (0xcaf5, 5)];
@@ -77,6 +86,21 @@ pub struct KindTicks {
     pub counters: u8,
 }
 
+/// The contact check's numbers (`1000:d464`, `docs/sim.md`, "Contacts (T-141)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Contact {
+    /// How near, past both radii, another object is a contact (at most this, in the
+    /// distance's low word).
+    pub near: u16,
+    /// Checks skipped after a bump.
+    pub wait: u8,
+    /// The ahead test's box (8.8): a coordinate is in it from above `back` up to
+    /// `reach`; and how many steps of the closing velocity it tries.
+    pub reach: i16,
+    pub back: i16,
+    pub steps: u16,
+}
+
 /// The sensing tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sensing {
@@ -93,6 +117,7 @@ pub struct Sensing {
     pub point: (i32, i32),
     /// The sound event a lock plays for the robot whose console is open.
     pub lock_sound: u8,
+    pub contact: Contact,
 }
 
 /// One weapon in the weapon state (`docs/sim.md`, "Sensing"): its number (the state
@@ -225,6 +250,32 @@ fn weapons(image: &[u8]) -> Result<[[Weapon; 2]; 3], FormatError> {
     Ok([kind(0)?, kind(1)?, kind(2)?])
 }
 
+fn contact(image: &[u8]) -> Result<Contact, FormatError> {
+    let call = operand(image, AHEAD_CALL_AT, &[0xe8])?;
+    if usize::from((AHEAD_CALL_AT as u16 + 3).wrapping_add(call)) != AHEAD.0
+        || !starts(image, AHEAD.0, AHEAD.1)
+    {
+        return Err(invalid(AHEAD_CALL_AT, "not the contact check's ahead test"));
+    }
+    let wait = match image.get(BUMP_WAIT_AT.0..BUMP_WAIT_AT.0 + 5) {
+        Some([b @ .., w]) if b == BUMP_WAIT_AT.1 => *w,
+        _ => return Err(invalid(BUMP_WAIT_AT.0, "not the bump's wait")),
+    };
+    let reach = operand(image, AHEAD_BOX_AT, &[0xb8])? as i16;
+    let back = operand(image, AHEAD_BOX_AT + 3, &[0xba])? as i16;
+    let steps = operand(image, AHEAD_BOX_AT + 6, &[0xbf])?.wrapping_sub(1);
+    if reach <= 0 || back >= 0 || steps == 0 || steps > 0x100 {
+        return Err(invalid(AHEAD_BOX_AT, "not the ahead test's box"));
+    }
+    Ok(Contact {
+        near: operand(image, NEAR_AT, &[0x3d])?,
+        wait,
+        reach,
+        back,
+        steps,
+    })
+}
+
 /// Reads the tables from a load image whose data segment starts at `ds`.
 pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
     if !starts(image, SCAN.0, SCAN.1) || !starts(image, LOCKED_ON.0, LOCKED_ON.1) {
@@ -259,6 +310,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
             destination: m(13)?,
         },
         lock_sound: (sound / 2) as u8,
+        contact: contact(image)?,
         weapons: weapons(image)?,
         point: {
             let at = ds + usize::from(operand(image, POINT_AT.0, POINT_AT.1)?);
@@ -301,6 +353,11 @@ mod tests {
             (15, 5, 6, 8)
         );
         assert_eq!(t.map(|t| t.counters), [13; 3]);
+        let c = sensing.contact;
+        assert_eq!(
+            (c.near, c.wait, c.reach, c.back, c.steps),
+            (0x5000, 3, 0x20, -0x14, 3)
+        );
         assert_eq!((t[1].lock, t[1].arc, t[1].range), (6, 0x1100, 0x310));
         let m = sensing.messages;
         assert_eq!(
@@ -327,6 +384,13 @@ mod tests {
             (0xa300 + 7, 0xe9),
             (0xa320 + 16, 0x8b),
             (POINT_AT.0, 0xa1),
+            // The contact check's numbers and the ahead test.
+            (NEAR_AT, 0x3c),
+            (BUMP_WAIT_AT.0 + 2, 0xfc),
+            (AHEAD_CALL_AT + 1, 0x16),
+            (AHEAD.0, 0x56),
+            (AHEAD_BOX_AT + 3, 0xbb),
+            (AHEAD_BOX_AT + 7, 0x00),
             // The scorpion's lock routine calls elsewhere, and its scan is gone.
             (0xa217, 0x00),
             (DS + 0x9720 + 30, 0x00),
@@ -361,6 +425,12 @@ mod tests {
             assert!(t.arc > 0 && t.arc < 0x4000);
             assert!(t.range > 0 && t.range <= range);
         }
+        // The contact check's numbers as T-141 and T-183 traced them.
+        let c = sensing.contact;
+        assert_eq!(
+            (c.near, c.wait, c.reach, c.back, c.steps),
+            (0x6400, 4, 0x19, -0x19, 4)
+        );
         // Each kind has two weapons with damaged bits; only the scorpion's first takes
         // all its bits (its two cannons).
         for (k, kind) in sensing.weapons.iter().enumerate() {

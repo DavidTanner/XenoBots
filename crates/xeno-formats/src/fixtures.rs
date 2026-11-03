@@ -1781,6 +1781,17 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
     }
     put(POINT_AT.0, &op(POINT_AT.1, 0x9770));
     put(ds + 0x9770, &[2, 0, 1, 0, 0xff, 0xff, 0xff, 0xff]);
+    // The contact check: near 0x5000, a wait of 3, a box of -0x14 (exclusive) to 0x20
+    // and 3 steps.
+    put(NEAR_AT, &op(&[0x3d], 0x5000));
+    put(BUMP_WAIT_AT.0, &[BUMP_WAIT_AT.1, &[3]].concat());
+    let call = (AHEAD.0 as u16).wrapping_sub(AHEAD_CALL_AT as u16 + 3);
+    put(AHEAD_CALL_AT, &op(&[0xe8], call));
+    put(AHEAD.0, AHEAD.1);
+    put(
+        AHEAD_BOX_AT,
+        &[op(&[0xb8], 0x20), op(&[0xba], 0xffec), op(&[0xbf], 4)].concat(),
+    );
 }
 
 /// Writes made-up weapon instructions (`crate::weapons`) after [`synthetic_sensing`]'s

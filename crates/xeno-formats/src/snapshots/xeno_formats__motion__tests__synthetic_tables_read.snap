@@ -1459,6 +1459,13 @@ Motion {
             -1,
         ),
         lock_sound: 26,
+        contact: Contact {
+            near: 20480,
+            wait: 3,
+            reach: 32,
+            back: -20,
+            steps: 3,
+        },
     },
     net: Net {
         programs: [
