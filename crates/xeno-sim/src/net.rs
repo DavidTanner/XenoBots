@@ -256,7 +256,8 @@ pub fn dump(world: &mut World, id: EntityId, tables: &Tables) {
 
 /// The dump's step (`1000:9a50`), at the scorpion's tick-table entry `Dump::step`:
 /// while dumping, +0x11c counts down and at 0 starts again and a relay is deployed
-/// (`deploy`); one that cannot be stops the dump (`dump`).
+/// (`deploy`); one that cannot be stops the dump (`dump`). Then the cargo gauges
+/// (+0x11a, +0x11b) are set from the relays.
 pub fn dump_step(
     world: &mut World,
     id: EntityId,
@@ -273,16 +274,25 @@ pub fn dump_step(
     else {
         return;
     };
-    if (m.tick & 0x1e) >> 1 != d.step || c.equipment & d.bit == 0 {
+    if (m.tick & 0x1e) >> 1 != d.step {
         return;
     }
-    m.dump_wait = m.dump_wait.wrapping_sub(1);
-    if m.dump_wait != 0 {
-        return;
+    if c.equipment & d.bit != 0 {
+        m.dump_wait = m.dump_wait.wrapping_sub(1);
+        if m.dump_wait == 0 {
+            m.dump_wait = d.wait;
+            if !deploy(world, id, tables, random, events) {
+                dump(world, id, tables);
+            }
+        }
     }
-    m.dump_wait = d.wait;
-    if !deploy(world, id, tables, random, events) {
-        dump(world, id, tables);
+    // `1000:9a6d`: the cargo gauges from the relays, dumping or not.
+    if let Some(m) = crate::motion::movement(world, id) {
+        let (relays, bias) = (m.relays, m.gauge_bias);
+        m.gauges = [
+            (relays << 4).wrapping_add(bias),
+            (relays << 3).wrapping_add(bias << 1),
+        ];
     }
 }
 

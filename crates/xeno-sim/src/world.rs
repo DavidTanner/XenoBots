@@ -225,6 +225,18 @@ pub struct Movement {
     pub target_bearing: u16,
     /// +0xed: another robot's lock on this one, halved every 16 ticks.
     pub locked_on: u8,
+    /// The console counters, stepped by the tick table's entry `KindTicks::counters`
+    /// (`crate::sense::counters`): +0xee up by 2 (the lock warning light's blink, bit
+    /// 2); +0xfa, a humanoid's or scout's clock for the status page (S sets it to 0), a
+    /// scorpion's bit 7 its damage lights; the humanoid's (+0x10a) or scout's (+0x108)
+    /// status page, 0 to 3 (0 for a scorpion).
+    pub blink: u8,
+    pub clock: u8,
+    pub page: u8,
+    /// A scorpion's +0x119 (set only when made) and its cargo gauges +0x11a, +0x11b,
+    /// set by the dump's step (`crate::net::dump_step`).
+    pub gauge_bias: u8,
+    pub gauges: [u8; 2],
     /// +0x10a..+0x114: a scorpion's line of relay-net cells (`net::Grid`).
     // shortcut: kept for every kind; a humanoid's or scout's script running the net
     // opcodes would overwrite its gear and light there in the original. No stock
@@ -333,6 +345,12 @@ impl Movement {
         // (gear, stride, legs, stance and its target, relays) by kind; the frames start
         // at +0xfe.
         let frames = |f: &[u8]| -> [u8; 6] { f[1..7].try_into().expect("+0xff to +0x104") };
+        // (page, +0x119 and the gauges) by kind.
+        let (page, (gauge_bias, gauges)) = match &r.parts {
+            Parts::Humanoid(p) => (p.light, (0, [0; 2])),
+            Parts::Scorpion(p) => (0, (p.unknown_119, p.gauges)),
+            Parts::Scout(p) => (p.light, (0, [0; 2])),
+        };
         let (gear, stride, legs, stance, (relays, dump_wait)) = match &r.parts {
             Parts::Humanoid(p) => {
                 let [.., a, b] = p.frames;
@@ -386,6 +404,11 @@ impl Movement {
             target_distance: r.target_distance,
             target_bearing: r.target_bearing,
             locked_on: r.locked_on,
+            blink: r.blink,
+            clock: r.clock,
+            page,
+            gauge_bias,
+            gauges,
             guns: Guns {
                 energy: r.energy,
                 ecm: r.ecm,
@@ -457,6 +480,8 @@ impl StateHash for State {
                 h.u8(m.stride);
                 h.bytes(&m.legs);
                 h.bytes(&[m.contacts, m.locked_on, m.bump_wait]);
+                h.bytes(&[m.blink, m.clock, m.page, m.gauge_bias]);
+                h.bytes(&m.gauges);
                 h.u16(m.target.map_or(0xffff, |t| t.0));
                 h.u16(m.target_distance);
                 h.u16(m.target_bearing);

@@ -209,7 +209,14 @@ pub fn draw_status(
 /// left; page 2 the sensors' states.
 fn status_lines(con: &HumanCon, robot: &Robot) -> Vec<Line> {
     use TextMode::{Opaque, Transparent};
-    let page = usize::from(robot.page).min(con.pages.len() - 1);
+    // `1000:a96f`: the draw cuts +0x10a by 3 when 3 or more (the sim's
+    // `Pilot::StatusShown`), and its low two bits pick the page (3 is page 2).
+    let cut = if robot.page >= 3 {
+        robot.page - 3
+    } else {
+        robot.page
+    };
+    let page = usize::from(cut & 3).min(con.pages.len() - 1);
     let state = |broken| crate::console::state((&con.ok, &con.out), broken);
     let percent = crate::panels::percent;
     let mut lines = vec![(
@@ -446,6 +453,11 @@ mod tests {
         );
         robot.page = 2;
         assert_eq!(texts(&robot)[1..], [&b"Y"[..], b"N", b"Y", b"N", b"Y"]);
+        // The draw cuts 3 or more by 3: page 3 is page 0, 4 page 1.
+        robot.page = 3;
+        assert_eq!(texts(&robot)[0], b"P0");
+        robot.page = 4;
+        assert_eq!(texts(&robot)[0], b"P1");
     }
 
     #[test]

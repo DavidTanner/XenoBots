@@ -26,6 +26,10 @@ pub(crate) const KEEP_LOCK: usize = 0xd66f;
 pub(crate) const LOCKED_ON: (usize, &[u8]) = (0xdc95, &[0xd0, 0xad, 0xed, 0x00]);
 /// The contact check (`1000:d464`, T-141), found in the tick tables by its address.
 pub(crate) const CONTACT: usize = 0xd464;
+/// Each kind's console counters (humanoid `1000:b318`, scorpion `9a14`, scout `caf5`;
+/// T-167), found by address, and where in each its two `inc byte [di + 0xee]` start.
+pub(crate) const COUNTERS: [(usize, usize); 3] = [(0xb318, 5), (0x9a14, 0), (0xcaf5, 5)];
+pub(crate) const COUNTERS_OP: &[u8] = &[0xfe, 0x85, 0xee, 0x00, 0xfe, 0x85, 0xee, 0x00];
 /// Entries in a tick table.
 pub const TICKS: usize = 16;
 /// `mov si, message` before each of the lock's messages to the robot's panel, in
@@ -68,6 +72,9 @@ pub struct KindTicks {
     pub locked_on: u8,
     /// The contact check (`1000:d464`).
     pub contact: u8,
+    /// The console counters (`COUNTERS`): +0xee, and +0xfa with the status page or
+    /// the scorpion's damage lights.
+    pub counters: u8,
 }
 
 /// The sensing tables.
@@ -133,9 +140,14 @@ fn starts(image: &[u8], at: usize, bytes: &[u8]) -> bool {
 
 /// A kind's tick table: the entries of the scan and the lock warning's decay, and of
 /// the routine that calls the lock's upkeep (`mov ax, arc`, `mov bx, range`, `call`).
-fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatError> {
-    let table = ds + usize::from(operand(image, at, TICKS_OP)?);
+fn kind_ticks(image: &[u8], ds: usize, kind: usize) -> Result<KindTicks, FormatError> {
+    let table = ds + usize::from(operand(image, TICKS_AT[kind], TICKS_OP)?);
     let (mut scan, mut lock, mut locked_on, mut contact) = (None, None, None, None);
+    let (counters_at, incs) = COUNTERS[kind];
+    if !starts(image, counters_at + incs, COUNTERS_OP) {
+        return Err(invalid(counters_at, "not the console counters"));
+    }
+    let mut counters = None;
     for n in 0..TICKS {
         let routine = usize::from(word(image, table + 2 * n)?);
         if routine == SCAN.0 {
@@ -144,6 +156,8 @@ fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatErr
             locked_on = locked_on.or(Some(n as u8));
         } else if routine == CONTACT {
             contact = contact.or(Some(n as u8));
+        } else if routine == counters_at {
+            counters = counters.or(Some(n as u8));
         } else if let Some(&[0xb8, a0, a1, 0xbb, r0, r1, 0xe8, c0, c1]) =
             image.get(routine..routine + 9)
         {
@@ -154,15 +168,18 @@ fn kind_ticks(image: &[u8], ds: usize, at: usize) -> Result<KindTicks, FormatErr
             }
         }
     }
-    match (scan, lock, locked_on, contact) {
-        (Some(scan), Some((lock, arc, range)), Some(locked_on), Some(contact)) => Ok(KindTicks {
-            scan,
-            lock,
-            arc,
-            range,
-            locked_on,
-            contact,
-        }),
+    match (scan, lock, locked_on, contact, counters) {
+        (Some(scan), Some((lock, arc, range)), Some(locked_on), Some(contact), Some(counters)) => {
+            Ok(KindTicks {
+                scan,
+                lock,
+                arc,
+                range,
+                locked_on,
+                contact,
+                counters,
+            })
+        }
         _ => Err(invalid(table, "a tick table without the sensing routines")),
     }
 }
@@ -254,9 +271,9 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
         scan_range: ranges(image, ds, SCAN_RANGE_AT)?,
         lock_range: ranges(image, ds, LOCK_RANGE_AT)?,
         ticks: [
-            kind_ticks(image, ds, TICKS_AT[0])?,
-            kind_ticks(image, ds, TICKS_AT[1])?,
-            kind_ticks(image, ds, TICKS_AT[2])?,
+            kind_ticks(image, ds, 0)?,
+            kind_ticks(image, ds, 1)?,
+            kind_ticks(image, ds, 2)?,
         ],
     })
 }
@@ -283,6 +300,7 @@ mod tests {
             (t[0].scan, t[0].lock, t[0].locked_on, t[0].contact),
             (15, 5, 6, 8)
         );
+        assert_eq!(t.map(|t| t.counters), [13; 3]);
         assert_eq!((t[1].lock, t[1].arc, t[1].range), (6, 0x1100, 0x310));
         let m = sensing.messages;
         assert_eq!(
@@ -312,6 +330,9 @@ mod tests {
             // The scorpion's lock routine calls elsewhere, and its scan is gone.
             (0xa217, 0x00),
             (DS + 0x9720 + 30, 0x00),
+            // The scout's counters are not its routine, or not in its table.
+            (COUNTERS[2].0 + 5, 0xfa),
+            (DS + 0x9740 + 26, 0x00),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -336,7 +357,7 @@ mod tests {
         assert!(sensing.scan_range.iter().all(|&r| r > 0x100));
         assert!(sensing.scan_range[0] < sensing.lock_range[0]);
         for (t, range) in sensing.ticks.iter().zip(sensing.lock_range) {
-            assert_eq!(t.scan, 15);
+            assert_eq!((t.scan, t.counters), (15, 4));
             assert!(t.arc > 0 && t.arc < 0x4000);
             assert!(t.range > 0 && t.range <= range);
         }

@@ -943,9 +943,11 @@ and 0x31 in the robot's widget state (+0x10c): 0 and 1 in the stock files.
 
 **Counters the panels go by** (each robot's tick table `DS:0x6acf`, entry 4,
 `1000:b318`, so once every 16 ticks when +0x1a & 0x1e is 8): +0xee goes up by 2 (bit 2,
-the warning light's blink, flips every 32 ticks); while +0xed is not 0 and bit 2 is set
-sound event 0x12 plays; when +0xfa's low five bits are 0, +0x10a steps (AND 3); then
-+0xfa goes up by one. So the status panel turns a page every 512 ticks.
+the warning light's blink, flips every 32 ticks); when its low two bits are then 0 the
+light is marked and, while +0xed is not 0 and bit 2 is set, sound event 9 plays (`mov
+ax, 0x12`; once every 64 ticks); when +0xfa's low five bits are 0, +0x10a steps (AND
+3); then +0xfa goes up by one. So the status panel turns a page every 512 ticks. The
+sim keeps and steps them since T-167 (`docs/sim.md`, "The console counters (T-167)").
 
 **Names** (`1fe6:7f38`, the target's): a robot's two letters and serial (as the
 detail panel's); a base six bytes from the immediates at `1fe6:7f71` (three `mov word
@@ -966,9 +968,7 @@ robot over as F2 and F3; the lock button's left and right releases `Pilot::NextT
 and `DropTarget` (T-162's humanoid half). The console keeps one shared look and fire
 button for whichever robot is viewed (`Mission::look`, `firing`). Shortcuts, each
 named in the code: a target's serial is the
-scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); +0xee and the status page are worked out from
-the passes since the load (`World::ticks`) and the robot's +0x1a, +0xfa and +0x10a
-as loaded (T-167), the pages going round in threes as while the console is open; the
+scenario's as loaded (the signal is the sim's since T-148; the cloak and ECM counts since T-136); the
 bit-7 colour is the briefing's 0x17 on 0; the shared-look buttons add only bit 3 of
 +0x22; the fire request is sent before the tick, not set at its end. In T-165 the gear lever, the compass and
 the turn buttons answer the mouse: `xeno_formats::humancon` reads the lever's gear
@@ -977,8 +977,11 @@ rectangles, notches and messages and the compass's centre; the sim's `Pilot::Gea
 to share them, T-169, T-172) and `Movement::held` (+0x1b, loaded, saved and hashed;
 the humanoid's tick runs 10 and 11). Shortcuts: the lever goes by its own capture,
 not +0x22 (which the shared look and the lock button also set); a turn button's leave
-is taken at the release, as the fire button's. Not ported: the status panel's press
-(T-167). The third display is below (T-166). Still to check
+is taken at the release, as the fire button's. Since T-167 the warning light's blink
+and the status page are the sim's (+0xee, +0x10a); the panel's press and S are
+`Pilot::StatusClock`, and with the console open the app sends `Pilot::StatusShown`
+before each tick, the draw's cut (a shortcut: the original cuts in the frame after the
+step). The press goes by its capture, not +0x22, as the lever does. The third display is below (T-166). Still to check
 in DOSBox (T-168): every widget's look, the blink and page timing.
 
 ### The third display (T-166)
@@ -1100,12 +1103,13 @@ is the second byte of their states (+0x150, +0x153); the drop buttons' (+0x156 t
 +0x15c).
 
 **Counters.** The scorpion's tick table `DS:0x6732` (by +0x1a, kept to 0..=0x1e):
-entry 4 (`1000:9a14`) adds 2 to +0xee (marking the warning light; sound event 0x12
-while +0xed holds and bit 2 is set), halves +0xed, and flips +0xfa bit 7 (marking the
-damage panel): so the damage lights show every other 16 ticks. Entry 5 (`9a50`) steps
+entry 4 (`1000:9a14`) adds 2 to +0xee (marking the warning light and, while +0xed
+holds and bit 2 is set, sound event 9, when the low two bits are 0, as the humanoid's),
+halves +0xed, and flips +0xfa bit 7 (marking the damage panel): so the damage lights
+show every other 16 ticks. Entry 5 (`9a50`) steps
 the dump, marks the cargo for a redraw and sets the gauges: +0x11a to the relays times
 16 plus +0x119, +0x11b to the relays times 8 plus twice +0x119 (each marked when it
-changes).
+changes). The sim keeps and steps both since T-167.
 
 **In the port**: `xeno_formats::scorpcon` reads the texts, tables, rectangles and the
 bank's handle; `xeno-app`'s `scorpcon` draws the power panel, the warning light, the
@@ -1121,9 +1125,9 @@ half), stop `Pilot::Stop` and the pilot, U `Pilot::Deploy` (and since T-149 C, D
 with the key their number picks (T-137; the shared look while held); the weapon
 buttons and the relay panel show their frame XORed while held. Not ported: the speed
 buttons, lever, compass and turn buttons (T-169), the
-fire release's clearing of +0xfd bit 5. Shortcuts, each named in the code (the signal is the sim's since T-148): +0xee and +0xfa bit 7 are worked
-out from the passes since the load (T-167); the gauges are worked out each frame from
-the relays, not every 16 ticks; the damage panel draws its cover under the lights (the
+fire release's clearing of +0xfd bit 5. Since T-167 the warning light, the damage
+panel (+0xfa bit 7) and the cargo gauges (+0x11a, +0x11b) are drawn from the sim.
+Shortcuts, each named in the code (the signal is the sim's since T-148): the damage panel draws its cover under the lights (the
 original leaves the picture there when the console opens with bit 7 set). Still to
 check in DOSBox: every widget's look and the blink timing.
 
@@ -1168,9 +1172,10 @@ state of widget `0x13a`, the stance gauge, so the open console redraws it each t
 stance moves.
 
 **Counters.** The scout's tick table `DS:0x6ebf` (by +0x1a): entry 4 (`1000:caf5`) adds
-2 to +0xee (marking the warning light; sound event 0x12 while +0xed holds and bit 2 is
-set), and when +0xfa's low five bits are 0 steps +0x108 (AND 3, marking the status
-panel); then +0xfa goes up by one. So the status panel turns a page every 512 ticks,
+2 to +0xee (marking the warning light and, while +0xed holds and bit 2 is set, sound
+event 9, when the low two bits are 0, as the humanoid's), and when +0xfa's low five
+bits are 0 steps +0x108 (AND 3, marking the status panel); then +0xfa goes up by one
+(in the sim since T-167). So the status panel turns a page every 512 ticks,
 round all four. The recall's routine (`cb3d`) marks the program panel and the switches.
 
 **In the port**: `xeno_formats::scoutcon` reads the texts, tables, rectangles and the
@@ -1182,14 +1187,15 @@ button (part 2): the shared look as the other kinds' (only bit 3 of +0x22 added)
 weapon buttons' own look while held, the switches lit for whoever drives. Shortcuts,
 each named in the code: a target's serial is the
 scenario's as loaded (the signal, the cloaks and ECM charges since T-136 and the drops since T-137 are the sim's); +0xee and the status
-page are worked out from the passes since the load (T-167). In part 3 the fire button
+page are the sim's since T-167. In part 3 the fire button
 held sends `Pilot::Fire` every retrace (as the other kinds'), the weapon buttons
 `Pilot::Weapon`, the switches hand the robot over as F2 and F3, the lock button's left
 and right releases `Pilot::NextTarget` and `DropTarget` (T-162's scout half), the stance
 buttons `Pilot::Stance` (as E, W and Q; the look flipped while held), the drop buttons
 `Pilot::Drop` (T-137, as the scorpion's). Not ported: the compass's, gear lever's and
-turn buttons' mouse (T-172), the third display (T-173), the status panel's press
-(T-167). Still to check in DOSBox (T-174): every widget's look and the blink and page
+turn buttons' mouse (T-172), the third display (T-173). The status panel's press is
+`Pilot::StatusClock` (T-167), but only on the panel's top rows: the rest overlaps the
+3D view's region, which the port's hit test takes first (T-210). Still to check in DOSBox (T-174): every widget's look and the blink and page
 timing.
 
 ### The situation room's main view (T-103)

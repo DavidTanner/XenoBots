@@ -11,7 +11,7 @@ use crate::motion::{Event, Tables, movement, robot};
 use crate::orders::RobotKind;
 use crate::script::{bearing, fine_bearing, post};
 use crate::terrain::approx_distance;
-use crate::world::{Components, Damage, Entity, EntityId, Position, State, World};
+use crate::world::{Components, Damage, Entity, EntityId, Movement, Position, State, World};
 
 /// Events the scan posts: enemy units found where there were none, and none left.
 pub const EVENT_CONTACTS: u8 = 1;
@@ -99,7 +99,30 @@ pub fn step(world: &mut World, id: EntityId, tables: &Tables) {
         keep_lock(world, id, (ticks.arc, ticks.range), tables);
     } else if entry == ticks.locked_on {
         warn(world, id);
+    } else if entry == ticks.counters
+        && let Some(m) = movement(world, id)
+    {
+        counters(k, m);
     }
+}
+
+/// The console counters (humanoid `1000:b318`, scorpion `9a14`, scout `caf5`):
+/// +0xee up by 2; a scorpion then halves its `locked_on` and flips +0xfa bit 7 (its
+/// damage lights); the others step the status page (AND 3) when +0xfa's low five bits
+/// are 0, then +0xfa.
+// shortcut: while +0xee's low two bits are 0, `locked_on` is not 0 and +0xee bit 2 is
+// set, each plays sound event 9 (`mov ax, 0x12`) for the robot on view; not yet (T-206).
+pub(crate) fn counters(kind: RobotKind, m: &mut Movement) {
+    m.blink = m.blink.wrapping_add(2);
+    if kind == RobotKind::Scorpion {
+        m.locked_on >>= 1;
+        m.clock ^= 0x80;
+        return;
+    }
+    if m.clock & 0x1f == 0 {
+        m.page = m.page.wrapping_add(1) & 3;
+    }
+    m.clock = m.clock.wrapping_add(1);
 }
 
 /// The scan (`1000:dcba`): only while +0x1a's top three bits are clear, +0x17's scan

@@ -166,16 +166,6 @@ pub fn draw_gauge(fb: &mut Framebuffer, area: Rect, sprites: Sprites, gauge: u8)
     sprite(fb, sprites, handle, area.left, area.top, BlitMode::Opaque);
 }
 
-/// What the gauges last drew (+0x11a, +0x11b), as the tick table's entry 5
-/// (`1000:9a50`) sets them: the relays times 16 plus +0x119, and the relays times 8
-/// plus twice +0x119.
-pub fn gauges(relays: u8, extra: u8) -> [u8; 2] {
-    [
-        relays.wrapping_mul(16).wrapping_add(extra),
-        relays.wrapping_mul(8).wrapping_add(extra.wrapping_mul(2)),
-    ]
-}
-
 /// `1000:88b3`: the target panel's colours, 0x7a (0xff for a warning) on 0, where its
 /// two parts start, and the barrels' bits (+0xdc bits 0 and 1).
 const TARGET_COLOURS: (u8, u8) = (0x7a, 0xff);
@@ -367,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn the_damage_lights_and_gauges() {
+    fn the_damage_lights() {
         let mut robot = Robot {
             helm: 100,
             ..Robot::default()
@@ -377,10 +367,6 @@ mod tests {
         assert_eq!(damaged(&robot), [true, false, true, true, false, false]);
         robot.systems = 0x08;
         assert!(damaged(&robot)[5]);
-        // 12 relays: the first gauge's 13th look, the second's 7th.
-        let g = gauges(12, 0);
-        assert_eq!(g, [192, 96]);
-        assert_eq!(g.map(|g| (g >> 1) & 0x78), [0x60, 0x30]);
     }
 
     #[test]
