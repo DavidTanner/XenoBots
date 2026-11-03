@@ -1,11 +1,19 @@
 name: Release
 
 # Manual only: Actions tab -> Release -> Run workflow (on main).
-# The version and tag come from xeno-app's version in Cargo.toml; bump it
-# before running. Nothing is built unless the full CI suite passes first.
+# The version is picked automatically: the highest release so far (published
+# or draft) raised by the chosen step, or Cargo.toml's version if that is
+# higher (set it by hand to jump, e.g. to 1.0.0). It is stamped into the build
+# only; nothing is committed back. Nothing is built unless the full CI suite
+# passes first.
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: Which part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
       draft:
         description: Create the release as a draft (publish it by hand after checking)
         type: boolean
@@ -28,8 +36,11 @@ defaults:
 
 jobs:
   prepare:
-    name: Check version and tag
+    name: Pick version and tag
     runs-on: ubuntu-latest
+    # Write access only so the release list includes drafts; nothing is written.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -42,13 +53,32 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
       - id: version
-        name: Read version from Cargo.toml
+        name: Pick the next version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 \
+          floor=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "xeno-app") | .version')
+          # Every release so far: pushed tags, plus drafts (which have no tag yet).
+          last=$( {
+            git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||'
+            gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 \
+              --json tagName --jq '.[].tagName'
+          } | sed -n 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' | sort -V | tail -n 1)
+          version=$floor
+          if [ -n "$last" ]; then
+            IFS=. read -r major minor patch <<< "$last"
+            case "$BUMP" in
+              major) next="$((major + 1)).0.0" ;;
+              minor) next="$major.$((minor + 1)).0" ;;
+              *) next="$major.$minor.$((patch + 1))" ;;
+            esac
+            version=$(printf '%s\n%s\n' "$next" "$floor" | sort -V | tail -n 1)
+          fi
           tag="v$version"
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-            echo "::error::Tag $tag already exists. Bump the version in Cargo.toml first."
+            echo "::error::Tag $tag already exists."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -90,6 +120,13 @@ jobs:
             libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev
       - run: rustup toolchain install
       - run: rustup target add $TARGETS
+      # Stamp the picked version into the workspace (first `version =` line, in
+      # [workspace.package]) and the lock file's workspace entries only.
+      - name: Set the release version
+        run: |
+          perl -pi -e 's/^version = "[^"]*"/version = "$ENV{VERSION}"/ if !$done && /^version = / and $done = 1' Cargo.toml
+          cargo update --workspace
+          grep -Fx "version = \"$VERSION\"" Cargo.toml
       - name: Build
         run: |
           for target in $TARGETS; do
