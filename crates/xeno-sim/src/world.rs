@@ -115,6 +115,9 @@ pub enum State {
     },
     /// A mine, buoy or decoy (kinds 9 to 12, `crate::drops`).
     Drop(crate::drops::Drop),
+    /// A removed object (kind 15, `crate::shot::tick_removed`): its last ticks are in
+    /// +0x17 ([`Entity::status`]).
+    Removed,
     /// Obstacles and objects without a known layout do nothing.
     #[default]
     None,
@@ -588,6 +591,7 @@ impl StateHash for State {
                 h.u8(7);
                 h.bytes(&[d.battery, d.ticks, d.level, d.charges]);
             }
+            State::Removed => h.u8(8),
             State::None => h.u8(2),
         }
     }

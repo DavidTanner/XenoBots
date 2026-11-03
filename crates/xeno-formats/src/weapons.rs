@@ -196,8 +196,9 @@ pub(crate) const MISSILE: [Site; 7] = [
     (0xe587, &[0xb0], false),
     (0xe531, &[0xc7, 0x44, 0x10], true),
 ];
-/// The tail missile's set-up (`1000:e08e`) and tick (`e0e8`).
-pub(crate) const TAIL: [Site; 13] = [
+/// The tail missile's set-up (`1000:e08e`) and tick (`e0e8`), and its removal
+/// (`1000:f5a4`): `mov word [di], kind` and `mov byte [di + 0x17], ticks`.
+pub(crate) const TAIL: [Site; 15] = [
     (0xe0b9, MOV_AX, true),
     (0xe09c, &[0xc7, 0x44, 0x27], true),
     (0xe170, &[0x83, 0x45, 0x27], false),
@@ -211,6 +212,8 @@ pub(crate) const TAIL: [Site; 13] = [
     (0xe21d, &[0x81, 0xfb], true),
     (0xe1fa, &[0xb0], false),
     (0xe1fe, &[0xbb], true),
+    (0xf5b3, &[0xc7, 0x05], true),
+    (0xf5bb, &[0xc6, 0x45, 0x17], false),
 ];
 /// `jmp [bx + table]` in `1000:f6d0`: the kinds' hit tests, which a shot's hit search
 /// asks of an object it is over. `mov bx, [bx + table]` in `1000:e963`: the kinds'
@@ -442,6 +445,10 @@ pub struct Tail {
     pub points: u8,
     pub radius: u16,
     pub explosion: Explosion,
+    /// Its end turns it into this kind (the removed object) with +0x17 at `removed_ticks`,
+    /// which the kind's tick (`1000:f5c1`) counts down to free the slot.
+    pub removed: u16,
+    pub removed_ticks: u8,
 }
 
 fn value(image: &[u8], &(at, op, wide): &Site) -> Result<u16, FormatError> {
@@ -734,6 +741,8 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
         dive,
         points,
         radius,
+        removed,
+        removed_ticks,
     ] = values(image, &TAIL)?;
     let tail = Tail {
         height: h,
@@ -750,6 +759,8 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Weapons, FormatError> {
         points: points as u8,
         radius,
         explosion: e(6)?,
+        removed,
+        removed_ticks: removed_ticks as u8,
     };
     let g = |i: usize| gun(image, ds, &GUNS[i]);
     Ok(Weapons {
@@ -836,6 +847,7 @@ mod tests {
             MESSAGES_AT[6],
             SHELL[8].0 + 1,
             TAIL[12].0,
+            TAIL[14].0 + 1,
             EXPLOSIONS_AT[6],
             HITS_AT.0,
             HEIGHTS_AT.0 + 1,
@@ -891,6 +903,8 @@ mod tests {
         );
         assert!(w.shell.speed > w.homing.speed && w.homing.speed > w.missile.speed);
         assert!(w.tail.speed < w.tail.top && w.tail.near > 0);
+        // The removed object is the kind before the obstacle, and lives two ticks.
+        assert_eq!((w.tail.removed, w.tail.removed_ticks), (15, 2));
         for e in [
             w.shell.hit,
             w.homing.hit,
