@@ -966,8 +966,8 @@ in place of the last, turned off as the console is left. Shortcuts: the noise dr
 from a random word of its own (seed 0), not the sim's, so drawing never changes a
 replay; a missile camera whose missile is gone draws the noise until the next 16-tick
 step (the original reads slot 0xffff's object then); the names' bit-7 codes are drawn
-in the same colour. Not ported: the buttons (T-188), the target's name and the missile
-camera's string and sight (T-189); none of it is checked in DOSBox (T-190).
+in the same colour. Not ported: the target's name and the missile camera's string and
+sight (T-189); none of it is checked in DOSBox (T-190). The buttons are T-188's, below.
 
 ### The display's buttons (T-188)
 
@@ -1023,6 +1023,20 @@ it (`test ax, 0x80`) and ignores moves (`test ax, 1`).
 The colours and the unlit digits are read from the user's `xeno.exe`
 (`views::SecondDisplay::pan_colours`, `pan_unlit`); the sprite handles and offsets
 are the handlers' immediates, kept as constants with the other buttons'.
+
+**In the port** (T-188): each console draws its buttons as above from the display's
+mode (+0xef as `Mission::display_mode` gives it, bit 2 included) and pan, and the
+readout from the second display's colours; the mode buttons' and the readout's frames
+are XORed while held, the scorpion's mode buttons lit while held. Under the mouse:
+the pan buttons and the readout do nothing in the map mode; a pan button's press sends
+`Pilot::HoldPan` (+0x1b 1 or 2, the shared look flipped), its release anywhere
+`ReleasePan` (but in the map mode, where it stays held, as the original's); after each
+tick `Mission::step_displays` pans a step for a held code. The zoom's release (over it)
+zooms in or out as `=` and `-`, a mode button's sets the mode as the mode keys do (the
+scorpion's also clears the look). Shortcuts: the readout's left and right releases
+pan at once (to 0 as Y, or to 0x8000 with `Pilot::Untrack`), not at the end of the
+next tick through +0x1b 3 and 4; a button left while held lets go only at the release,
+as the turn buttons. Not checked in DOSBox (T-190).
 
 ### The humanoid console's instruments (T-130)
 

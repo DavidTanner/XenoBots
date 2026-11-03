@@ -290,6 +290,8 @@ impl Sim {
             | Pilot::OtherWeapon
             | Pilot::ReleaseTurn { .. }
             | Pilot::ReleaseSpeed
+            | Pilot::HoldPan { .. }
+            | Pilot::ReleasePan
             | Pilot::StatusClock
             | Pilot::StatusShown => false,
             _ => return events,
@@ -337,7 +339,8 @@ impl Sim {
             Pilot::HoldSpeed { faster } => {
                 m.held = Movement::HELD_SLOWER - u8::from(faster);
             }
-            Pilot::ReleaseSpeed => m.held = 0,
+            Pilot::ReleaseSpeed | Pilot::ReleasePan => m.held = 0,
+            Pilot::HoldPan { more } => m.held = Movement::HELD_PAN_LESS + u8::from(more),
             Pilot::Speed(speed) => m.target_speed = speed,
             Pilot::Weapon(_) | Pilot::OtherWeapon => {
                 let weapon = match key {
@@ -523,6 +526,15 @@ pub enum Pilot {
     },
     /// The speed button let go or left (+0x1b 0).
     ReleaseSpeed,
+    /// A second display's pan less or more button pressed (humanoid `1000:a162`,
+    /// `a1ba`; scorpion `84e9`, `8543`; scout `bc07`, `bc55`): +0x1b 1 or 2, so at the
+    /// end of each of the robot's ticks `TRACKING` is cleared and the caller pans the
+    /// display (`docs/screens.md`, "The display's buttons (T-188)"). No pilot switch.
+    HoldPan {
+        more: bool,
+    },
+    /// The pan button let go or left (+0x1b 0).
+    ReleasePan,
     /// The scorpion's speed lever released (`1000:8798`): the pilot takes over and the
     /// speed asked for (+0x28) is the lever's, by the pointer's row
     /// (`xeno_formats::scorpcon::ScorpCon::lever_speed`). The velocity follows when the
@@ -808,6 +820,21 @@ mod tests {
         };
         sim.pilot(id, stop);
         assert_eq!(robot(&sim).0.mode & Movement::TURNING, 0);
+        // A pan button held (T-188) clears TRACKING at the end of each tick, with no
+        // pilot switch; the release lets it be.
+        use xeno_formats::usg::status::TRACKING;
+        let tracking = |sim: &Sim| sim.world.get(id).unwrap().status & TRACKING != 0;
+        sim.world.get_mut(id).unwrap().status |= TRACKING;
+        sim.pilot(id, Pilot::HoldPan { more: true });
+        assert_eq!(robot(&sim).0.held, Movement::HELD_PAN_MORE);
+        assert!(tracking(&sim), "only at the tick");
+        sim.tick(&[]);
+        assert!(!tracking(&sim));
+        sim.pilot(id, Pilot::ReleasePan);
+        sim.world.get_mut(id).unwrap().status |= TRACKING;
+        sim.tick(&[]);
+        assert_eq!(robot(&sim).0.held, 0);
+        assert!(tracking(&sim));
     }
 
     #[test]

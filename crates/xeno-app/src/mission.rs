@@ -278,8 +278,44 @@ const TURN_TYPES: [u16; 6] = [
 ];
 /// The scorpion's faster and slower buttons, held (`1000:8df6`, `8e8b`).
 const SPEED_TYPES: [u16; 2] = [crate::scorpcon::FASTER_TYPE, crate::scorpcon::SLOWER_TYPE];
+/// The second display's buttons (T-188; `docs/screens.md`, "The display's buttons
+/// (T-188)"): each kind's pan less then pan more buttons, zooms and mode buttons; the
+/// pan readout (`crate::console::PAN_TYPE`) is every kind's.
+const PAN_TYPES: [u16; 6] = [
+    crate::humancon::PAN_TYPES[0],
+    crate::scorpcon::PAN_TYPES[0],
+    crate::scoutcon::PAN_TYPES[0],
+    crate::humancon::PAN_TYPES[1],
+    crate::scorpcon::PAN_TYPES[1],
+    crate::scoutcon::PAN_TYPES[1],
+];
+const ZOOM_TYPES: [u16; 3] = [
+    crate::humancon::ZOOM_TYPE,
+    crate::scorpcon::ZOOM_TYPE,
+    crate::scoutcon::ZOOM_TYPE,
+];
+const MODE_TYPES: [[u16; 3]; 3] = [
+    crate::humancon::MODE_TYPES,
+    crate::scorpcon::MODE_TYPES,
+    crate::scoutcon::MODE_TYPES,
+];
+/// The display's mode a mode button sets.
+fn mode_button(kind: u16) -> Option<u8> {
+    MODE_TYPES
+        .iter()
+        .find_map(|types| types.iter().position(|&t| t == kind))
+        .map(|i| i as u8)
+}
 /// Buttons that flip the shared look on a press and back on a release.
-const SHARED_LOOK_TYPES: [u16; 16] = [
+const SHARED_LOOK_TYPES: [u16; 22] = [
+    ZOOM_TYPES[0],
+    ZOOM_TYPES[1],
+    ZOOM_TYPES[2],
+    // `1000:85fc`: the scorpion's mode buttons XOR +0x22 with 0x88 (the look, and the
+    // lit sprite while held).
+    MODE_TYPES[1][0],
+    MODE_TYPES[1][1],
+    MODE_TYPES[1][2],
     crate::scorpcon::DROP_TYPE,
     crate::scoutcon::DROP_TYPE,
     crate::humancon::CLOAK_TYPE,
@@ -338,13 +374,15 @@ pub struct Display {
 
 /// Display mode 2, the map, and bit 2: the mode's device is damaged. Mode 7 (the
 /// scorpion's lost missile camera) is left as it is by `1000:db5c`.
-const MAP_DISPLAY: u8 = 2;
+const MAP_DISPLAY: u8 = crate::console::MAP_MODE;
 const DAMAGED: u8 = 4;
 const LOST_MISSILE_CAMERA: u8 = 7;
 const MISSILE_DISPLAY: u8 = 3;
 /// The zoom's name shows for this many 16-tick periods after a mode or zoom key, and
 /// the missile camera breaks up for this many once its missile is gone (`1000:998a`).
 const LABEL_TIME: u8 = 6;
+/// The pan readout's right release: the camera turned behind the robot (`1000:b3b4`).
+const BEHIND: u16 = 0x8000;
 const STATIC_TIME: u8 = 5;
 /// The zoom steps go from 0 to 4 (`1000:da0e`, `da37`).
 const MAX_DISPLAY_ZOOM: u8 = 4;
@@ -1390,6 +1428,24 @@ impl Mission {
                 }
             }
             h::AHEAD_TYPE | s::AHEAD_TYPE | c::AHEAD_TYPE => self.pilot(slot, Pilot::Straight),
+            // `1000:a212` and the others': a left release zooms in, a right one out.
+            kind if ZOOM_TYPES.contains(&kind) => self.zoom_display(slot, !right, assets),
+            kind if mode_button(kind).is_some() => {
+                if s::MODE_TYPES.contains(&kind) {
+                    self.look = crate::console::Look::default();
+                }
+                self.set_display_mode(slot, mode_button(kind).unwrap_or(0));
+            }
+            // `1000:db26`: +0x1b 3 (the pan to 0) or 4 (to 0x8000, behind), run once at
+            // the end of the robot's tick.
+            // shortcut: the port pans at the release, up to a tick early; upgrade if the
+            // display's pan moves into the sim.
+            crate::console::PAN_TYPE if self.pan_declines(Target::Instrument(w), assets) => {}
+            crate::console::PAN_TYPE if right => {
+                self.displays.entry(slot).or_default().pan = BEHIND;
+                self.pilot(slot, Pilot::Untrack);
+            }
+            crate::console::PAN_TYPE => self.pan_display(slot, None, assets),
             h::CLOAK_TYPE | c::CLOAK_TYPE => self.pilot(slot, Pilot::Cloak),
             h::ECM_TYPE | c::ECM_TYPE => self.pilot(slot, Pilot::Ecm),
             h::LOCK_TYPE | s::LOCK_TYPE | c::LOCK_TYPE => {
@@ -1571,6 +1627,16 @@ impl Mission {
         self.pilot(slot, Pilot::Untrack);
     }
 
+    /// Whether `target` is a pan button or the pan readout, whose handlers decline in
+    /// the map mode (+0xef exactly 2).
+    fn pan_declines(&self, target: Target, assets: &Assets) -> bool {
+        let (Target::Instrument(w), Viewed::Robot(slot)) = (target, self.viewed) else {
+            return false;
+        };
+        (PAN_TYPES.contains(&w.kind) || w.kind == crate::console::PAN_TYPE)
+            && self.display_mode(slot, assets) == MAP_DISPLAY
+    }
+
     /// After each tick of the world, every robot's display as its kind's tick leaves
     /// it (`docs/screens.md`, "The display's other modes (T-134)"): following a tracked
     /// target's distance and bearing every tick; the scorpion's missile camera on a
@@ -1581,6 +1647,7 @@ impl Mission {
             return;
         }
         let ranges = &assets.views.second_display.ranges;
+        let steps = &assets.views.second_display.pan_steps;
         let mut modes = Vec::new();
         for (&slot, d) in &mut self.displays {
             let Run::Running(sim) = &self.run else {
@@ -1596,6 +1663,13 @@ impl Mission {
                 let zoom = ranges.iter().position(|&r| m.target_distance <= r);
                 d.zoom = zoom.unwrap_or(ranges.len() - 1) as u8;
                 d.pan = m.target_bearing.wrapping_sub(e.heading);
+            }
+            // A pan button held (+0x1b 1 or 2): Z's or X's step every tick (T-188).
+            let step = steps.get(usize::from(d.zoom)).copied().unwrap_or(0);
+            match m.held {
+                xeno_sim::Movement::HELD_PAN_LESS => d.pan = d.pan.wrapping_sub(step),
+                xeno_sim::Movement::HELD_PAN_MORE => d.pan = d.pan.wrapping_add(step),
+                _ => {}
             }
             let flying = m.guns.missile.is_some();
             if flying && !std::mem::replace(&mut d.flying, flying) {
@@ -2494,7 +2568,11 @@ impl Mission {
                 w if w.kind == GROUP_TYPE => tables.nested.iter().rev().find(over)?,
                 w => w,
             };
-            kinds.contains(&w.kind).then_some(Target::Instrument(*w))
+            let display = PAN_TYPES.contains(&w.kind)
+                || mode_button(w.kind).is_some()
+                || ZOOM_TYPES.contains(&w.kind)
+                || w.kind == crate::console::PAN_TYPE;
+            (kinds.contains(&w.kind) || display).then_some(Target::Instrument(*w))
         })
     }
 
@@ -2509,6 +2587,9 @@ impl Mission {
             }
             return;
         };
+        if self.pan_declines(target, assets) {
+            return;
+        }
         self.capture = Some((target, button));
         match target {
             Target::Panel => {
@@ -2570,6 +2651,15 @@ impl Mission {
                 if let Viewed::Robot(slot) = self.viewed {
                     let right = TURN_TYPES[3..].contains(&w.kind);
                     self.pilot(slot, Pilot::HoldTurn { right });
+                }
+            }
+            // `1000:a162`, `a1ba` and the other kinds': a pan button held (+0x1b 1 or 2).
+            Target::Instrument(w) if PAN_TYPES.contains(&w.kind) => {
+                self.look.pressed = !self.look.pressed;
+                if let Viewed::Robot(slot) = self.viewed {
+                    self.displays.entry(slot).or_default();
+                    let more = PAN_TYPES[3..].contains(&w.kind);
+                    self.pilot(slot, Pilot::HoldPan { more });
                 }
             }
             Target::Instrument(w) if SPEED_TYPES.contains(&w.kind) => {
@@ -2648,6 +2738,16 @@ impl Mission {
                 let right = TURN_TYPES[3..].contains(&w.kind);
                 let keep = over && by == MouseButton::Right;
                 self.pilot(slot, Pilot::ReleaseTurn { right, keep });
+                return None;
+            }
+            // A pan button let go or left (the same shortcut); in the map mode its
+            // handler declines, so the button stays held.
+            if PAN_TYPES.contains(&w.kind) {
+                if !self.pan_declines(target, assets) {
+                    self.look.pressed = !self.look.pressed;
+                    self.dirty = true;
+                    self.pilot(slot, Pilot::ReleasePan);
+                }
                 return None;
             }
             // A speed button let go or left (the same shortcut).
@@ -3508,9 +3608,10 @@ impl Mission {
         ) else {
             return;
         };
-        let Some(robot) = self.instruments(slot, room, &con.base_name) else {
+        let Some(mut robot) = self.instruments(slot, room, &con.base_name) else {
             return;
         };
+        robot.display_mode = self.display_mode(slot, assets);
         let tables = &assets.views.humanoid;
         let area = |kind| tables.all(kind).next().and_then(|w| w.area);
         let lookup = |h| crate::console::lookup(&assets.humancon_sprites, con.bank, h);
@@ -3539,11 +3640,14 @@ impl Mission {
             if self
                 .capture
                 .is_some_and(|(t, _)| t == Target::Instrument(*w))
-                && matches!(w.kind, h::WEAPON_TYPE | h::PILOT_TYPE | h::PROGRAM_TYPE)
+                && (matches!(w.kind, h::WEAPON_TYPE | h::PILOT_TYPE | h::PROGRAM_TYPE)
+                    || h::MODE_TYPES.contains(&w.kind)
+                    || w.kind == crate::console::PAN_TYPE)
             {
                 xor_frame(fb, a, crate::console::PRESSED_XOR);
             }
         }
+        Self::draw_pan(fb, (assets, RobotKind::Humanoid, font), &robot);
     }
 
     /// The scorpion console's instruments ([`scorpcon`]) from the sim.
@@ -3556,9 +3660,10 @@ impl Mission {
             return;
         };
         let name = assets.humancon.as_ref().map_or(&[0u8; 6], |h| &h.base_name);
-        let Some(robot) = self.instruments(slot, room, name) else {
+        let Some(mut robot) = self.instruments(slot, room, name) else {
             return;
         };
+        robot.display_mode = self.display_mode(slot, assets);
         let tables = &assets.views.scorpion;
         let area = |kind| tables.all(kind).next().and_then(|w| w.area);
         let lookup = |h| crate::console::lookup(&assets.scorpcon_sprites, con.bank, h);
@@ -3593,10 +3698,16 @@ impl Mission {
                 .is_some_and(|(t, _)| t == Target::Instrument(*w));
             s::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
             // `1000:dfd5`: a weapon button or the relay panel held shows its frame XORed.
-            if held && matches!(w.kind, s::WEAPON_TYPE | s::RELAYS_TYPE) {
+            if held
+                && matches!(
+                    w.kind,
+                    s::WEAPON_TYPE | s::RELAYS_TYPE | crate::console::PAN_TYPE
+                )
+            {
                 xor_frame(fb, a, crate::console::PRESSED_XOR);
             }
         }
+        Self::draw_pan(fb, (assets, RobotKind::Scorpion, font), &robot);
     }
 
     /// The scout console's instruments ([`scoutcon`]) from the sim.
@@ -3609,9 +3720,10 @@ impl Mission {
             return;
         };
         let name = assets.humancon.as_ref().map_or(&[0u8; 6], |h| &h.base_name);
-        let Some(robot) = self.instruments(slot, room, name) else {
+        let Some(mut robot) = self.instruments(slot, room, name) else {
             return;
         };
+        robot.display_mode = self.display_mode(slot, assets);
         let tables = &assets.views.scout;
         let area = |kind| tables.all(kind).next().and_then(|w| w.area);
         let lookup = |h| crate::console::lookup(&assets.scoutcon_sprites, con.bank, h);
@@ -3643,10 +3755,35 @@ impl Mission {
                 .is_some_and(|(t, _)| t == Target::Instrument(*w));
             c::draw_button(fb, sprites, con, (w.kind, a, n), &robot, (self.look, held));
             // `1000:dfd5`: a switch held shows its frame XORed.
-            if held && matches!(w.kind, c::PILOT_TYPE | c::PROGRAM_TYPE) {
+            if held
+                && (matches!(
+                    w.kind,
+                    c::PILOT_TYPE | c::PROGRAM_TYPE | crate::console::PAN_TYPE
+                ) || c::MODE_TYPES.contains(&w.kind))
+            {
                 xor_frame(fb, a, crate::console::PRESSED_XOR);
             }
         }
+        Self::draw_pan(fb, (assets, RobotKind::Scout, font), &robot);
+    }
+
+    /// The console's pan readout (`0x150`) in its kind's colours.
+    fn draw_pan(
+        fb: &mut Framebuffer,
+        (assets, kind, font): (&Assets, RobotKind, &xeno_formats::font::Font),
+        robot: &crate::console::Robot,
+    ) {
+        let tables = assets.console_tables(kind);
+        let Some(area) = tables
+            .all(crate::console::PAN_TYPE)
+            .next()
+            .and_then(|w| w.area)
+        else {
+            return;
+        };
+        let d = &assets.views.second_display;
+        let style = (&d.pan_unlit[..], d.pan_colours[kind.index()]);
+        crate::console::draw_pan(fb, font, area, style, robot);
     }
 
     /// The second byte of `widget`'s state in robot `slot`'s widget state (humanoid
@@ -3740,6 +3877,9 @@ impl Mission {
             damage_shown: m.clock & 0x80 != 0,
             stance: m.stance,
             drops: m.guns.drops,
+            // `display_mode` needs the assets: the callers set it.
+            display_mode: 0,
+            pan: self.display(slot).pan,
         })
     }
 }
@@ -7388,6 +7528,112 @@ pub mod tests {
         robot_state_mut(&mut m, robot).clock = 5;
         m.tick(&[]);
         assert_eq!(robot_state(&m).page, 0);
+    }
+
+    /// Each console's second display buttons by mouse (T-188): the mode buttons set the
+    /// mode (the scorpion's lit while held), the zoom zooms in on a left release and out
+    /// on a right one, a pan button held pans a step a tick until let go, the readout's
+    /// left release centres the pan and its right one turns it behind; in the map mode
+    /// the pan buttons decline.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_display_buttons_act() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        for (kind, name) in [
+            (RobotKind::Humanoid, "htrain.usg"),
+            (RobotKind::Scorpion, "ctrain.usg"),
+            (RobotKind::Scout, "strain.usg"),
+        ] {
+            let mut m = Mission::new(
+                name.into(),
+                &assets.scenarios[name],
+                Random::seeded(1),
+                &assets.motion,
+            );
+            let robot = m
+                .robots()
+                .into_iter()
+                .find(|&s| m.book().get(s).unwrap().kind == kind)
+                .unwrap();
+            m.view_robot(robot).unwrap();
+            let tables = assets.views.console(kind);
+            let find = |t| tables.all(t).next().and_then(|w| w.area).unwrap();
+            let centre = |t| {
+                let a = find(t);
+                Some(((a.left + a.right) / 2, (a.top + a.bottom) / 2))
+            };
+            let click = |m: &mut Mission, t, button| {
+                m.mouse_down(button, centre(t), &assets);
+                m.mouse_up(button, centre(t), &assets);
+            };
+            let i = kind.index();
+            let [thermal, camera, map] = [1, 0, 2].map(|n| MODE_TYPES[i][n]);
+            // The scorpion's mode button held shows its lit sprite whatever the mode.
+            m.mouse_down(LEFT, centre(thermal), &assets);
+            assert_eq!(m.look.pressed, kind == RobotKind::Scorpion, "{kind:?}");
+            m.mouse_up(LEFT, centre(thermal), &assets);
+            assert_eq!(
+                (m.display(robot).mode, m.look.pressed),
+                (1, false),
+                "{kind:?}"
+            );
+            click(&mut m, camera, LEFT);
+            assert_eq!(m.display(robot).mode, 0);
+            let zoom = m.display(robot).zoom;
+            click(&mut m, ZOOM_TYPES[i], LEFT);
+            assert_eq!(m.display(robot).zoom, zoom + 1, "{kind:?}");
+            click(&mut m, ZOOM_TYPES[i], RIGHT);
+            assert_eq!(m.display(robot).zoom, zoom);
+            // Held, a step a tick; the release stops it.
+            let step = assets.views.second_display.pan_steps[usize::from(zoom)];
+            let more = PAN_TYPES[3 + i];
+            m.mouse_down(LEFT, centre(more), &assets);
+            assert_eq!(
+                robot_state(&m, robot).held,
+                xeno_sim::Movement::HELD_PAN_MORE
+            );
+            for _ in 0..3 {
+                m.tick(&[]);
+                m.step_displays(&assets);
+            }
+            m.mouse_up(LEFT, None, &assets);
+            assert_eq!(m.display(robot).pan, 3 * step, "{kind:?}");
+            assert!(!m.look.pressed);
+            m.tick(&[]);
+            m.step_displays(&assets);
+            assert_eq!(m.display(robot).pan, 3 * step);
+            m.mouse_down(LEFT, centre(PAN_TYPES[i]), &assets);
+            m.tick(&[]);
+            m.step_displays(&assets);
+            m.mouse_up(LEFT, None, &assets);
+            assert_eq!(m.display(robot).pan, 2 * step);
+            // The readout: right behind, left back to 0.
+            click(&mut m, crate::console::PAN_TYPE, RIGHT);
+            assert_eq!(m.display(robot).pan, BEHIND);
+            click(&mut m, crate::console::PAN_TYPE, LEFT);
+            assert_eq!(m.display(robot).pan, 0);
+            // In the map mode the pan buttons decline.
+            click(&mut m, map, LEFT);
+            assert_eq!(m.display(robot).mode, MAP_DISPLAY);
+            m.mouse_down(LEFT, centre(more), &assets);
+            assert_eq!((robot_state(&m, robot).held, m.look.pressed), (0, false));
+            m.mouse_up(LEFT, None, &assets);
+        }
+    }
+
+    fn robot_state(m: &Mission, slot: u16) -> xeno_sim::Movement {
+        match m.world().get(EntityId(slot)).unwrap().state {
+            State::Robot(r) => r,
+            _ => unreachable!(),
+        }
     }
 
     fn robot_state_mut(m: &mut Mission, slot: u16) -> &mut xeno_sim::Movement {

@@ -31,6 +31,11 @@ pub const ECM_TYPE: u16 = 0xae;
 pub const LEFT_TYPE: u16 = 0xb2;
 pub const AHEAD_TYPE: u16 = 0xb4;
 pub const RIGHT_TYPE: u16 = 0xb6;
+/// The second display's pan less and more, zoom and mode (camera, thermal, map)
+/// buttons (T-188).
+pub const PAN_TYPES: [u16; 2] = [0x88, 0x8a];
+pub const ZOOM_TYPE: u16 = 0x8c;
+pub const MODE_TYPES: [u16; 3] = [0x8e, 0x90, 0x92];
 /// `1000:a6f4`, `a617`: the unlit digits in 0x58, the number in 0x0f, transparent; the
 /// speed at (0x4d, 0x9f), the heading at (0x5a, 0x78).
 const UNLIT_COLOUR: u8 = 0x58;
@@ -261,6 +266,12 @@ const ECM: (u16, i16, i16) = (0x590, 0, 0);
 const LEFT: (u16, i16, i16) = (0x5c8, 1, 1);
 const AHEAD: (u16, i16, i16) = (0x5d8, 0, 1);
 const RIGHT: (u16, i16, i16) = (0x5e8, 1, 1);
+/// `1000:a14b` to `a2ca`: the pan buttons, the zoom and the first mode button (8
+/// handles a mode, the next one while the mode is the button's).
+const PAN_LESS: (u16, i16, i16) = (0x4b0, 0, -1);
+const PAN_MORE: (u16, i16, i16) = (0x4c0, 1, -1);
+const ZOOM: (u16, i16, i16) = (0x4d0, 1, -1);
+const MODE: u16 = 0x4e0;
 /// Pilot (lit while the program drives) and program (lit while the pilot drives) at
 /// -1; the lock button at its corner.
 const PILOT: [u16; 2] = [0x548, 0x540];
@@ -306,6 +317,14 @@ fn button(
         LEFT_TYPE => shared(LEFT),
         AHEAD_TYPE => shared(AHEAD),
         RIGHT_TYPE => shared(RIGHT),
+        k if k == PAN_TYPES[0] => shared(PAN_LESS),
+        k if k == PAN_TYPES[1] => shared(PAN_MORE),
+        ZOOM_TYPE => shared(ZOOM),
+        k if MODE_TYPES.contains(&k) => {
+            let mode = MODE_TYPES.iter().position(|&t| t == k)? as u8;
+            let lit = if robot.display_mode == mode { NEXT } else { 0 };
+            Some((MODE + 2 * NEXT * u16::from(mode) + lit, 1, -1))
+        }
         WEAPON_TYPE => {
             let sprites = con.weapon_sprites[usize::from(weapon == robot.weapon)];
             Some((sprites[usize::from(weapon & 1)], -1, -1))
@@ -498,5 +517,12 @@ mod tests {
         robot.target = Some(Vec::new());
         assert_eq!(handle(&robot, look, LOCK_TYPE, 0), LOCK);
         assert!(button(&con, 0xa2, 0, &robot, look).is_none());
+        // T-188: the pan buttons take the look; a mode button is lit in its mode only.
+        assert_eq!(handle(&robot, look, PAN_TYPES[0], 0), 0x4b0 + NEXT);
+        robot.display_mode = 2;
+        assert_eq!(handle(&robot, look, MODE_TYPES[2], 0), 0x500 + NEXT);
+        assert_eq!(handle(&robot, look, MODE_TYPES[1], 0), 0x4f0);
+        robot.display_mode = 6;
+        assert_eq!(handle(&robot, look, MODE_TYPES[2], 0), 0x500);
     }
 }

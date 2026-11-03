@@ -248,10 +248,15 @@ fn recall(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Eve
 /// for the heading less or plus 0x40 (humanoid `1000:b3d5`, `b3df`; scorpion `9c3c`,
 /// `9c4b`; scout `cbad`, `cbb7`), the scorpion's faster and slower buttons step the speed asked for by one
 /// up to the top or down to the bottom of its range (`9c28`, `9c32`). The velocity
-/// follows when the speed next steps.
-fn held(tables: &Tables, kind: ObjectKind, heading: u16, m: &mut Movement) {
+/// follows when the speed next steps. A pan button held (1, 2: humanoid `b377`,
+/// `b389`; scorpion `9bca`, `9bdc`; scout `cb4f`, `cb61`) clears `TRACKING`; the pan
+/// itself is the display's, `xeno-app`'s.
+fn held(tables: &Tables, kind: ObjectKind, heading: u16, m: &mut Movement, status: &mut u8) {
     let g = &tables.gears;
     match (kind, m.held) {
+        (_, Movement::HELD_PAN_LESS | Movement::HELD_PAN_MORE) => {
+            *status &= !xeno_formats::usg::status::TRACKING
+        }
         (_, Movement::HELD_LEFT) => m.target_heading = heading.wrapping_sub(0x40),
         (_, Movement::HELD_RIGHT) => m.target_heading = heading.wrapping_add(0x40),
         (ObjectKind::Scorpion, Movement::HELD_FASTER) if m.target_speed < g.scorpion_top => {
@@ -830,7 +835,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             if let Some(e) = world.get_mut(id)
                 && let State::Robot(m) = &mut e.state
             {
-                held(tables, e.kind, e.heading, m);
+                held(tables, e.kind, e.heading, m, &mut e.status);
             }
             crate::damage::total(world, id, tables, &mut events);
         }

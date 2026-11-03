@@ -236,7 +236,10 @@ fn status_lines(con: &ScoutCon, (ok, out): (&[u8], &[u8]), robot: &Robot) -> Vec
 
 /// `1000:bd7f` to `ba18`: the shared-look buttons' sprites and where each goes from its
 /// rectangle's corner.
-const SHARED: [(u16, u16, i16, i16); 9] = [
+const SHARED: [(u16, u16, i16, i16); 12] = [
+    (PAN_TYPES[0], 0x9b0, 0, 0),
+    (PAN_TYPES[1], 0x9c0, 0, 0),
+    (ZOOM_TYPE, 0x9d0, 0, 0),
     (FIRE_TYPE, 0xa40, 0, 0),
     (DROP_TYPE, 0xa98, 5, 3),
     (CLOAK_TYPE, 0xaa8, -3, 0),
@@ -251,6 +254,13 @@ const SHARED: [(u16, u16, i16, i16); 9] = [
 const LOCK: u16 = 0xa70;
 const PILOT: u16 = 0xa60;
 const PROGRAM: u16 = 0xa50;
+/// `1000:bcd7`: the first mode button (16 handles a mode).
+const MODE: u16 = 0x9e0;
+/// The second display's pan less and more, zoom and mode (camera, thermal, map)
+/// buttons (T-188).
+pub const PAN_TYPES: [u16; 2] = [0x10c, 0x10e];
+pub const ZOOM_TYPE: u16 = 0x110;
+pub const MODE_TYPES: [u16; 3] = [0x112, 0x114, 0x116];
 
 /// A button (`kind`, its rectangle and its state's second byte: a weapon's number) as
 /// its draw handler draws it; `held` while the pointer holds it.
@@ -288,6 +298,14 @@ fn button(
         return Some((base + lit(look.pressed), dx, dy));
     }
     match kind {
+        k if MODE_TYPES.contains(&k) => {
+            let mode = MODE_TYPES.iter().position(|&t| t == k)? as u8;
+            Some((
+                MODE + 2 * NEXT * u16::from(mode) + lit(robot.display_mode == mode),
+                0,
+                0,
+            ))
+        }
         // `1000:b7db`: the weapon held (and not already selected) adds its own look.
         WEAPON_TYPE => {
             let selected = n == robot.weapon;
