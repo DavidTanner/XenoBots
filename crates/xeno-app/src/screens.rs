@@ -610,6 +610,18 @@ impl Screens {
         matches!(self.screen, Mission(_)) && !self.mission.dialog_open() && !self.mission.paused()
     }
 
+    /// The key legend's labels (T-217) while a mission view is in play: each widget
+    /// with a key and its key's name.
+    // The window draws them in T-217's part 2.
+    #[allow(dead_code)]
+    pub fn legend(&self, wasd: bool) -> Vec<(xeno_formats::maproom::Rect, String)> {
+        if self.in_play() {
+            self.mission.legend(&self.mission_assets, wasd)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Whether a key asked to leave the game.
     pub fn quit(&self) -> bool {
         self.quit

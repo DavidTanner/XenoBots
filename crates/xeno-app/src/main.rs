@@ -13,6 +13,7 @@ mod game_dir;
 mod humancon;
 mod intro;
 mod keymap;
+mod legend;
 mod login;
 mod mainview;
 mod maproom;
