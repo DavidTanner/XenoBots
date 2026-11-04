@@ -150,6 +150,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
 | F12 | Not in the original: the game speed, 1x, 2x, 4x and back (as `--speed`). It acts in a mission (not while paused or in a file dialog), and while it isn't 1x the screen shows it top right (for example `4X`), as does the window title. On a Mac, F12 may need Fn. |
 | Shift+F12 | Not in the original: WASD on the robot consoles on or off (as `--wasd`): W Up, A Left, S Down, D Right, and Left A (next target), Down S (status page), Right D (relay dump), Up W (standing stance). The window title shows `WASD` while it is on. |
+| Ctrl+F12 | Not in the original: the key legend on or off. On a robot console or in the situation room, each button or panel that has a key is labelled with it (for example `F5`, `SPACE`, `A/R`: a left and a right click), following WASD when it is on; it shows while a mission is in play and changes nothing in the game. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
 

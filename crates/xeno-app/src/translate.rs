@@ -1,5 +1,5 @@
 //! Turns winit window events into the game's input events (`input`) and the window's
-//! own actions: quit, the fullscreen toggle, the game speed and WASD. Only this module and `window` see winit.
+//! own actions: quit, the fullscreen toggle, the game speed, WASD and the key legend. Only this module and `window` see winit.
 //!
 //! The mouse is mapped from window pixels to view pixels through the presented
 //! layout ([`Translator::set_layout`], `xeno_render::Layout::view_point`): moves are
@@ -47,6 +47,8 @@ pub enum WindowAction {
     /// Shift+F12: WASD on the consoles on or off (T-216). The original binds Shift+F12
     /// nowhere.
     ToggleWasd,
+    /// Ctrl+F12: the key legend on or off (T-217). The original binds Ctrl+F12 nowhere.
+    ToggleLegend,
 }
 
 /// Collects the game's input events between retraces, and decides the window keys.
@@ -56,6 +58,8 @@ pub struct Translator {
     alt: bool,
     /// Whether Shift is held.
     shift: bool,
+    /// Whether Ctrl is held.
+    ctrl: bool,
     /// The keys the game has seen go down and not up.
     held: Keys,
     pending: Vec<InputEvent>,
@@ -96,6 +100,7 @@ impl Translator {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.alt = modifiers.state().alt_key();
                 self.shift = modifiers.state().shift_key();
+                self.ctrl = modifiers.state().control_key();
                 None
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -154,6 +159,7 @@ impl Translator {
         };
         let window_key = match code {
             ScanCode::F11 => Some(WindowAction::ToggleFullscreen),
+            ScanCode::F12 if self.ctrl => Some(WindowAction::ToggleLegend),
             ScanCode::F12 if self.shift => Some(WindowAction::ToggleWasd),
             ScanCode::F12 => Some(WindowAction::CycleSpeed),
             ScanCode::ENTER | ScanCode::KEYPAD_ENTER if self.alt => {
@@ -881,6 +887,28 @@ mod tests {
         shift(&mut t, false);
         let speed = Some(WindowAction::CycleSpeed);
         assert_eq!(t.key(sc(0x58), true, false, None, false), speed);
+        t.key(sc(0x58), false, false, None, false);
+        assert_eq!(events(&mut t), []);
+    }
+
+    #[test]
+    fn ctrl_f12_switches_the_legend_without_reaching_the_game() {
+        let mut t = Translator::default();
+        let held = |t: &mut Translator, state: ModifiersState| {
+            t.window_event(&WindowEvent::ModifiersChanged(state.into()), false)
+        };
+        held(&mut t, ModifiersState::CONTROL);
+        let toggle = Some(WindowAction::ToggleLegend);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), toggle);
+        assert_eq!(t.key(sc(0x58), true, true, None, false), None);
+        assert_eq!(t.key(sc(0x58), false, false, None, false), None);
+        // Ctrl with Shift is still the legend; Shift alone WASD.
+        held(&mut t, ModifiersState::CONTROL | ModifiersState::SHIFT);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), toggle);
+        t.key(sc(0x58), false, false, None, false);
+        held(&mut t, ModifiersState::SHIFT);
+        let wasd = Some(WindowAction::ToggleWasd);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), wasd);
         t.key(sc(0x58), false, false, None, false);
         assert_eq!(events(&mut t), []);
     }
