@@ -326,13 +326,15 @@ impl App {
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
-        // The game speed's extra steps (T-215) get no input, and the music and the
-        // arrows' repeat keep real time.
+        // The music keeps real time at the game speed (T-215): only real retraces tick it.
         if !step.extra {
             // The driver's hook runs first in the retrace interrupt, whatever the mode.
             self.music.tick();
-            self.log.record(retrace, self.input.take());
         }
+        // Every step takes input: the host's events are all drained by the first step
+        // of a real retrace, so an extra step gets only the console arrows' own repeats,
+        // which then count game steps and turn the robot as fast as it drives.
+        self.log.record(retrace, self.input.take());
         for event in self.log.events_at(retrace) {
             log::debug!("retrace {retrace}: {event:?}");
             self.keys.apply(event);

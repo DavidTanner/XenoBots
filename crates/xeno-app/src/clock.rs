@@ -28,7 +28,7 @@ pub struct Step {
     /// retrace (`docs/re/dvr-protocol.md`), so it is derived from the retrace count.
     pub sixty_hz: u64,
     /// One of the speed's extra steps, not the first of its real retrace (T-215): the
-    /// music and the host's input go with the real retraces only.
+    /// music goes with the real retraces only, and the host's events reach the first.
     pub extra: bool,
 }
 

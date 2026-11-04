@@ -83,16 +83,18 @@ speed when it isn't 1x.
   sim, the robots' programs, the game clock, the views' turns (T-209's passes count
   steps) and colour records advance N retraces for each real one. Only the last
   step's frame is shown, since the window draws after the batch.
-- **Deterministic.** The steps are numbered on in the input log, and the host's input
-  goes only to the first step of each real retrace (`Step::extra` is set on the
-  others), so a replay of the log gives the same state at any speed. F12 is a window
+- **Deterministic.** The steps are numbered on in the input log, and the host's events
+  all go to the first step of each real retrace (`Step::extra` is set on the others),
+  so a replay of the log gives the same state at any speed. Every step still takes
+  the console arrows' own repeats (T-207), which therefore count game steps: a held
+  arrow turns the robot, and changes gear, N times as fast, with the first repeat
+  after 35 steps (125 ms at 4x). F12 is a window
   key, like F11: it never reaches the game or the log.
 - **What follows it.** Only a mission in play (`Screens::in_play`: a mission screen,
   not paused by F1 and with no file dialog open). Inside it everything the retrace
   drives runs faster, the sound effects too (they play as the sim posts them, so more
   of them a second), and a view's fades. The music keeps real time (its driver is
-  ticked once per real retrace), and so do the console arrows' own repeat (T-207,
-  counted in real retraces) and the mouse. The cutscenes, the intro drop, the map
+  ticked once per real retrace), and so does the mouse. The cutscenes, the intro drop, the map
   room and every other screen stay 1x, so the chosen speed takes effect on entering a
   mission and stops on leaving it, pausing or opening a dialog. Each such change
   restarts the clock at the new speed from that wake-up (the log counting on), and the
