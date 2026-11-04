@@ -591,7 +591,12 @@ scorpion `9a14`, scout `caf5`; found by address and checked by its two `inc byte
 warning light's blink (bit 2: on and off every 32 ticks). While +0xee's low two bits
 are then 0 (every other call; never, for an odd +0xee) it marks the light for a redraw
 and, with `locked_on` not 0 and +0xee bit 2 set, plays **sound event 9** for the
-robot on view (`mov ax, 0x12`, `call 1000:eec6` at `b347`, `9a39`, `cb1f`; to be posted from here by T-206).
+robot on view (`mov ax, 0x12`, `call 1000:eec6` at `b347`, `9a39`, `cb1f`; confirmed
+by T-206: the same test in all three, the scorpion's before its halving, so a last
+`locked_on` of 1 still sounds). The sim posts it as an `Event::Sound` for the robot
+(`only_for`), the event read from the three `mov ax` by `Sensing::warning_sound`; it
+sounds as the light comes on (+0xee 4, 12, ...), once every 64 ticks while the lock
+holds. The event's flags do not queue, so on voice 2 it restarts the sound.
 The humanoid and the scout then step their status page (humanoid +0x10a, scout +0x108:
 `inc`, `and 3`, and a mark) when +0xfa's low five bits are 0, and step +0xfa; so the
 page turns every 512 ticks. The scorpion instead halves `locked_on` a second time (as

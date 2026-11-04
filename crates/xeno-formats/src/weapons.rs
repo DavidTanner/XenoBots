@@ -474,7 +474,7 @@ fn values<const N: usize>(image: &[u8], sites: &[Site; N]) -> Result<[u16; N], F
 
 /// The sound a `mov ax, 2 * event` at `at` plays, and whether for everyone, by the
 /// sound routine the `call` after it reaches.
-fn sound(image: &[u8], at: usize) -> Result<(u8, bool), FormatError> {
+pub(crate) fn sound(image: &[u8], at: usize) -> Result<(u8, bool), FormatError> {
     let event = operand(image, at, MOV_AX)?;
     let call = operand(image, at + 3, &[0xe8])?;
     let to = usize::from((at as u16 + 6).wrapping_add(call));

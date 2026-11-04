@@ -1459,6 +1459,7 @@ Motion {
             -1,
         ),
         lock_sound: 26,
+        warning_sound: 23,
         contact: Contact {
             near: 20480,
             wait: 3,

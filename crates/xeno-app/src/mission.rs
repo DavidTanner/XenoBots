@@ -5142,6 +5142,36 @@ pub mod tests {
         assert_eq!(hit(&mut m, 81), [Sound::Stop(28), Sound::Play(2)]);
     }
 
+    /// The lock warning (T-206; the synthetic event 23) sounds every 64 ticks while
+    /// another robot keeps a lock on the robot, only while its console is open.
+    #[test]
+    fn the_lock_warning_is_heard_only_on_its_console() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = m.book().side(Side::Human).map(|(s, _)| s).next().unwrap();
+        let warnings = |m: &mut Mission| {
+            (0..128)
+                .map(|_| {
+                    if let Some(State::Robot(r)) = m
+                        .world_mut()
+                        .get_mut(xeno_sim::EntityId(robot))
+                        .map(|e| &mut e.state)
+                    {
+                        r.locked_on = 0xff;
+                    }
+                    m.tick([]);
+                    m.take_sounds()
+                        .iter()
+                        .filter(|s| **s == Sound::Play(23))
+                        .count()
+                })
+                .sum::<usize>()
+        };
+        assert_eq!(warnings(&mut m), 0);
+        m.view_robot(robot).unwrap();
+        assert_eq!(warnings(&mut m), 2);
+    }
+
     /// The pointer's shape by the picture's colour under it, the view and its mode
     /// (T-106; the synthetic tables give M and R 3, and the consoles 3, 4, 6, 4).
     #[test]

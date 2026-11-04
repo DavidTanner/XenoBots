@@ -34,9 +34,11 @@ fn world() -> World {
 }
 
 /// One step of robot 1 at tick table entry `(tick & 0x1e) >> 1`.
-fn step_at(world: &mut World, tick: u8) {
+fn step_at(world: &mut World, tick: u8) -> Vec<Event> {
     movement(world, EntityId(1)).unwrap().tick = tick;
-    step(world, EntityId(1), &synthetic_tables());
+    let mut events = Vec::new();
+    step(world, EntityId(1), &synthetic_tables(), &mut events);
+    events
 }
 
 #[test]
@@ -274,7 +276,7 @@ fn the_upkeep_warns_the_target_and_works_out_its_bits() {
     // The target's warning: event 3 once, then it fades over 8 halvings.
     let warn_at = |world: &mut World| {
         movement(world, EntityId(2)).unwrap().tick = 12;
-        step(world, EntityId(2), &t);
+        step(world, EntityId(2), &t, &mut Vec::new());
     };
     warn_at(&mut world);
     assert_eq!(m(&world, 2).script.events, 1 << EVENT_LOCKED_ON);
@@ -649,6 +651,43 @@ fn the_console_counters_step_by_kind() {
     assert_eq!((s.blink, s.clock, s.page, s.locked_on), (2, 0x85, 0, 0x7f));
     counters(RobotKind::Scorpion, &mut s);
     assert_eq!((s.clock, s.locked_on), (0x05, 0x3f));
+}
+
+/// The lock warning's sound (T-206): while another robot's lock holds, the counters
+/// play the synthetic event 23 for the robot on view on every fourth step (every 64
+/// ticks), each time the light (+0xee bit 2) comes on; none without a lock.
+#[test]
+fn the_lock_warning_sounds_as_the_light_comes_on() {
+    let mut world = world();
+    let entry = 13 << 1;
+    let warning = Event::Sound {
+        event: 23,
+        only_for: Some(EntityId(1)),
+    };
+    movement(&mut world, EntityId(1)).unwrap().locked_on = 0x80;
+    let mut heard = Vec::new();
+    for n in 0..16 {
+        let was_lit = m(&world, 1).blink & 4 != 0;
+        let events = step_at(&mut world, entry);
+        let lit = m(&world, 1).blink & 4 != 0;
+        assert_eq!(events == [warning], lit && !was_lit, "step {n}");
+        if !events.is_empty() {
+            heard.push(n);
+        }
+    }
+    assert_eq!(heard, [1, 5, 9, 13]);
+    // Other entries are silent, and so are the counters with no lock.
+    assert!(step_at(&mut world, entry + 2).is_empty());
+    movement(&mut world, EntityId(1)).unwrap().locked_on = 0;
+    assert!((0..16).all(|_| step_at(&mut world, entry).is_empty()));
+    // The scorpion tests its lock before halving it: a last 1 still sounds.
+    let mut s = Movement {
+        blink: 2,
+        locked_on: 1,
+        ..Movement::default()
+    };
+    assert!(counters(RobotKind::Scorpion, &mut s));
+    assert_eq!((s.blink, s.locked_on), (4, 0));
 }
 
 /// A stock humanoid, scorpion and scout (scen00a's first of each) keep their counters

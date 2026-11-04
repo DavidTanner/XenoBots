@@ -57,6 +57,9 @@ pub(crate) const MESSAGES_AT: [usize; 14] = [
 pub(crate) const NEXT_RANGE_AT: usize = 0xd822;
 /// `mov ax, 2 * event` before the lock's sound.
 pub(crate) const LOCK_SOUND_AT: usize = 0xd902;
+/// `mov ax, 2 * event` and the call to `snd_play_sound_effect_if_viewed` in each
+/// kind's console counters (`COUNTERS`' order): the lock warning's sound (T-206).
+pub(crate) const WARNING_SOUND_AT: [usize; 3] = [0xb344, 0x9a36, 0xcb1c];
 /// `call cs:[bx + table]` in the weapon state routines (`1000:d0e9`, `d10d`, opcodes
 /// 0x78 to 0x7a): each kind's routine for its first and second weapon.
 pub(crate) const WEAPON_STATE_AT: [usize; 2] = [0xd0ed, 0xd111];
@@ -117,6 +120,9 @@ pub struct Sensing {
     pub point: (i32, i32),
     /// The sound event a lock plays for the robot whose console is open.
     pub lock_sound: u8,
+    /// The sound event the console counters play for the robot on view while another
+    /// robot keeps a lock on it (the same in each kind's).
+    pub warning_sound: u8,
     pub contact: Contact,
 }
 
@@ -292,7 +298,16 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
     if sound % 2 != 0 || sound > 0x1ff {
         return Err(invalid(LOCK_SOUND_AT, "not a sound event"));
     }
+    let mut warning_sound = None;
+    for at in WARNING_SOUND_AT {
+        match (crate::weapons::sound(image, at)?, warning_sound) {
+            ((event, false), None) => warning_sound = Some(event),
+            ((event, false), Some(w)) if event == w => {}
+            _ => return Err(invalid(at, "not the lock warning's sound")),
+        }
+    }
     Ok(Sensing {
+        warning_sound: warning_sound.unwrap_or_default(),
         messages: Messages {
             none_found: m(0)?,
             locked: m(1)?,
@@ -364,6 +379,7 @@ mod tests {
             (m.none_found, m.destroyed, sensing.lock_sound),
             (0x40, 0x49, 26)
         );
+        assert_eq!(sensing.warning_sound, 23);
         insta::assert_debug_snapshot!(sensing);
     }
 
@@ -397,6 +413,9 @@ mod tests {
             // The scout's counters are not its routine, or not in its table.
             (COUNTERS[2].0 + 5, 0xfa),
             (DS + 0x9740 + 26, 0x00),
+            // The scout's warning is another sound; the scorpion's is heard by all.
+            (WARNING_SOUND_AT[2] + 1, 0x30),
+            (WARNING_SOUND_AT[1] + 4, 0x00),
         ] {
             let mut image = synthetic();
             image[at] = value;
@@ -425,6 +444,8 @@ mod tests {
             assert!(t.arc > 0 && t.arc < 0x4000);
             assert!(t.range > 0 && t.range <= range);
         }
+        // The lock warning's sound is event 9 (`docs/formats/dsounds.md`).
+        assert_eq!(sensing.warning_sound, 9);
         // The contact check's numbers as T-141 and T-183 traced them.
         let c = sensing.contact;
         assert_eq!(

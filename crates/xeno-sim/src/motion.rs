@@ -804,7 +804,7 @@ pub fn tick(world: &mut World, tables: &Tables, random: &mut Random) -> Vec<Even
             }
             // `1fe6:826d` comes after the move.
             world.type_panel(id, &tables.strings);
-            crate::sense::step(world, id, tables);
+            crate::sense::step(world, id, tables, &mut events);
             crate::contact::step(world, id, tables, random, &mut events);
             crate::weapons::step(world, id, tables, random, &mut events);
             crate::relay::signal_step(world, id, tables);
