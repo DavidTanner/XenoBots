@@ -2468,11 +2468,27 @@ impl Mission {
         }
     }
 
-    /// `1000:7eac`: the object's console opens if it is a unit.
+    /// `1000:7eac`: a unit of either side's list; one of the viewed object's side has its
+    /// console opened, another side's gets the refusal (`Messages::other_side`) through
+    /// `1000:d53f`: on the viewed robot's panel, or from the situation room into the
+    /// base's log.
     fn jump(&mut self, object: u16) -> Option<Request> {
-        // shortcut: only the player's robots can be viewed, so `7eac`'s message for
-        // another side's and its Ctrl developer case are not ported (T-214).
-        self.view_robot(object).map(Request::Show)
+        if self.book().get(object)?.side == Side::Human {
+            return self.view_robot(object).map(Request::Show);
+        }
+        // shortcut: with unlock word 8 and Ctrl the original opens the alien robot's
+        // console (`7ec2`); the port's consoles serve only the player's robots, so it
+        // refuses as without; upgrade with T-222.
+        let viewer = match self.viewed {
+            Viewed::Robot(slot) => slot,
+            Viewed::Base => self.world().base(Side::Human)?.0,
+        };
+        let Run::Running(sim) = &self.run else {
+            return None;
+        };
+        let text = sim.tables()?.sensing.messages.other_side;
+        self.pilot(viewer, Pilot::Say(text));
+        None
     }
 
     /// The main view's left release (`1000:57a2`): on a unit (+0x16 `UNIT`, `57aa`)
@@ -3135,7 +3151,7 @@ impl Mission {
             },
             // A release over the view's region (`1000:9d83`, `9eea`) with an object
             // under the pointer in the last frame: the left locks it (`1000:d8a7`), the
-            // right opens its console (`1000:7eac`), if it is one of the player's.
+            // right opens its console or refuses it (`1000:7eac`, `Mission::jump`).
             Target::Region(i) => {
                 let (Viewed::Robot(slot), true) = (self.viewed, self.region == Some(i)) else {
                     return None;
@@ -5081,11 +5097,21 @@ pub mod tests {
         press(&mut m, (100, 50));
         assert_eq!((m.map, m.selected), (before, Some(robot)));
         // Off the main view, nothing; the right release on an alien robot opens
-        // nothing either (its refusal is T-214's).
+        // nothing but writes the refusal into the base's log (`7ee0`, `d53f`).
         let before = m.map;
         press(&mut m, (10, 10));
         assert_eq!(m.map, before);
         assert_eq!(click(&mut m, &assets, (100, 50), MouseButton::Right), None);
+        let refused = assets.motion.sensing.messages.other_side;
+        let world = m.world();
+        let logged = match world.base(Side::Human).and_then(|b| world.get(b)) {
+            Some(e) => match &e.state {
+                State::Base { depot, .. } => depot.log.iter().any(|l| l.text == refused),
+                _ => false,
+            },
+            None => false,
+        };
+        assert!(logged, "the refusal is in the base's log");
         // Mode C acts on the probe as M or R left it (nothing resets it): nothing
         // probed recentres.
         m.mode = LOG_MODE;
@@ -5472,7 +5498,7 @@ pub mod tests {
 
     /// A release over the 3D view's region with an object under the pointer in the
     /// last frame: the left locks it, the right opens its console if it is the
-    /// player's. Off the region's colour, or with nothing probed, nothing.
+    /// player's and else refuses. Off the region's colour, or with nothing probed, nothing.
     #[test]
     fn a_release_on_the_view_locks_or_opens_the_object_under_the_pointer() {
         let assets = test_assets();
@@ -5506,9 +5532,15 @@ pub mod tests {
         m.probed.set([Some(enemy), None]);
         click(&mut m, &assets, (100, 50), left);
         assert_eq!(target(&m), Some(EntityId(enemy)));
-        // The right button on the enemy does nothing; on a friend, its console.
+        // The right button on the enemy opens nothing and posts the refusal to the
+        // robot's panel (`7ee0`); on a friend, its console.
         let right = MouseButton::Right;
+        robot_state_mut(&mut m, robot).panel.queue = [0; 5];
         assert_eq!(click(&mut m, &assets, (100, 50), right), None);
+        assert_eq!(
+            robot_state(&m, robot).panel.queue[0],
+            assets.motion.sensing.messages.other_side
+        );
         m.probed.set([Some(friend), None]);
         let opened = click(&mut m, &assets, (100, 50), right);
         assert_eq!(opened, Some(Request::Show(View::Scorpion)));

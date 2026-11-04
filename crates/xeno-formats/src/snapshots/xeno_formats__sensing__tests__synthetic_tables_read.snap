@@ -57,6 +57,7 @@ Sensing {
         none_next: 75,
         goal_object: 76,
         destination: 77,
+        other_side: 78,
     },
     weapons: [
         [

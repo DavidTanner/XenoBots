@@ -2342,7 +2342,8 @@ it, so `DS:0x594c` says whether the pointer was last over the region.
   jump ("Under the pointer (T-133)" in `docs/screens.md`): a unit in either side's list
   opens its console (`7ef2`) if it is of the base's side, or with unlock word 8 and Ctrl;
   an alien one gets the refusal (string `0x1a1f`) through `1000:d53f` with the base in
-  `DI`, so into the base's log rather than a panel (T-214). Anything else: nothing.
+  `DI`, so into the base's log rather than a panel (`d53f` tests +0x00 = 3 and writes
+  with `65a6`; else `d2a2`, the panel). Anything else: nothing.
 - **Left release** (`1000:5781`): with Ctrl and the mode 4 (M), the editor's place
   (`1000:6be8`) and nothing else. Otherwise (Ctrl in other modes included) with
   `DS:0x594c` = 1: a same-side `UNIT` is selected and bit 15 cleared, an alien unit
@@ -2355,7 +2356,8 @@ it, so `DS:0x594c` says whether the pointer was last over the region.
 The port (`Mission::main_view_release`): the release over the main view's rectangle
 with no widget there, in any mode, on `Mission::sitroom_probe` (the M and R frames'
 object and camera, reset by nothing but a new mission); the right through `Mission::jump`, shared with
-the consoles' right release (the alien refusal still T-214's). The editor's place and
+the consoles' right release (an alien unit's refusal written into the base's log,
+T-214; the Ctrl case refuses too, T-222). The editor's place and
 the select or recentre moved from the press to the release. Not checked in DOSBox
 (T-182).
 

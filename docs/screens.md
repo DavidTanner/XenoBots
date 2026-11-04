@@ -771,7 +771,10 @@ time):
   panel when the object clicked is in a unit list but not of the viewed object's side
   (`1000:d6d8`, +0x16 bit 3). `7eac` scans 0x98 bytes from `DS:0x62f5`, the human
   list and the alien one after it (`DS:0x6341`; T-208 found the span), so a right
-  release on an alien robot sends it. Not ported (T-214).
+  release on an alien robot sends it. `d53f` sends it to a base's log instead when the
+  viewer is a base (+0x00 = 3), as from the situation room's main view (T-212). Ported
+  with T-214: `xeno_formats::sensing::Messages::other_side` reads the offset from the
+  `mov si` at `1000:7ee0`, and `Mission::jump` posts it (`Pilot::Say`).
 
 **In the port**: `xeno_formats::messages` reads the names, letters, the base's two
 texts, the interval and the header's bytes (and writes the header into the string
@@ -849,8 +852,11 @@ finishes. Leaving the console (`1000:dac0`) does the same and sets `DS:0x70ad` t
   after it, T-208); otherwise nothing. Then, with
   unlock word 8 (`DS:0x1598` = 0xba17) and Ctrl in the event's word (0x1000), its view
   opens; otherwise only when it is of the viewed robot's side (+0x16 bit 3,
-  `1000:d6d8`), and else a message (string `0x1a1f`) goes to the viewed robot's
-  panel. The view opens through `ui_open_view_of_object` (`1000:7ef2`), as Tab's; no
+  `1000:d6d8`: the two objects' +0x16 bit 3 compared), and else a message (string
+  `0x1a1f`, `mov si` at `1000:7ee0`) goes to the viewed robot's panel through
+  `1000:d53f`. The Ctrl test reads the word after the current event (`DS:0x1730`,
+  +0x02); with unlock word 8 and Ctrl the side test is skipped, so an alien robot's
+  console opens. The view opens through `ui_open_view_of_object` (`1000:7ef2`), as Tab's; no
   check that the robot is in its base.
 - **The map mode's press.** On the second display a left press (0x2) with Alt
   (0x2000) while the display mode is exactly 2 sets +0x23 bit 2 (no region test);
@@ -899,8 +905,9 @@ before the sim's tick: the object probed becomes the goal (`Pilot::GoalObject`),
 else the point the destination (`Pilot::Destination`); an Alt release in the same
 retrace takes it back. The consoles' map now marks a goal object (sprite 0x1a0 on the
 object, `1000:f914`) as well as a destination. Shortcuts: the press acts on the last
-frame drawn, not the next one; `7eac`'s refusal message and its Ctrl case are not
-ported (only the player's robots can be viewed).
+frame drawn, not the next one; a right release on an alien robot posts the refusal
+(T-214), but the Ctrl case with unlock word 8 refuses too, since the port's consoles
+serve only the player's robots (T-222).
 
 ### The display's other modes (T-134)
 
