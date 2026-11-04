@@ -362,25 +362,28 @@ pub fn radar_camera(e: &Entity, radar: &Radar, view: &View3d, tables: &Tables) -
 /// display (T-166)"): the background sprite opaque at the buffer's corner
 /// (`1000:3b29`, slot `0x5c4`), then (`3b58`) a dot of `colour` at each of
 /// `points`, the main view's render list reused, as `1000:3bca` places it (as
-/// [`pixel`], clipped), then one in the middle for the robot itself.
+/// [`pixel`], clipped), then one in the middle for the robot itself. `true` when a
+/// point's dot is on `under` (the pointer, in the buffer) but for the middle, whose
+/// probe names nothing (T-208).
 pub fn draw_radar(
     buffer: &mut Framebuffer,
     camera: &Camera,
     points: impl IntoIterator<Item = (i32, i32)>,
     background: Option<&Sprite>,
     colour: u8,
-) {
+    under: Option<(i32, i32)>,
+) -> bool {
     opaque(buffer, background, 0, 0);
+    let mut probed = false;
     for (x, y) in points {
         let at = pixel(camera, buffer, x, y);
+        probed |= under == Some(at);
         dot(buffer, at, colour);
     }
     let size = buffer.surface();
-    dot(
-        buffer,
-        ((size.width / 2) as i32, (size.height / 2) as i32),
-        colour,
-    );
+    let middle = ((size.width / 2) as i32, (size.height / 2) as i32);
+    dot(buffer, middle, colour);
+    probed && under != Some(middle)
 }
 
 /// A position's pixel in the buffer (`1000:3ad8`): columns right with the lateral
@@ -1502,13 +1505,14 @@ pub(crate) mod tests {
     }
 
     /// The radar draws its background, a dot per point around the robot heading up,
-    /// clipped to the buffer, and the robot's own in the middle.
+    /// clipped to the buffer, and the robot's own in the middle; the probe finds a
+    /// point's dot under the pointer, but not the middle's (T-208).
     #[test]
     fn the_radar_dots_its_points_heading_up() {
         let tables = crate::mission::tests::test_assets().motion;
         let (world, _) = world();
         // The humanoid at (15, 13), its heading turned to 0 or a half turn.
-        let frame = |heading: u16, offset: u16| {
+        let frame = |heading: u16, offset: u16, under| {
             let mut robot = world.get(EntityId(2)).unwrap().clone();
             robot.heading = heading;
             let camera = radar_camera(&robot, &radar(offset), &view(), &tables);
@@ -1518,10 +1522,11 @@ pub(crate) mod tests {
             let unit = |x: i32, y: i32| (x << 16, y << 16);
             // Three right and two up of it, and one far out of the buffer.
             let points = [unit(18, 15), unit(15 + 40, 13)];
-            draw_radar(&mut b, &camera, points, Some(&background), 0x44);
-            b
+            let probed = draw_radar(&mut b, &camera, points, Some(&background), 0x44, under);
+            (b, probed)
         };
-        let b = frame(0, 0);
+        let (b, probed) = frame(0, 0, None);
+        assert!(!probed);
         let at = |b: &Framebuffer, x, y| b.get(x, y).unwrap();
         assert_eq!(at(&b, 0, 0), 5, "the background at the corner");
         assert_eq!(at(&b, 3, 0), 0x99, "past the background");
@@ -1529,8 +1534,11 @@ pub(crate) mod tests {
         assert_eq!(at(&b, 13, 3), 0x44, "the point at heading 0, as on the map");
         let count = |b: &Framebuffer| b.pixels().iter().filter(|&&p| p == 0x44).count();
         assert_eq!(count(&b), 2, "the far point clipped");
+        assert!(frame(0, 0, Some((13, 3))).1, "the point's dot");
+        assert!(!frame(0, 0, Some((12, 3))).1, "beside it");
+        assert!(!frame(0, 0, Some((10, 5))).1, "the middle names nothing");
         // A half turn turns the point round the middle; so does the offset.
-        for b in [frame(0x8000, 0), frame(0x9000, 0x1000)] {
+        for (b, _) in [frame(0x8000, 0, None), frame(0x9000, 0x1000, None)] {
             assert_eq!(at(&b, 7, 7), 0x44);
             assert_eq!(count(&b), 2);
         }

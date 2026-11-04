@@ -146,24 +146,35 @@ fn looking_locks_the_nearest_enemy_in_the_locking_range() {
     assert!(m(&world2, 1).panel.queue.contains(&text.none_found));
 }
 
+/// Robot 1 locks `target`.
+fn lock_on(world: &mut World, target: u16, t: &Tables) {
+    lock(
+        world,
+        EntityId(1),
+        Some(EntityId(target)),
+        t,
+        &mut Vec::new(),
+    );
+}
+
 #[test]
 fn a_lock_is_refused_damaged_out_of_range_or_on_itself() {
     let t = synthetic_tables();
     let text = t.sensing.messages;
     let mut world = world();
     // 6 units is within the humanoid's 8, 8 is not.
-    lock(&mut world, EntityId(1), EntityId(3), &t, &mut Vec::new());
+    lock_on(&mut world, 3, &t);
     assert_eq!(m(&world, 1).target, Some(EntityId(3)));
     world.get_mut(EntityId(2)).unwrap().position.x = Fixed::from_int(108);
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     assert_eq!(
         m(&world, 1).panel.queue[..2],
         [text.locked, text.out_of_range]
     );
     movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
-    lock(&mut world, EntityId(1), EntityId(1), &t, &mut Vec::new());
+    lock_on(&mut world, 1, &t);
     // Its own side: locked, with a warning.
-    lock(&mut world, EntityId(1), EntityId(4), &t, &mut Vec::new());
+    lock_on(&mut world, 4, &t);
     assert_eq!(m(&world, 1).target, Some(EntityId(4)));
     assert_eq!(
         m(&world, 1).panel.queue[..3],
@@ -174,17 +185,42 @@ fn a_lock_is_refused_damaged_out_of_range_or_on_itself() {
         c.targeting |= 1;
     }
     movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     assert_eq!(m(&world, 1).target, Some(EntityId(4)));
     assert_eq!(m(&world, 1).panel.queue[0], text.targeting_damaged);
     // A cloaked robot cannot be locked, silently.
     let mut world = self::world();
     world.get_mut(EntityId(2)).unwrap().status |= status::CLOAKED;
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     assert_eq!(
         (m(&world, 1).target, m(&world, 1).panel.queue[0]),
         (None, 0)
     );
+}
+
+/// A third display's dot (T-208) names no object: the lock sets `TRACKING` and keeps
+/// its target, silently, or says the targeting computer is damaged.
+#[test]
+fn a_lock_on_no_object_only_tracks() {
+    let t = synthetic_tables();
+    let mut world = world();
+    lock_on(&mut world, 3, &t);
+    movement(&mut world, EntityId(1)).unwrap().panel = Default::default();
+    world.get_mut(EntityId(1)).unwrap().status &= !status::TRACKING;
+    let mut events = Vec::new();
+    lock(&mut world, EntityId(1), None, &t, &mut events);
+    assert_ne!(st(&world, 1) & status::TRACKING, 0);
+    assert_eq!(
+        (m(&world, 1).target, m(&world, 1).panel.queue[0]),
+        (Some(EntityId(3)), 0)
+    );
+    assert!(events.is_empty());
+    if let Damage::Robot(c) = &mut world.get_mut(EntityId(1)).unwrap().damage {
+        c.targeting |= 1;
+    }
+    lock(&mut world, EntityId(1), None, &t, &mut events);
+    let text = t.sensing.messages;
+    assert_eq!(m(&world, 1).panel.queue[0], text.targeting_damaged);
 }
 
 /// `1000:d8e7`: a lock marks whatever it takes spotted, a base too; the scan marks
@@ -201,12 +237,12 @@ fn a_locked_base_is_spotted_but_the_scan_spots_only_units() {
     step_at(&mut world, 0x1e);
     assert_eq!(m(&world, 1).contacts, 1, "the scout only");
     assert_eq!(st(&world, 6) & status::SPOTTED, 0);
-    lock(&mut world, EntityId(1), EntityId(6), &t, &mut Vec::new());
+    lock_on(&mut world, 6, &t);
     assert_eq!(m(&world, 1).target, Some(EntityId(6)));
     assert_ne!(st(&world, 6) & status::SPOTTED, 0);
     // A unit without `TARGETABLE` cannot be locked, whatever its kind.
     world.get_mut(EntityId(2)).unwrap().flags &= !xeno_formats::usg::flag::TARGETABLE;
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     assert_eq!(m(&world, 1).target, Some(EntityId(6)));
 }
 
@@ -257,7 +293,7 @@ fn the_upkeep_warns_the_target_and_works_out_its_bits() {
         x: Fixed::from_int(100),
         y: Fixed::from_int(102),
     };
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     step_at(&mut world, 10);
     assert_eq!(world.lock_window, (0x1000, 0x300));
     assert_eq!(parts_of(&world, 1).targeting, 6);
@@ -296,7 +332,7 @@ fn the_upkeep_loses_a_far_target_and_drops_a_destroyed_one() {
     let t = synthetic_tables();
     let text = t.sensing.messages;
     let mut world = world();
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     // Kept while its last distance is within the locking range, even if now past.
     world.get_mut(EntityId(2)).unwrap().position.x = Fixed::from_int(109);
     step_at(&mut world, 10);
@@ -307,7 +343,7 @@ fn the_upkeep_loses_a_far_target_and_drops_a_destroyed_one() {
     assert!(m(&world, 1).panel.queue.contains(&text.lost));
     // Gone: dropped with no event.
     let mut world = self::world();
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     world.remove(EntityId(2));
     step_at(&mut world, 10);
     assert_eq!((m(&world, 1).target, m(&world, 1).script.events), (None, 0));
@@ -335,7 +371,7 @@ fn the_lock_is_on_its_target_s_memory_not_its_slot() {
     // A destroyed robot's slot taken by a relay: the lock stays on the robot's memory,
     // `GONE`, and is dropped (the port followed the slot to the relay before T-203).
     let mut world = world();
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     world.remove(EntityId(2));
     world.insert(EntityId(2), small(4, flag::TARGETABLE, 102));
     let ghost = m(&world, 1).target.unwrap();
@@ -353,7 +389,7 @@ fn the_lock_is_on_its_target_s_memory_not_its_slot() {
     // follows it, a shot that is not targetable, bearing and distance worked out.
     let mut world = self::world();
     world.insert(EntityId(5), small(4, flag::TARGETABLE | flag::ALIEN, 102));
-    lock(&mut world, EntityId(1), EntityId(5), &t, &mut Vec::new());
+    lock_on(&mut world, 5, &t);
     world.remove(EntityId(5));
     world.insert(EntityId(9), small(7, 0, 104));
     assert_eq!(m(&world, 1).target, Some(EntityId(9)));
@@ -372,7 +408,7 @@ fn the_lock_is_on_its_target_s_memory_not_its_slot() {
 fn a_target_s_running_ecm_loses_the_lock() {
     let t = synthetic_tables();
     let mut world = world();
-    lock(&mut world, EntityId(1), EntityId(2), &t, &mut Vec::new());
+    lock_on(&mut world, 2, &t);
     // The time running loses it, not the status bit.
     world.get_mut(EntityId(2)).unwrap().status |= xeno_formats::usg::status::ECM;
     step_at(&mut world, 10);
