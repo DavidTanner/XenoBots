@@ -490,7 +490,7 @@ pub fn view_records(view: crate::screens::View) -> &'static [u8] {
 /// Alt+Q, the only key word the situation room's end handler acts on.
 const ALT_Q: u16 = 0x2010;
 /// The situation room's sprite buttons, by widget type (`docs/screens.md`).
-mod button {
+pub(crate) mod button {
     pub const SCROLL_UP: u16 = 0x54;
     pub const SCROLL_DOWN: u16 = 0x56;
     pub const VIEW: u16 = 0x58;
@@ -1224,6 +1224,24 @@ impl Mission {
             Run::Parked(_) => None,
         };
         self.log_change(change, programs);
+    }
+
+    /// The key legend's labels for the view open (T-217, `legend`): each widget with a
+    /// key and its key's name; `wasd` labels a console through T-216's swap.
+    pub fn legend(&self, assets: &Assets, wasd: bool) -> Vec<(Rect, String)> {
+        match self.viewed {
+            Viewed::Base => {
+                crate::legend::labels(&assets.views.situation, None, |w| self.mode_of(w), false)
+            }
+            Viewed::Robot(slot) => {
+                let Some(robot) = self.book().get(slot) else {
+                    return Vec::new();
+                };
+                let view = assets.console_tables(robot.kind);
+                let byte = |w: &views::Widget| self.widget_byte(slot, w);
+                crate::legend::labels(view, Some(robot.kind), byte, wasd)
+            }
+        }
     }
 
     #[cfg(test)]
@@ -8776,5 +8794,69 @@ pub mod tests {
             }
         });
         assert_eq!(lost, Some(Request::Over { won: false }));
+    }
+
+    /// The key legend (T-217) on every stock scenario's situation room and each of the
+    /// player's robots' consoles: every label in font 0, inside 320x200, apart from the
+    /// others; each console kind and the room label what they should; and Ctrl+F12, the
+    /// legend's key, is bound by none of the mission views' tables.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_key_legend_labels_every_view_inside_the_screen() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let v = &assets.views;
+        for view in [&v.situation, &v.humanoid, &v.scorpion, &v.scout] {
+            assert!(view.keys.iter().all(|&(word, _)| word != 0x1058));
+        }
+        let font = &assets.fonts[&0];
+        let (cell, rows) = (usize::from(font.header.width), font.rows());
+        let mut seen = BTreeMap::new();
+        for (name, scenario) in &assets.scenarios {
+            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+            let mut views = vec![("situation room".to_string(), m.legend(&assets, false))];
+            for slot in m.robots() {
+                let kind = m.book().get(slot).unwrap().kind;
+                m.view_robot(slot).unwrap();
+                for wasd in [false, true] {
+                    views.push((format!("{kind:?} wasd {wasd}"), m.legend(&assets, wasd)));
+                }
+            }
+            for (view, labels) in views {
+                let placed = crate::legend::place(&labels, cell, rows, (320, 200));
+                let boxes: Vec<_> = placed
+                    .iter()
+                    .map(|p| (p.x, p.y, cell * p.text.len() + 2, rows + 2))
+                    .collect();
+                for (i, &(x, y, w, h)) in boxes.iter().enumerate() {
+                    let p = &placed[i];
+                    assert!(x + w <= 320 && y + h <= 200, "{name} {view}: {p:?}");
+                    assert!(p.text.bytes().all(|c| font.glyph(c).is_some()), "{p:?}");
+                    for (j, &(bx, by, bw, bh)) in boxes[..i].iter().enumerate() {
+                        let apart = x + w <= bx || bx + bw <= x || y + h <= by || by + bh <= y;
+                        assert!(apart, "{name} {view}: {p:?} on {:?}", placed[j]);
+                    }
+                }
+                let texts: Vec<String> = labels.into_iter().map(|(_, t)| t).collect();
+                if let Some(before) = seen.insert(view.clone(), texts.clone()) {
+                    assert_eq!(before, texts, "{name} {view}");
+                }
+            }
+        }
+        let texts = |view: &str| seen[view].join(" ");
+        assert_eq!(
+            texts("situation room"),
+            "ALT+Q TAB SPACE 1 2 3 4 5 6 F2 F3 ALT+Q =/- I U B N G O S M R C"
+        );
+        for view in seen.keys() {
+            println!("{view}: {}", texts(view));
+        }
     }
 }
