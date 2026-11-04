@@ -849,6 +849,21 @@ default (500 ms, 10.9 a second), whatever else is pressed or released. The repea
 replays exactly. Releasing the arrow, or the window losing focus, stops them. The
 situation room, dialogs and every other screen keep the system's repeat.
 
+**WASD (T-216), a departure from the original.** The original reads only the arrows.
+With `--wasd`, or after Shift+F12 (a window key, `docs/screens.md`, "Keys that only the
+port uses"), and off by default, while a console takes keys `translate` swaps each of
+W, A, S and D with its arrow (Up, Left, Down, Right; the `E0` arrows, not the keypad's)
+before the input log, which records the codes the game sees, so a log replays without
+the setting. The letters then steer and change gear, with the held arrows' own repeat
+above, and the arrows take the letters' actions: Left the next target (A), Down the
+status page (S), Right the scorpion's dump (D), Up the scout's standing stance (W); the
+keypad's arrows still steer. Every code sent is one the consoles' tables already bind,
+so no new key reaches the game. With Ctrl or Alt held a key keeps its own code
+(Ctrl+Alt+S stays the shots; no table binds a modified arrow or letter but that one); a
+swapped key's repeats and release stay swapped even if the console closes or the
+setting changes while it is held. A swapped letter types no text, as an arrow types
+none. The situation room, dialogs, the pause and every other screen are untouched.
+
 | Key | Humanoid | Scorpion | Scout | What it does |
 |---|---|---|---|---|
 | Left, Right | `1000:acc0`, `accd` | `9420`, `942d` | `c5e3`, `c5f0` | The pilot takes over (`order_switch_to_manual`, `1000:d446`: +0x23 bit 7 cleared, event 0xb), then the heading asked for is the **heading** less or plus `Gears::turn` (0x100, 1/256 of a turn, in the stock build). A held key repeats from the heading as it turns |

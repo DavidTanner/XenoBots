@@ -132,6 +132,11 @@ struct Cli {
             .map(|s| s.parse::<u64>().expect("listed values parse")),
     )]
     speed: u64,
+
+    /// Not in the original: on the robot consoles, W, A, S and D act as Up, Left, Down
+    /// and Right, and the arrows as W, A, S and D. Shift+F12 switches it in play.
+    #[arg(long)]
+    wasd: bool,
 }
 
 /// `--screen`'s values.
@@ -299,6 +304,7 @@ fn main() -> ExitCode {
         cli.aspect,
         cli.fullscreen,
         cli.speed,
+        cli.wasd,
         viewer,
         intro,
         drop,
@@ -403,5 +409,13 @@ mod tests {
             let e = speed(&["--speed", bad]).unwrap_err().to_string();
             assert!(e.contains("possible values: 1, 2, 4"), "{e}");
         }
+    }
+
+    #[test]
+    fn wasd_is_off_unless_asked_for() {
+        let wasd =
+            |args: &[&str]| Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.wasd);
+        assert!(!wasd(&[]).unwrap());
+        assert!(wasd(&["--wasd"]).unwrap());
     }
 }
