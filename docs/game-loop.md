@@ -97,8 +97,10 @@ the frame so the game's picture is untouched), and the window title shows it too
   drives runs faster, the sound effects too (they play as the sim posts them, so more
   of them a second), and a view's fades. The music keeps real time (its driver is
   ticked once per real retrace), and so does the mouse. So, at the user's request, do
-  the walking sound and the colour records: only every Nth footstep event (13, 14,
-  15) is played, and the extra steps run the DAC without its records
+  the walking sound and the colour records: only every Nth footstep (events 13, 14
+  and 15) is played, a footstep being a run of steps in a row that post one (the
+  scorpion posts on every step its leg step is even, the humanoid and the scout once
+  as a leg lands), played whole, and the extra steps run the DAC without its records
   (`Dac::retrace_with`), so a console's radar sweep and the views' blinks and
   rotations look as at 1x. Neither touches the sim, so the log still replays. The cutscenes, the intro drop, the map
   room and every other screen stay 1x, so the chosen speed takes effect on entering a

@@ -73,6 +73,34 @@ fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) 
     fb.draw_text(font, &mut cursor, text.as_bytes(), TextMode::Opaque);
 }
 
+/// At a game speed of N (T-215) the legs step N times as often, so only every Nth
+/// footstep is played. A footstep is a run of retraces in a row that post one: the
+/// humanoid's and the scout's post on one retrace as a leg lands, the scorpion's on
+/// every retrace its step is even, each restarting the sound. A played run plays
+/// whole, so the sound is the one 1x gives, at 1x's pace.
+#[derive(Debug, Default)]
+struct Footsteps {
+    /// Runs since the last played one.
+    runs: u64,
+    /// The last retrace that posted a footstep.
+    last: Option<u64>,
+    /// Whether the current run plays.
+    play: bool,
+}
+
+impl Footsteps {
+    /// Whether a footstep posted on `retrace` is played at `speed`.
+    fn hear(&mut self, retrace: u64, speed: u64) -> bool {
+        let same_run = self.last.is_some_and(|last| retrace <= last + 1);
+        if !same_run {
+            self.runs = (self.runs + 1) % speed;
+            self.play = self.runs == 0;
+        }
+        self.last = Some(retrace);
+        self.play
+    }
+}
+
 /// The footstep sound events (`xeno_sim::motion`), kept at 1x at a game speed.
 const FOOTSTEPS: [u8; 3] = [
     xeno_sim::motion::FOOTSTEP_HUMANOID,
@@ -147,7 +175,7 @@ pub fn run(
         front,
         log_base: 0,
         sixty_hz: 0,
-        footsteps: 0,
+        footsteps: Footsteps::default(),
         meter: Meter::default(),
         fb,
         palette,
@@ -198,8 +226,8 @@ struct App {
     log_base: u64,
     /// The 60 Hz count at the last retrace, to tell a cutscene when it moves.
     sixty_hz: u64,
-    /// Footsteps heard since the last one played, at a game speed (T-215).
-    footsteps: u64,
+    /// Keeps the walking sound at 1x at a game speed (T-215).
+    footsteps: Footsteps,
     meter: Meter,
     /// The picture to show.
     fb: Framebuffer,
@@ -465,11 +493,8 @@ impl App {
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
                 for sound in screens.take_sounds() {
                     match sound {
-                        // At a game speed of N (T-215) the legs step N times as often;
-                        // every Nth footstep keeps the walking sound at 1x.
                         crate::mission::Sound::Play(event) if FOOTSTEPS.contains(&event) => {
-                            self.footsteps = (self.footsteps + 1) % self.clock.speed();
-                            if self.footsteps == 0 {
+                            if self.footsteps.hear(retrace, self.clock.speed()) {
                                 self.music.effect(event);
                             }
                         }
@@ -779,6 +804,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn footsteps_play_every_nth_run_at_a_speed() {
+        // A scorpion's: runs of 3 retraces in a row, 5 apart.
+        let posts: Vec<u64> = (0..8)
+            .flat_map(|run| (0..3).map(move |i| run * 5 + i))
+            .collect();
+        for speed in SPEEDS {
+            let mut footsteps = Footsteps::default();
+            let played: Vec<u64> = posts
+                .iter()
+                .copied()
+                .filter(|&r| footsteps.hear(r, speed))
+                .collect();
+            // Whole runs, every Nth: the first of them N runs in.
+            let runs: Vec<u64> = (0..8).filter(|run| (run + 1) % speed == 0).collect();
+            let want: Vec<u64> = runs
+                .iter()
+                .flat_map(|run| (0..3).map(move |i| run * 5 + i))
+                .collect();
+            assert_eq!(played, want, "{speed}x");
+        }
+        // A humanoid's: single retraces, all played at 1x.
+        let mut footsteps = Footsteps::default();
+        assert!([3, 9, 15].iter().all(|&r| footsteps.hear(r, 1)));
+    }
+
+    #[test]
     fn the_speed_label_sits_top_right_in_steady_colours() {
         let fonts = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block());
         let font = &fonts.unwrap()[0];
@@ -863,7 +914,7 @@ mod tests {
             front,
             log_base: 0,
             sixty_hz: 0,
-            footsteps: 0,
+            footsteps: Footsteps::default(),
             meter: Meter::default(),
             fb,
             palette,
