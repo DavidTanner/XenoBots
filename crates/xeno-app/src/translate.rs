@@ -1,5 +1,5 @@
 //! Turns winit window events into the game's input events (`input`) and the window's
-//! own actions: quit, the fullscreen toggle and the game speed. Only this module and `window` see winit.
+//! own actions: quit, the fullscreen toggle, the game speed and WASD. Only this module and `window` see winit.
 //!
 //! The mouse is mapped from window pixels to view pixels through the presented
 //! layout ([`Translator::set_layout`], `xeno_render::Layout::view_point`): moves are
@@ -25,6 +25,16 @@ const ARROWS: [u16; 8] = [0x48, 0x4b, 0x4d, 0x50, 0xe048, 0xe04b, 0xe04d, 0xe050
 /// second), which the original's INT 9 handler sees as repeated make codes.
 pub const ARROW_DELAY: u32 = 35;
 pub const ARROW_EVERY: u32 = 7;
+/// With WASD on a console (T-216), each letter and its arrow (the one with `E0`, not
+/// the keypad's) swap codes: W Up, A Left, S Down, D Right.
+const WASD: [(u16, u16); 4] = [
+    (0x11, 0xe048),
+    (0x1e, 0xe04b),
+    (0x1f, 0xe050),
+    (0x20, 0xe04d),
+];
+/// Ctrl and Alt: with either held a key keeps its own code (Ctrl+Alt+S stays the shots).
+const CTRL_ALT: [u16; 4] = [0x1d, 0xe01d, 0x38, 0xe038];
 
 /// What the window should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +44,9 @@ pub enum WindowAction {
     LeaveFullscreen,
     /// F12: the next game speed (T-215). The original binds plain F12 nowhere.
     CycleSpeed,
+    /// Shift+F12: WASD on the consoles on or off (T-216). The original binds Shift+F12
+    /// nowhere.
+    ToggleWasd,
 }
 
 /// Collects the game's input events between retraces, and decides the window keys.
@@ -41,6 +54,8 @@ pub enum WindowAction {
 pub struct Translator {
     /// Whether Alt (Option on macOS) is held.
     alt: bool,
+    /// Whether Shift is held.
+    shift: bool,
     /// The keys the game has seen go down and not up.
     held: Keys,
     pending: Vec<InputEvent>,
@@ -50,6 +65,11 @@ pub struct Translator {
     /// Set while a robot console takes keys (T-207): held arrows then repeat by the
     /// port's own count ([`ARROW_DELAY`], [`ARROW_EVERY`]), not the system's.
     pub console_arrows: bool,
+    /// WASD (T-216, `--wasd`, Shift+F12): while a console takes keys, W, A, S and D
+    /// and the arrows swap codes ([`WASD`]) before the input log.
+    pub wasd: bool,
+    /// The keys held whose press was swapped, so their release is swapped too.
+    swapped: Vec<ScanCode>,
     /// The arrows held, and the retraces each has been held.
     arrows: Vec<(ScanCode, u32)>,
     /// The layout last presented and its view, to map the cursor.
@@ -75,6 +95,7 @@ impl Translator {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.alt = modifiers.state().alt_key();
+                self.shift = modifiers.state().shift_key();
                 None
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -133,6 +154,7 @@ impl Translator {
         };
         let window_key = match code {
             ScanCode::F11 => Some(WindowAction::ToggleFullscreen),
+            ScanCode::F12 if self.shift => Some(WindowAction::ToggleWasd),
             ScanCode::F12 => Some(WindowAction::CycleSpeed),
             ScanCode::ENTER | ScanCode::KEYPAD_ENTER if self.alt => {
                 Some(WindowAction::ToggleFullscreen)
@@ -152,6 +174,7 @@ impl Translator {
         {
             return (!repeat).then_some(action);
         }
+        let (code, swapped) = self.swap(code, pressed);
         // Not faithful (T-207): the keyboard repeats only the last key pressed, so in the
         // original Space or any key stopped a held arrow's turn. The port repeats each
         // held arrow itself (in `take`) and drops the system's repeat for it.
@@ -170,11 +193,43 @@ impl Translator {
                 code,
                 repeat: repeat && !was_up,
             });
-            self.pending.extend(typed);
+            if !swapped {
+                self.pending.extend(typed);
+            }
         } else if self.held.release(code) {
             self.pending.push(InputEvent::KeyUp { code });
         }
         None
+    }
+
+    /// The code the game sees for physical `code` (T-216), and whether it was swapped
+    /// (then it types nothing, as an arrow doesn't). A release, and a held key's
+    /// repeats, follow its first press.
+    fn swap(&mut self, code: ScanCode, pressed: bool) -> (ScanCode, bool) {
+        let Some(other) = WASD.iter().find_map(|&(letter, arrow)| match code.0 {
+            c if c == letter => Some(arrow),
+            c if c == arrow => Some(letter),
+            _ => None,
+        }) else {
+            return (code, false);
+        };
+        let was = self.swapped.contains(&code);
+        let now = was
+            || (pressed
+                && self.wasd
+                && self.console_arrows
+                && !self.held.is_down(code)
+                && !CTRL_ALT.iter().any(|&c| self.held.is_down(ScanCode(c))));
+        if now && !was {
+            self.swapped.push(code);
+        } else if was && !pressed {
+            self.swapped.retain(|&c| c != code);
+        }
+        if now {
+            (ScanCode(other), true)
+        } else {
+            (code, false)
+        }
     }
 
     /// The layout the picture was last presented with (window pixels) and its view. A
@@ -234,7 +289,8 @@ impl Translator {
         }
         self.held = Keys::default();
         self.arrows.clear();
-        self.alt = false;
+        self.swapped.clear();
+        (self.alt, self.shift) = (false, false);
     }
 
     /// The events since the last call, for the next retrace; called once a retrace.
@@ -686,5 +742,146 @@ mod tests {
         let mut t = Translator::default();
         t.key(sc(0xe048), true, false, None, false);
         assert_eq!(presses_of(&mut t, 0xe048, 60, |_, _| {}), [0]);
+    }
+
+    fn up(code: u16) -> InputEvent {
+        InputEvent::KeyUp {
+            code: ScanCode(code),
+        }
+    }
+
+    #[test]
+    fn wasd_swaps_the_letters_and_the_arrows_only_on_a_console() {
+        let tap = |t: &mut Translator, code: u16, text| {
+            t.key(sc(code), true, false, text, false);
+            t.key(sc(code), false, false, None, false);
+            events(t)
+        };
+        let letters = [
+            (0x11, "w", 0xe048),
+            (0x1e, "a", 0xe04b),
+            (0x1f, "s", 0xe050),
+            (0x20, "d", 0xe04d),
+        ];
+        // On a console: each letter is its arrow, typing nothing, and each arrow its
+        // letter (so next target, the status page, the dump and the stance stay
+        // reachable); the keypad's arrows stay arrows.
+        let mut t = Translator {
+            console_arrows: true,
+            wasd: true,
+            ..Translator::default()
+        };
+        for (letter, text, arrow) in letters {
+            assert_eq!(
+                tap(&mut t, letter, Some(text)),
+                [down(arrow, false), up(arrow)]
+            );
+            assert_eq!(tap(&mut t, arrow, None), [down(letter, false), up(letter)]);
+        }
+        assert_eq!(tap(&mut t, 0x48, None), [down(0x48, false), up(0x48)]);
+        // With Ctrl or Alt held a letter keeps its code: Ctrl+Alt+S is still the shots.
+        t.key(sc(0x1d), true, false, None, false);
+        t.key(sc(0x38), true, false, None, false);
+        events(&mut t);
+        let s = [down(0x1f, false), InputEvent::Text('s'), up(0x1f)];
+        assert_eq!(tap(&mut t, 0x1f, Some("s")), s);
+        // Off a console (the situation room, a dialog, the pause, the other screens),
+        // or with WASD off, nothing changes.
+        for (console, wasd) in [(false, true), (true, false), (false, false)] {
+            let mut t = Translator {
+                console_arrows: console,
+                wasd,
+                ..Translator::default()
+            };
+            for (letter, text, arrow) in letters {
+                let ch = text.chars().next().unwrap();
+                let typed = [down(letter, false), InputEvent::Text(ch), up(letter)];
+                assert_eq!(tap(&mut t, letter, Some(text)), typed);
+                assert_eq!(tap(&mut t, arrow, None), [down(arrow, false), up(arrow)]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_swapped_key_is_released_as_it_was_pressed() {
+        let mut t = Translator {
+            console_arrows: true,
+            wasd: true,
+            ..Translator::default()
+        };
+        t.key(sc(0x11), true, false, Some("w"), false);
+        // A dialog opens and WASD goes off while W is held: its repeat and its release
+        // are still Up's.
+        (t.console_arrows, t.wasd) = (false, false);
+        t.key(sc(0x11), true, true, Some("w"), false);
+        t.key(sc(0x11), false, false, None, false);
+        assert_eq!(
+            events(&mut t),
+            [down(0xe048, false), down(0xe048, true), up(0xe048)]
+        );
+        // A letter held before the console took keys stays the letter.
+        t.key(sc(0x1e), true, false, Some("a"), false);
+        (t.console_arrows, t.wasd) = (true, true);
+        t.key(sc(0x1e), true, true, Some("a"), false);
+        t.key(sc(0x1e), false, false, None, false);
+        let a = InputEvent::Text('a');
+        assert_eq!(
+            events(&mut t),
+            [down(0x1e, false), a, down(0x1e, true), a, up(0x1e)]
+        );
+    }
+
+    #[test]
+    fn a_held_wasd_letter_repeats_as_its_arrow_whatever_else_is_pressed() {
+        let a = 0x1e;
+        let os = |t: &mut Translator, r: u32| {
+            t.key(sc(a), true, r > 0, Some("a"), false);
+        };
+        let new = || Translator {
+            console_arrows: true,
+            wasd: true,
+            ..Translator::default()
+        };
+        let mut t = new();
+        let alone = presses_of(&mut t, 0xe04b, 60, os);
+        assert_eq!(alone, [0, 35, 42, 49, 56]);
+        let mut t = new();
+        let busy = presses_of(&mut t, 0xe04b, 60, |t, r| {
+            if r == 0 {
+                os(t, 0);
+            }
+            match r {
+                10 => t.key(sc(0x39), true, false, Some(" "), false),
+                11..=39 => t.key(sc(0x39), true, true, Some(" "), false),
+                45 => t.key(sc(0x39), false, false, None, false),
+                47 => t.key(sc(0x20), true, false, Some("d"), false),
+                48 => t.key(sc(0x20), false, false, None, false),
+                _ => None,
+            };
+        });
+        assert_eq!(busy, alone);
+    }
+
+    #[test]
+    fn shift_f12_switches_wasd_and_f12_alone_the_speed() {
+        let mut t = Translator::default();
+        let shift = |t: &mut Translator, held| {
+            let state = if held {
+                ModifiersState::SHIFT
+            } else {
+                ModifiersState::empty()
+            };
+            t.window_event(&WindowEvent::ModifiersChanged(state.into()), false)
+        };
+        shift(&mut t, true);
+        let toggle = Some(WindowAction::ToggleWasd);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), toggle);
+        assert_eq!(t.key(sc(0x58), true, true, None, false), None);
+        assert_eq!(t.key(sc(0x58), false, false, None, false), None);
+        shift(&mut t, false);
+        let speed = Some(WindowAction::CycleSpeed);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), speed);
+        t.key(sc(0x58), false, false, None, false);
+        assert_eq!(events(&mut t), []);
     }
 }

@@ -122,13 +122,14 @@ pub enum FrontEnd {
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
 /// or closes the window. `music` plays what the cutscenes and screens cue; a mission
-/// in play runs `speed` retraces a real one (T-215).
+/// in play runs `speed` retraces a real one (T-215); `wasd` starts WASD on (T-216).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
     aspect: Aspect,
     fullscreen: bool,
     speed: u64,
+    wasd: bool,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -195,6 +196,7 @@ pub fn run(
         music,
         speed,
     };
+    app.input.wasd = wasd;
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop.run_app(&mut app)?;
@@ -327,7 +329,7 @@ impl App {
     fn create_surface(&self, event_loop: &ActiveEventLoop) -> Result<Surface, Box<dyn Error>> {
         let view = self.fb.view();
         let attributes = Window::default_attributes()
-            .with_title(&self.title)
+            .with_title(self.full_title())
             .with_inner_size(initial_size(view, self.scale, self.aspect))
             .with_min_inner_size(physical(view))
             .with_fullscreen(
@@ -544,14 +546,23 @@ impl App {
 
     fn set_title(&self) {
         if let Some(surface) = &self.surface {
-            let speed = match self.speed {
-                1 => String::new(),
-                n => format!(" - speed {n}x (F12)"),
-            };
-            surface
-                .window()
-                .set_title(&format!("{}{speed}", self.title));
+            surface.window().set_title(&self.full_title());
         }
+    }
+
+    /// The title with the port's settings that are on: the game speed (T-215), WASD
+    /// (T-216).
+    fn full_title(&self) -> String {
+        let speed = match self.speed {
+            1 => String::new(),
+            n => format!(" - speed {n}x (F12)"),
+        };
+        let wasd = if self.input.wasd {
+            " - WASD (Shift+F12)"
+        } else {
+            ""
+        };
+        format!("{}{speed}{wasd}", self.title)
     }
 
     /// The speed the clock should run at: the chosen one while a mission is in play,
@@ -754,6 +765,11 @@ impl ApplicationHandler for App {
                 let at = SPEEDS.iter().position(|&s| s == self.speed).unwrap_or(0);
                 self.speed = SPEEDS[(at + 1) % SPEEDS.len()];
                 log::info!("game speed {}x (in a mission)", self.speed);
+                self.set_title();
+            }
+            Some(WindowAction::ToggleWasd) => {
+                self.input.wasd = !self.input.wasd;
+                log::info!("WASD on the consoles {}", self.input.wasd);
                 self.set_title();
             }
             None => {}
@@ -975,6 +991,21 @@ mod tests {
         };
         assert_eq!(screens.screen(), Screen::MapRoom);
         assert!(app.cutscene.is_none() && app.pointer_shown());
+    }
+
+    #[test]
+    fn the_title_shows_the_speed_and_wasd_when_on() {
+        use crate::screens::{Screen, tests};
+        let mut app = test_app(FrontEnd::Screens(Box::new(tests::new(Screen::MapRoom))));
+        app.title = "Xenobots".into();
+        assert_eq!(app.full_title(), "Xenobots");
+        app.input.wasd = true;
+        assert_eq!(app.full_title(), "Xenobots - WASD (Shift+F12)");
+        app.speed = 2;
+        assert_eq!(
+            app.full_title(),
+            "Xenobots - speed 2x (F12) - WASD (Shift+F12)"
+        );
     }
 
     #[test]
