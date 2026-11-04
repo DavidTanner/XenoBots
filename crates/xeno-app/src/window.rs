@@ -642,7 +642,16 @@ impl ApplicationHandler for App {
         // F12 (or anything else) may have changed the speed since the last wake-up.
         self.speed_changed(now, self.clock.retraces());
         let mut ran = false;
+        // At a game speed (T-215) a slow machine or a debug build would fall behind and
+        // then catch up for many steps at once, holding the mouse and keys back; the
+        // extra steps past half a retrace's time are dropped instead, so the game runs
+        // slower than chosen but the input stays prompt. Real retraces always run.
+        let budget = Rate::for_height(self.fb.view().height).time_of(1) / 2;
         for step in self.clock.advance(now) {
+            if step.extra && start.elapsed() > now + budget {
+                self.clock.drop_from(step.retrace, now);
+                break;
+            }
             ran = true;
             if self.tick(step) {
                 self.restart_clock(now);

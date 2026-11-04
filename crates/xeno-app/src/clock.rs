@@ -109,6 +109,17 @@ impl Clock {
         })
     }
 
+    /// Drops the steps from `from` on, not run: the game speed's extra steps past a
+    /// wake-up's time budget (T-215). The clock restarts from `now`, as after a stall,
+    /// so the next step is a real retrace's first.
+    pub fn drop_from(&mut self, from: u64, now: Duration) {
+        let ran = from - 1;
+        self.dropped += self.retraces - ran;
+        self.retraces = ran;
+        self.epoch = now;
+        self.base = ran;
+    }
+
     /// When the next real retrace is due.
     pub fn next_due(&self) -> Duration {
         self.epoch
@@ -245,6 +256,24 @@ mod tests {
             assert_eq!(clock.dropped(), (420 - 70 - 10) * speed);
             assert_eq!(clock.next_due(), ms(6000) + Rate::MODE_13H.time_of(1));
         }
+    }
+
+    #[test]
+    fn extra_steps_over_budget_are_dropped() {
+        let ms = Duration::from_millis;
+        let mut clock = Clock::new(Rate::MODE_13H, Duration::ZERO).at_speed(4);
+        let steps: Vec<_> = clock.advance(ms(30)).collect();
+        assert_eq!(steps.len(), 8);
+        // Two steps ran; the rest of the batch is dropped and the clock restarts.
+        clock.drop_from(steps[2].retrace, ms(30));
+        assert_eq!((clock.retraces(), clock.dropped()), (2, 6));
+        assert_eq!(clock.next_due(), ms(30) + Rate::MODE_13H.time_of(1));
+        let next: Vec<_> = clock.advance(ms(45)).collect();
+        assert_eq!(next.len(), 4);
+        assert_eq!(
+            (next[0].retrace, next[0].extra, next[1].extra),
+            (3, false, true)
+        );
     }
 
     #[test]

@@ -106,6 +106,12 @@ speed when it isn't 1x.
 - **Catch-up cap.** One wake-up runs at most 10 real retraces, 10 N steps; after a
   longer stall the rest are dropped as at 1x, so a machine too slow for N steps a
   retrace runs the mission slower than N but never spirals.
+- **Time budget.** An extra step that would start more than half a retrace (about
+  7 ms) into its wake-up is dropped with the rest of the batch (`Clock::drop_from`),
+  the clock restarting as after a stall; a real retrace's first step always runs. Without
+  it a debug build (about 3 ms a mission step) fell behind at 4x and then caught up
+  dozens of steps at once, and the mouse and clicks lagged while it did. Dropped steps
+  never take a log number, so the log still replays.
 - **Cost.** In a release build on the developer's machine (Apple silicon), four mission
   steps take about 0.5 ms a real retrace on a humanoid console and 0.6 ms in the
   situation room (worst 0.8 ms over a minute), against a 14.3 ms budget at 70 Hz: 4x
