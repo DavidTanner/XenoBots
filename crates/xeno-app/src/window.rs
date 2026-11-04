@@ -28,6 +28,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 use xeno_formats::font::Font;
+use xeno_formats::maproom::Rect;
 use xeno_render::{Aspect, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode};
 
 use crate::clock::{Clock, Rate, SPEEDS, Step};
@@ -35,31 +36,35 @@ use crate::drop;
 use crate::input::{InputLog, Keys, Mouse};
 use crate::intro::{Cutscene, Kind};
 use crate::keymap::KeyMap;
+use crate::legend;
 use crate::music::{Cue, Jukebox};
 use crate::pointer;
 use crate::screens::{Screen, Screens};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
 
-/// Draws the game speed's label (T-215), the port's own text such as `4X`, at the
-/// view's top right in `font`: the palette's brightest colour on its darkest, leaving
-/// out the colours the views' records animate (16..=31, 253..=255) so it never blinks.
-fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) {
+/// The port's labels' colours: the palette's brightest colour and its darkest, leaving
+/// out the colours the views' records animate (16..=31, 253..=255) so they never blink.
+fn steady_colours(palette: &Palette) -> Option<(u8, u8)> {
     let steady = || (0..=252u8).filter(|c| !(16..=31).contains(c));
     let level = |c: &u8| {
         let Rgb { r, g, b } = palette.colors[usize::from(*c)];
         u16::from(r) + u16::from(g) + u16::from(b)
     };
-    let (Some(light), Some(dark)) = (steady().max_by_key(level), steady().min_by_key(level)) else {
-        return;
-    };
-    let text = format!("{speed}X");
+    Some((steady().max_by_key(level)?, steady().min_by_key(level)?))
+}
+
+/// One of the port's labels: `text` in `font` in a box one pixel round it, its corner at
+/// surface pixel (`x`, `y`), light on dark.
+fn draw_label(
+    fb: &mut Framebuffer,
+    font: &Font,
+    (light, dark): (u8, u8),
+    (x, y): (usize, usize),
+    text: &str,
+) {
     let (cell, rows) = (usize::from(font.header.width), font.rows());
     let width = cell * text.len() + 2;
-    let (ox, oy) = fb.origin();
-    let x = ox + fb.view().width.saturating_sub(width + 2);
-    let y = oy + 2;
-    // A box one pixel round the text, then the text in opaque cells.
     let stride = fb.surface().width;
     for row in y..y + rows + 2 {
         for column in x..x + width {
@@ -71,6 +76,33 @@ fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) 
     let mut cursor = TextCursor::at(x as i32 + 1, y as i32 + 1, light);
     cursor.background = dark;
     fb.draw_text(font, &mut cursor, text.as_bytes(), TextMode::Opaque);
+}
+
+/// Draws the game speed's label (T-215), the port's own text such as `4X`, at the
+/// view's top right in `font`, in the steady colours.
+fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) {
+    let Some(colours) = steady_colours(palette) else {
+        return;
+    };
+    let text = format!("{speed}X");
+    let width = usize::from(font.header.width) * text.len() + 2;
+    let (ox, oy) = fb.origin();
+    let x = ox + fb.view().width.saturating_sub(width + 2);
+    draw_label(fb, font, colours, (x, oy + 2), &text);
+}
+
+/// Draws the key legend (T-217): each label placed by `legend::place` in the view, as
+/// the speed's label.
+fn draw_legend(fb: &mut Framebuffer, palette: &Palette, font: &Font, labels: &[(Rect, String)]) {
+    let Some(colours) = steady_colours(palette) else {
+        return;
+    };
+    let view = fb.view();
+    let (cell, rows) = (usize::from(font.header.width), font.rows());
+    let (ox, oy) = fb.origin();
+    for p in legend::place(labels, cell, rows, (view.width, view.height)) {
+        draw_label(fb, font, colours, (ox + p.x, oy + p.y), &p.text);
+    }
 }
 
 /// At a game speed of N (T-215) the legs step N times as often, so only every Nth
@@ -195,6 +227,7 @@ pub fn run(
         error: None,
         music,
         speed,
+        legend: false,
     };
     app.input.wasd = wasd;
     let event_loop = EventLoop::new()?;
@@ -263,6 +296,8 @@ struct App {
     /// The game speed (T-215, one of [`SPEEDS`]): F12 cycles it, and it applies
     /// while a mission is in play.
     speed: u64,
+    /// The key legend (T-217): Ctrl+F12 labels the view's widgets with their keys.
+    legend: bool,
 }
 
 /// Counts for the once-a-second rate log.
@@ -375,12 +410,24 @@ impl App {
             self.fullscreen,
             layout.picture(self.fb.view())
         );
-        // The game speed's label (T-215), over a copy of the picture for this frame.
+        // The game speed's label (T-215) and the key legend (T-217), over a copy of the
+        // picture for this frame.
         let saved = match &self.front {
-            FrontEnd::Screens(screens) if speed > 1 => screens.font(0).map(|font| {
+            FrontEnd::Screens(screens) => screens.font(0).and_then(|font| {
+                let labels = if self.legend {
+                    screens.legend(self.input.wasd)
+                } else {
+                    Vec::new()
+                };
+                if speed == 1 && labels.is_empty() {
+                    return None;
+                }
                 let saved = self.fb.clone();
-                draw_speed(&mut self.fb, &self.palette, font, speed);
-                saved
+                if speed > 1 {
+                    draw_speed(&mut self.fb, &self.palette, font, speed);
+                }
+                draw_legend(&mut self.fb, &self.palette, font, &labels);
+                Some(saved)
             }),
             _ => None,
         };
@@ -772,6 +819,10 @@ impl ApplicationHandler for App {
                 log::info!("WASD on the consoles {}", self.input.wasd);
                 self.set_title();
             }
+            Some(WindowAction::ToggleLegend) => {
+                self.legend = !self.legend;
+                log::info!("key legend {}", self.legend);
+            }
             None => {}
         }
         match event {
@@ -949,6 +1000,7 @@ mod tests {
             error: None,
             music: Jukebox::default(),
             speed: 1,
+            legend: false,
         }
     }
 

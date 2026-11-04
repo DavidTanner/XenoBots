@@ -215,8 +215,6 @@ pub struct Placed {
 /// `width` by `height` view: on its widget's centre, else above, below, left or right
 /// of it, the first that overlaps no box placed before; on the centre if none is free.
 /// Every box is kept inside the view.
-// The window places them in T-217's part 2.
-#[allow(dead_code)]
 pub fn place(
     labels: &[(Rect, String)],
     cell: usize,
