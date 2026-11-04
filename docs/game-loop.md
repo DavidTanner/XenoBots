@@ -30,7 +30,8 @@ Reference); 25.175 MHz is the VGA's nominal 25 MHz clock.
   at 70 Hz), so a short hiccup is caught up unseen. After a longer stall (a debugger, a
   blocked event loop, a sleeping laptop) the rest are **dropped**: the clock restarts
   from that moment, so the game resumes where it was, as if paused, instead of racing.
-  Dropped retraces are counted and logged.
+  Dropped retraces are counted and logged. At a game speed above 1x the cap is 10
+  real retraces, each its N steps ("Game speed (T-215)" below).
 - **The 60 Hz chain.** The original also runs a 60 Hz hook chain, advanced from each
   retrace by the frame period (it also drives the game clock `DS:0x374`). The port
   derives it the same way: after retrace `n` the 60 Hz count is
@@ -69,6 +70,58 @@ frame shows the latest state.
   retraces run, the 60 Hz ticks and the frames drawn, per second and since the window
   opened, and any retraces dropped. The test card's white marker steps one pixel per
   retrace and its yellow one per 60 Hz tick.
+
+## Game speed (T-215)
+
+**Not in the original**, and off by default: a deliberate departure from "faithful
+first", asked for by the user. `--speed N` (1, 2 or 4) or F12 in the window (1x, 2x,
+4x, then 1x again) runs a mission in play N times as fast. While it does, the window
+draws a label such as `4X` at the picture's top right (font 0 from the user's
+`mgavideo.dvr`, the palette's brightest steady colour on its darkest, over a copy of
+the frame so the game's picture is untouched), and the window title shows it too.
+
+- **More steps, not shorter ones.** The clock (`Clock::at_speed`) still wakes once per
+  real retrace and then runs N retrace steps, each exactly the step it is at 1x: the
+  sim, the robots' programs, the game clock, the views' turns (T-209's passes count
+  steps) and colour records advance N retraces for each real one. Only the last
+  step's frame is shown, since the window draws after the batch.
+- **Deterministic.** The steps are numbered on in the input log, and the host's events
+  all go to the first step of each real retrace (`Step::extra` is set on the others),
+  so a replay of the log gives the same state at any speed. Every step still takes
+  the console arrows' own repeats (T-207), which therefore count game steps: a held
+  arrow turns the robot, and changes gear, N times as fast, with the first repeat
+  after 35 steps (125 ms at 4x). F12 is a window
+  key, like F11: it never reaches the game or the log.
+- **What follows it.** Only a mission in play (`Screens::in_play`: a mission screen,
+  not paused by F1 and with no file dialog open). Inside it everything the retrace
+  drives runs faster, the sound effects too (they play as the sim posts them, so more
+  of them a second), and a view's fades. The music keeps real time (its driver is
+  ticked once per real retrace), and so does the mouse. So, at the user's request, do
+  the walking sound and the colour records: only every Nth footstep (events 13, 14
+  and 15) is played, a footstep being a run of steps in a row that post one (the
+  scorpion posts on every step its leg step is even, the humanoid and the scout once
+  as a leg lands), played whole, and the extra steps run the DAC without its records
+  (`Dac::retrace_with`), so a console's radar sweep and the views' blinks and
+  rotations look as at 1x. Neither touches the sim, so the log still replays. The cutscenes, the intro drop, the map
+  room and every other screen stay 1x, so the chosen speed takes effect on entering a
+  mission and stops on leaving it, pausing or opening a dialog. Each such change
+  restarts the clock at the new speed from that wake-up (the log counting on), and the
+  steps still due at the old speed in that wake-up are dropped, as at a mode change.
+- **Catch-up cap.** One wake-up runs at most 10 real retraces, 10 N steps; after a
+  longer stall the rest are dropped as at 1x, so a machine too slow for N steps a
+  retrace runs the mission slower than N but never spirals.
+- **Time budget.** An extra step that would start more than half a retrace (about
+  7 ms) into its wake-up is dropped with the rest of the batch (`Clock::drop_from`),
+  the clock restarting as after a stall; a real retrace's first step always runs. Without
+  it a debug build (about 3 ms a mission step) fell behind at 4x and then caught up
+  dozens of steps at once, and the mouse and clicks lagged while it did. Dropped steps
+  never take a log number, so the log still replays.
+- **Cost.** In a release build on the developer's machine (Apple silicon), four mission
+  steps take about 0.5 ms a real retrace on a humanoid console and 0.6 ms in the
+  situation room (worst 0.8 ms over a minute), against a 14.3 ms budget at 70 Hz: 4x
+  fits, with the present step (under 2 ms at 5K) on top.
+- **1x is unchanged.** At speed 1 no step is extra and the clock never restarts for
+  the speed, so the loop is exactly what it was.
 
 ## Input
 

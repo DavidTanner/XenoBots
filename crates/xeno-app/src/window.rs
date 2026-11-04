@@ -27,9 +27,10 @@ use winit::dpi::{LogicalSize, PhysicalSize, Size as WindowSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
-use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
+use xeno_formats::font::Font;
+use xeno_render::{Aspect, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode};
 
-use crate::clock::{Clock, Rate, Step};
+use crate::clock::{Clock, Rate, SPEEDS, Step};
 use crate::drop;
 use crate::input::{InputLog, Keys, Mouse};
 use crate::intro::{Cutscene, Kind};
@@ -39,6 +40,73 @@ use crate::pointer;
 use crate::screens::{Screen, Screens};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
+
+/// Draws the game speed's label (T-215), the port's own text such as `4X`, at the
+/// view's top right in `font`: the palette's brightest colour on its darkest, leaving
+/// out the colours the views' records animate (16..=31, 253..=255) so it never blinks.
+fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) {
+    let steady = || (0..=252u8).filter(|c| !(16..=31).contains(c));
+    let level = |c: &u8| {
+        let Rgb { r, g, b } = palette.colors[usize::from(*c)];
+        u16::from(r) + u16::from(g) + u16::from(b)
+    };
+    let (Some(light), Some(dark)) = (steady().max_by_key(level), steady().min_by_key(level)) else {
+        return;
+    };
+    let text = format!("{speed}X");
+    let (cell, rows) = (usize::from(font.header.width), font.rows());
+    let width = cell * text.len() + 2;
+    let (ox, oy) = fb.origin();
+    let x = ox + fb.view().width.saturating_sub(width + 2);
+    let y = oy + 2;
+    // A box one pixel round the text, then the text in opaque cells.
+    let stride = fb.surface().width;
+    for row in y..y + rows + 2 {
+        for column in x..x + width {
+            if let Some(p) = fb.pixels_mut().get_mut(row * stride + column) {
+                *p = dark;
+            }
+        }
+    }
+    let mut cursor = TextCursor::at(x as i32 + 1, y as i32 + 1, light);
+    cursor.background = dark;
+    fb.draw_text(font, &mut cursor, text.as_bytes(), TextMode::Opaque);
+}
+
+/// At a game speed of N (T-215) the legs step N times as often, so only every Nth
+/// footstep is played. A footstep is a run of retraces in a row that post one: the
+/// humanoid's and the scout's post on one retrace as a leg lands, the scorpion's on
+/// every retrace its step is even, each restarting the sound. A played run plays
+/// whole, so the sound is the one 1x gives, at 1x's pace.
+#[derive(Debug, Default)]
+struct Footsteps {
+    /// Runs since the last played one.
+    runs: u64,
+    /// The last retrace that posted a footstep.
+    last: Option<u64>,
+    /// Whether the current run plays.
+    play: bool,
+}
+
+impl Footsteps {
+    /// Whether a footstep posted on `retrace` is played at `speed`.
+    fn hear(&mut self, retrace: u64, speed: u64) -> bool {
+        let same_run = self.last.is_some_and(|last| retrace <= last + 1);
+        if !same_run {
+            self.runs = (self.runs + 1) % speed;
+            self.play = self.runs == 0;
+        }
+        self.last = Some(retrace);
+        self.play
+    }
+}
+
+/// The footstep sound events (`xeno_sim::motion`), kept at 1x at a game speed.
+const FOOTSTEPS: [u8; 3] = [
+    xeno_sim::motion::FOOTSTEP_HUMANOID,
+    xeno_sim::motion::FOOTSTEP_SCORPION,
+    xeno_sim::motion::FOOTSTEP_SCOUT,
+];
 use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
@@ -53,12 +121,14 @@ pub enum FrontEnd {
 
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
-/// or closes the window. `music` plays what the cutscenes and screens cue.
+/// or closes the window. `music` plays what the cutscenes and screens cue; a mission
+/// in play runs `speed` retraces a real one (T-215).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
     aspect: Aspect,
     fullscreen: bool,
+    speed: u64,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -105,6 +175,7 @@ pub fn run(
         front,
         log_base: 0,
         sixty_hz: 0,
+        footsteps: Footsteps::default(),
         meter: Meter::default(),
         fb,
         palette,
@@ -122,6 +193,7 @@ pub fn run(
         fullscreen: false,
         error: None,
         music,
+        speed,
     };
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -154,6 +226,8 @@ struct App {
     log_base: u64,
     /// The 60 Hz count at the last retrace, to tell a cutscene when it moves.
     sixty_hz: u64,
+    /// Keeps the walking sound at 1x at a game speed (T-215).
+    footsteps: Footsteps,
     meter: Meter,
     /// The picture to show.
     fb: Framebuffer,
@@ -182,8 +256,11 @@ struct App {
     fullscreen: bool,
     /// The error that stopped the event loop, if any.
     error: Option<Box<dyn Error>>,
-    /// Ticked every retrace; cued by the cutscenes and the screens.
+    /// Ticked every real retrace; cued by the cutscenes and the screens.
     music: Jukebox,
+    /// The game speed (T-215, one of [`SPEEDS`]): F12 cycles it, and it applies
+    /// while a mission is in play.
+    speed: u64,
 }
 
 /// Counts for the once-a-second rate log.
@@ -267,6 +344,7 @@ impl App {
     /// buffer. Every resize and scale change asks for a new frame.
     fn redraw(&mut self) -> Result<(), Box<dyn Error>> {
         let pointer = self.mouse.position.filter(|_| self.pointer_shown());
+        let speed = self.speed_now();
         let Some(surface) = &mut self.surface else {
             return Ok(());
         };
@@ -295,6 +373,15 @@ impl App {
             self.fullscreen,
             layout.picture(self.fb.view())
         );
+        // The game speed's label (T-215), over a copy of the picture for this frame.
+        let saved = match &self.front {
+            FrontEnd::Screens(screens) if speed > 1 => screens.font(0).map(|font| {
+                let saved = self.fb.clone();
+                draw_speed(&mut self.fb, &self.palette, font, speed);
+                saved
+            }),
+            _ => None,
+        };
         // The game's pointer, if the screens show it (T-049), only over the picture's
         // pixels for this frame.
         let under = match (&self.front, pointer) {
@@ -306,6 +393,9 @@ impl App {
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         if let Some(under) = under {
             under.restore(&mut self.fb);
+        }
+        if let Some(saved) = saved {
+            self.fb = saved;
         }
         buffer.present()?;
         self.meter.frames_now += 1;
@@ -319,9 +409,15 @@ impl App {
     /// clock must
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
-        // The driver's hook runs first in the retrace interrupt, whatever the mode.
-        self.music.tick();
         let retrace = self.log_base + step.retrace;
+        // The music keeps real time at the game speed (T-215): only real retraces tick it.
+        if !step.extra {
+            // The driver's hook runs first in the retrace interrupt, whatever the mode.
+            self.music.tick();
+        }
+        // Every step takes input: the host's events are all drained by the first step
+        // of a real retrace, so an extra step gets only the console arrows' own repeats,
+        // which then count game steps and turn the robot as fast as it drives.
         self.log.record(retrace, self.input.take());
         for event in self.log.events_at(retrace) {
             log::debug!("retrace {retrace}: {event:?}");
@@ -393,9 +489,15 @@ impl App {
         }
         match &mut self.front {
             FrontEnd::Screens(screens) => {
+                screens.extra_step = step.extra;
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
                 for sound in screens.take_sounds() {
                     match sound {
+                        crate::mission::Sound::Play(event) if FOOTSTEPS.contains(&event) => {
+                            if self.footsteps.hear(retrace, self.clock.speed()) {
+                                self.music.effect(event);
+                            }
+                        }
                         crate::mission::Sound::Play(event) => self.music.effect(event),
                         crate::mission::Sound::Stop(event) => self.music.stop(event),
                         crate::mission::Sound::Beep(tone) => self.music.beep(tone),
@@ -442,8 +544,34 @@ impl App {
 
     fn set_title(&self) {
         if let Some(surface) = &self.surface {
-            surface.window().set_title(&self.title);
+            let speed = match self.speed {
+                1 => String::new(),
+                n => format!(" - speed {n}x (F12)"),
+            };
+            surface
+                .window()
+                .set_title(&format!("{}{speed}", self.title));
         }
+    }
+
+    /// The speed the clock should run at: the chosen one while a mission is in play,
+    /// else 1 (the cutscenes, the drop and the other screens keep the original's).
+    fn speed_now(&self) -> u64 {
+        match &self.front {
+            FrontEnd::Screens(screens) if self.pointer_shown() && screens.in_play() => self.speed,
+            _ => 1,
+        }
+    }
+
+    /// Restarts the clock if the speed it should run at changed; `ran` is the last
+    /// retrace run, so the log's count goes on from it.
+    fn speed_changed(&mut self, now: Duration, ran: u64) -> bool {
+        if self.clock.speed() == self.speed_now() {
+            return false;
+        }
+        self.log_base += ran;
+        self.restart_clock(now);
+        true
     }
 
     /// Whether the screens are up, which draw the game's pointer where they show it
@@ -476,13 +604,14 @@ impl App {
     /// original's mode changes (`docs/game-loop.md`, "Mode changes").
     fn restart_clock(&mut self, now: Duration) {
         let rate = Rate::for_height(self.fb.view().height);
+        let speed = self.speed_now();
         log::info!(
-            "mode change at retrace {}: {:?} view, clock restarted at {:.3} retraces a second",
+            "clock restarted at retrace {}: {:?} view, {:.3} retraces a second, speed {speed}x",
             self.log_base,
             self.fb.view(),
             rate.hz()
         );
-        self.clock = Clock::new(rate, now);
+        self.clock = Clock::new(rate, now).at_speed(speed);
         self.sixty_hz = 0;
         self.meter = Meter {
             since: now,
@@ -581,11 +710,27 @@ impl ApplicationHandler for App {
             return;
         };
         let now = start.elapsed();
+        // F12 (or anything else) may have changed the speed since the last wake-up.
+        self.speed_changed(now, self.clock.retraces());
         let mut ran = false;
+        // At a game speed (T-215) a slow machine or a debug build would fall behind and
+        // then catch up for many steps at once, holding the mouse and keys back; the
+        // extra steps past half a retrace's time are dropped instead, so the game runs
+        // slower than chosen but the input stays prompt. Real retraces always run.
+        let budget = Rate::for_height(self.fb.view().height).time_of(1) / 2;
         for step in self.clock.advance(now) {
+            if step.extra && start.elapsed() > now + budget {
+                self.clock.drop_from(step.retrace, now);
+                break;
+            }
             ran = true;
             if self.tick(step) {
                 self.restart_clock(now);
+                break;
+            }
+            // Entering or leaving a mission in play changes it too; the rest of this
+            // wake-up's steps at the old speed are dropped, as at a mode change.
+            if self.speed_changed(now, step.retrace) {
                 break;
             }
         }
@@ -605,6 +750,12 @@ impl ApplicationHandler for App {
             Some(WindowAction::Quit) => event_loop.exit(),
             Some(WindowAction::ToggleFullscreen) => self.set_fullscreen(!self.is_fullscreen()),
             Some(WindowAction::LeaveFullscreen) => self.set_fullscreen(false),
+            Some(WindowAction::CycleSpeed) => {
+                let at = SPEEDS.iter().position(|&s| s == self.speed).unwrap_or(0);
+                self.speed = SPEEDS[(at + 1) % SPEEDS.len()];
+                log::info!("game speed {}x (in a mission)", self.speed);
+                self.set_title();
+            }
             None => {}
         }
         match event {
@@ -653,6 +804,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn footsteps_play_every_nth_run_at_a_speed() {
+        // A scorpion's: runs of 3 retraces in a row, 5 apart.
+        let posts: Vec<u64> = (0..8)
+            .flat_map(|run| (0..3).map(move |i| run * 5 + i))
+            .collect();
+        for speed in SPEEDS {
+            let mut footsteps = Footsteps::default();
+            let played: Vec<u64> = posts
+                .iter()
+                .copied()
+                .filter(|&r| footsteps.hear(r, speed))
+                .collect();
+            // Whole runs, every Nth: the first of them N runs in.
+            let runs: Vec<u64> = (0..8).filter(|run| (run + 1) % speed == 0).collect();
+            let want: Vec<u64> = runs
+                .iter()
+                .flat_map(|run| (0..3).map(move |i| run * 5 + i))
+                .collect();
+            assert_eq!(played, want, "{speed}x");
+        }
+        // A humanoid's: single retraces, all played at 1x.
+        let mut footsteps = Footsteps::default();
+        assert!([3, 9, 15].iter().all(|&r| footsteps.hear(r, 1)));
+    }
+
+    #[test]
+    fn the_speed_label_sits_top_right_in_steady_colours() {
+        let fonts = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block());
+        let font = &fonts.unwrap()[0];
+        // The brightest and darkest colours are animated ones, which the label skips.
+        let mut palette = Palette {
+            colors: [Rgb {
+                r: 30,
+                g: 30,
+                b: 30,
+            }; 256],
+        };
+        palette.colors[20] = Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        palette.colors[254] = Rgb { r: 0, g: 0, b: 0 };
+        palette.colors[100] = Rgb {
+            r: 200,
+            g: 200,
+            b: 200,
+        };
+        palette.colors[7] = Rgb { r: 5, g: 5, b: 5 };
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.pixels_mut().fill(50);
+        draw_speed(&mut fb, &palette, font, 4);
+        let width = usize::from(font.header.width) * 2 + 2;
+        let (left, bottom) = (320 - width - 2, 2 + font.rows() + 2);
+        for (i, &p) in fb.pixels().iter().enumerate() {
+            let (x, y) = (i % 320, i / 320);
+            let inside = (left..320 - 2).contains(&x) && (2..bottom).contains(&y);
+            if inside {
+                assert!(p == 7 || p == 100, "({x}, {y}): {p}");
+            } else {
+                assert_eq!(p, 50, "({x}, {y})");
+            }
+        }
+        // The box's corner is the dark colour.
+        assert_eq!(fb.pixels()[2 * 320 + left], 7);
+    }
+
+    #[test]
     fn default_window_is_logical_and_a_fixed_scale_is_physical() {
         let view = Size::MODE_13H;
         let size = |scale, aspect| initial_size(view, scale, aspect);
@@ -695,6 +914,7 @@ mod tests {
             front,
             log_base: 0,
             sixty_hz: 0,
+            footsteps: Footsteps::default(),
             meter: Meter::default(),
             fb,
             palette,
@@ -712,6 +932,7 @@ mod tests {
             fullscreen: false,
             error: None,
             music: Jukebox::default(),
+            speed: 1,
         }
     }
 
@@ -727,6 +948,7 @@ mod tests {
             let step = Step {
                 retrace: n,
                 sixty_hz: n,
+                extra: false,
             };
             if app.tick(step) {
                 // As `about_to_wait` does: the clock restarts at the new mode's rate.
@@ -755,6 +977,34 @@ mod tests {
         assert!(app.cutscene.is_none() && app.pointer_shown());
     }
 
+    #[test]
+    fn the_speed_applies_only_to_a_mission_in_play() {
+        use crate::screens::{Ending, Screen, View, tests};
+        let app = |screen| {
+            let mut app = test_app(FrontEnd::Screens(Box::new(tests::new(screen))));
+            app.speed = 4;
+            app
+        };
+        let mut mission = app(Screen::Mission(View::SitRoom));
+        assert_eq!(mission.speed_now(), 4);
+        for screen in [
+            Screen::MapRoom,
+            Screen::Login,
+            Screen::Cutscene(Ending::Won),
+        ] {
+            assert_eq!(app(screen).speed_now(), 1, "{screen:?}");
+        }
+        // The clock restarts at the speed once, and the log counts on from retrace 5.
+        assert!(mission.speed_changed(Duration::from_secs(1), 5));
+        assert_eq!((mission.clock.speed(), mission.log_base), (4, 5));
+        assert!(!mission.speed_changed(Duration::from_secs(1), 0));
+        // At 1x nothing restarts: the clock is today's.
+        let mut once = app(Screen::Mission(View::SitRoom));
+        once.speed = 1;
+        assert!(!once.speed_changed(Duration::from_secs(1), 5));
+        assert_eq!((once.clock.speed(), once.log_base), (1, 0));
+    }
+
     /// Runs `app` for `n` retraces from its start; the retraces where the song cued
     /// changed, and where the mode did.
     type Changes = Vec<(u64, Option<&'static str>)>;
@@ -765,6 +1015,7 @@ mod tests {
             let changed = app.tick(Step {
                 retrace: at,
                 sixty_hz: at,
+                extra: false,
             });
             if changed {
                 app.restart_clock(Duration::from_millis(r));

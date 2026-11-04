@@ -9,9 +9,14 @@ use std::time::Duration;
 
 pub use xeno_sim::Rate;
 
-/// The most retraces one [`Clock::advance`] runs. A longer stall (a debugger, a blocked
-/// event loop, a sleeping laptop) drops the rest: game time pauses instead of racing.
+/// The most real retraces one [`Clock::advance`] runs (each `speed` steps). A longer
+/// stall (a debugger, a blocked event loop, a sleeping laptop) drops the rest: game
+/// time pauses instead of racing.
 pub const MAX_CATCH_UP: u64 = 10;
+
+/// The game speeds (T-215): retrace steps run for each real retrace. Not in the
+/// original; only a mission in play runs faster (`docs/game-loop.md`, "Game speed").
+pub const SPEEDS: [u64; 3] = [1, 2, 4];
 
 /// One retrace step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +27,9 @@ pub struct Step {
     /// retrace at 70 Hz, 1 or 2 at 59.94 Hz. The original advances that chain from each
     /// retrace (`docs/re/dvr-protocol.md`), so it is derived from the retrace count.
     pub sixty_hz: u64,
+    /// One of the speed's extra steps, not the first of its real retrace (T-215): the
+    /// music goes with the real retraces only, and the host's events reach the first.
+    pub extra: bool,
 }
 
 /// A fixed-timestep clock. Retrace `n` is due once `n` whole periods have passed since
@@ -37,6 +45,8 @@ pub struct Clock {
     retraces: u64,
     /// Retraces dropped after stalls.
     dropped: u64,
+    /// Steps a real retrace, one of [`SPEEDS`].
+    speed: u64,
 }
 
 impl Clock {
@@ -47,7 +57,17 @@ impl Clock {
             base: 0,
             retraces: 0,
             dropped: 0,
+            speed: 1,
         }
+    }
+
+    /// The clock running `speed` steps a real retrace, from its start.
+    pub fn at_speed(self, speed: u64) -> Self {
+        Clock { speed, ..self }
+    }
+
+    pub fn speed(&self) -> u64 {
+        self.speed
     }
 
     pub fn retraces(&self) -> u64 {
@@ -64,14 +84,17 @@ impl Clock {
         self.dropped
     }
 
-    /// Runs the retraces due by `now`, at most [`MAX_CATCH_UP`]. If more were due, the
-    /// rest are dropped and the clock restarts from `now`, so the next one is a full
-    /// period away.
+    /// Runs the steps due by `now`, `speed` a real retrace, at most [`MAX_CATCH_UP`]
+    /// real retraces' worth. If more were due, the rest are dropped and the clock
+    /// restarts from `now`, so the next one is a full period away.
     pub fn advance(&mut self, now: Duration) -> impl Iterator<Item = Step> + use<> {
-        let due = self.base + self.rate.ticks_in(now.saturating_sub(self.epoch));
+        let real = self.rate.ticks_in(now.saturating_sub(self.epoch));
+        let due = self.base + self.speed * real;
         let behind = due.saturating_sub(self.retraces);
-        let run = behind.min(MAX_CATCH_UP);
+        let run = behind.min(MAX_CATCH_UP * self.speed);
         let first = self.retraces + 1;
+        // Runs since the base are whole real retraces, so the base starts each group.
+        let (base, speed) = (self.base, self.speed);
         self.retraces += run;
         if behind > run {
             self.dropped += behind - run;
@@ -82,12 +105,27 @@ impl Clock {
         (first..=self.retraces).map(move |n| Step {
             retrace: n,
             sixty_hz: rate.convert(n, Rate::SIXTY_HZ),
+            extra: !(n - base - 1).is_multiple_of(speed),
         })
     }
 
-    /// When the next retrace is due.
+    /// Drops the steps from `from` on, not run: the game speed's extra steps past a
+    /// wake-up's time budget (T-215). The clock restarts from `now`, as after a stall,
+    /// so the next step is a real retrace's first.
+    pub fn drop_from(&mut self, from: u64, now: Duration) {
+        let ran = from - 1;
+        self.dropped += self.retraces - ran;
+        self.retraces = ran;
+        self.epoch = now;
+        self.base = ran;
+    }
+
+    /// When the next real retrace is due.
     pub fn next_due(&self) -> Duration {
-        self.epoch + self.rate.time_of(self.retraces - self.base + 1)
+        self.epoch
+            + self
+                .rate
+                .time_of((self.retraces - self.base) / self.speed + 1)
     }
 }
 
@@ -191,6 +229,51 @@ mod tests {
         assert_eq!(a_second_from(&mut clock, ms(6100)), 70);
         assert_eq!(run_for(&mut clock, ms(16_100)).len(), 10);
         assert_eq!((clock.retraces(), clock.dropped()), (167, 340 + 620));
+    }
+
+    #[test]
+    fn a_speed_runs_its_steps_for_each_real_retrace() {
+        let ms = Duration::from_millis;
+        for speed in SPEEDS {
+            let mut clock = Clock::new(Rate::MODE_13H, Duration::ZERO).at_speed(speed);
+            let (mut extras, mut n) = (0, 0);
+            for ms in 1..=1000 {
+                let steps = run_for(&mut clock, Duration::from_millis(ms));
+                // Each wake-up runs whole real retraces, the first step of each real.
+                assert!((steps.len() as u64).is_multiple_of(speed));
+                for (i, step) in steps.iter().enumerate() {
+                    n += 1;
+                    assert_eq!(step.retrace, n);
+                    assert_eq!(step.extra, !(i as u64).is_multiple_of(speed));
+                    extras += u64::from(step.extra);
+                }
+            }
+            assert_eq!((n, extras), (70 * speed, 70 * (speed - 1)));
+            // Real retraces are due when they are at 1x.
+            assert_eq!(clock.next_due(), Rate::MODE_13H.time_of(71));
+            // The cap is ten real retraces: a stall runs 10 * speed steps, drops the rest.
+            assert_eq!(run_for(&mut clock, ms(6000)).len() as u64, 10 * speed);
+            assert_eq!(clock.dropped(), (420 - 70 - 10) * speed);
+            assert_eq!(clock.next_due(), ms(6000) + Rate::MODE_13H.time_of(1));
+        }
+    }
+
+    #[test]
+    fn extra_steps_over_budget_are_dropped() {
+        let ms = Duration::from_millis;
+        let mut clock = Clock::new(Rate::MODE_13H, Duration::ZERO).at_speed(4);
+        let steps: Vec<_> = clock.advance(ms(30)).collect();
+        assert_eq!(steps.len(), 8);
+        // Two steps ran; the rest of the batch is dropped and the clock restarts.
+        clock.drop_from(steps[2].retrace, ms(30));
+        assert_eq!((clock.retraces(), clock.dropped()), (2, 6));
+        assert_eq!(clock.next_due(), ms(30) + Rate::MODE_13H.time_of(1));
+        let next: Vec<_> = clock.advance(ms(45)).collect();
+        assert_eq!(next.len(), 4);
+        assert_eq!(
+            (next[0].retrace, next[0].extra, next[1].extra),
+            (3, false, true)
+        );
     }
 
     #[test]

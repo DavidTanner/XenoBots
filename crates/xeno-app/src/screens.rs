@@ -299,6 +299,9 @@ enum Load {
 /// The front end's state.
 #[derive(Debug, Clone)]
 pub struct Screens {
+    /// The coming retrace is one of the game speed's extra steps (T-215): the colour
+    /// records (a console's radar sweep among them) keep real time and skip it.
+    pub extra_step: bool,
     pictures: Pictures,
     screen: Screen,
     /// Fading out to this screen.
@@ -387,6 +390,7 @@ impl Screens {
         let map_room_shown = start != Login;
         let pointer = pointer::State::new(login.pointer, map_room_shown);
         Screens {
+            extra_step: false,
             pictures,
             screen: start,
             next: Some(start),
@@ -511,6 +515,11 @@ impl Screens {
     }
 
     /// The mouse pointer's shape, if the screens show it.
+    /// Font `n` of the user's `mgavideo.dvr`, as the missions load it.
+    pub fn font(&self, n: u16) -> Option<&xeno_formats::font::Font> {
+        self.mission_assets.fonts.get(&n)
+    }
+
     pub fn pointer(&self) -> Option<&Pointer> {
         let shape = usize::from(self.pointer.shape());
         self.pointer
@@ -595,6 +604,12 @@ impl Screens {
         console && !self.mission.dialog_open() && !self.mission.paused()
     }
 
+    /// Whether a mission is in play, which the game speed runs faster (T-215): not
+    /// paused, and no file dialog open.
+    pub fn in_play(&self) -> bool {
+        matches!(self.screen, Mission(_)) && !self.mission.dialog_open() && !self.mission.paused()
+    }
+
     /// Whether a key asked to leave the game.
     pub fn quit(&self) -> bool {
         self.quit
@@ -623,7 +638,7 @@ impl Screens {
             }
             self.set_shape(ARROW);
         }
-        self.dac.retrace();
+        self.dac.retrace_with(!self.extra_step);
         if !self.dac.dirty()
             && let Some(fade) = self.fade_in.take()
         {

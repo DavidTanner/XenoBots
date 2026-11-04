@@ -120,6 +120,18 @@ struct Cli {
     /// is logged at start-up, and passing it again repeats the run.
     #[arg(long, value_name = "N")]
     seed: Option<u32>,
+
+    /// Run a mission N times as fast as the original (1, 2 or 4): N retraces of the
+    /// game for each real one. Not in the original; F12 cycles it in play. The music,
+    /// the cutscenes and the other screens keep the original's pace.
+    #[arg(
+        long,
+        value_name = "N",
+        default_value = "1",
+        value_parser = clap::builder::PossibleValuesParser::new(["1", "2", "4"])
+            .map(|s| s.parse::<u64>().expect("listed values parse")),
+    )]
+    speed: u64,
 }
 
 /// `--screen`'s values.
@@ -286,6 +298,7 @@ fn main() -> ExitCode {
         cli.scale,
         cli.aspect,
         cli.fullscreen,
+        cli.speed,
         viewer,
         intro,
         drop,
@@ -375,5 +388,20 @@ mod tests {
         assert_eq!(seed(&[]).unwrap(), None);
         assert_eq!(seed(&["--seed", "7"]).unwrap(), Some(7));
         assert!(seed(&["--seed", "-1"]).is_err());
+    }
+
+    #[test]
+    fn the_speed_flag_takes_the_listed_speeds() {
+        let speed =
+            |args: &[&str]| Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.speed);
+        assert_eq!(speed(&[]).unwrap(), 1);
+        for (arg, n) in [("1", 1), ("2", 2), ("4", 4)] {
+            assert_eq!(speed(&["--speed", arg]).unwrap(), n);
+        }
+        assert_eq!(clock::SPEEDS, [1, 2, 4], "the flag lists every speed");
+        for bad in ["0", "3", "8", "fast"] {
+            let e = speed(&["--speed", bad]).unwrap_err().to_string();
+            assert!(e.contains("possible values: 1, 2, 4"), "{e}");
+        }
     }
 }

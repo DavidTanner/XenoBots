@@ -14,6 +14,7 @@ impl ScanCode {
     pub const ESCAPE: ScanCode = ScanCode(0x01);
     pub const ENTER: ScanCode = ScanCode(0x1c);
     pub const F11: ScanCode = ScanCode(0x57);
+    pub const F12: ScanCode = ScanCode(0x58);
     pub const KEYPAD_ENTER: ScanCode = ScanCode(0xe01c);
 
     /// 0..=127 for plain keys, 128..=255 for `E0` keys.

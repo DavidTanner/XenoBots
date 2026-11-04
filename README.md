@@ -139,6 +139,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
 | `--view <file>` | Show one file instead of the cutscene and screens (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
+| `--speed <1\|2\|4>` | Not in the original: run a mission in play 2 or 4 times as fast (default 1). F12 changes it while playing. The music, the cutscenes and the other screens keep the original's pace; see `docs/game-loop.md`, "Game speed (T-215)". |
 | `--seed <n>` | The seed of the game's random word (the campaign's alert rises and calendar). By default it comes from the clock, as the original's comes from the timer; it is logged at start-up, and passing it again repeats the run. |
 
 | Key | Action |
@@ -146,6 +147,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, the mission's views, review, the cutscenes after a mission) take it instead. |
 | Any other key, P | During the opening cutscene: end it (fading out) and skip the drop, or pause it until the next key. During a cutscene after a mission: the same, then the map room. During the drop: end it at once, or pause it. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
+| F12 | Not in the original: the game speed, 1x, 2x, 4x and back (as `--speed`). It acts in a mission (not while paused or in a file dialog), and while it isn't 1x the screen shows it top right (for example `4X`), as does the window title. On a Mac, F12 may need Fn. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
 
