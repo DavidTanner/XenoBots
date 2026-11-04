@@ -6,7 +6,7 @@
 //! ([`crate::terrain`]). There is no map grid and no world edge: the original has
 //! neither, so positions are never limited (`docs/formats/usg.md`, "The world").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario, Side};
 
@@ -768,7 +768,11 @@ impl Memory {
 /// Not hashed or saved: as in the original, a loaded world lays its objects out anew.
 #[derive(Debug, Clone, Default)]
 struct Pools {
-    at: BTreeMap<EntityId, Memory>,
+    /// Where each object lives, and its +0x02: the place it took, or for a loaded
+    /// object the file's index (`scen_read_object` reads the file over +0x02).
+    at: BTreeMap<EntityId, (Memory, u16)>,
+    /// The places marked in use.
+    used: BTreeSet<Memory>,
     /// The bytes freed objects left, until their memory is taken again.
     freed: BTreeMap<Memory, Entity>,
 }
@@ -785,17 +789,35 @@ impl Eq for Pools {}
 impl Pools {
     /// `1000:f4ee`: the lowest free place in `kind`'s pool, for slot `id`; none when
     /// the pool is full.
-    // shortcut: the loader overwrites +0x02 with the file's index and `f5cd` frees the
-    // place that names, so a file whose indices are not its load order (scen06a's small
-    // pool) frees places still in use; the port frees where the object lives. T-213.
     fn alloc(&mut self, id: EntityId, kind: ObjectKind) -> Option<Memory> {
         let big = crate::orders::RobotKind::of(kind).is_some() || kind == ObjectKind::Base;
         let size = if big { 40 } else { 200 };
-        let index =
-            (0..size).find(|&i| !self.at.values().any(|m| *m == Memory { big, index: i }))?;
-        let m = Memory { big, index };
-        self.at.insert(id, m);
+        let m = (0..size)
+            .map(|index| Memory { big, index })
+            .find(|m| !self.used.contains(m))?;
+        self.used.insert(m);
+        self.at.insert(id, (m, m.index));
         Some(m)
+    }
+
+    /// `f5cd`'s part: the place +0x02 names is marked free, which for a loaded object
+    /// whose file index is not where it was loaded is another place than its own (all
+    /// but one of scen06a's small objects). Returns the memory the object lived in.
+    fn free(&mut self, id: EntityId) -> Option<Memory> {
+        let (m, named) = self.at.remove(&id)?;
+        self.used.remove(&Memory {
+            big: m.big,
+            index: named,
+        });
+        Some(m)
+    }
+
+    /// The slot of another object living in `m` (a place freed by a wrong +0x02).
+    fn other_at(&self, id: EntityId, m: Memory) -> Option<EntityId> {
+        self.at
+            .iter()
+            .find(|&(&o, &(p, _))| o != id && p == m)
+            .map(|(&o, _)| o)
     }
 }
 
@@ -897,7 +919,9 @@ impl World {
         // `1000:f47d` takes each object's memory (`f4ee`) in file order.
         let mut pools = Pools::default();
         for o in scenario.objects.iter().flatten() {
-            pools.alloc(EntityId(o.slot), o.kind);
+            if let Some(m) = pools.alloc(EntityId(o.slot), o.kind) {
+                pools.at.insert(EntityId(o.slot), (m, o.pool_index));
+            }
         }
         World {
             entities,
@@ -1001,10 +1025,21 @@ impl World {
             self.take(id);
             // `f4ee`: the lowest free memory of its pool; `f4b1` clears the bytes a
             // freed object left there, so a lock still on them now has this object.
-            if let Some(m) = self.pools.alloc(id, kind)
-                && self.pools.freed.remove(&m).is_some()
-            {
-                self.retarget(m.ghost(), id);
+            if let Some(m) = self.pools.alloc(id, kind) {
+                if self.pools.freed.remove(&m).is_some() {
+                    self.retarget(m.ghost(), id);
+                } else if let Some(old) = self.pools.other_at(id, m) {
+                    // A live object's place was freed by another's +0x02, and `f4b1`
+                    // clears its bytes for this one: its slot still names that memory.
+                    // shortcut: the original then has two slots on one object (both
+                    // ticked); the port keeps the new slot only and empties the old one
+                    // with no release, explosion or message (its count kept). Upgrade if
+                    // DOSBox (scen06a, a relay destroyed, then a shot) shows the doubled
+                    // object matters.
+                    self.entities.remove(&old);
+                    self.pools.at.remove(&old);
+                    self.retarget(old, id);
+                }
             }
         }
         old
@@ -1018,7 +1053,7 @@ impl World {
             self.release(id);
             // Its memory is free, its bytes still there with `GONE` (`f5dc`): a lock
             // (a pointer, `docs/sim.md`, "The lock's pointer (T-203)") stays on them.
-            if let Some(m) = self.pools.at.remove(&id) {
+            if let Some(m) = self.pools.free(id) {
                 let mut left = e.clone();
                 left.flags |= usg::flag::GONE;
                 self.pools.freed.insert(m, left);
@@ -1240,6 +1275,48 @@ mod tests {
         assert_eq!(world.free_slot(), Some(EntityId(2)));
     }
 
+    /// `f5cd` frees the place +0x02 names (T-213): with a loaded object's index naming
+    /// another's place, the next small object is made over that live one, which leaves
+    /// its slot (shortcut in `World::insert`) and hands its locks on; the freed object's
+    /// own place stays taken.
+    #[test]
+    fn a_freed_object_frees_the_place_its_index_names() {
+        let small = |x| Entity {
+            kind: ObjectKind::Obstacle,
+            ..robot(x, 0)
+        };
+        let mut world = World::default();
+        for slot in [5, 6, 7] {
+            world.insert(EntityId(slot), small(slot as i16));
+        }
+        // Places 0, 1, 2 as made; +0x02 as a file might have them, rotated.
+        for (slot, named) in [(5, 2), (6, 0), (7, 1)] {
+            world.pools.at.get_mut(&EntityId(slot)).unwrap().1 = named;
+        }
+        let mut locker = robot(0, 0);
+        locker.state = State::Robot(Movement {
+            target: Some(EntityId(5)),
+            ..Default::default()
+        });
+        world.insert(EntityId(1), locker);
+        world.remove(EntityId(6)); // frees place 0, slot 5's
+        world.insert(EntityId(8), small(8)); // made in place 0, over slot 5
+        assert!(world.get(EntityId(5)).is_none());
+        assert_eq!(world.refs(EntityId(5)), 1, "the old slot's count is kept");
+        let State::Robot(m) = &world.get(EntityId(1)).unwrap().state else {
+            unreachable!()
+        };
+        assert_eq!(m.target, Some(EntityId(8)), "the lock is on the memory");
+        // Slot 6's own place, 1, is still marked: the next is made in place 3.
+        world.insert(EntityId(9), small(9));
+        let place = |w: &World, id| w.pools.at[&EntityId(id)].0.index;
+        assert_eq!((place(&world, 8), place(&world, 9)), (0, 3));
+        // A made object's +0x02 is its place: freed, the place is free again.
+        world.remove(EntityId(8));
+        world.insert(EntityId(10), small(10));
+        assert_eq!(place(&world, 10), 0);
+    }
+
     #[test]
     fn objects_are_kept_by_slot_whatever_the_order_they_came_in() {
         let (mut a, mut b) = (World::default(), World::default());
@@ -1361,6 +1438,44 @@ mod tests {
             ..plain
         };
         assert!(World::from_scenario(&empty).is_empty());
+    }
+
+    /// scen06a's small objects' +0x02 are not their load order (T-213): a relay
+    /// destroyed frees another object's place, and the next small object is made there.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_scen06a_frees_the_place_its_indices_name() {
+        let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+            return;
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(dir);
+        let file = std::fs::read(dir.join("scen06a.usg")).unwrap();
+        let scenario = xeno_formats::usg::parse(&file).unwrap();
+        let small: Vec<_> = scenario
+            .objects
+            .iter()
+            .flatten()
+            .filter(|o| o.size == Object::SMALL)
+            .collect();
+        // Loaded in file order, so the n-th small object lives in place n.
+        let (relay, named) = small
+            .iter()
+            .enumerate()
+            .find(|(n, o)| o.kind == ObjectKind::Relay && usize::from(o.pool_index) != *n)
+            .map(|(_, o)| (o.slot, o.pool_index))
+            .expect("a relay out of order");
+        let victim = small[usize::from(named)].slot;
+        let mut world = World::from_scenario(&scenario);
+        world.remove(EntityId(relay));
+        let made = world.free_slot().unwrap();
+        world.insert(made, world.get(EntityId(victim)).unwrap().clone());
+        assert!(
+            world.get(EntityId(victim)).is_none(),
+            "made over slot {victim}"
+        );
+        assert_eq!(world.pools.at[&made].0.index, named);
     }
 
     /// Every stock scenario loads every object, and each side's units, bases and the
