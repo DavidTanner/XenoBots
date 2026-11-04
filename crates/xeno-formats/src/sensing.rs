@@ -48,10 +48,10 @@ pub const TICKS: usize = 16;
 /// locked one of its own side; the upkeep (`d66f`) lost the target, and found it
 /// destroyed; the R key (`d7f8`) dropped the target; the A key (`d812`) found none;
 /// the consoles' map-mode press (T-133) set an object goal (`4685`) or a destination
-/// (`46c7`).
-pub(crate) const MESSAGES_AT: [usize; 14] = [
+/// (`46c7`); the console jump (`7eac`) refused another side's unit (T-214).
+pub(crate) const MESSAGES_AT: [usize; 15] = [
     0xd7f0, 0xd8f4, 0xd8fc, 0xd917, 0xd910, 0xd91e, 0xd909, 0xd8dd, 0xd6bd, 0xd6d0, 0xd7fe, 0xd89f,
-    0x46bb, 0x46e7,
+    0x46bb, 0x46e7, 0x7ee0,
 ];
 /// `mov ax, [bx + table]` in the A key's search (`1000:d812`): the locking range again.
 pub(crate) const NEXT_RANGE_AT: usize = 0xd822;
@@ -154,6 +154,7 @@ pub struct Messages {
     pub none_next: u16,
     pub goal_object: u16,
     pub destination: u16,
+    pub other_side: u16,
 }
 
 fn ranges(image: &[u8], ds: usize, at: usize) -> Result<[u16; 3], FormatError> {
@@ -323,6 +324,7 @@ pub fn read_image(image: &[u8], ds: usize) -> Result<Sensing, FormatError> {
             none_next: m(11)?,
             goal_object: m(12)?,
             destination: m(13)?,
+            other_side: m(14)?,
         },
         lock_sound: (sound / 2) as u8,
         contact: contact(image)?,
@@ -461,6 +463,8 @@ mod tests {
         // The messages are text in the string segment (0x0c breaks a line).
         let motion = crate::motion::read(&exe).unwrap();
         let m = sensing.messages;
+        // The console jump's refusal (`1000:7ee0`, T-214).
+        assert_eq!(m.other_side, 0x1a1f);
         for at in [
             m.none_found,
             m.locked,
@@ -476,6 +480,7 @@ mod tests {
             m.none_next,
             m.goal_object,
             m.destination,
+            m.other_side,
         ] {
             let text: Vec<u8> = (at..)
                 .map(|o| motion.strings.byte(o))
