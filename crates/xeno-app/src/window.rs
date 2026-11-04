@@ -29,7 +29,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
 
-use crate::clock::{Clock, Rate, Step};
+use crate::clock::{Clock, Rate, SPEEDS, Step};
 use crate::drop;
 use crate::input::{InputLog, Keys, Mouse};
 use crate::intro::{Cutscene, Kind};
@@ -53,12 +53,14 @@ pub enum FrontEnd {
 
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
-/// or closes the window. `music` plays what the cutscenes and screens cue.
+/// or closes the window. `music` plays what the cutscenes and screens cue; a mission
+/// in play runs `speed` retraces a real one (T-215).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
     aspect: Aspect,
     fullscreen: bool,
+    speed: u64,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -122,6 +124,7 @@ pub fn run(
         fullscreen: false,
         error: None,
         music,
+        speed,
     };
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -182,8 +185,11 @@ struct App {
     fullscreen: bool,
     /// The error that stopped the event loop, if any.
     error: Option<Box<dyn Error>>,
-    /// Ticked every retrace; cued by the cutscenes and the screens.
+    /// Ticked every real retrace; cued by the cutscenes and the screens.
     music: Jukebox,
+    /// The game speed (T-215, one of [`SPEEDS`]): F12 cycles it, and it applies
+    /// while a mission is in play.
+    speed: u64,
 }
 
 /// Counts for the once-a-second rate log.
@@ -319,10 +325,14 @@ impl App {
     /// clock must
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
-        // The driver's hook runs first in the retrace interrupt, whatever the mode.
-        self.music.tick();
         let retrace = self.log_base + step.retrace;
-        self.log.record(retrace, self.input.take());
+        // The game speed's extra steps (T-215) get no input, and the music and the
+        // arrows' repeat keep real time.
+        if !step.extra {
+            // The driver's hook runs first in the retrace interrupt, whatever the mode.
+            self.music.tick();
+            self.log.record(retrace, self.input.take());
+        }
         for event in self.log.events_at(retrace) {
             log::debug!("retrace {retrace}: {event:?}");
             self.keys.apply(event);
@@ -442,8 +452,34 @@ impl App {
 
     fn set_title(&self) {
         if let Some(surface) = &self.surface {
-            surface.window().set_title(&self.title);
+            let speed = match self.speed {
+                1 => String::new(),
+                n => format!(" - speed {n}x (F12)"),
+            };
+            surface
+                .window()
+                .set_title(&format!("{}{speed}", self.title));
         }
+    }
+
+    /// The speed the clock should run at: the chosen one while a mission is in play,
+    /// else 1 (the cutscenes, the drop and the other screens keep the original's).
+    fn speed_now(&self) -> u64 {
+        match &self.front {
+            FrontEnd::Screens(screens) if self.pointer_shown() && screens.in_play() => self.speed,
+            _ => 1,
+        }
+    }
+
+    /// Restarts the clock if the speed it should run at changed; `ran` is the last
+    /// retrace run, so the log's count goes on from it.
+    fn speed_changed(&mut self, now: Duration, ran: u64) -> bool {
+        if self.clock.speed() == self.speed_now() {
+            return false;
+        }
+        self.log_base += ran;
+        self.restart_clock(now);
+        true
     }
 
     /// Whether the screens are up, which draw the game's pointer where they show it
@@ -476,13 +512,14 @@ impl App {
     /// original's mode changes (`docs/game-loop.md`, "Mode changes").
     fn restart_clock(&mut self, now: Duration) {
         let rate = Rate::for_height(self.fb.view().height);
+        let speed = self.speed_now();
         log::info!(
-            "mode change at retrace {}: {:?} view, clock restarted at {:.3} retraces a second",
+            "clock restarted at retrace {}: {:?} view, {:.3} retraces a second, speed {speed}x",
             self.log_base,
             self.fb.view(),
             rate.hz()
         );
-        self.clock = Clock::new(rate, now);
+        self.clock = Clock::new(rate, now).at_speed(speed);
         self.sixty_hz = 0;
         self.meter = Meter {
             since: now,
@@ -581,11 +618,18 @@ impl ApplicationHandler for App {
             return;
         };
         let now = start.elapsed();
+        // F12 (or anything else) may have changed the speed since the last wake-up.
+        self.speed_changed(now, self.clock.retraces());
         let mut ran = false;
         for step in self.clock.advance(now) {
             ran = true;
             if self.tick(step) {
                 self.restart_clock(now);
+                break;
+            }
+            // Entering or leaving a mission in play changes it too; the rest of this
+            // wake-up's steps at the old speed are dropped, as at a mode change.
+            if self.speed_changed(now, step.retrace) {
                 break;
             }
         }
@@ -605,6 +649,12 @@ impl ApplicationHandler for App {
             Some(WindowAction::Quit) => event_loop.exit(),
             Some(WindowAction::ToggleFullscreen) => self.set_fullscreen(!self.is_fullscreen()),
             Some(WindowAction::LeaveFullscreen) => self.set_fullscreen(false),
+            Some(WindowAction::CycleSpeed) => {
+                let at = SPEEDS.iter().position(|&s| s == self.speed).unwrap_or(0);
+                self.speed = SPEEDS[(at + 1) % SPEEDS.len()];
+                log::info!("game speed {}x (in a mission)", self.speed);
+                self.set_title();
+            }
             None => {}
         }
         match event {
@@ -712,6 +762,7 @@ mod tests {
             fullscreen: false,
             error: None,
             music: Jukebox::default(),
+            speed: 1,
         }
     }
 
@@ -727,6 +778,7 @@ mod tests {
             let step = Step {
                 retrace: n,
                 sixty_hz: n,
+                extra: false,
             };
             if app.tick(step) {
                 // As `about_to_wait` does: the clock restarts at the new mode's rate.
@@ -755,6 +807,34 @@ mod tests {
         assert!(app.cutscene.is_none() && app.pointer_shown());
     }
 
+    #[test]
+    fn the_speed_applies_only_to_a_mission_in_play() {
+        use crate::screens::{Ending, Screen, View, tests};
+        let app = |screen| {
+            let mut app = test_app(FrontEnd::Screens(Box::new(tests::new(screen))));
+            app.speed = 4;
+            app
+        };
+        let mut mission = app(Screen::Mission(View::SitRoom));
+        assert_eq!(mission.speed_now(), 4);
+        for screen in [
+            Screen::MapRoom,
+            Screen::Login,
+            Screen::Cutscene(Ending::Won),
+        ] {
+            assert_eq!(app(screen).speed_now(), 1, "{screen:?}");
+        }
+        // The clock restarts at the speed once, and the log counts on from retrace 5.
+        assert!(mission.speed_changed(Duration::from_secs(1), 5));
+        assert_eq!((mission.clock.speed(), mission.log_base), (4, 5));
+        assert!(!mission.speed_changed(Duration::from_secs(1), 0));
+        // At 1x nothing restarts: the clock is today's.
+        let mut once = app(Screen::Mission(View::SitRoom));
+        once.speed = 1;
+        assert!(!once.speed_changed(Duration::from_secs(1), 5));
+        assert_eq!((once.clock.speed(), once.log_base), (1, 0));
+    }
+
     /// Runs `app` for `n` retraces from its start; the retraces where the song cued
     /// changed, and where the mode did.
     type Changes = Vec<(u64, Option<&'static str>)>;
@@ -765,6 +845,7 @@ mod tests {
             let changed = app.tick(Step {
                 retrace: at,
                 sixty_hz: at,
+                extra: false,
             });
             if changed {
                 app.restart_clock(Duration::from_millis(r));

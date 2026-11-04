@@ -1,5 +1,5 @@
 //! Turns winit window events into the game's input events (`input`) and the window's
-//! own actions: quit, and the fullscreen toggle. Only this module and `window` see winit.
+//! own actions: quit, the fullscreen toggle and the game speed. Only this module and `window` see winit.
 //!
 //! The mouse is mapped from window pixels to view pixels through the presented
 //! layout ([`Translator::set_layout`], `xeno_render::Layout::view_point`): moves are
@@ -32,6 +32,8 @@ pub enum WindowAction {
     Quit,
     ToggleFullscreen,
     LeaveFullscreen,
+    /// F12: the next game speed (T-215). The original binds plain F12 nowhere.
+    CycleSpeed,
 }
 
 /// Collects the game's input events between retraces, and decides the window keys.
@@ -131,6 +133,7 @@ impl Translator {
         };
         let window_key = match code {
             ScanCode::F11 => Some(WindowAction::ToggleFullscreen),
+            ScanCode::F12 => Some(WindowAction::CycleSpeed),
             ScanCode::ENTER | ScanCode::KEYPAD_ENTER if self.alt => {
                 Some(WindowAction::ToggleFullscreen)
             }
@@ -465,6 +468,11 @@ mod tests {
         assert_eq!(t.key(sc(0x57), true, false, None, false), toggle);
         assert_eq!(t.key(sc(0x57), true, true, None, true), None);
         assert_eq!(t.key(sc(0x57), false, false, None, true), None);
+        // F12, the game speed (T-215), is the window's too.
+        let speed = Some(WindowAction::CycleSpeed);
+        assert_eq!(t.key(sc(0x58), true, false, None, false), speed);
+        assert_eq!(t.key(sc(0x58), true, true, None, false), None);
+        assert_eq!(t.key(sc(0x58), false, false, None, false), None);
         let alt = |t: &mut Translator, held| {
             let state = if held {
                 ModifiersState::ALT

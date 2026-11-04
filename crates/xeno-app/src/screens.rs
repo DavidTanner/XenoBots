@@ -595,6 +595,12 @@ impl Screens {
         console && !self.mission.dialog_open() && !self.mission.paused()
     }
 
+    /// Whether a mission is in play, which the game speed runs faster (T-215): not
+    /// paused, and no file dialog open.
+    pub fn in_play(&self) -> bool {
+        matches!(self.screen, Mission(_)) && !self.mission.dialog_open() && !self.mission.paused()
+    }
+
     /// Whether a key asked to leave the game.
     pub fn quit(&self) -> bool {
         self.quit

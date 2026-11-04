@@ -2644,8 +2644,8 @@ intro and the drop (or straight away with `--no-intro`) it starts at the log-in.
 | Mission | `sitroom.m@l` or a console's `.m@l`, by the object viewed (T-043) | The views' own key tables and widgets (below, "Mission views"); a base destroyed by play ends the mission won or lost after its end script (T-055, T-150); winning the campaign's last scenario plays the campaign won (T-176) |
 | Cutscene (won, lost, campaign won) | The original's cutscene in the 320x240 mode (T-045, `vcl.md`), played by the window | Any key but P skips it, P pauses; then the map room |
 
-No key in a mission is the port's own: its stand-in Ctrl+C (campaign won) is gone
-(T-176), and the campaign is won by winning its last scenario. Ctrl+W
+No key the game sees in a mission is the port's own (the window's keys, below, never
+reach it): its stand-in Ctrl+C (campaign won) is gone (T-176), and the campaign is won by winning its last scenario. Ctrl+W
 and Ctrl+L are the map room's developer keys only; in a mission no view's table binds
 them, and the port's stand-ins that destroyed a base there are gone (T-150): bases fall
 to shots, and no developer key of the original ends a mission. A mission ends with a
@@ -2940,6 +2940,18 @@ original.
 - **Not modelled**: the music.
 - `--screen <name>` starts at a screen (skipping the intro and drop); `--screen
   test-card` shows the synthetic test card instead of the screens.
+
+### Keys that only the port uses
+
+The window's keys (`translate.rs`, `WindowAction`; `docs/game-loop.md`, "Input"). They
+never reach the game or the input log, so each must be a key the original binds
+nowhere it can be pressed.
+
+| Key | Where | Does | Why it is free |
+|---|---|---|---|
+| F11, Alt+Enter | Everywhere | Window or fullscreen | No screen's table binds F11 or Alt+Enter; Ctrl+Alt+F11 is a developer key behind unlock word 2 (`docs/formats/key.md`), which the port does not model |
+| ESC | Where no screen's table binds it | Leaves fullscreen, or quits | A screen that binds ESC claims it (`Translator::screen_claims_escape`) |
+| F12 | Everywhere; acts in a mission in play | The next game speed: 1x, 2x, 4x (T-215, `docs/game-loop.md`, "Game speed (T-215)"), shown in the window title | No screen's table binds F12; only Ctrl+Alt+F12 does, the timing benchmark behind unlock word 2 (`docs/formats/key.md`), which the port does not model |
 
 ## Symbols
 
