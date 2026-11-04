@@ -2669,10 +2669,8 @@ Deliberate deviation: `e0e1`'s free of the scorpion. The port drops the missile,
 homing shot's set-up does, and the launch is counted as the original counts it; a
 player's robot vanishing with no explosion is a bug, not a rule, and the state it leaves
 (a unit in the list with no object) is one the port cannot show the way DOSBox would
-without guessing. Shortcut: the loader's +2 is the file's index, and `f5cd` frees the
-place +2 names; in scen06a's small pool (+2 not the load order) a freed relay frees
-another object's place, so the next object is made over a live one. The port frees where
-the object lives (T-213).
+without guessing. The loader's +2 and what `f5cd` frees with it: "The pools as loaded
+(T-213)", below.
 
 Tests: `sense`'s `the_lock_is_on_its_target_s_memory_not_its_slot` (a destroyed robot's
 slot taken by a relay: the lock is dropped, not moved to the relay; a freed relay's
@@ -2683,6 +2681,47 @@ now takes out the driven scorpion's own side's other robots too: in the ntrain f
 before the drive, a human scorpion whose target died now steers to where it stood (the
 port read no target before), the fight goes another way, and the driven scorpion
 bumped its own side's scorpion and lost its tail missile.
+
+### The pools as loaded (T-213)
+
+A T-090 pass read `f4ee`, `f47d`, `f5cd` and the reader that calls `f47d`
+(`scen_read_object`, `1000:f1eb` and `f238`).
+
+**What the loader leaves.** `f4ee` marks the lowest free place's byte 1 and writes its
+index at +2; `f47d` stores the slot's pointer and count and clears from +4; then
+`scen_read_object` reads the file's object over the memory from **+2** (both of its
+layouts), so +2 holds the index the file was saved with. `f5cd` clears the byte of the
+place +2 names (and the pool's count), not the byte of the place the object is in. An
+object made in play keeps the index `f4ee` wrote, so only loaded objects can differ.
+
+**Stock files.** Every stock small pool's indices are its load order but scen06a's: its
+23 small objects (obstacles and relays) are a rotation of it (the first three obstacles
+name places 19 to 21, the relays from slot 16 on name 0 onwards), so freeing any of them
+but the last obstacle marks another live object's place free and leaves its own marked
+for good, unless the object that names it is freed too. The next small object anyone makes
+(a shot, explosion, sparkle, drop or relay) then takes that place: `f4b1` clears the bytes
+from +4 and writes the new object over the live one, whose slot still points at that
+memory. Two slots then hold one object, both ticked. Robots' indices differ in most
+files, but nothing makes a big-pool object in play outside the editor.
+
+**The port.** `Pools` keeps each object's +2 beside where it lives (the file's index at
+load, the place taken otherwise) and the places marked in use apart from who is in them;
+`World::remove` marks free the place +2 names. A new object goes in the lowest place not
+marked, as `f4ee`'s does. Shortcut: if another object still lives there, the port cannot
+have two slots on one `Entity`; that object leaves its slot with no release, explosion or
+message (the slot's count is kept, so `free_slot` still passes it over while it holds
+one), and every lock on it moves to the new object, which is what its memory now holds.
+Not checked in DOSBox (T-220): what the doubled object does in the original (it is
+ticked twice a pass), and what the old slot does once the new object is freed in turn.
+Not hashed: the layout, as before, though the object removed is.
+
+Tests: `world`'s `a_freed_object_frees_the_place_its_index_names` (synthetic, rotated
+indices: a freed object's named place is reused over a live object, which leaves its slot
+with its count and hands its lock on; the freed object's own place stays marked; a made
+object's place is freed by its own index) and
+`real_assets_scen06a_frees_the_place_its_indices_name` (the first relay out of order,
+destroyed, and the next small object is made in the place its index names, over the
+object loaded there). No play test, pinned number or state hash changed.
 
 ## The mission clock (T-102)
 
