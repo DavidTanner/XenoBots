@@ -403,6 +403,7 @@ impl App {
                 }
                 self.palette = screens.palette();
                 self.input.screen_claims_escape = screens.claims_escape();
+                self.input.console_arrows = screens.console_open();
                 let cutscene = screens.take_cutscene();
                 if screens.take_changed() {
                     // `MAINTHEM` stops on entering the map room's loop (`1000:6f34`).
@@ -424,6 +425,7 @@ impl App {
                     self.log_base = retrace;
                     // Its keys are the game's: any key but P skips it, ESC included.
                     self.input.screen_claims_escape = true;
+                    self.input.console_arrows = false;
                     return true;
                 }
             }

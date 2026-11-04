@@ -588,6 +588,13 @@ impl Screens {
         }
     }
 
+    /// Whether a robot console takes its keys (no dialog or pause over it): its held
+    /// arrows repeat by the port's count (T-207, `translate`).
+    pub fn console_open(&self) -> bool {
+        let console = matches!(self.screen, Mission(view) if view != View::SitRoom);
+        console && !self.mission.dialog_open() && !self.mission.paused()
+    }
+
     /// Whether a key asked to leave the game.
     pub fn quit(&self) -> bool {
         self.quit
@@ -1958,6 +1965,24 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(screens.screen(), MapRoom);
+    }
+
+    #[test]
+    fn only_the_consoles_repeat_their_arrows() {
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        for (screen, console) in [
+            (Login, false),
+            (MapRoom, false),
+            (Training, false),
+            (Review, false),
+            (Mission(View::SitRoom), false),
+            (Mission(View::Humanoid), true),
+            (Mission(View::Scorpion), true),
+        ] {
+            let mut screens = new(screen);
+            screens.retrace([], fb);
+            assert_eq!(screens.console_open(), console, "{screen:?}");
+        }
     }
 
     #[test]
