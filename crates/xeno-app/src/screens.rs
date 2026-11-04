@@ -3000,6 +3000,7 @@ pub(crate) mod tests {
             let to = world.get_mut(other).unwrap();
             to.position.x.0 = at.x.0 + step(heading);
             to.position.y.0 = at.y.0 + step(0x4000u16.wrapping_sub(heading));
+            screens.mission().new_frames();
             screens.retrace([], fb);
             fb.pixels().to_vec()
         };
@@ -3097,6 +3098,7 @@ pub(crate) mod tests {
             let e = world.get_mut(alien).unwrap();
             e.position = at;
             e.position.x.0 += units << 16;
+            screens.mission().new_frames();
             screens.retrace([], fb);
             region.iter().map(|&i| fb.pixels()[i]).collect::<Vec<u8>>()
         };

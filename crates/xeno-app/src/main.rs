@@ -30,6 +30,7 @@ mod status;
 mod terrain;
 mod test_pattern;
 mod translate;
+mod turns;
 mod viewer;
 mod window;
 

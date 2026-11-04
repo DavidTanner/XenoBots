@@ -1301,9 +1301,9 @@ background, then a dot per point through the maps' `pixel`, then the middle) are
 mode 0x12 for any kind. `Mission::draw_third` draws the humanoid's: the points are the
 main view's render list (`scene::nodes` from the main view's camera), or with the
 radar's bit in +0xf6 the noise in its colours; the frame is kept (`Mission::radar`)
-and copied through the colour-253 region until the next. Shortcuts: a frame every 8
-ticks of the sim, not every 8 chances the frame pipeline gives (T-209); the list is
-built afresh for the frame rather than kept from the main view's last; the noise draws
+and copied through the colour-253 region until the next. Its frames come on
+their turn, every 8 chances (`docs/render.md`, "The views take turns (T-209)": every
+25 passes). Shortcuts: the list is built afresh for the frame rather than kept from the main view's last; the noise draws
 from the displays' own random word, as the second display's. Not checked in DOSBox
 (T-168).
 
@@ -1412,9 +1412,9 @@ mode 0x12, zoom 8, shift 1, the robot as the viewer, its x, y and z plus its eye
 in `DS:0x65e9`; clicks answer as the humanoid's ("A click on the third display (T-208)").
 
 **In the port**: `Mission::draw_third` draws it as the humanoid's, the kind's `Radar`
-from `xeno_formats::radar` and the background from the scorpion console's bank, a
-frame every 5 ticks of the sim (the same shortcut as the humanoid's, T-209). Not
-checked in DOSBox (T-171).
+from `xeno_formats::radar` and the background from the scorpion console's bank, its
+frames on their turn every 5 chances (16 passes; `docs/render.md`, "The views take
+turns (T-209)"). Not checked in DOSBox (T-171).
 
 ### The scorpion console's instruments (T-131)
 
@@ -1578,8 +1578,9 @@ set calls the lock (`d8a7`), a right one `7eac`, as the other kinds' ("A click o
 third display (T-208)").
 
 **In the port**: `Mission::draw_third` draws it as the others', the kind's `Radar`
-from `xeno_formats::radar` and the background from the scout console's bank, a frame
-every 5 ticks of the sim (the same shortcut, T-209). Not checked in DOSBox (T-174).
+from `xeno_formats::radar` and the background from the scout console's bank, its
+frames on their turn every 5 chances (16 passes; `docs/render.md`, "The views take
+turns (T-209)"). Not checked in DOSBox (T-174).
 
 ### The situation room's main view (T-103)
 
