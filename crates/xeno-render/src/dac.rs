@@ -131,11 +131,18 @@ impl Dac {
     /// The retrace handler (`pal_on_retrace`): upload the shadow if it changed, run the
     /// colour-animation records unless held, then run a fade step.
     pub fn retrace(&mut self) {
+        self.retrace_with(true);
+    }
+
+    /// [`Dac::retrace`], running the colour-animation records only if `anims`: the
+    /// port's game speed (T-215) runs its extra steps without them, so the records
+    /// keep real time.
+    pub fn retrace_with(&mut self, anims: bool) {
         if self.dirty {
             self.hardware = self.shadow;
             self.dirty = false;
         }
-        if self.hold == 0 {
+        if anims && self.hold == 0 {
             self.anims.fire(&mut self.hardware);
             self.anims.advance();
         }
@@ -455,6 +462,12 @@ mod tests {
         }
         assert_eq!(dac.hardware()[0], 1);
         dac.release_anims();
+        // A game speed's extra step (T-215) leaves the records as a hold does.
+        dac.set(&grey(1));
+        for _ in 0..4 {
+            dac.retrace_with(false);
+        }
+        assert_eq!(dac.hardware()[0], 1);
         dac.retrace();
         assert_eq!(dac.hardware()[0], 63);
     }

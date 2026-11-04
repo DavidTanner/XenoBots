@@ -299,6 +299,9 @@ enum Load {
 /// The front end's state.
 #[derive(Debug, Clone)]
 pub struct Screens {
+    /// The coming retrace is one of the game speed's extra steps (T-215): the colour
+    /// records (a console's radar sweep among them) keep real time and skip it.
+    pub extra_step: bool,
     pictures: Pictures,
     screen: Screen,
     /// Fading out to this screen.
@@ -387,6 +390,7 @@ impl Screens {
         let map_room_shown = start != Login;
         let pointer = pointer::State::new(login.pointer, map_room_shown);
         Screens {
+            extra_step: false,
             pictures,
             screen: start,
             next: Some(start),
@@ -629,7 +633,7 @@ impl Screens {
             }
             self.set_shape(ARROW);
         }
-        self.dac.retrace();
+        self.dac.retrace_with(!self.extra_step);
         if !self.dac.dirty()
             && let Some(fade) = self.fade_in.take()
         {

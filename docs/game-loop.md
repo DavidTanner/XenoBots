@@ -94,7 +94,11 @@ speed when it isn't 1x.
   not paused by F1 and with no file dialog open). Inside it everything the retrace
   drives runs faster, the sound effects too (they play as the sim posts them, so more
   of them a second), and a view's fades. The music keeps real time (its driver is
-  ticked once per real retrace), and so does the mouse. The cutscenes, the intro drop, the map
+  ticked once per real retrace), and so does the mouse. So, at the user's request, do
+  the walking sound and the colour records: only every Nth footstep event (13, 14,
+  15) is played, and the extra steps run the DAC without its records
+  (`Dac::retrace_with`), so a console's radar sweep and the views' blinks and
+  rotations look as at 1x. Neither touches the sim, so the log still replays. The cutscenes, the intro drop, the map
   room and every other screen stay 1x, so the chosen speed takes effect on entering a
   mission and stops on leaving it, pausing or opening a dialog. Each such change
   restarts the clock at the new speed from that wake-up (the log counting on), and the

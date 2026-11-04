@@ -39,6 +39,13 @@ use crate::pointer;
 use crate::screens::{Screen, Screens};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
+
+/// The footstep sound events (`xeno_sim::motion`), kept at 1x at a game speed.
+const FOOTSTEPS: [u8; 3] = [
+    xeno_sim::motion::FOOTSTEP_HUMANOID,
+    xeno_sim::motion::FOOTSTEP_SCORPION,
+    xeno_sim::motion::FOOTSTEP_SCOUT,
+];
 use crate::viewer::Viewer;
 
 type Surface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
@@ -107,6 +114,7 @@ pub fn run(
         front,
         log_base: 0,
         sixty_hz: 0,
+        footsteps: 0,
         meter: Meter::default(),
         fb,
         palette,
@@ -157,6 +165,8 @@ struct App {
     log_base: u64,
     /// The 60 Hz count at the last retrace, to tell a cutscene when it moves.
     sixty_hz: u64,
+    /// Footsteps heard since the last one played, at a game speed (T-215).
+    footsteps: u64,
     meter: Meter,
     /// The picture to show.
     fb: Framebuffer,
@@ -405,9 +415,18 @@ impl App {
         }
         match &mut self.front {
             FrontEnd::Screens(screens) => {
+                screens.extra_step = step.extra;
                 screens.retrace(self.log.events_at(retrace), &mut self.fb);
                 for sound in screens.take_sounds() {
                     match sound {
+                        // At a game speed of N (T-215) the legs step N times as often;
+                        // every Nth footstep keeps the walking sound at 1x.
+                        crate::mission::Sound::Play(event) if FOOTSTEPS.contains(&event) => {
+                            self.footsteps = (self.footsteps + 1) % self.clock.speed();
+                            if self.footsteps == 0 {
+                                self.music.effect(event);
+                            }
+                        }
                         crate::mission::Sound::Play(event) => self.music.effect(event),
                         crate::mission::Sound::Stop(event) => self.music.stop(event),
                         crate::mission::Sound::Beep(tone) => self.music.beep(tone),
@@ -747,6 +766,7 @@ mod tests {
             front,
             log_base: 0,
             sixty_hz: 0,
+            footsteps: 0,
             meter: Meter::default(),
             fb,
             palette,
