@@ -2591,7 +2591,8 @@ original.
 - **Key words.** Each key going down is turned into the original's key word (Shift
   0x08, Ctrl 0x10, Alt 0x20 in the high byte, the set 1 code with `E0` dropped in the
   low byte, `screens::key_word`) and looked up in the screen's (key word, action)
-  table; the first match acts. Auto-repeat counts as a press.
+  table; the first match acts. Auto-repeat counts as a press (on a console the arrows'
+  repeat is the port's own, T-207: `docs/sim.md`, "The cockpit keys (T-105)").
 - **ESC.** A screen claims ESC exactly when its table binds it (log-in, training menu,
   the mission's views, review; and a cutscene, whose player takes any key; for the training menu and the views, the
   user's tables); then `Translator::screen_claims_escape` is set and ESC reaches the

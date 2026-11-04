@@ -18,6 +18,14 @@ use xeno_render::{Layout, Size};
 
 use crate::input::{InputEvent, Keys, Mouse, MouseButton, ScanCode};
 
+/// The arrows and the keypad's arrows, with and without `E0`.
+const ARROWS: [u16; 8] = [0x48, 0x4b, 0x4d, 0x50, 0xe048, 0xe04b, 0xe04d, 0xe050];
+/// A held arrow's first repeat on a console after 35 retraces (500 ms at 70 Hz), then
+/// every 7 (10 a second): about an AT keyboard's typematic default (500 ms, 10.9 a
+/// second), which the original's INT 9 handler sees as repeated make codes.
+pub const ARROW_DELAY: u32 = 35;
+pub const ARROW_EVERY: u32 = 7;
+
 /// What the window should do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowAction {
@@ -37,6 +45,11 @@ pub struct Translator {
     /// Set by a screen that uses ESC itself (T-040). Until then ESC belongs to the
     /// window: it leaves fullscreen, or quits from a window, and the game never sees it.
     pub screen_claims_escape: bool,
+    /// Set while a robot console takes keys (T-207): held arrows then repeat by the
+    /// port's own count ([`ARROW_DELAY`], [`ARROW_EVERY`]), not the system's.
+    pub console_arrows: bool,
+    /// The arrows held, and the retraces each has been held.
+    arrows: Vec<(ScanCode, u32)>,
     /// The layout last presented and its view, to map the cursor.
     layout: Option<(Layout, Size)>,
     /// The cursor in window pixels, while it is over the window.
@@ -136,6 +149,18 @@ impl Translator {
         {
             return (!repeat).then_some(action);
         }
+        // Not faithful (T-207): the keyboard repeats only the last key pressed, so in the
+        // original Space or any key stopped a held arrow's turn. The port repeats each
+        // held arrow itself (in `take`) and drops the system's repeat for it.
+        let arrow = ARROWS.contains(&code.0);
+        if arrow && pressed && repeat && self.console_arrows && self.held.is_down(code) {
+            return None;
+        }
+        if arrow && pressed && !self.held.is_down(code) {
+            self.arrows.push((code, 0));
+        } else if arrow && !pressed {
+            self.arrows.retain(|&(c, _)| c != code);
+        }
         if pressed {
             let was_up = self.held.press(code);
             self.pending.push(InputEvent::KeyDown {
@@ -205,11 +230,24 @@ impl Translator {
             self.button(button, false);
         }
         self.held = Keys::default();
+        self.arrows.clear();
         self.alt = false;
     }
 
-    /// The events since the last call, for the next retrace.
+    /// The events since the last call, for the next retrace; called once a retrace.
+    /// On a console a held arrow's own repeats come last.
     pub fn take(&mut self) -> std::vec::Drain<'_, InputEvent> {
+        for (code, held) in &mut self.arrows {
+            let due = *held >= ARROW_DELAY && (*held - ARROW_DELAY).is_multiple_of(ARROW_EVERY);
+            if due && self.console_arrows {
+                let event = InputEvent::KeyDown {
+                    code: *code,
+                    repeat: true,
+                };
+                self.pending.push(event);
+            }
+            *held += 1;
+        }
         self.pending.drain(..)
     }
 }
@@ -566,5 +604,79 @@ mod tests {
         assert_eq!(events(&mut t), [up(0x1e), up(0xe048)]);
         t.key(sc(0x1e), false, false, None, false);
         assert_eq!(events(&mut t), []);
+    }
+
+    /// The retraces (of `n`) at which `code` went down, with `at(r)` run before each.
+    fn presses_of(
+        t: &mut Translator,
+        code: u16,
+        n: u32,
+        mut at: impl FnMut(&mut Translator, u32),
+    ) -> Vec<u32> {
+        (0..n)
+            .filter(|&r| {
+                at(t, r);
+                let events = events(t);
+                events
+                    .iter()
+                    .any(|e| matches!(e, InputEvent::KeyDown { code: c, .. } if c.0 == code))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_held_arrow_on_a_console_repeats_by_its_own_count_whatever_else_is_pressed() {
+        let left = 0xe04b;
+        // The system's repeats come every retrace; the console drops them.
+        let os = |t: &mut Translator, r: u32| {
+            t.key(sc(left), true, r > 0, None, false);
+        };
+        let mut t = Translator {
+            console_arrows: true,
+            ..Translator::default()
+        };
+        let alone = presses_of(&mut t, left, 60, os);
+        assert_eq!(alone, [0, 35, 42, 49, 56]);
+        // Space pressed, held and released, and A tapped, change nothing.
+        let mut t = Translator {
+            console_arrows: true,
+            ..Translator::default()
+        };
+        let busy = presses_of(&mut t, left, 60, |t, r| {
+            if r == 0 {
+                os(t, 0);
+            }
+            match r {
+                10 | 40 => t.key(sc(0x39), true, false, Some(" "), false),
+                11..=39 => t.key(sc(0x39), true, true, Some(" "), false),
+                45 => t.key(sc(0x39), false, false, None, false),
+                47 => t.key(sc(0x1e), true, false, Some("a"), false),
+                48 => t.key(sc(0x1e), false, false, None, false),
+                _ => None,
+            };
+        });
+        assert_eq!(busy, alone);
+        // Releasing stops it; so does losing focus, for the keypad's arrow too.
+        t.key(sc(left), false, false, None, false);
+        assert_eq!(presses_of(&mut t, left, 60, |_, _| {}), []);
+        t.key(sc(0x4d), true, false, None, false);
+        t.window_event(&WindowEvent::Focused(false), false);
+        events(&mut t);
+        assert_eq!(presses_of(&mut t, 0x4d, 60, |_, _| {}), []);
+    }
+
+    #[test]
+    fn arrows_elsewhere_keep_the_systems_repeat() {
+        let mut t = Translator::default();
+        let os = |t: &mut Translator, r: u32| {
+            t.key(sc(0xe048), true, r > 0, None, false);
+        };
+        assert_eq!(
+            presses_of(&mut t, 0xe048, 40, os),
+            (0..40).collect::<Vec<_>>()
+        );
+        let mut t = Translator::default();
+        t.key(sc(0xe048), true, false, None, false);
+        assert_eq!(presses_of(&mut t, 0xe048, 60, |_, _| {}), [0]);
     }
 }

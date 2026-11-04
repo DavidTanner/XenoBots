@@ -835,6 +835,20 @@ scorpion `DS:0x676a`, scout `DS:0x6efa`). Each handler runs with DI on the viewe
 robot. Keys are set 1 make codes; the arrows' `E0` prefix is dropped, so the keypad's
 arrows act the same, and the keyboard's repeat repeats them.
 
+**Held arrows (T-207), a departure from the original.** `xeno.exe`'s own INT 9 handler
+(`1fe6:3d53`) reads port 0x60 and posts a press, a repeat (the code's last byte seen
+again) or a release, so it sees the keyboard's typematic repeat, and the keyboard
+repeats only the last key pressed: in the original, pressing Space, F5, A or any key
+while Left was held stopped the turn until Left was pressed again. The port does not
+copy that. While a console takes keys (`Screens::console_open`: a console view, no
+dialog or pause over it), `translate` drops the system's repeat for the arrows and the
+keypad's arrows and makes its own for each one held: a repeat 35 retraces after the
+press (500 ms at 70 Hz), then every 7 (10 a second), about an AT keyboard's typematic
+default (500 ms, 10.9 a second), whatever else is pressed or released. The repeats are
+`KeyDown { repeat: true }` events in the input log like any other, so a log still
+replays exactly. Releasing the arrow, or the window losing focus, stops them. The
+situation room, dialogs and every other screen keep the system's repeat.
+
 | Key | Humanoid | Scorpion | Scout | What it does |
 |---|---|---|---|---|
 | Left, Right | `1000:acc0`, `accd` | `9420`, `942d` | `c5e3`, `c5f0` | The pilot takes over (`order_switch_to_manual`, `1000:d446`: +0x23 bit 7 cleared, event 0xb), then the heading asked for is the **heading** less or plus `Gears::turn` (0x100, 1/256 of a turn, in the stock build). A held key repeats from the heading as it turns |

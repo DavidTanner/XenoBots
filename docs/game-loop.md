@@ -91,7 +91,8 @@ else sees winit.
 - **Events**: `KeyDown { code, repeat }`, `KeyUp { code }` and `Text(char)` (printable
   characters with the layout and Shift applied, for T-041's name entry). A release is
   sent only for a key that went down, and losing focus releases every held key.
-  `Keys` is the set of held keys.
+  `Keys` is the set of held keys. On a robot console the arrows' repeats are the
+  port's own, not the system's (T-207, `docs/sim.md`, "The cockpit keys (T-105)").
 - **Window keys** never reach the game. F11, or Alt+Enter (either Enter), toggles
   fullscreen; holding them does not repeat. ESC leaves fullscreen, or quits from a
   window. A screen that wants ESC itself sets `Translator::screen_claims_escape`
