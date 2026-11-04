@@ -1609,8 +1609,8 @@ the grid step `1000:3760`, colour-0 dots on the relays' lattice, every point wit
 and y even and `x = y` mod 4, drawn after the clear and under everything else;
 `docs/render.md`, "The grid step (T-143)"); clear colour 0x43
 (`DS:0x1457`), hill colour 0x42 (`DS:0x1458`); zoom `1 << +0x36`; heading 0; the
-camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left press on the map
-off a unit sets it and moves the centre to the pointer, `1000:57d2`; one on an alien
+camera on the centre +0x4f/+0x53 while +0x32 bit 15 is set (a left release on the
+main view off a unit, in any mode, sets it and moves the centre to the pointer, `1000:57d2`; one on an alien
 unit does nothing, `1000:57bd`, T-201 in `docs/sim.md`; every stock base has it set), else on the selected unit unless it is at its base, else on the base. The
 steps (`DS:0x395a`): the camera with the focal factor `DS:0x4d32` (327, exponent -16),
 the clear, the pointer probe and `1000:3877`, which asks the producers for one node at
@@ -2156,10 +2156,12 @@ is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` headin
 | Alt+F1 | `1000:6bcf` | As above |
 
 **Placing** (`ui_editor_place_at_pointer`, `1000:6be8`, T-108): the situation room's
-main view's mouse handler (`1000:571f`) calls it on a left press whose event word has
-Ctrl (0x1000) while the view is in **mode 4 (the map)** (`1000:5781`); the press then
-does nothing else, so without unlock word 9 (checked first) a Ctrl+press on the map
-does nothing at all. Every kind is followed by beeps (`1000:0261` and `0266`; a
+main view's mouse handler (`1000:571f`) calls it on a left release (event bit 0x4,
+T-212; earlier notes said press) whose event word has Ctrl (0x1000) while the view is
+in **mode 4 (the map)** (`1000:5781`); the release then does nothing else, so without
+unlock word 9 (checked first) a Ctrl+click on the map does nothing at all. With Ctrl in
+another mode the release goes on as without it (`docs/sim.md`, "The main view's
+releases (T-212)"). Every kind is followed by beeps (`1000:0261` and `0266`; a
 refused relay or path point `0266` three or two times: `docs/sim.md`, "The other
 beeps (T-211)"), played in the port.
 
@@ -2816,14 +2818,17 @@ original.
   and repair state are the scenario's as loaded (robots made since show call sign 0);
   the C button's new-message look (the base's +0xb4, which the sim sets since T-129) is
   not shown.
-- **The map's press** (`Mission::map_press`, T-128): the map's frame probes at the
-  pointer (`mainview::Probe`, kept in `Mission::probed` as `1000:5619` keeps it); a
-  left press on the map in mode M with no widget there selects the probed object if it
-  is one of the player's robots and clears the map's bit 15, else sets bit 15 and moves
-  the centre to the point under the pointer (`mainview::pointer_to_world`). Shortcuts:
-  the camera is the map's now, not the last frame's (as the editor's press), and the
-  map redraws on every pointer move so the probe follows it. Not checked in DOSBox
-  (T-182).
+- **The main view's releases** (`Mission::main_view_release`, T-128, T-212): the M
+  and R frames probe at the pointer (`mainview::Probe`, `scene::draw`) and keep the
+  object and the frame's camera in `Mission::sitroom_probe` as `1000:5619` keeps
+  `DS:0x594a`, reset by nothing; a release over the main view with no widget there, in
+  any mode, acts on it as `docs/sim.md`, "The main view's releases (T-212)": the left
+  selects the player's unit or recentres the map (Ctrl in mode M: the editor's place),
+  the right opens the unit's console (`Mission::jump`, the consoles' too). Shortcuts:
+  the recentre's camera is the situation room's last M or R frame's (the map's now
+  before any), not whichever view drew last; the map and R redraw on every pointer move
+  so the probe follows it; a right release on an alien robot does nothing (T-214). Not
+  checked in DOSBox (T-182).
 - **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
   bar, the power rows' bars and the clock as "The situation room's panels (T-127)"
   above, from the player's base in the sim (`State::Base::counts`, `Depot`), the mission
