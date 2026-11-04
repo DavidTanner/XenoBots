@@ -184,6 +184,8 @@ impl View {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpriteButton {
     pub kind: u16,
+    /// Its widget's state offset, which its redraw mark is at (T-205).
+    pub state: u16,
     pub area: Rect,
     pub handle: u16,
 }
@@ -425,6 +427,7 @@ impl Exe<'_> {
                 let handle = operand(self.image, at + head.len(), &[ADD_AX])?;
                 buttons.push(SpriteButton {
                     kind: widget.kind,
+                    state: widget.state,
                     area,
                     handle,
                 });

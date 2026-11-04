@@ -790,7 +790,10 @@ impl Screens {
             self.view_covered = !self.view_covered;
             match self.view_covered {
                 true => self.close_view_records(view),
-                false => self.viewed(view),
+                false => {
+                    self.mission.mark_all();
+                    self.viewed(view);
+                }
             }
         }
         if self.screen == MapRoom && self.next.is_none() && self.map.take_dirty() {

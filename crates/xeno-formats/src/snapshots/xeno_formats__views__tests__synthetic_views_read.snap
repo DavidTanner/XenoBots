@@ -388,6 +388,7 @@ MissionViews {
     situation_buttons: [
         SpriteButton {
             kind: 84,
+            state: 3,
             area: Rect {
                 top: 73,
                 left: 13,
