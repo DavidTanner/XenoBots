@@ -298,6 +298,8 @@ pub struct MapState {
     hover: Option<usize>,
     /// Something changed since the last draw.
     dirty: bool,
+    /// A selection was refused since the last call to [`MapState::take_refused`].
+    refused: bool,
 }
 
 impl MapState {
@@ -334,16 +336,22 @@ impl MapState {
         self.set_hover(over_map.then(|| campaign.hit(at.0, at.1)).flatten());
     }
 
+    /// Whether a selection was refused (the original beeps, `1000:0270`); clears it.
+    pub fn take_refused(&mut self) -> bool {
+        std::mem::take(&mut self.refused)
+    }
+
     /// Whether the map room needs drawing again; clears it.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
     }
 
     /// Moves the selection to `i` if the campaign accepts it; otherwise the original
-    /// beeps (`1000:0270`, T-211) and keeps the old one.
+    /// beeps (`1000:0270`) and keeps the old one.
     fn select(&mut self, i: usize, campaign: &Campaign) -> bool {
         if !campaign.accepts(i) {
             log::debug!("map room: scenario {i} refused while a mission has no result");
+            self.refused = true;
             return false;
         }
         self.selection = Some(i);
@@ -811,8 +819,11 @@ pub mod tests {
         busy.table.scenarios[3].state = IN_PLAY;
         state.step(1, &busy);
         assert_eq!(state.selection(), Some(3));
+        assert!(!state.take_refused());
         state.step(1, &busy);
         assert_eq!(state.selection(), Some(3));
+        assert!(state.take_refused(), "a refusal beeps");
+        assert!(!state.take_refused());
         assert!(!busy.may_train());
     }
 

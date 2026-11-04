@@ -6,7 +6,7 @@
 //!
 //! The sound effects (T-061) go to the same device: `xeno.exe`'s sound events play
 //! `dsounds.bin` blocks on the effects mixer's voices, as `snd_play_sound_effect` does.
-//! The beep (T-193) sounds the PC speaker as `xeno.exe`'s `1000:0261` does.
+//! The beeps (T-193, T-211) sound the PC speaker as `xeno.exe`'s `1000:0261`..`0270` do.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,8 +38,8 @@ pub struct Jukebox {
     pub playing: Option<&'static str>,
     /// What each sound event plays; empty without `dsounds.bin` or the event table.
     effects: Vec<Effect>,
-    /// The beep, read from `xeno.exe`; `None` beeps nothing.
-    beep: Option<sounds::Beep>,
+    /// The beeps, read from `xeno.exe` in `mission::Tone`'s order; `None` beeps nothing.
+    beeps: Option<[sounds::Beep; 4]>,
 }
 
 /// A sound event as the mixer's play takes it (`Mixer::play`).
@@ -92,12 +92,12 @@ impl Jukebox {
             log::warn!("no sound effects: {e}");
             Vec::new()
         });
-        let beep = files
+        let beeps = files
             .read("xeno.exe")
             .map_err(|e| e.to_string())
             .and_then(|exe| lzexe::unpack(&exe).map_err(|e| format!("xeno.exe: {e}")))
-            .and_then(|exe| sounds::read_beep(&exe).map_err(|e| format!("xeno.exe's beep: {e}")))
-            .inspect_err(|e| log::warn!("no beep: {e}"))
+            .and_then(|exe| sounds::read_beeps(&exe).map_err(|e| format!("xeno.exe's beeps: {e}")))
+            .inspect_err(|e| log::warn!("no beeps: {e}"))
             .ok();
         let bank = files
             .read("sounddvr.dvr")
@@ -127,14 +127,15 @@ impl Jukebox {
             songs,
             playing: None,
             effects,
-            beep,
+            beeps,
         }
     }
 
-    /// The beep on the PC speaker (`1000:0261`).
-    pub fn beep(&mut self) {
-        log::debug!("beep");
-        if let (Some(output), Some(b)) = (&self.output, self.beep) {
+    /// A beep on the PC speaker.
+    pub fn beep(&mut self, tone: crate::mission::Tone) {
+        log::debug!("beep {tone:?}");
+        if let (Some(output), Some(beeps)) = (&self.output, self.beeps) {
+            let b = beeps[tone as usize];
             output.speaker().beep(b.divisor, b.on, b.off);
         }
     }

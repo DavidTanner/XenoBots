@@ -13,6 +13,8 @@ use xeno_sim::editor::{Place, Placed};
 use xeno_sim::terrain::Paths;
 use xeno_sim::{Position, Sim};
 
+use crate::mission::Tone;
+
 /// The handlers in the editor's key table (`DS:0x5bc3`), by their offset in segment
 /// `1000`, which is how the port knows them.
 pub(crate) mod handler {
@@ -189,15 +191,15 @@ impl Editor {
     /// A Ctrl+left press on the map in mode M (`ui_editor_place_at_pointer`,
     /// `1000:6be8`) at `at`, with the picked kind and side: a path point goes on the
     /// side's current path, a robot, a relay (T-142) or an obstacle is made, the side's
-    /// base moved. Returns
-    /// whether the status changed (only a point redraws it).
+    /// base moved. Returns whether the status changed (only a point redraws it), and
+    /// the beeps the original sounds after (`docs/sim.md`, "The beep (T-193)").
     pub fn place(
         &self,
         at: Position,
         scenario: &mut Scenario,
         sim: &mut Sim,
         tables: &Tables,
-    ) -> bool {
+    ) -> (bool, &'static [Tone]) {
         let side = if self.alien { Side::Alien } else { Side::Human };
         let what = match self.kind {
             -1 => {
@@ -206,7 +208,7 @@ impl Editor {
                 let t = table(scenario, self.alien);
                 let p = &mut t.paths[self.path.min(PathTable::SLOTS - 1)];
                 if t.count == 0 || usize::from(p.point_count) >= Path::MAX_POINTS {
-                    return false;
+                    return (false, &[Tone::Middle, Tone::Middle]); // `1000:6cd1`
                 }
                 p.points[usize::from(p.point_count)] = Point {
                     x: at.x.0,
@@ -214,7 +216,7 @@ impl Editor {
                 };
                 p.point_count += 1;
                 sim.set_paths(Paths::from_scenario(scenario));
-                return true;
+                return (true, &[Tone::High]); // `1000:6ccd`
             }
             0..=2 => Place::Robot {
                 kind: ObjectKind::from(self.kind as u16),
@@ -226,8 +228,14 @@ impl Editor {
             16 => Place::Obstacle,
             kind => {
                 log::debug!("editor: kind {kind} is none the keys pick");
-                return false;
+                return (false, &[]);
             }
+        };
+        // `1000:6c9b` after a relay, `6ca2` for a refused one, else `6c2c`, `6c42`, `6c5e`
+        // whatever was placed.
+        let beeps: &[Tone] = match what {
+            Place::Relay => &[Tone::High, Tone::Middle],
+            _ => &[Tone::Middle, Tone::High],
         };
         let objects = scenario.objects.get_or_insert_with(Vec::new);
         match sim.place(what, at, tables) {
@@ -238,10 +246,15 @@ impl Editor {
                 }
             }
             None => {
-                log::info!("editor: nothing placed (no free slot, sign or base, or a relay there)")
+                log::info!("editor: nothing placed (no free slot, sign or base, or a relay there)");
+                // shortcut: a relay with no free slot also beeps as refused, where the
+                // original (which checks only the cell) beeps as placed.
+                if what == Place::Relay {
+                    return (false, &[Tone::Middle; 3]);
+                }
             }
         }
-        false
+        (false, beeps)
     }
 
     /// Ctrl+E's flag (`DS:0x6ffa`): the maps show undetected alien robots.

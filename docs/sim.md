@@ -1047,11 +1047,11 @@ Every caller of `1000:0261` (near calls in segment `1000`; an `e8` byte pair at
 | `1000:cffa` | F1's pause, after the clock is pushed (so the beep's 8 counts are put back) | beeps |
 | `1000:d1ac` | Ctrl+P with unlock word 8, after the charge | beeps |
 | `1000:eef8` | `ui_load_scenario_with_dialog`: the reader failed (Alt+L) | beeps |
-| `1000:6ac4` | The editor's Ctrl+D, after `0266` | not yet (T-211) |
-| `1000:6ad4` | The editor's Ctrl+Alt+R, after `026b` and `0266` | not yet (T-211) |
-| `1000:6c2f`, `6c45`, `6c61` | Placing a unit, base or relay in the editor, after `0266` | not yet (T-211) |
-| `1000:6c9b` | Placing an obstacle, before `0266` | not yet (T-211) |
-| `1000:6ccd` | Placing a path point | not yet (T-211) |
+| `1000:6ac4` | The editor's Ctrl+D, after `0266` | beeps (T-211) |
+| `1000:6ad4` | The editor's Ctrl+Alt+R, after `026b` and `0266` | beeps (T-211) |
+| `1000:6c2f`, `6c45`, `6c61` | Placing a robot, obstacle or base in the editor, after `0266` | beeps (T-211) |
+| `1000:6c9b` | Placing a relay, before `0266` | beeps (T-211) |
+| `1000:6ccd` | Placing a path point | beeps (T-211) |
 | `1000:7d21`, `7d2b`, `7d35` | The developer clock keys (widget `0x146`: Ctrl+Alt+M five minutes, D a day, H an hour) | not ported |
 | `1000:7d4e` | The screenshot key (`0x148`), after the screenshot slot `0x1558` | not ported |
 
@@ -1064,6 +1064,50 @@ it beside the mixer and the music. `Mission::beep` raises `Sound::Beep`, which t
 window hands to `Jukebox::beep`. Shortcuts: the port does not stop the game for the
 beep's 8 counts, and it does not test the clock (the port's clock is not the
 original's from start-up). Not checked in DOSBox (T-194).
+
+### The other beeps (T-211)
+
+Traced with Ghidra. `0266` and `026b` are `0261`'s routine with another divisor (the
+same clock test, 4 counts on and 4 off). `0270`'s routine (`1fe6:43f7`) has **no**
+clock test: `pushf`, `push ax`, `push bx`, the tone with 0x960 and 1, the wait with 1,
+so about 497 Hz for one count and one silent (about 33 ms in all). The other far
+thunk, `0275`, takes its divisor and count in `AX` and `BX`; nothing in segment `1000`
+calls it.
+
+Every near call to them in segment `1000`, in the order each caller makes them:
+
+| Caller | What | Beeps | In the port |
+|---|---|---|---|
+| `1000:6ab2` | `ui_dispatch_editor_key`: after any key in the editor's table has run and the status is redrawn (not for a key that is not in the table, nor without unlock word 9) | `0270` | beeps |
+| `1000:6ac1` | Ctrl+D, after `sim_destroy_robot` (whether or not a unit was selected) | `0266`, `0261`, then the dispatcher's `0270` | beeps |
+| `1000:6ace` | Ctrl+Alt+R, after the relays are removed | `026b`, `0266`, `0261`, then `0270` | beeps |
+| `1000:6c2c` | Placing a robot (after `sim_add_unit_to_side_list`) | `0266`, `0261` | beeps |
+| `1000:6c42` | Placing an obstacle | `0266`, `0261` | beeps |
+| `1000:6c5e` | Moving the side's base | `0266`, `0261` | beeps |
+| `1000:6c9b` | Placing a relay the check (`1000:d15b`) allows | `0261`, `0266` | beeps |
+| `1000:6ca2` | A relay refused (a relay stands in the cell) | `0266` three times | beeps |
+| `1000:6ccd` | A path point added (after the status is redrawn) | `0261` | beeps |
+| `1000:6cd1` | A path point refused (the side has no path, or the path has 16 points) | `0266` twice | beeps |
+| `1000:74e0` | `ui_map_room_set_selection`: a selection refused while the last mission has no result | `0270` | beeps |
+| `1000:487d` | The robot program interpreter: the program pointer (+0x34) outside `DS:0x5034`..`0x5670`; an `int 3` follows (a developer's trap) | `0266` | not ported |
+| `1000:3b25` | A routine at `1000:3af0` (tests on the camera, `DS:0x1462`) that nothing calls directly | `026b` | not ported |
+| `1000:53ec` | A `call 026b`, `ret` that nothing calls directly | `026b` | not ported |
+
+A placement is a mouse press, not a key, so it has no `0270`. The placements beep
+whether or not the sim had room: only the relay looks before it beeps.
+
+**In the port.** `sounds::read_beeps` reads all four from the user's `xeno.exe`, each
+thunk to its routine as for `0261`, taking either shape (the clock test's or
+`0270`'s; `Beep::clock_test` says which) and refusing any other. `mission::Tone`
+names them (`High`, `Middle`, `Low`, `Short`); `Sound::Beep` carries one, and
+`Jukebox::beep` sounds the one read. The editor's keys beep as in the table, the
+handler's own first and the dispatcher's last; `Editor::place` returns the
+placement's beeps; the map room's refused selection beeps through
+`MapState::take_refused`. Shortcuts: the dispatcher's `0270` after Ctrl+M,
+Ctrl+Alt+O and Ctrl+Alt+B comes as the terrain editor or the file dialog opens, not
+as it closes (the original's loops run inside the key); a relay refused because no
+slot is free beeps as refused, where the original beeps as placed. Not checked in
+DOSBox (T-194).
 
 ## The ECM and the cloak (T-136)
 
