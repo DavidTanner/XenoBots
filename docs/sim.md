@@ -2312,7 +2312,8 @@ has `TARGETABLE` alone until it rises.
 
 **The map's press (T-201).** `DS:0x594a` is the object the situation room's main view
 probed in its last frame (`1000:5619`, `1000:41b7`'s result, written before each
-redraw; its only writer). The main view's mouse handler (`1000:571f`) on a left press
+redraw; its only writer). The main view's mouse handler (`1000:571f`) on a left release
+(event bit 0x4; T-201 called it a press, T-212)
 with the pointer over the view's region (`DS:0x594c`) and no Ctrl-in-mode-M placing
 reads it at `1000:57aa`: an object with `UNIT` and the base's side bit (`57b0` to
 `57bd`) clears the base's +0x32 bit 15 and is selected (`2000:6d91`, `6d18`); a unit
@@ -2321,8 +2322,42 @@ of the **other** side does nothing at all; no object, or one without `UNIT`, set
 fields and selection, which `xeno-app` keeps (`Mission::map_press`, T-128), not on the
 sim's state. T-128's port took the roster's robots for the unit test and recentred on
 an alien unit; since T-201 it reads the sim's `UNIT` and side and passes an alien unit
-over. The same handler's right release (`1000:576a`) opens the probed object's console
-through `1000:7eac`, and the press is not limited to mode M (T-212).
+over. The same handler's right release and its other modes are below (T-212).
+
+**The main view's releases (T-212).** The handler (`1000:571f`) tests the event's
+bits in the order 0x400 (leave: shape 0, `DS:0x594c` = 0), 0x1 (move: over the
+colour-255 region, slot `0x5bc`, the mode's shape and `DS:0x594c` = 1, else as the
+leave), 0x4 (left release) and 0x10 (right release); it takes no press (0x2, 0x8), and
+nothing in it tests the mode but the Ctrl case. Under capture the moves keep coming to
+it, so `DS:0x594c` says whether the pointer was last over the region.
+- **The probe.** `DS:0x594a` (0 in the image) is written only at `1000:561c`, which two
+  of the five mode routines (`DS:0x5ae0`) reach: M's (`5590`, when its frame is drawn)
+  and R's (`55d6`, with a selected unit; none, the view cleared and the probe not
+  written). O (`556a`), S (`5570`) and C (`56a7`) never write it, and nothing resets it
+  on a mode change, a view switch or a new mission: in O, S and C, and in R with no
+  unit, a release acts on whatever M or R last probed. R's probe is the unit's 3D view's
+  (`1000:41b7` after the copy, as the consoles' 3D views).
+- **Right release** (`1000:576a`): with `DS:0x594c` = 1 and the probe not 0,
+  `1000:7eac` with `AX` the object and `DI` the base (`DS:0x62f1`), the consoles'
+  jump ("Under the pointer (T-133)" in `docs/screens.md`): a unit in either side's list
+  opens its console (`7ef2`) if it is of the base's side, or with unlock word 8 and Ctrl;
+  an alien one gets the refusal (string `0x1a1f`) through `1000:d53f` with the base in
+  `DI`, so into the base's log rather than a panel (T-214). Anything else: nothing.
+- **Left release** (`1000:5781`): with Ctrl and the mode 4 (M), the editor's place
+  (`1000:6be8`) and nothing else. Otherwise (Ctrl in other modes included) with
+  `DS:0x594c` = 1: a same-side `UNIT` is selected and bit 15 cleared, an alien unit
+  passed over, and anything else (0 too) sets bit 15 and moves the map's centre through
+  `ui_map_pointer_to_world` (`1000:3fd3`). That conversion reads the target rectangle
+  (`DS:0x145a`), camera position (`DS:0x1462`, `0x1466`) and focal factor
+  (`DS:0x4d24`) the last `gfx_set_view_camera` left, so after an R frame it is the
+  unit's eye and 3D focal factor, and in O, S and C whatever view drew last.
+
+The port (`Mission::main_view_release`): the release over the main view's rectangle
+with no widget there, in any mode, on `Mission::sitroom_probe` (the M and R frames'
+object and camera, reset by nothing but a new mission); the right through `Mission::jump`, shared with
+the consoles' right release (the alien refusal still T-214's). The editor's place and
+the select or recentre moved from the press to the release. Not checked in DOSBox
+(T-182).
 
 Removal (`1000:f5a4`) sets a kind-15 object's +0x17 to 2 and its tick (`f5c1`) counts
 it down to free the slot.

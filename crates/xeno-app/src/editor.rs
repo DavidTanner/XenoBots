@@ -188,7 +188,7 @@ impl Editor {
         Effect::None
     }
 
-    /// A Ctrl+left press on the map in mode M (`ui_editor_place_at_pointer`,
+    /// A Ctrl+left release on the map in mode M (`ui_editor_place_at_pointer`,
     /// `1000:6be8`) at `at`, with the picked kind and side: a path point goes on the
     /// side's current path, a robot, a relay (T-142) or an obstacle is made, the side's
     /// base moved. Returns whether the status changed (only a point redraws it), and

@@ -941,6 +941,11 @@ pub struct Mission {
     /// The object under the pointer in the last frame of the 3D view and of the second
     /// display (the humanoid's `DS:0x6a78`, `0x6a7a`, read by `1000:41b7`).
     probed: Cell<[Option<u16>; 2]>,
+    /// The object under the pointer in the situation room main view's last M or R
+    /// frame (`DS:0x594a`, its only writer `1000:561c`), and that frame's camera (the
+    /// one `ui_map_pointer_to_world` reads). Neither mode change nor view switch resets
+    /// them, so modes O, S and C act on the last M or R frame's.
+    sitroom_probe: Cell<(Option<u16>, Option<xeno_render::view3d::Camera>)>,
     /// The point under the pointer on the second display's last map frame
     /// (`ui_map_pointer_to_world`); none after a camera frame.
     map_point: Cell<Option<xeno_sim::Position>>,
@@ -957,6 +962,8 @@ pub struct Mission {
     second_frame: RefCell<Option<(u32, Framebuffer)>>,
     /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
     alt: bool,
+    /// Ctrl in the last key word (0x1000), likewise.
+    ctrl: bool,
     /// The map display's Alt press waits for the next frame (+0x23 bit 2).
     goal_press: bool,
     dirty: bool,
@@ -1066,12 +1073,14 @@ impl Mission {
             pointer: None,
             region: None,
             probed: Cell::default(),
+            sitroom_probe: Cell::default(),
             map_point: Cell::default(),
             radar: std::cell::RefCell::default(),
             passes: 0,
             main_frame: RefCell::default(),
             second_frame: RefCell::default(),
             alt: false,
+            ctrl: false,
             goal_press: false,
             dirty: true,
             tint: None,
@@ -2324,6 +2333,11 @@ impl Mission {
         self.alt = alt;
     }
 
+    /// The last key word's Ctrl (0x1000), likewise.
+    pub fn set_ctrl(&mut self, ctrl: bool) {
+        self.ctrl = ctrl;
+    }
+
     /// The pointer moved to `at`: in the terrain editor, the ground point under it. A
     /// console and the situation room's map draw again, so their views probe the new
     /// position (the original draws them continuously).
@@ -2332,7 +2346,7 @@ impl Mission {
         // shortcut: redraws on every move, the original every 4 ticks (its frames
         // run over several passes; the map's too, T-134).
         self.dirty |= matches!(self.viewed, Viewed::Robot(_))
-            || (self.viewed == Viewed::Base && self.mode == MAP_MODE);
+            || (self.viewed == Viewed::Base && matches!(self.mode, MAP_MODE | ROBOT_VIEW_MODE));
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
             dialog.mouse_move(at, tables);
             return;
@@ -2382,10 +2396,10 @@ impl Mission {
         }
     }
 
-    /// A left press with Ctrl at `at` (`1000:5781`): over the situation room's main view
+    /// A left release with Ctrl at `at` (`1000:5781`): over the situation room's main view
     /// in mode M (the map), with no other widget there, it is the editor's place
     /// (`ui_editor_place_at_pointer`), which needs unlock word 9 and a running sim.
-    /// Returns whether the press was taken.
+    /// Returns whether the release was taken.
     pub fn place_at_pointer(&mut self, at: Option<(u16, u16)>, assets: &Assets) -> bool {
         let Some(at) = at else {
             return false;
@@ -2420,18 +2434,57 @@ impl Mission {
         true
     }
 
-    /// A left press on the situation room's map in mode M with no widget there
-    /// (`1000:5781`): on a unit (+0x16 `UNIT`, `1000:57aa`) probed in the last frame
-    /// (`DS:0x594a`), one of the player's is selected and the map's bit 15 cleared
-    /// (`1fe6:6f31`) and an alien one is passed over; otherwise it sets bit 15 and
-    /// moves the centre (+0x4f, +0x53) to the point under the pointer
-    /// (`ui_map_pointer_to_world`).
-    fn map_press(&mut self, at: (u16, u16), assets: &Assets) {
+    /// A release over the situation room's main view with no widget there, in any mode
+    /// (`1000:571f`: `DS:0x594c` is set over the view's region in all five), acting on
+    /// the object its last M or R frame probed (`DS:0x594a`). The right (`1000:576a`)
+    /// opens the object's console as the consoles' right release does (`7eac`). The
+    /// left (`5781`) with Ctrl in mode M is the editor's place, and otherwise
+    /// [`Mission::map_release`].
+    fn main_view_release(
+        &mut self,
+        button: MouseButton,
+        at: Option<(u16, u16)>,
+        assets: &Assets,
+    ) -> Option<Request> {
+        let at = at?;
         let view = self.main_view(assets);
-        if self.viewed != Viewed::Base || self.mode != MAP_MODE || !view.contains(at.0, at.1) {
-            return;
+        if self.viewed != Viewed::Base
+            || !view.contains(at.0, at.1)
+            || self.target(assets, at).is_some()
+        {
+            return None;
         }
-        let unit = self.probed.get()[0].and_then(|s| {
+        match button {
+            MouseButton::Right => self.jump(self.sitroom_probe.get().0?),
+            MouseButton::Left if self.ctrl && self.mode == MAP_MODE => {
+                self.place_at_pointer(Some(at), assets);
+                None
+            }
+            MouseButton::Left => {
+                self.map_release(at, assets);
+                None
+            }
+            MouseButton::Middle => None,
+        }
+    }
+
+    /// `1000:7eac`: the object's console opens if it is a unit.
+    fn jump(&mut self, object: u16) -> Option<Request> {
+        // shortcut: only the player's robots can be viewed, so `7eac`'s message for
+        // another side's and its Ctrl developer case are not ported (T-214).
+        self.view_robot(object).map(Request::Show)
+    }
+
+    /// The main view's left release (`1000:57a2`): on a unit (+0x16 `UNIT`, `57aa`)
+    /// probed in the last M or R frame, one of the player's is selected and the map's
+    /// bit 15 cleared (`1fe6:6f31`) and an alien one is passed over; otherwise it sets
+    /// bit 15 and moves the centre (+0x4f, +0x53) to the point under the pointer
+    /// (`ui_map_pointer_to_world`) by that frame's camera: the map's, or in mode R the
+    /// robot's eye, whatever the mode now.
+    fn map_release(&mut self, at: (u16, u16), assets: &Assets) {
+        let view = self.main_view(assets);
+        let (probed, camera) = self.sitroom_probe.get();
+        let unit = probed.and_then(|s| {
             let e = self.world().get(EntityId(s))?;
             (e.flags & usg::flag::UNIT != 0).then_some((s, e.side))
         });
@@ -2441,7 +2494,9 @@ impl Mission {
                 self.map.overlays &= !usg::Base::MAP_FREE;
                 self.select_unit(Some(slot));
             }
-        } else if let Some(camera) = self.map_camera(assets) {
+        } else if let Some(camera) = camera.or_else(|| self.map_camera(assets)) {
+            // shortcut: the camera is the situation room's last; the original's is
+            // whatever view drew last (a console's too); upgrade if that is wanted.
             self.map.overlays |= usg::Base::MAP_FREE;
             self.map.centre = mainview::pointer_to_world(&camera, view, at);
             self.dirty = true;
@@ -2837,10 +2892,8 @@ impl Mission {
         if self.unpause() || self.capture.is_some() || button == MouseButton::Middle {
             return;
         }
+        // The main view's handler (`1000:571f`) takes no press: it acts on the release.
         let Some(target) = at.and_then(|at| self.target(assets, at)) else {
-            if let (MouseButton::Left, Some(at)) = (button, at) {
-                self.map_press(at, assets);
-            }
             return;
         };
         if self.pan_declines(target, assets) {
@@ -2966,7 +3019,9 @@ impl Mission {
         at: Option<(u16, u16)>,
         assets: &Assets,
     ) -> Option<Request> {
-        let (target, by) = self.capture?;
+        let Some((target, by)) = self.capture else {
+            return self.main_view_release(button, at, assets);
+        };
         if by != button {
             return None;
         }
@@ -3102,10 +3157,7 @@ impl Mission {
                 }
                 let object = self.probed.get()[i]?;
                 if right {
-                    // shortcut: only the player's robots can be viewed, so `7eac`'s
-                    // message for another side's and its Ctrl developer case are not
-                    // ported; upgrade if the port lets the enemy's robots be viewed.
-                    return self.view_robot(object).map(Request::Show);
+                    return self.jump(object);
                 }
                 self.pilot(slot, Pilot::Lock(Some(EntityId(object))));
                 None
@@ -3301,8 +3353,9 @@ impl Mission {
             .and_then(|s| s.terrain.as_ref())
             .map_or(&[][..], |t| &t.features);
         let probe = self.probe_at(left, top);
+        // The frame, and the object under the pointer.
         let robot_view = |buffer: &mut Framebuffer, slot: u16| {
-            let drawn = scene::draw(
+            scene::draw(
                 buffer,
                 self.world(),
                 EntityId(slot),
@@ -3312,10 +3365,7 @@ impl Mission {
                 &assets.models,
                 self.sky(assets),
                 probe,
-            );
-            let [_, second] = self.probed.get();
-            self.probed.set([drawn.flatten(), second]);
-            drawn.is_some()
+            )
         };
         let mut buffer = Framebuffer::new(Size::new(width, height));
         let drawn = match (self.viewed, self.mode, &assets.sitroom) {
@@ -3326,7 +3376,10 @@ impl Mission {
                     .as_ref()
                     .is_none_or(|(p, b)| *p != pass || b.surface() != buffer.surface())
                 {
-                    *kept = robot_view(&mut buffer, slot).then_some((pass, buffer));
+                    let drawn = robot_view(&mut buffer, slot);
+                    let [_, second] = self.probed.get();
+                    self.probed.set([drawn.flatten(), second]);
+                    *kept = drawn.is_some().then_some((pass, buffer));
                 }
                 if let Some((_, b)) = kept.as_ref() {
                     review::copy_through(fb, b, left, top);
@@ -3359,13 +3412,16 @@ impl Mission {
                             [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
                             probe,
                         );
-                        // `1000:5619`: the press reads it (`map_press`).
-                        let [_, second] = self.probed.get();
-                        self.probed.set([under, second]);
+                        // `1000:5619`: the release reads it (`main_view_release`).
+                        self.sitroom_probe.set((under, Some(camera)));
                         true
                     }
                     ROBOT_VIEW_MODE => match (self.selected, selected) {
-                        (Some(slot), Some(e)) if robot_view(&mut buffer, slot) => {
+                        (Some(slot), Some(e))
+                            if let Some(under) = robot_view(&mut buffer, slot) =>
+                        {
+                            let camera = scene::camera(world, EntityId(slot), view, &assets.motion);
+                            self.sitroom_probe.set((under, camera));
                             mainview::label_robot_view(&mut buffer, e, &inputs);
                             true
                         }
@@ -4963,11 +5019,12 @@ pub mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A left press on the map in mode M (`1000:5781`): on one of the player's robots
-    /// probed in the last frame it frees the camera's hold on the centre and selects
-    /// it; elsewhere (nothing probed, or not the player's) it moves the centre there.
+    /// A left release on the main view (`1000:5781`): on one of the player's robots
+    /// probed in the last M or R frame it frees the camera's hold on the centre and
+    /// selects it; elsewhere (nothing probed, or not a unit) it moves the centre there,
+    /// in any mode. A right release (`576a`) opens the probed robot's console.
     #[test]
-    fn a_press_on_the_map_selects_or_recentres() {
+    fn a_release_on_the_main_view_selects_recentres_or_opens() {
         use xeno_sim::{Fixed, Position};
         let mut assets = test_assets();
         assets.view3d = Some(mainview::tests::view());
@@ -4985,14 +5042,19 @@ pub mod tests {
         m.mode = MAP_MODE;
         m.map.overlays |= usg::Base::MAP_FREE;
         (m.map.centre, m.map.zoom) = (Position::default(), 0);
-        let press = |m: &mut Mission, at| m.mouse_down(MouseButton::Left, Some(at), &assets);
+        let press = |m: &mut Mission, at| {
+            m.mouse_down(MouseButton::Left, Some(at), &assets);
+            let centre = m.map.centre;
+            assert_eq!(m.map.centre, centre, "the press does nothing");
+            m.mouse_up(MouseButton::Left, Some(at), &assets);
+        };
         // Nothing under the pointer: the centre moves to the point (5, 3).
         press(&mut m, (165, 67));
         let unit = Fixed::from_int;
         assert_eq!((m.map.centre.x, m.map.centre.y), (unit(5), unit(3)));
         // One of the player's robots: selected, the centre let go.
         let robot = m.robots()[0];
-        m.probed.set([Some(robot), None]);
+        m.sitroom_probe.set((Some(robot), None));
         press(&mut m, (100, 50));
         assert_eq!(m.selected, Some(robot));
         assert_eq!(m.map.overlays & usg::Base::MAP_FREE, 0);
@@ -5003,7 +5065,7 @@ pub mod tests {
             .iter()
             .find(|(_, e)| e.kind == usg::ObjectKind::Base)
             .map(|(id, _)| id.0);
-        m.probed.set([base, None]);
+        m.sitroom_probe.set((base, None));
         press(&mut m, (165, 67));
         assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
         assert_eq!(m.selected, Some(robot));
@@ -5015,15 +5077,23 @@ pub mod tests {
             .map(|(id, _)| id.0)
             .expect("the test mission has an alien robot");
         let before = m.map;
-        m.probed.set([Some(alien), None]);
+        m.sitroom_probe.set((Some(alien), None));
         press(&mut m, (100, 50));
         assert_eq!((m.map, m.selected), (before, Some(robot)));
-        // Off the main view, or in another mode, nothing.
+        // Off the main view, nothing; the right release on an alien robot opens
+        // nothing either (its refusal is T-214's).
         let before = m.map;
         press(&mut m, (10, 10));
-        m.mode = LOG_MODE;
-        press(&mut m, (130, 50));
         assert_eq!(m.map, before);
+        assert_eq!(click(&mut m, &assets, (100, 50), MouseButton::Right), None);
+        // Mode C acts on the probe as M or R left it (nothing resets it): nothing
+        // probed recentres.
+        m.mode = LOG_MODE;
+        m.sitroom_probe.set((None, None));
+        m.map.overlays &= !usg::Base::MAP_FREE;
+        press(&mut m, (130, 50));
+        assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
+        assert_ne!(m.map.centre, before.centre);
         // Drawn: the map probes the pointer over another robot's dot, and the press
         // there selects it.
         let other = *m.robots().last().unwrap();
@@ -5034,7 +5104,7 @@ pub mod tests {
             .get_mut(xeno_sim::EntityId(other))
             .unwrap()
             .status &= !1;
-        (m.mode, m.probed) = (MAP_MODE, Cell::default());
+        (m.mode, m.sitroom_probe) = (MAP_MODE, Cell::default());
         let camera = m.map_camera(&assets).unwrap();
         let map = Framebuffer::new(Size::new(120, 60));
         let (x, y) = mainview::pixel(&camera, &map, at.x.0, at.y.0);
@@ -5043,8 +5113,14 @@ pub mod tests {
         let mut fb = Framebuffer::new(Size::MODE_13H);
         fb.fill_rect(xeno_render::Rect::new(100, 40, 120, 60), 255);
         m.draw(&mut fb, &assets);
+        // In mode C the map's last frame's probe still selects; the right release
+        // opens the robot's console.
+        m.select_unit(Some(robot));
+        m.mode = LOG_MODE;
         press(&mut m, at);
         assert_eq!(m.selected, Some(other));
+        assert!(click(&mut m, &assets, at, MouseButton::Right).is_some());
+        assert_eq!(m.viewed, Viewed::Robot(other));
     }
 
     /// With unlock word 9, a Ctrl+left press on the map in mode M places the picked

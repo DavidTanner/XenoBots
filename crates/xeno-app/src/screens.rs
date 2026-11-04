@@ -735,23 +735,19 @@ impl Screens {
                     }
                     (InputEvent::MouseDown { button }, Mission(_)) => {
                         let at = self.mouse.position;
-                        // The event's key word carries Ctrl (`1000:5781` tests 0x1000).
                         let held = key_word(ScanCode(0), &self.keys).0;
-                        let ctrl = held & CTRL != 0;
                         self.mission.set_alt(held & ALT != 0);
                         let assets = &self.mission_assets;
-                        let placed = self.mission.terrain_mouse(button, true, at, held, assets)
-                            || button == xeno_sim::input::MouseButton::Left
-                                && ctrl
-                                && self.mission.place_at_pointer(at, &self.mission_assets);
-                        if !placed {
+                        if !self.mission.terrain_mouse(button, true, at, held, assets) {
                             self.mission.mouse_down(button, at, &self.mission_assets);
                         }
                     }
                     (InputEvent::MouseUp { button }, Mission(_)) => {
                         let at = self.mouse.position;
-                        let alt = key_word(ScanCode(0), &self.keys).0 & ALT != 0;
-                        self.mission.set_alt(alt);
+                        // The event's key word carries Ctrl (`1000:5781` tests 0x1000).
+                        let held = key_word(ScanCode(0), &self.keys).0;
+                        self.mission.set_alt(held & ALT != 0);
+                        self.mission.set_ctrl(held & CTRL != 0);
                         let assets = &self.mission_assets;
                         if !self.mission.terrain_mouse(button, false, at, 0, assets)
                             && let Some(request) =
