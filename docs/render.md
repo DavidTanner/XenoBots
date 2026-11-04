@@ -45,8 +45,9 @@ The steps of the 3D lists:
 - **end** (`1000:2982`): marks the frame ready (`DS:0x1450` bit 7) and goes back to the
   start step.
 
-**Two views a frame.** A console draws its main view first: its routine (humanoid
-`1000:b507`, scorpion `1000:9d4a`, scout and the others alike) sets the target to the
+**Two views a frame.** A console draws its main view first: its draw handler (humanoid
+`1000:9d40`, scorpion `803c`, scout `b4fc`, from the draw table `DS:0x3328`; T-209
+corrected the addresses given before) sets the target to the
 main view's rectangle (`DS:0x145a`, for the scorpion `DS:0x6832`), `DS:0x1450` to 1
 and calls `1000:dba0` (mode 4, so it builds the list). When that frame is ready
 (`DS:0x1450` = 0x81) it copies the buffer to the screen through the picture's
@@ -56,6 +57,66 @@ scorpion, `1000:dbe8`): the mode is `DS:0x70ae[+0xef]` (the console's display mo
 0, 1, 2, 3 give 6, 0xa, 0xc, 8), from the same camera position, so modes 6 and 0xa
 draw the main view's list again. That display, its zoom and pan, and its map are in
 `docs/screens.md`, "The second display (T-104)".
+
+### The views take turns (T-209)
+
+From a Ghidra pass over `gfx_run_view_steps` (`1000:28cf`), the retrace hook
+(`1fe6:32a3`), the mission loop (`sim_run_mission_loop`, `1000:7e37` to `7e98`), the
+three consoles' view handlers and widget sets, and every writer of `DS:0x1450`,
+`DS:0x372` and `DS:0x62ed`.
+
+**One pass.** The mission loop's pass is: the draw pass (`1000:26cd`, the marked
+widgets' draw handlers in set order), the sim's ticks for the game-clock counts that
+went by (up to 10; none while an input event waits, `1fe6:39c3`), then
+`gfx_run_view_steps`, then the input. Nothing in the loop waits for a retrace.
+
+**The step budget.** `gfx_run_view_steps` does nothing unless `DS:0x1450` is 1 to
+0x7f (a frame running); then it sets `DS:0x372` to 3 and calls steps until it is 0.
+The retrace hook (`1fe6:32a3`) shifts `DS:0x372` right once a retrace (with `inc word
+[0x370]` and `inc byte [0x646]` beside it), so the budget runs out at the **second**
+retrace after the pass's steps began; the draw step (`1000:2e94`) and the other long
+steps (`2edd`, `38a5`, `3bc3`, the dots) test it between nodes and return to carry on
+next pass. The end step (`1000:2982`) sets bit 7 of `DS:0x1450` and sets `DS:0x372`
+to 0 itself, so a pass never draws more than one frame. How many passes a frame takes
+therefore depends on the machine: on a fast one every frame is done in the pass it
+starts; on a slow one a pass lasts about two retraces and a frame spreads over several.
+
+**The turns.** A console's set (humanoid `0x388b`, scorpion `0x3863`, scout `0x38aa`)
+holds the 3D view (types `0x84`, `0xbc`, `0x106`), the second display (`0x86`, `0xbe`,
+`0x108`) and the third (`0xaa`, `0xd8`, `0x126`) in that order, all top-level, and
+each handler marks itself every pass. Each handler: with `DS:0x1450` at 0 it starts its
+frame (1, 2 or 3); with bit 7 and its own number it copies the buffer through its
+region, reads the probe and sets `DS:0x1450` to 0; otherwise it does nothing. So a
+copy and the next view's start come in the same pass, and with every frame done in its
+pass the passes go:
+
+| Pass | Draw pass | Steps |
+|---|---|---|
+| 0 | the 3D view starts (1) | the 3D view's frame |
+| 1 | it is copied; the second display starts (2) | the second display's frame |
+| 2 | it is copied; the third display's chance | its frame, if the chance starts one |
+| 3 | the third display's frame is copied | nothing |
+
+then pass 0 again, or after a chance that started nothing, straight after pass 2. The
+third display's routine counts `DS:0x62ed` down on each chance and starts a frame at 0,
+reloading 8 (humanoid) or 5 (scorpion, scout); each console's opener (`1000:a0d4`,
+`8467`, `bb91`) sets it to 1, so the first chance draws. A cycle is `3 * n + 1`
+passes: the 3D view and the second display a frame every 3 passes (4 across the
+radar's), the third display a frame every 25 passes on the humanoid and 16 on the
+scorpion and the scout. The second display always starts a frame on its turn (the
+map's counter `DS:0x62ee` is always 1, above), as does the radar, damaged or not
+(both paths set `DS:0x1450` to 3). A view switch leaves `DS:0x1450` as it is, so the
+new view's handler copies a frame of its own number that the old view left.
+
+**In the port** (`xeno-app`'s `turns`): a pass is one retrace the mission runs
+(`Mission::tick`), counted from the console's opening; each view keeps its last frame
+and draws its next on its turn, from the world as it stands when drawn, the third
+display's every `xeno_formats::radar::Radar::frames` chances. Shortcuts: every frame is
+done in the pass it starts (the fast machine), and a pass is one retrace, where the
+original's pass length is the machine's; a frame is shown from the pass it is drawn on,
+not the next; the frame an old view leaves running is dropped at a switch; before a
+view's first turn its first frame is drawn early. Not measured in DOSBox (T-168,
+T-171, T-174).
 
 ## The camera
 

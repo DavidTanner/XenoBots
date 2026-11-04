@@ -59,6 +59,7 @@ use crate::pointer::{ARROW, CORNER};
 use crate::screens::View;
 use crate::status;
 use crate::terrain::{self, TerrainEditor};
+use crate::turns::{self, Turn};
 use crate::{review, scene};
 
 /// Original handlers (offsets in `xeno.exe`'s segment `1000`) whose keys the port acts
@@ -494,8 +495,8 @@ pub const TRAINING_PRESSED_XOR: u8 = 9;
 const VIEW_COLOURS: [u8; 3] = [253, 254, 255];
 /// A view's region in the frame: left, top, width and height (`review::region_of`).
 type Region = (usize, usize, usize, usize);
-/// A third display's frame: its key (robot, pass group), buffer and probe.
-type RadarFrame = ((u16, u16), Framebuffer, bool);
+/// A third display's frame: the pass it was drawn on, its buffer and probe.
+type RadarFrame = (u32, Framebuffer, bool);
 /// The port's own placeholder marks (not the original's).
 const PLACEHOLDER: u8 = 255;
 const PLACEHOLDER_INK: u8 = 0;
@@ -929,10 +930,17 @@ pub struct Mission {
     /// The point under the pointer on the second display's last map frame
     /// (`ui_map_pointer_to_world`); none after a camera frame.
     map_point: Cell<Option<xeno_sim::Position>>,
-    /// The third display's last frame, kept until its next (every `frames` passes),
-    /// with the robot and the pass group it was drawn for, and whether a dot was under
-    /// the pointer (`DS:0x6a7c` not 0: a word that names no object, T-208).
+    /// The third display's last frame, kept until its next ([`turns`]), with the pass
+    /// it was drawn on and whether a dot was under the pointer (`DS:0x6a7c` not 0: a
+    /// word that names no object, T-208).
     radar: std::cell::RefCell<Option<RadarFrame>>,
+    /// The open console's passes so far: each retrace the mission runs is one
+    /// ([`turns`]).
+    passes: u32,
+    /// The console's 3D view's and second display's last frames, with the pass each
+    /// was drawn on, kept until their next ([`turns`]).
+    main_frame: RefCell<Option<(u32, Framebuffer)>>,
+    second_frame: RefCell<Option<(u32, Framebuffer)>>,
     /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
     alt: bool,
     /// The map display's Alt press waits for the next frame (+0x23 bit 2).
@@ -1046,6 +1054,9 @@ impl Mission {
             probed: Cell::default(),
             map_point: Cell::default(),
             radar: std::cell::RefCell::default(),
+            passes: 0,
+            main_frame: RefCell::default(),
+            second_frame: RefCell::default(),
             alt: false,
             goal_press: false,
             dirty: true,
@@ -1197,6 +1208,15 @@ impl Mission {
         self.viewed
     }
 
+    /// Drops the views' kept frames, so each draws its next now rather than at its
+    /// turn (tests use it for what a frame shows, not when).
+    pub fn new_frames(&self) {
+        for frame in [&self.main_frame, &self.second_frame] {
+            frame.take();
+        }
+        self.radar.take();
+    }
+
     /// Views `robot` (the player's), as with Tab or the roster.
     pub fn view_robot(&mut self, slot: u16) -> Option<View> {
         let robot = *self.book().get(slot)?;
@@ -1250,6 +1270,11 @@ impl Mission {
         (self.goal_press, self.region) = (false, None);
         self.probed.set([None; 2]);
         self.map_point.set(None);
+        // The turns start again with the 3D view (`DS:0x62ed` = 1 at the opener).
+        // shortcut: a frame the last view left running is dropped; the original's
+        // new view copies it if its turn's number matches.
+        self.passes = 0;
+        self.new_frames();
         self.dirty = true;
     }
 
@@ -1568,6 +1593,7 @@ impl Mission {
         };
         let (mut over, mut taken) = (None, false);
         self.ticked = true;
+        self.passes = self.passes.wrapping_add(1);
         for event in sim.tick(events) {
             log::debug!("mission: retrace {}: {event:?}", sim.retrace());
             match event {
@@ -3262,7 +3288,20 @@ impl Mission {
         };
         let mut buffer = Framebuffer::new(Size::new(width, height));
         let drawn = match (self.viewed, self.mode, &assets.sitroom) {
-            (Viewed::Robot(slot), _, _) => robot_view(&mut buffer, slot),
+            (Viewed::Robot(slot), _, _) => {
+                let pass = turns::frame_pass(self.passes, self.chances(assets, slot), Turn::Main);
+                let mut kept = self.main_frame.borrow_mut();
+                if kept
+                    .as_ref()
+                    .is_none_or(|(p, b)| *p != pass || b.surface() != buffer.surface())
+                {
+                    *kept = robot_view(&mut buffer, slot).then_some((pass, buffer));
+                }
+                if let Some((_, b)) = kept.as_ref() {
+                    review::copy_through(fb, b, left, top);
+                }
+                return kept.is_some();
+            }
             (Viewed::Base, MAP_MODE | ROBOT_VIEW_MODE | LOG_MODE, Some(room)) => {
                 let inputs = mainview::Inputs {
                     room,
@@ -3357,6 +3396,15 @@ impl Mission {
         true
     }
 
+    /// How many of the third display's chances make a frame on `slot`'s console
+    /// (`DS:0x62ed`; 0 without the radars' tables).
+    fn chances(&self, assets: &Assets, slot: u16) -> u8 {
+        match (&assets.radars, self.book().get(slot)) {
+            (Some(radars), Some(robot)) => radars[robot.kind.index()].frames,
+            _ => 0,
+        }
+    }
+
     /// The pointer probe's pixel in a view whose region starts at (`left`, `top`): the
     /// pointer less that (`1000:4042`).
     fn probe_at(&self, left: usize, top: usize) -> Option<(usize, usize)> {
@@ -3377,6 +3425,16 @@ impl Mission {
         let (Some(view), Some(robot)) = (&assets.view3d, self.book().get(slot)) else {
             return false;
         };
+        let pass = turns::frame_pass(self.passes, self.chances(assets, slot), Turn::Second);
+        if let Some((_, b)) = self
+            .second_frame
+            .borrow()
+            .as_ref()
+            .filter(|(p, b)| *p == pass && b.surface() == Size::new(width, height))
+        {
+            review::copy_through_colour(fb, b, (left, top), SECOND_DISPLAY);
+            return true;
+        }
         let tables = &assets.views.second_display;
         let d = self.display(slot);
         let mode = self.display_mode(slot, assets);
@@ -3482,6 +3540,7 @@ impl Mission {
         self.probed.set([main, under]);
         self.map_point.set(point);
         review::copy_through_colour(fb, &buffer, (left, top), SECOND_DISPLAY);
+        *self.second_frame.borrow_mut() = Some((pass, buffer));
         true
     }
 
@@ -3588,10 +3647,7 @@ impl Mission {
         let Some(e) = world.get(EntityId(slot)) else {
             return false;
         };
-        // shortcut: a frame every `frames` passes of the sim; the original's counter
-        // (`DS:0x62ed`) steps only when no other view's frame is running, so its frames
-        // are further apart (T-168 measures them).
-        let key = (slot, world.ticks / u16::from(radar.frames.max(1)));
+        let key = turns::frame_pass(self.passes, radar.frames, Turn::Third);
         let mut kept = self.radar.borrow_mut();
         if kept
             .as_ref()
@@ -5342,7 +5398,7 @@ pub mod tests {
             (e.status & usg::status::TRACKING != 0, target)
         };
         let frame = |m: &Mission, dot| {
-            *m.radar.borrow_mut() = Some(((robot, 0), Framebuffer::new(Size::new(1, 1)), dot));
+            *m.radar.borrow_mut() = Some((0, Framebuffer::new(Size::new(1, 1)), dot));
         };
         m.pointer_shape(&assets, (100, 140), THIRD_DISPLAY, false);
         frame(&m, false);
@@ -6885,6 +6941,7 @@ pub mod tests {
                     let region: Vec<bool> =
                         fb.pixels().iter().map(|&p| p == SECOND_DISPLAY).collect();
                     let before = region.iter().filter(|&&r| r).count();
+                    m.new_frames();
                     m.draw(&mut fb, &assets);
                     let count = |colour| {
                         fb.pixels()
@@ -6962,6 +7019,7 @@ pub mod tests {
                 let mut fb = Framebuffer::new(Size::MODE_13H);
                 fb.pixels_mut().copy_from_slice(&picture.pixels);
                 let region = review::region_of(&fb, SECOND_DISPLAY).unwrap();
+                m.new_frames();
                 assert!(m.draw_second(&mut fb, &assets, region));
                 (fb, region)
             };
@@ -7122,7 +7180,8 @@ pub mod tests {
             assert_eq!(fb.get(x, y), Some(radar.dot), "{x}, {y}");
         }
         assert_eq!(fb.get(left + width / 2, top + height / 2), Some(radar.dot));
-        // The radar damaged: the noise's colours, from the next frame on.
+        // The radar damaged: the noise's colours, from the next frame on: pass 2 of
+        // the next cycle of turns (`turns`).
         if let Some(xeno_sim::Damage::Robot(c)) = m
             .world_mut()
             .get_mut(EntityId(robot))
@@ -7130,9 +7189,16 @@ pub mod tests {
         {
             c.systems |= radar.device;
         }
-        for _ in 0..radar.frames {
+        for _ in 0..3 * radar.frames + 2 {
             m.tick(&[]);
         }
+        let (_, inside) = draw(&m);
+        assert!(
+            !inside
+                .iter()
+                .all(|p| (radar.noise..radar.noise + 16).contains(p))
+        );
+        m.tick(&[]);
         let (_, inside) = draw(&m);
         let ramp = radar.noise..radar.noise + 16;
         assert!(inside.iter().all(|p| ramp.contains(p)));
