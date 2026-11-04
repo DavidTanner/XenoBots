@@ -428,12 +428,26 @@ const DISPLAY_SOUND: u8 = 10;
 const NOISE_SOUND: u8 = 28;
 
 /// A sound event to play, or to stop (`1000:eeb1`: the event's voice given silence
-/// with the event's flags), or the PC speaker's beep (`1000:0261`).
+/// with the event's flags), or a PC speaker beep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sound {
     Play(u8),
     Stop(u8),
-    Beep,
+    Beep(Tone),
+}
+
+/// The PC speaker's beeps, in the order of `sounds::BEEPS_AT` (`docs/sim.md`, "The
+/// beep (T-193)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// `1000:0261`: about 994 Hz.
+    High,
+    /// `1000:0266`: about 497 Hz.
+    Middle,
+    /// `1000:026b`: about 249 Hz.
+    Low,
+    /// `1000:0270`: about 497 Hz, a quarter as long.
+    Short,
 }
 
 /// The situation room's main view (widget type 0x50) and its orders mode, and how
@@ -1626,13 +1640,13 @@ impl Mission {
         std::mem::take(&mut self.sounds)
     }
 
-    /// The beep (`1000:0261`). The original sounds it only while the game clock is not
-    /// 0, which it is only before the timer starts and one count in 65,536.
+    /// A beep. The original sounds all but `Short` only while the game clock is not 0,
+    /// which it is only before the timer starts and one count in 65,536.
     // shortcut: the original stops the game for the beep's on and off counts (a busy
     // wait on the clock); the port beeps without stalling. Stall if a DOSBox capture
     // (T-194) shows the lost time matters.
-    pub fn beep(&mut self) {
-        self.sounds.push(Sound::Beep);
+    pub fn beep(&mut self, tone: Tone) {
+        self.sounds.push(Sound::Beep(tone));
     }
 
     /// Robot `slot`'s console display.
@@ -1969,7 +1983,7 @@ impl Mission {
             (_, handler::PAUSE) => {
                 self.paused = true;
                 self.dirty = true;
-                self.beep();
+                self.beep(Tone::High);
                 None
             }
             (_, handler::SHOTS) => {
@@ -1979,7 +1993,7 @@ impl Mission {
             }
             (Viewed::Robot(slot), handler::CHARGE) if assets.developer_unlocked => {
                 self.pilot(slot, Pilot::Charge);
-                self.beep();
+                self.beep(Tone::High);
                 None
             }
             (Viewed::Robot(_), handler::BASE) => Some(self.base()),
@@ -2137,6 +2151,19 @@ impl Mission {
         }
         if effect == Effect::DestroySelected {
             self.destroy_selected();
+        }
+        // The handler's own beeps (Ctrl+D `1000:6ac1`, Ctrl+Alt+R `6ace`), then the
+        // dispatcher's after every key (`1000:6ab2`).
+        // shortcut: the dispatcher's beep comes when Ctrl+M or a file dialog opens, not
+        // when it closes as in the original (its loops run inside the key); defer it if
+        // DOSBox shows the difference matters.
+        let own: &[Tone] = match handler {
+            crate::editor::handler::DESTROY => &[Tone::Middle, Tone::High],
+            crate::editor::handler::REMOVE_RELAYS => &[Tone::Low, Tone::Middle, Tone::High],
+            _ => &[],
+        };
+        for &tone in own.iter().chain(&[Tone::Short]) {
+            self.beep(tone);
         }
         match (effect, &assets.file_dialogs) {
             (Effect::Orders, Some(dialogs)) => {
@@ -2380,10 +2407,14 @@ impl Mission {
             return true;
         };
         let point = mainview::pointer_to_world(&camera, view, at);
-        if self.editor.place(point, scenario, sim, tables) {
+        let (status, beeps) = self.editor.place(point, scenario, sim, tables);
+        if status {
             for row in self.editor.status(scenario, tables) {
                 log::info!("editor: {row}");
             }
+        }
+        for &tone in beeps {
+            self.beep(tone);
         }
         self.dirty = true;
         true
@@ -4742,9 +4773,20 @@ pub mod tests {
         assert!(relays(&m) > 0);
         m.key(remove.0, &assets);
         assert!(relays(&m) > 0, "locked: nothing happens");
+        let beeps = |m: &mut Mission| {
+            let sounds = m.take_sounds().into_iter();
+            sounds
+                .filter(|s| matches!(s, Sound::Beep(_)))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(beeps(&mut m), []);
         assets.editor_unlocked = true;
         m.key(remove.0, &assets);
         assert_eq!(relays(&m), 0);
+        // Its own three beeps, then the dispatcher's after every key.
+        use Tone::*;
+        let tones = [Low, Middle, High, Short].map(Sound::Beep);
+        assert_eq!(beeps(&mut m), tones);
         // Ctrl+M opens the terrain editor (with the driver's keys), which stops the
         // sim; a Ctrl+drag makes a circle, Alt+E applies it through the sim and Alt+Q
         // leaves, writing the circles.
@@ -5021,6 +5063,7 @@ pub mod tests {
             (0x1023, 0x6ad8), // Ctrl+H: humanoids
             (0x1020, 0x6ab7), // Ctrl+D
             (0x1012, 0x6be2), // Ctrl+E
+            (0x1013, 0x6af4), // Ctrl+R: relays
         ];
         assets.editor = Some(editor::Editor {
             keys: keys.clone(),
@@ -5063,8 +5106,18 @@ pub mod tests {
         assets.editor_unlocked = true;
         let key = |m: &mut Mission, word: u16| m.key(word, &assets);
         let press = |m: &mut Mission, at| m.place_at_pointer(Some(at), &assets);
+        let beeps = |m: &mut Mission| {
+            let sounds = m.take_sounds().into_iter();
+            sounds
+                .filter(|s| matches!(s, Sound::Beep(_)))
+                .collect::<Vec<_>>()
+        };
+        use Tone::*;
+        beeps(&mut m);
         key(&mut m, 0x1018);
+        assert_eq!(beeps(&mut m), [Sound::Beep(Short)], "after every key");
         assert!(press(&mut m, (165, 67)));
+        assert_eq!(beeps(&mut m), [Middle, High].map(Sound::Beep));
         let unit = Fixed::from_int;
         let o = m
             .scenario
@@ -5085,6 +5138,13 @@ pub mod tests {
             (made.kind, made.position.x, made.position.y),
             (o.kind, unit(5), unit(3))
         );
+        // A relay, then one refused in its cell.
+        key(&mut m, 0x1013);
+        beeps(&mut m);
+        press(&mut m, (180, 50));
+        assert_eq!(beeps(&mut m), [High, Middle].map(Sound::Beep));
+        press(&mut m, (180, 50));
+        assert_eq!(beeps(&mut m), [Middle; 3].map(Sound::Beep), "refused");
         // A humanoid, the player's, with its orders and in the roster.
         key(&mut m, 0x1023);
         press(&mut m, (160, 70));
@@ -5108,14 +5168,18 @@ pub mod tests {
         let base = m.world().get(slot).unwrap().position;
         assert_eq!((base.x, base.y), (unit(-10), unit(-10)));
         key(&mut m, 0x1019);
+        beeps(&mut m);
         press(&mut m, (161, 69));
+        assert_eq!(beeps(&mut m), [Middle, Middle].map(Sound::Beep), "refused");
         let human = |m: &Mission| m.scenario.as_ref().unwrap().human_paths.clone();
         assert!(
             human(&m).is_none_or(|t| t.paths[0].point_count == 0),
             "no path yet"
         );
         key(&mut m, 0x1052);
+        beeps(&mut m);
         press(&mut m, (161, 69));
+        assert_eq!(beeps(&mut m), [Sound::Beep(High)]);
         let t = human(&m).unwrap();
         assert_eq!((t.count, t.paths[0].point_count), (1, 1));
         assert_eq!(
@@ -5136,7 +5200,9 @@ pub mod tests {
         // Ctrl+D destroys the selected unit, through the sim and out of the save;
         // Ctrl+E shows undetected aliens.
         let gone = m.selected.unwrap();
+        beeps(&mut m);
         key(&mut m, 0x1020);
+        assert_eq!(beeps(&mut m), [Middle, High, Short].map(Sound::Beep));
         assert!(m.world().get(EntityId(gone)).is_none() && m.book().get(gone).is_none());
         assert!(
             !m.scenario
@@ -5852,7 +5918,7 @@ pub mod tests {
         }
         let mut m = mission(&assets);
         let ticks = |m: &Mission| m.world().ticks;
-        let beeped = |m: &mut Mission| m.take_sounds().contains(&Sound::Beep);
+        let beeped = |m: &mut Mission| m.take_sounds().contains(&Sound::Beep(Tone::High));
         assert_eq!(m.key(f1, &assets), None);
         assert!(m.paused());
         assert!(beeped(&mut m), "F1 beeps");

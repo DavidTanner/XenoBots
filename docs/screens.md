@@ -239,7 +239,7 @@ campaign starts with none) and `DS:0x5ff5` its offset. A record is **selectable*
 when its `unlock_level` is at most the progress and its `state` is not 10.
 `ui_map_room_set_selection` (`1000:74c4`) then accepts it only if `DS:0x5fab` is not 0,
 or the record is in play (12); otherwise it calls `1000:0270` (a short beep: `docs/sim.md`, "The beep (T-193)") and
-keeps the old selection. So after a mission that ended with no result, only the
+keeps the old selection (played in the port, T-211). So after a mission that ended with no result, only the
 scenario in play can be picked.
 - **Click**: the map area acts on a button's **release** (the press only captures the
   pointer), hit-testing the pointer then (`scen_hit_test_map_box`, `1fe6:72f8`, the
@@ -2103,7 +2103,7 @@ scenario is saved from there. The situation room's widget set (`0x3822`) has a w
 of type `0x14a` whose key handler is `ui_dispatch_editor_key` (`1000:6a8d`); no console
 and no front-end screen has one. It compares the event's whole key word (presses only:
 a release has bit 7 set) with the 31 pairs at `DS:0x5bc3`, runs the match, redraws the
-status and calls `1000:0270` (a short beep, `docs/sim.md`, "The beep (T-193)"; T-211).
+status and calls `1000:0270` (a short beep, `docs/sim.md`, "The other beeps (T-211)").
 
 **Alt+F1.** The map room's Alt+F1 and the editor's both run `ui_editor_key_toggle_flag`
 (`1000:6bcf`), which with word 9 toggles `DS:0x4db4` and prints `ON` or `OFF` on the
@@ -2159,8 +2159,9 @@ is `DS:0x5c3f` kind (-1 path), `0x5c41` side (0 human, 1 alien), `0x5c43` headin
 main view's mouse handler (`1000:571f`) calls it on a left press whose event word has
 Ctrl (0x1000) while the view is in **mode 4 (the map)** (`1000:5781`); the press then
 does nothing else, so without unlock word 9 (checked first) a Ctrl+press on the map
-does nothing at all. Every kind is followed by `1000:0261`/`0266` (beeps:
-`docs/sim.md`, "The beep (T-193)"; not yet played, T-211).
+does nothing at all. Every kind is followed by beeps (`1000:0261` and `0266`; a
+refused relay or path point `0266` three or two times: `docs/sim.md`, "The other
+beeps (T-211)"), played in the port.
 
 The pointer becomes a world point in `ui_map_pointer_to_world` (`1000:3fd3`, the
 inverse of the drawing above): the row offset is the target rectangle's (`DS:0x145a`:

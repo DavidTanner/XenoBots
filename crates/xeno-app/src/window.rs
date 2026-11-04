@@ -398,7 +398,7 @@ impl App {
                     match sound {
                         crate::mission::Sound::Play(event) => self.music.effect(event),
                         crate::mission::Sound::Stop(event) => self.music.stop(event),
-                        crate::mission::Sound::Beep => self.music.beep(),
+                        crate::mission::Sound::Beep(tone) => self.music.beep(tone),
                     }
                 }
                 self.palette = screens.palette();

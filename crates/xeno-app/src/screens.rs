@@ -803,6 +803,9 @@ impl Screens {
                 }
             }
         }
+        if self.map.take_refused() {
+            self.mission.beep(mission::Tone::Short);
+        }
         if self.screen == MapRoom && self.next.is_none() && self.map.take_dirty() {
             self.draw_map(fb);
         }
@@ -951,7 +954,7 @@ impl Screens {
             Ok(scenario) => scenario,
             Err(e) => {
                 log::warn!("{:?}: cannot load {}: {e}", self.screen, path.display());
-                return self.mission.beep();
+                return self.mission.beep(mission::Tone::High);
             }
         };
         let file = path
@@ -1785,7 +1788,11 @@ pub(crate) mod tests {
             "A.USG",
             "a failed load changes nothing"
         );
-        assert_eq!(screens.take_sounds(), [mission::Sound::Beep], "but beeps");
+        assert_eq!(
+            screens.take_sounds(),
+            [mission::Sound::Beep(mission::Tone::High)],
+            "but beeps"
+        );
 
         // P plays the selection; it is the loaded record, so the file loaded resumes.
         file_keys(&mut screens, &mut fb, false, &[0x19]);
