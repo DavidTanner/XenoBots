@@ -767,12 +767,11 @@ time):
   deployer's damage part (`9ad7`, its message at `9ae7`; `damage::Part`, T-129).
 - The scorpion's damage panel's status lines (`1000:9153` to `926c`, from its release
   `90f9`), ported with T-186: below, "The damage panel's status lines (T-186)".
-- Never sent in play: the console jump's refusal (`7ee3`, in `7eac`). It goes to the
-  viewed object's panel when the object clicked is in the human side's unit list but
-  not of the viewed object's side (`1000:d6d8`, +0x16 bit 3). The viewed object is
-  always the human base or a robot from that list, and a side's list holds only its
-  own side's robots (the loader and the editor's `sim_add_unit_to_side_list` add a
-  robot to its side's), so the sides always match. Not ported.
+- The console jump's refusal (`7ee3`, in `7eac`). It goes to the viewed object's
+  panel when the object clicked is in a unit list but not of the viewed object's side
+  (`1000:d6d8`, +0x16 bit 3). `7eac` scans 0x98 bytes from `DS:0x62f5`, the human
+  list and the alien one after it (`DS:0x6341`; T-208 found the span), so a right
+  release on an alien robot sends it. Not ported (T-214).
 
 **In the port**: `xeno_formats::messages` reads the names, letters, the base's two
 texts, the interval and the header's bytes (and writes the header into the string
@@ -846,7 +845,8 @@ finishes. Leaving the console (`1000:dac0`) does the same and sets `DS:0x70ad` t
   lock (`sim_lock_target`, `1000:d8af`) by the viewed robot (`DS:0x62f1`) with its
   checks, messages and sound (`docs/sim.md`, "Sensing (T-112)").
 - A right release (0x10) with the flag and an object: `1000:7eac`. The object must be
-  in the human side's unit list (`DS:0x62f5`, 76 bytes); otherwise nothing. Then, with
+  in a unit list (0x98 bytes from `DS:0x62f5`: the human side's and the alien's
+  after it, T-208); otherwise nothing. Then, with
   unlock word 8 (`DS:0x1598` = 0xba17) and Ctrl in the event's word (0x1000), its view
   opens; otherwise only when it is of the viewed robot's side (+0x16 bit 3,
   `1000:d6d8`), and else a message (string `0x1a1f`) goes to the viewed robot's
@@ -1289,7 +1289,7 @@ under the pointer puts a word that is no object in `DS:0x6a7c`.
 4 (`a02b`) and the region flag `DS:0x6a7e` = 3; outside or on leaving, shape 0 and 0.
 A left release with the flag 3 and `DS:0x6a7c` not 0 calls the lock (`1000:d8a7`); a
 right release, `7eac` (open the object's view). Given the probe above, both act on the
-non-object word; what that does was not traced.
+non-object word: below, "A click on the third display (T-208)".
 
 **In the port**: `xeno_formats::radar` reads each kind's frame routine from the user's
 `xeno.exe` (the handler's head checked, the routine decoded instruction by
@@ -1303,9 +1303,62 @@ main view's render list (`scene::nodes` from the main view's camera), or with th
 radar's bit in +0xf6 the noise in its colours; the frame is kept (`Mission::radar`)
 and copied through the colour-253 region until the next. Shortcuts: a frame every 8
 ticks of the sim, not every 8 chances the frame pipeline gives (T-209); the list is
-built afresh for the frame rather than kept from the main view's last; the probe names
-nothing, so clicks on the display do nothing (T-208); the noise draws from the
-displays' own random word, as the second display's. Not checked in DOSBox (T-168).
+built afresh for the frame rather than kept from the main view's last; the noise draws
+from the displays' own random word, as the second display's. Not checked in DOSBox
+(T-168).
+
+### A click on the third display (T-208)
+
+From a Ghidra pass over the lock (`1000:d8a7`, `sim_lock_target` at `d8af`), the view
+opener (`7eac`), the probe (`3bca`, `3b40`) and the humanoid's mouse handler (`9fcc`).
+
+**The word.** The probe stores the word at node +4: the node's type in the low byte
+and its model number in the high (`docs/render.md`, "The render list"). In the main
+view's list, which list 0x12 reuses, that is 0x0002 for a humanoid, 0x0202 a scorpion,
+0x0402 a scout, 0x0602 a missile, 0x0802 a relay, 0x0c02 plasma, 0x0e02 a laser,
+0x1002 the base, 0x1402 an obstacle, 0x0a06 an explosion, 0x1206 the cloak's sparkle
+and 0x0008 a hill or block: never 0, so every dot under the pointer counts as
+probed. The middle dot (`3b40`) is drawn last and reads the word after `DS:0x145c`,
+which nothing addresses and the image holds as 0, so the pointer on the middle names
+nothing, whatever lies under it. The handler (`9fcc`, and `8370`, `b76e`) passes the
+word in `AX` with the region flag 3 and the word not 0.
+
+**The right release** (`7eac`) looks the word up in 0x98 bytes from `DS:0x62f5`: 76
+words, the human side's unit list (38 words) and the alien side's after it
+(`DS:0x6341`), which hold only robots' memory (the big pool from `DS:0xa8cc`) or 0. No
+node word is there, so it returns at once: **nothing happens**. (So `7eac` finds the
+alien side's robots too, and its refusal is reachable: T-214.)
+
+**The left release** (`d8af`, with the viewed robot in `DI`) acts in order: with the
+targeting computer damaged (+0xec bit 0) its message and nothing more; else `TRACKING`
+(+0x17 bit 6) set, whatever follows. The word is not the robot nor its target (both
+are object memory or 0), so the lock goes on with the word as an object's address: its
++0x16 bit 1 (`TARGETABLE`), +0x17 bit 0 (`CLOAKED`), its position at +4 for the range
+(`d730`), the side test (`d6d8`), then +0x17 bit 2 set in that memory and +0xe6 set to
+the word, with the "locked" message and sound. Those bytes, `DS:word + 0x16`, are the
+bottom of the host's data segment, all zero in the image and filled at run time: the
+driver slots and their neighbours (`docs/re/dvr-protocol.md`). For a hill, `DS:0x1e`
+is the low byte of slot `0x1e`'s offset (`1fe6:01e4`), bit 1 clear, so the lock stops
+there. For a humanoid, `DS:0x18` is the low byte of the segment in slot `0x16`, where
+DOS loaded the host's second code segment; for a missile `DS:0x618`, unlock word 15
+(`docs/formats/key.md`); for a scout byte 2 of `sounddvr.dvr`'s block descriptor
+(`DS:0x416`); the other kinds' fall in slot and driver memory the host never addresses
+by name. Where bit 1 happens to be set, the robot locks that memory: the upkeep then
+reads its `GONE` bit and position from slot words, and the lock's +0x17 bit 2 is ORed
+into a slot (for the humanoid, the high byte of slot `0x16`'s segment, which the
+modules' unloading calls through).
+
+**In the port**: the third display's frame notes whether a point's dot (not the middle)
+is on the pointer's pixel; a right release over the region does nothing, and a left
+release with a dot sends `Pilot::Lock(None)`: `sense::lock` gives the targeting
+message or sets `TRACKING`, then stops as if the word were not `TARGETABLE`. That is a
+**deliberate deviation** for the humanoid's, scout's, missile's and most other kinds'
+dots, whose outcome depends on the machine (where DOS loads the program, the unlock
+file) or corrupts the host's slots; for a hill's dot it is what the original does.
+Shortcut: with the pointer off the buffer during the frame the port probes nothing,
+where the original compares the offsets the last view's arm left (`DS:0x4c80`,
+`0x4c82`), so a dot there can be "probed" for a click made after moving in before the
+next frame. Not checked in DOSBox (T-168, T-171, T-174).
 
 ### The damage panel's status lines (T-186)
 
@@ -1356,7 +1409,7 @@ heading is not straight up; and the rest is the same: the radar is +0xf6 bit 3, 
 damaged view mode 0x18 in colours from 0x10 through the same region, otherwise view
 mode 0x12, zoom 8, shift 1, the robot as the viewer, its x, y and z plus its eye height
 (+0x1c, unused by list 0x12). The mouse (`8370`) is the second display's with flag 3
-in `DS:0x65e9`; clicks are T-208's, as the humanoid's.
+in `DS:0x65e9`; clicks answer as the humanoid's ("A click on the third display (T-208)").
 
 **In the port**: `Mission::draw_third` draws it as the humanoid's, the kind's `Radar`
 from `xeno_formats::radar` and the background from the scorpion console's bank, a
@@ -1521,7 +1574,8 @@ robot's own, with no eye height added (list 0x12 does not read it). The heading 
 robot's with no offset, so the display is heading up as the humanoid's; the radar is
 +0xf6 bit 3, damaged view mode 0x18 in colours from 0x10, zoom 8, shift 1. The mouse
 is the second display's with flag 3 in `DS:0x6e16`; a left release with the probe
-set calls the lock (`d8a7`), a right one `7eac`, as the other kinds' (T-208).
+set calls the lock (`d8a7`), a right one `7eac`, as the other kinds' ("A click on the
+third display (T-208)").
 
 **In the port**: `Mission::draw_third` draws it as the others', the kind's `Radar`
 from `xeno_formats::radar` and the background from the scout console's bank, a frame

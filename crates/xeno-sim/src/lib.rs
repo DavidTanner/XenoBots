@@ -476,8 +476,8 @@ pub enum Pilot {
     /// dropped (`drops::drop`).
     Drop(u8),
     /// A left release on an object in the console's views (`1000:d8a7`): that object
-    /// locked (`sense::lock`).
-    Lock(EntityId),
+    /// locked (`sense::lock`); `None` for a third display's dot, which names no object.
+    Lock(Option<EntityId>),
     /// The map display's Alt press (`1000:466b`): on nothing, the destination there
     /// (`script::set_destination`); on an object, that object the goal
     /// (`script::set_goal_object`).

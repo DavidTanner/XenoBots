@@ -230,7 +230,7 @@ pub fn look(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<E
     };
     match nearest(world, id, tables.sensing.lock_range[k.index()], true) {
         Some(target) => {
-            lock(world, id, target, tables, events);
+            lock(world, id, Some(target), tables, events);
             true
         }
         None => {
@@ -243,10 +243,12 @@ pub fn look(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<E
 /// Robot `id` locks `target` (`sim_lock_target`, `1000:d8af`), unless its targeting
 /// computer is damaged, the target is itself, its target already, not targetable,
 /// cloaked or out of range; a target of its own side is locked with a warning.
+/// `None` is a word that names no object (a third display's dot, T-208): only the
+/// targeting check and `TRACKING` act on it.
 pub fn lock(
     world: &mut World,
     id: EntityId,
-    target: EntityId,
+    target: Option<EntityId>,
     tables: &Tables,
     events: &mut Vec<Event>,
 ) {
@@ -263,6 +265,13 @@ pub fn lock(
     if let Some(e) = world.get_mut(id) {
         e.status |= status::TRACKING;
     }
+    // Deliberate deviation (T-208, `docs/screens.md`, "A click on the third display"):
+    // the original goes on with the word as an object's memory, the host's driver slots
+    // and run-time words, which depend on the machine; the port stops as if it were not
+    // `TARGETABLE`.
+    let Some(target) = target else {
+        return;
+    };
     if target == id || m.target == Some(target) {
         let text = if target == id {
             text.itself
@@ -332,7 +341,7 @@ pub fn next_target(world: &mut World, id: EntityId, tables: &Tables, events: &mu
         });
         if found {
             world.target_search = next;
-            return lock(world, id, o, tables, events);
+            return lock(world, id, Some(o), tables, events);
         }
     }
     say(world, id, tables.sensing.messages.none_next);

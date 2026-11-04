@@ -494,6 +494,8 @@ pub const TRAINING_PRESSED_XOR: u8 = 9;
 const VIEW_COLOURS: [u8; 3] = [253, 254, 255];
 /// A view's region in the frame: left, top, width and height (`review::region_of`).
 type Region = (usize, usize, usize, usize);
+/// A third display's frame: its key (robot, pass group), buffer and probe.
+type RadarFrame = ((u16, u16), Framebuffer, bool);
 /// The port's own placeholder marks (not the original's).
 const PLACEHOLDER: u8 = 255;
 const PLACEHOLDER_INK: u8 = 0;
@@ -928,8 +930,9 @@ pub struct Mission {
     /// (`ui_map_pointer_to_world`); none after a camera frame.
     map_point: Cell<Option<xeno_sim::Position>>,
     /// The third display's last frame, kept until its next (every `frames` passes),
-    /// with the robot and the pass group it was drawn for.
-    radar: std::cell::RefCell<Option<((u16, u16), Framebuffer)>>,
+    /// with the robot and the pass group it was drawn for, and whether a dot was under
+    /// the pointer (`DS:0x6a7c` not 0: a word that names no object, T-208).
+    radar: std::cell::RefCell<Option<RadarFrame>>,
     /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
     alt: bool,
     /// The map display's Alt press waits for the next frame (+0x23 bit 2).
@@ -2735,10 +2738,14 @@ impl Mission {
         .into_iter()
         .find_map(|(kind, target)| hit(kind).then_some(target))
         .or_else(|| {
-            let [first, second, _] = regions?;
-            [(first, Target::Region(0)), (second, Target::Region(1))]
-                .into_iter()
-                .find_map(|(kind, target)| (top?.kind == kind).then_some(target))
+            let [first, second, third] = regions?;
+            [
+                (first, Target::Region(0)),
+                (second, Target::Region(1)),
+                (third, Target::Region(2)),
+            ]
+            .into_iter()
+            .find_map(|(kind, target)| (top?.kind == kind).then_some(target))
         })
         .or_else(|| {
             // The consoles' buttons whose handlers are ported (T-130 to T-132).
@@ -3026,6 +3033,16 @@ impl Mission {
                     self.goal_press = false;
                     return None;
                 }
+                // The third display's probe (`1000:3bca`) names a node's type and model
+                // word, not an object: `7eac` finds no unit by it (the right does
+                // nothing), the lock no object (T-208).
+                if i == 2 {
+                    let dot = self.radar.borrow().as_ref().is_some_and(|r| r.2);
+                    if dot && !right {
+                        self.pilot(slot, Pilot::Lock(None));
+                    }
+                    return None;
+                }
                 let object = self.probed.get()[i]?;
                 if right {
                     // shortcut: only the player's robots can be viewed, so `7eac`'s
@@ -3033,7 +3050,7 @@ impl Mission {
                     // ported; upgrade if the port lets the enemy's robots be viewed.
                     return self.view_robot(object).map(Request::Show);
                 }
-                self.pilot(slot, Pilot::Lock(EntityId(object)));
+                self.pilot(slot, Pilot::Lock(Some(EntityId(object))));
                 None
             }
             Target::Roster(_) if right => self.view_selected(),
@@ -3578,9 +3595,10 @@ impl Mission {
         let mut kept = self.radar.borrow_mut();
         if kept
             .as_ref()
-            .is_none_or(|(k, b)| *k != key || b.surface() != Size::new(width, height))
+            .is_none_or(|(k, b, _)| *k != key || b.surface() != Size::new(width, height))
         {
             let mut buffer = Framebuffer::new(Size::new(width, height));
+            let mut probed = false;
             let systems = match e.damage {
                 xeno_sim::Damage::Robot(c) => c.systems,
                 _ => 0,
@@ -3602,11 +3620,26 @@ impl Mission {
                     .unwrap_or_default();
                 let background = crate::console::lookup(sprites, bank, radar.background);
                 let points = nodes.iter().map(|n| (n.position[0], n.position[1]));
-                mainview::draw_radar(&mut buffer, &camera, points, background, radar.dot);
+                // shortcut: no probe with the pointer off the buffer, where the
+                // original compares the offsets the last armed view left
+                // (`DS:0x4c80`); a click needs the pointer on the region anyway.
+                let under = self.pointer.and_then(|(x, y)| {
+                    let x = usize::from(x).checked_sub(left)?;
+                    let y = usize::from(y).checked_sub(top)?;
+                    (x < width && y < height).then_some((x as i32, y as i32))
+                });
+                probed = mainview::draw_radar(
+                    &mut buffer,
+                    &camera,
+                    points,
+                    background,
+                    radar.dot,
+                    under,
+                );
             }
-            *kept = Some((key, buffer));
+            *kept = Some((key, buffer, probed));
         }
-        if let Some((_, buffer)) = kept.as_ref() {
+        if let Some((_, buffer, _)) = kept.as_ref() {
             review::copy_through_colour(fb, buffer, (left, top), THIRD_DISPLAY);
         }
         true
@@ -5282,6 +5315,47 @@ pub mod tests {
         let opened = click(&mut m, &assets, (100, 50), right);
         assert_eq!(opened, Some(Request::Show(View::Scorpion)));
         assert_eq!(m.viewed(), Viewed::Robot(friend));
+    }
+
+    /// A release over the third display with a dot under the pointer in the last frame
+    /// (T-208): the word probed is no object, so the left only sets `TRACKING` and the
+    /// right does nothing; with no dot there, nothing.
+    #[test]
+    fn a_release_on_the_third_display_s_dot_only_tracks() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        let robot = 2;
+        m.view_robot(robot).unwrap();
+        let world = m.world_mut();
+        if let Some(e) = world.get_mut(EntityId(robot)) {
+            if let xeno_sim::Damage::Robot(c) = &mut e.damage {
+                c.targeting = 0;
+            }
+            e.status &= !usg::status::TRACKING;
+        }
+        let tracking = |m: &Mission| {
+            let e = m.world().get(EntityId(robot)).unwrap();
+            let target = match e.state {
+                State::Robot(r) => r.target,
+                _ => None,
+            };
+            (e.status & usg::status::TRACKING != 0, target)
+        };
+        let frame = |m: &Mission, dot| {
+            *m.radar.borrow_mut() = Some(((robot, 0), Framebuffer::new(Size::new(1, 1)), dot));
+        };
+        m.pointer_shape(&assets, (100, 140), THIRD_DISPLAY, false);
+        frame(&m, false);
+        click(&mut m, &assets, (100, 140), MouseButton::Left);
+        assert_eq!(tracking(&m), (false, None), "no dot under the pointer");
+        frame(&m, true);
+        assert_eq!(click(&mut m, &assets, (100, 140), MouseButton::Right), None);
+        assert_eq!(
+            (tracking(&m), m.viewed()),
+            ((false, None), Viewed::Robot(robot))
+        );
+        click(&mut m, &assets, (100, 140), MouseButton::Left);
+        assert_eq!(tracking(&m), (true, None));
     }
 
     /// On the second display a left release locks as on the 3D view; in the map mode an
