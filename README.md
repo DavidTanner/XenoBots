@@ -147,7 +147,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | ESC | Leave fullscreen; in a window, quit. Screens that use ESC themselves (log-in, training menu, the mission's views, review, the cutscenes after a mission) take it instead. |
 | Any other key, P | During the opening cutscene: end it (fading out) and skip the drop, or pause it until the next key. During a cutscene after a mission: the same, then the map room. During the drop: end it at once, or pause it. |
 | F11, Alt+Enter | Switch between a window and fullscreen. On a Mac, F11 may need Fn; the green window button also works. |
-| F12 | Not in the original: the game speed, 1x, 2x, 4x and back (as `--speed`). It acts in a mission (not while paused or in a file dialog), and the window title shows it when it isn't 1x. On a Mac, F12 may need Fn. |
+| F12 | Not in the original: the game speed, 1x, 2x, 4x and back (as `--speed`). It acts in a mission (not while paused or in a file dialog), and while it isn't 1x the screen shows it top right (for example `4X`), as does the window title. On a Mac, F12 may need Fn. |
 
 Run with `RUST_LOG=xeno_app=debug` to log the measured game rate once a second.
 

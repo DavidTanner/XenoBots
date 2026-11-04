@@ -2951,7 +2951,7 @@ nowhere it can be pressed.
 |---|---|---|---|
 | F11, Alt+Enter | Everywhere | Window or fullscreen | No screen's table binds F11 or Alt+Enter; Ctrl+Alt+F11 is a developer key behind unlock word 2 (`docs/formats/key.md`), which the port does not model |
 | ESC | Where no screen's table binds it | Leaves fullscreen, or quits | A screen that binds ESC claims it (`Translator::screen_claims_escape`) |
-| F12 | Everywhere; acts in a mission in play | The next game speed: 1x, 2x, 4x (T-215, `docs/game-loop.md`, "Game speed (T-215)"), shown in the window title | No screen's table binds F12; only Ctrl+Alt+F12 does, the timing benchmark behind unlock word 2 (`docs/formats/key.md`), which the port does not model |
+| F12 | Everywhere; acts in a mission in play | The next game speed: 1x, 2x, 4x (T-215, `docs/game-loop.md`, "Game speed (T-215)"), shown top right on the picture and in the window title | No screen's table binds F12; only Ctrl+Alt+F12 does, the timing benchmark behind unlock word 2 (`docs/formats/key.md`), which the port does not model |
 
 ## Symbols
 

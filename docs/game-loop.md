@@ -75,8 +75,10 @@ frame shows the latest state.
 
 **Not in the original**, and off by default: a deliberate departure from "faithful
 first", asked for by the user. `--speed N` (1, 2 or 4) or F12 in the window (1x, 2x,
-4x, then 1x again) runs a mission in play N times as fast. The window title shows the
-speed when it isn't 1x.
+4x, then 1x again) runs a mission in play N times as fast. While it does, the window
+draws a label such as `4X` at the picture's top right (font 0 from the user's
+`mgavideo.dvr`, the palette's brightest steady colour on its darkest, over a copy of
+the frame so the game's picture is untouched), and the window title shows it too.
 
 - **More steps, not shorter ones.** The clock (`Clock::at_speed`) still wakes once per
   real retrace and then runs N retrace steps, each exactly the step it is at 1x: the

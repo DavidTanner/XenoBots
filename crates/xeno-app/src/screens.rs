@@ -515,6 +515,11 @@ impl Screens {
     }
 
     /// The mouse pointer's shape, if the screens show it.
+    /// Font `n` of the user's `mgavideo.dvr`, as the missions load it.
+    pub fn font(&self, n: u16) -> Option<&xeno_formats::font::Font> {
+        self.mission_assets.fonts.get(&n)
+    }
+
     pub fn pointer(&self) -> Option<&Pointer> {
         let shape = usize::from(self.pointer.shape());
         self.pointer

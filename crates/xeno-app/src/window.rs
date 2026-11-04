@@ -27,7 +27,8 @@ use winit::dpi::{LogicalSize, PhysicalSize, Size as WindowSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
-use xeno_render::{Aspect, Framebuffer, Layout, Palette, Scale, Size};
+use xeno_formats::font::Font;
+use xeno_render::{Aspect, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode};
 
 use crate::clock::{Clock, Rate, SPEEDS, Step};
 use crate::drop;
@@ -39,6 +40,38 @@ use crate::pointer;
 use crate::screens::{Screen, Screens};
 use crate::test_pattern;
 use crate::translate::{Translator, WindowAction};
+
+/// Draws the game speed's label (T-215), the port's own text such as `4X`, at the
+/// view's top right in `font`: the palette's brightest colour on its darkest, leaving
+/// out the colours the views' records animate (16..=31, 253..=255) so it never blinks.
+fn draw_speed(fb: &mut Framebuffer, palette: &Palette, font: &Font, speed: u64) {
+    let steady = || (0..=252u8).filter(|c| !(16..=31).contains(c));
+    let level = |c: &u8| {
+        let Rgb { r, g, b } = palette.colors[usize::from(*c)];
+        u16::from(r) + u16::from(g) + u16::from(b)
+    };
+    let (Some(light), Some(dark)) = (steady().max_by_key(level), steady().min_by_key(level)) else {
+        return;
+    };
+    let text = format!("{speed}X");
+    let (cell, rows) = (usize::from(font.header.width), font.rows());
+    let width = cell * text.len() + 2;
+    let (ox, oy) = fb.origin();
+    let x = ox + fb.view().width.saturating_sub(width + 2);
+    let y = oy + 2;
+    // A box one pixel round the text, then the text in opaque cells.
+    let stride = fb.surface().width;
+    for row in y..y + rows + 2 {
+        for column in x..x + width {
+            if let Some(p) = fb.pixels_mut().get_mut(row * stride + column) {
+                *p = dark;
+            }
+        }
+    }
+    let mut cursor = TextCursor::at(x as i32 + 1, y as i32 + 1, light);
+    cursor.background = dark;
+    fb.draw_text(font, &mut cursor, text.as_bytes(), TextMode::Opaque);
+}
 
 /// The footstep sound events (`xeno_sim::motion`), kept at 1x at a game speed.
 const FOOTSTEPS: [u8; 3] = [
@@ -283,6 +316,7 @@ impl App {
     /// buffer. Every resize and scale change asks for a new frame.
     fn redraw(&mut self) -> Result<(), Box<dyn Error>> {
         let pointer = self.mouse.position.filter(|_| self.pointer_shown());
+        let speed = self.speed_now();
         let Some(surface) = &mut self.surface else {
             return Ok(());
         };
@@ -311,6 +345,15 @@ impl App {
             self.fullscreen,
             layout.picture(self.fb.view())
         );
+        // The game speed's label (T-215), over a copy of the picture for this frame.
+        let saved = match &self.front {
+            FrontEnd::Screens(screens) if speed > 1 => screens.font(0).map(|font| {
+                let saved = self.fb.clone();
+                draw_speed(&mut self.fb, &self.palette, font, speed);
+                saved
+            }),
+            _ => None,
+        };
         // The game's pointer, if the screens show it (T-049), only over the picture's
         // pixels for this frame.
         let under = match (&self.front, pointer) {
@@ -322,6 +365,9 @@ impl App {
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         if let Some(under) = under {
             under.restore(&mut self.fb);
+        }
+        if let Some(saved) = saved {
+            self.fb = saved;
         }
         buffer.present()?;
         self.meter.frames_now += 1;
@@ -731,6 +777,48 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_speed_label_sits_top_right_in_steady_colours() {
+        let fonts = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block());
+        let font = &fonts.unwrap()[0];
+        // The brightest and darkest colours are animated ones, which the label skips.
+        let mut palette = Palette {
+            colors: [Rgb {
+                r: 30,
+                g: 30,
+                b: 30,
+            }; 256],
+        };
+        palette.colors[20] = Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        palette.colors[254] = Rgb { r: 0, g: 0, b: 0 };
+        palette.colors[100] = Rgb {
+            r: 200,
+            g: 200,
+            b: 200,
+        };
+        palette.colors[7] = Rgb { r: 5, g: 5, b: 5 };
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.pixels_mut().fill(50);
+        draw_speed(&mut fb, &palette, font, 4);
+        let width = usize::from(font.header.width) * 2 + 2;
+        let (left, bottom) = (320 - width - 2, 2 + font.rows() + 2);
+        for (i, &p) in fb.pixels().iter().enumerate() {
+            let (x, y) = (i % 320, i / 320);
+            let inside = (left..320 - 2).contains(&x) && (2..bottom).contains(&y);
+            if inside {
+                assert!(p == 7 || p == 100, "({x}, {y}): {p}");
+            } else {
+                assert_eq!(p, 50, "({x}, {y})");
+            }
+        }
+        // The box's corner is the dark colour.
+        assert_eq!(fb.pixels()[2 * 320 + left], 7);
+    }
 
     #[test]
     fn default_window_is_logical_and_a_fixed_scale_is_physical() {
