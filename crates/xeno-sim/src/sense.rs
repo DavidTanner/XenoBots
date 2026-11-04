@@ -84,7 +84,7 @@ pub(crate) fn within(a: Position, b: Position, range: u16) -> bool {
 
 /// Robot `id`'s tick-table entry for this tick, after its move stepped +0x1a: the
 /// entry `(tick & 0x1e) >> 1` of its kind's table.
-pub fn step(world: &mut World, id: EntityId, tables: &Tables) {
+pub fn step(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
     let Some((kind, _, m)) = robot(world, id) else {
         return;
     };
@@ -101,28 +101,34 @@ pub fn step(world: &mut World, id: EntityId, tables: &Tables) {
         warn(world, id);
     } else if entry == ticks.counters
         && let Some(m) = movement(world, id)
+        && counters(k, m)
     {
-        counters(k, m);
+        events.push(Event::Sound {
+            event: tables.sensing.warning_sound,
+            only_for: Some(id),
+        });
     }
 }
 
 /// The console counters (humanoid `1000:b318`, scorpion `9a14`, scout `caf5`):
 /// +0xee up by 2; a scorpion then halves its `locked_on` and flips +0xfa bit 7 (its
 /// damage lights); the others step the status page (AND 3) when +0xfa's low five bits
-/// are 0, then +0xfa.
-// shortcut: while +0xee's low two bits are 0, `locked_on` is not 0 and +0xee bit 2 is
-// set, each plays sound event 9 (`mov ax, 0x12`) for the robot on view; not yet (T-206).
-pub(crate) fn counters(kind: RobotKind, m: &mut Movement) {
+/// are 0, then +0xfa. True when the lock warning sounds (T-206): +0xee, stepped, has
+/// its low two bits 0 and bit 2 set while `locked_on` (before the scorpion halves it)
+/// is not 0, so every fourth step, as the light (bit 2) comes on.
+pub(crate) fn counters(kind: RobotKind, m: &mut Movement) -> bool {
     m.blink = m.blink.wrapping_add(2);
+    let sound = m.blink & 3 == 0 && m.locked_on != 0 && m.blink & 4 != 0;
     if kind == RobotKind::Scorpion {
         m.locked_on >>= 1;
         m.clock ^= 0x80;
-        return;
+        return sound;
     }
     if m.clock & 0x1f == 0 {
         m.page = m.page.wrapping_add(1) & 3;
     }
     m.clock = m.clock.wrapping_add(1);
+    sound
 }
 
 /// The scan (`1000:dcba`): only while +0x1a's top three bits are clear, +0x17's scan

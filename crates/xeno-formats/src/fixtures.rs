@@ -1757,7 +1757,8 @@ pub fn synthetic_motion(image: &mut [u8], ds: usize, strings: usize) {
 /// at 0xa200 up; arcs 0x1000, 0x1100, 0x1200, ranges 0x300, 0x310, 0x320), the
 /// lock warning's decay after it, the contact check at 8 and the console counters at 13; scanning ranges 0x500,
 /// 0x600, 0x700 and locking ranges 0x800, 0x900, 0xa00 (`DS:0x9760`, `0x9766`); the lock's messages 0x40 to
-/// 0x49 in `MESSAGES_AT`'s order and its sound event 26; weapons by kind needing
+/// 0x49 in `MESSAGES_AT`'s order and its sound event 26; the lock warning's sound
+/// event 23; weapons by kind needing
 /// drives 10 and 22 (the scorpion's first with all of bits 3 damaged); the
 /// worked-out point (1.0000 + 2/65536, -1/65536) at `DS:0x9770`.
 pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
@@ -1794,6 +1795,10 @@ pub fn synthetic_sensing(image: &mut [u8], ds: usize) {
         put(at, &op(&[0xbe], 0x40 + i as u16));
     }
     put(LOCK_SOUND_AT, &op(&[0xb8], 52));
+    for at in WARNING_SOUND_AT {
+        let call = (crate::weapons::SOUND_VIEWED as u16).wrapping_sub(at as u16 + 6);
+        put(at, &[op(&[0xb8], 46), op(&[0xe8], call)].concat());
+    }
     // Weapons: humanoid 0, 1 needing 10 and 22 (bits 1, 2); scorpion 0 taking all of
     // bits 3, then bit 4; scout like the humanoid. Tables at 0xa2e0, routines 0xa300 up.
     put(DRIVE_CHECK.0, DRIVE_CHECK.1);
