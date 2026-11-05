@@ -190,6 +190,12 @@ the same pull request. Ids are stable; open tasks still refer to these by id.
 | T-065 | done | Name the 29 sound events in `xeno.exe`'s table at `DS:0x7e18` (slot, voice/flags, step override; played through host slot `0x44c` from `1000:ee90`): which game action triggers each, and whether `dsounds.bin` blocks 4 and 15 are ever played | T-023 | `docs/formats/dsounds.md` lists each event with its trigger | A T-090 pass from the callers of `1000:ee90`, `1000:eeb1` and `1000:eec6`. Also read the other three mixer back ends and the volume table at `sounddvr.dvr` `0x1b75`. Done: `dsounds.md`, "Sound events" (all 29 events, their triggers and callers; `AX` is twice the event number; blocks 1, 4 and 15 are never heard); `sounddvr.md`, "The effects mixer" (devices, the tick, the four back ends, the DAC and volume tables, queueing); `xeno_formats::sounds` reads the table; event numbers in `docs/sim.md`; note on T-061. |
 | T-118 | done | Give the emulated OPL2 time between the music driver's register writes | T-062 | A note off and a note on in one tick strike the note again; `mainthem`'s drums are heard | Found by ear: the hi-hat and snare were missing. `xeno_audio::Music` ran the chip only when the device pulled samples, so a drum hit's key off and key on reached it on the same sample and the hit was never struck again. The chip now runs one sample after each write (the driver's `opl_write_register` delays are about that long), played before new samples. The whole song's high-frequency energy rose about 4x offline. |
 
+## M7 Release
+
+| Id | Status | Task | Depends on | Done when | Notes |
+|---|---|---|---|---|---|
+| T-080 | done | Release workflow, manual `workflow_dispatch` only: run the CI workflow first (via `workflow_call`), build `xeno-app` for macOS (universal), Linux x86_64, Windows x86_64 and attach them to a GitHub release tagged `v<Cargo.toml version>` | T-003 | Artifacts downloadable from a release made by a real run | Releases only from `main`; drafts by default. Linux binary links the runner's glibc (ubuntu-latest); revisit if older distros matter. Workflow merged in PR #3; the user confirmed on 2026-11-05 that it works. The version is picked by the run (the highest release, drafts included, raised by the chosen patch, minor or major step; Cargo.toml's version is the floor) and stamped into the build only; the smoke test runs `xeno-app --version`. |
+
 ## T-090 pass log
 
 | Date | Binary | Focus | Outcome |
@@ -469,3 +475,4 @@ the same pull request. Ids are stable; open tasks still refer to these by id.
 | 2026-11-04 | T-221 done: the editor's objects and the save's take +0x02 from the sim's pools (`World::pool_index`, `next_pool_index`); `f4b1`/`f4ee` confirmed the one allocator for the editor and play. |
 | 2026-11-05 | T-222 done: with unlock word 8 and Ctrl a right release on an alien robot (a console's view or the situation room's map) opens its console (`7ec2`); the side test is the viewed object's, and Tab and the unit button step the viewed robot's side's list (`7e02`); the way back to the alien base's situation room (`7ee7`, `6845`) filed as T-231 |
 | 2026-11-05 | T-224 done: a robot destroyed on view turns the view to the situation room at once, as `sim_destroy_robot` does (`1000:de6d`, `7ee7`); `Mission::tick` checks the viewed robot left the order book. Added T-232 (DOSBox check). |
+| 2026-11-05 | T-080 done: the user confirmed the release workflow works. |

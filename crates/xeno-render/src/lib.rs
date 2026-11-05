@@ -11,6 +11,7 @@
 pub mod anim;
 pub mod dac;
 mod framebuffer;
+pub mod hd;
 mod model;
 pub mod present;
 pub mod shape;
@@ -21,6 +22,7 @@ pub mod view3d;
 pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
 pub use framebuffer::{Framebuffer, Rect, RenderError, Size};
+pub use hd::{AssetId, BlitRecord, Name};
 pub use model::{LoadedModel, ModelScale, ModelTarget, model_facing};
 pub use present::{Aspect, Layout, Scale, ViewPoint, present};
 pub use sprite::{Anchor, BlitMode, Orientation, SpriteBlit};

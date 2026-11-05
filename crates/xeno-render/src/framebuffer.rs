@@ -2,6 +2,8 @@
 
 use xeno_formats::Palette;
 
+use crate::hd::Recording;
+
 /// A width and height in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
@@ -68,6 +70,8 @@ pub struct Framebuffer {
     /// The VGA's line compare: view rows from this one on show the surface from (0, 0).
     split: Option<usize>,
     pixels: Vec<u8>,
+    /// The blits since [`Framebuffer::set_recording`], for the HD compositor.
+    recording: Option<Box<Recording>>,
 }
 
 impl Framebuffer {
@@ -79,6 +83,7 @@ impl Framebuffer {
             origin: (0, 0),
             split: None,
             pixels: vec![0; view.width * view.height],
+            recording: None,
         }
     }
 
@@ -93,6 +98,7 @@ impl Framebuffer {
             origin: (0, 0),
             split: None,
             pixels: vec![0; surface.width * surface.height],
+            recording: None,
         })
     }
 
@@ -153,6 +159,20 @@ impl Framebuffer {
         &mut self.pixels
     }
 
+    /// Starts recording blits afresh (`docs/hd.md`), or stops. Off by default; the
+    /// pixels drawn are the same either way.
+    pub fn set_recording(&mut self, on: bool) {
+        self.recording = on.then(|| Box::new(Recording::new(self.pixels.len())));
+    }
+
+    pub fn recording(&self) -> Option<&Recording> {
+        self.recording.as_deref()
+    }
+
+    pub(crate) fn pixels_and_recording(&mut self) -> (&mut [u8], Option<&mut Recording>) {
+        (&mut self.pixels, self.recording.as_deref_mut())
+    }
+
     /// The colour at surface pixel (`x`, `y`), if it is on the surface.
     pub fn get(&self, x: usize, y: usize) -> Option<u8> {
         (x < self.surface.width && y < self.surface.height)
@@ -162,6 +182,9 @@ impl Framebuffer {
     /// Fills the whole surface with `colour`.
     pub fn clear(&mut self, colour: u8) {
         self.pixels.fill(colour);
+        if let Some(r) = &mut self.recording {
+            r.owners.fill(0);
+        }
     }
 
     /// Fills the part of `rect` that lies on the surface with `colour`.
@@ -180,6 +203,9 @@ impl Framebuffer {
         for y in y0..y1 {
             let row = y * self.surface.width;
             self.pixels[row + x0..row + x1].fill(colour);
+            if let Some(r) = &mut self.recording {
+                r.owners[row + x0..row + x1].fill(0);
+            }
         }
     }
 

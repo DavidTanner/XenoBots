@@ -262,7 +262,7 @@ and 4:3 aspect correction by default, so a 3840x2160 display shows a crisp 8x10 
 (each 320x200 pixel 8 wide and 10 tall) rather than a smeared one. Later milestones
 add edge-aware scalers and an optional user-supplied HD asset pack, with the sprite
 pipeline designed so higher-resolution art can replace the originals one asset at a
-time.
+time ([docs/hd.md](docs/hd.md)).
 
 ## Project layout
 
