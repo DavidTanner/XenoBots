@@ -60,7 +60,7 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
    pack's image differs from the original where something else has redrawn the
    original's exact colour.
 
-3. **The compositor** (`hd::compose`, part 2 of T-070). `compose` runs `present`
+3. **The compositor** (`hd::compose`). `compose` runs `present`
    unchanged, then for every view pixel still owned by a blit whose name has an
    `HdImage`, fills that pixel's `sx` by `sy` block of window pixels from the HD
    image: the window pixel's place in the blit's rectangle, scaled to output pixels,
