@@ -1597,8 +1597,9 @@ base's +0x37 and then clears bit 14 of +0x32). The base's fields: +0x32 the map'
 overlay bits, +0x36 its zoom (0 to 6), +0x37 the mode, +0x3c the selected unit, +0x4f
 and +0x53 the map's centre (16.16), +0x59 the message log (`usg::Base`). Modes M and R
 draw a 3D-view frame into the view's buffer (`DS:0x1470`, the colour-255 region of
-`DS:0x5680`, as a console does) and copy it through the region when it is ready (at
-most every 4 ticks for the map); modes O, S and C draw on the screen.
+`DS:0x5680`, as a console does) and copy it through the region when it is ready (the
+map's at most every 4 counts of the game clock, R's every other pass; `docs/render.md`,
+"The situation room's frames (T-218)"); modes O, S and C draw on the screen.
 
 | Mode | Key | Routine | What it draws |
 |---|---|---|---|
@@ -2810,7 +2811,8 @@ original.
 - **Main view** (`crates/xeno-app/src/mainview.rs`, T-103 part 1): modes M, R and C
   as "The situation room's main view (T-103)" above, from the tables
   `xeno_formats::sitroom` reads and `msprite0`. The map starts with the overlays, zoom
-  and centre saved in the player's base and is drawn each frame (not every 4 ticks);
+  and centre saved in the player's base; its frames, and R's, take turns as the
+  original's (`docs/render.md`, "The situation room's frames (T-218)");
   the pixel scale is `xeno_render::view3d::Camera::map_offset`. Known gaps, each a
   `shortcut:` in the code: the labels' colour (0x0f, a guess), a target object's marker and the path
   overlay are not drawn; the GRID overlay draws the grid step (T-143). The log is the sim's (`xeno_sim::log`, T-129). The rule is drawn by `mainview::draw_line`, slot `0x558` as traced in

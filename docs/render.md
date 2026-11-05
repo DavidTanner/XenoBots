@@ -105,8 +105,10 @@ passes: the 3D view and the second display a frame every 3 passes (4 across the
 radar's), the third display a frame every 25 passes on the humanoid and 16 on the
 scorpion and the scout. The second display always starts a frame on its turn (the
 map's counter `DS:0x62ee` is always 1, above), as does the radar, damaged or not
-(both paths set `DS:0x1450` to 3). A view switch leaves `DS:0x1450` as it is, so the
-new view's handler copies a frame of its own number that the old view left.
+(both paths set `DS:0x1450` to 3). A view switch zeroes `DS:0x1450` (and `DS:0x372`):
+every switch goes through `ui_open_view_of_object` (`1000:7ef2`), which calls
+`1000:28bd` (T-218 found the call; T-209 had it that the switch left the byte as it
+was), so no frame runs on into the new view.
 
 **In the port** (`xeno-app`'s `turns`): a pass is one retrace the mission runs
 (`Mission::tick`), counted from the console's opening; each view keeps its last frame
@@ -114,9 +116,56 @@ and draws its next on its turn, from the world as it stands when drawn, the thir
 display's every `xeno_formats::radar::Radar::frames` chances. Shortcuts: every frame is
 done in the pass it starts (the fast machine), and a pass is one retrace, where the
 original's pass length is the machine's; a frame is shown from the pass it is drawn on,
-not the next; the frame an old view leaves running is dropped at a switch; before a
-view's first turn its first frame is drawn early. Not measured in DOSBox (T-168,
+not the next; before a view's first turn its first frame is drawn early. Not measured in DOSBox (T-168,
 T-171, T-174).
+
+### The situation room's frames (T-218)
+
+From a Ghidra pass over the main view's M and R routines (`1000:5590` to `55d5`,
+`55d6` to `562f`), their frame starts (`1fe6:6c05`, `6b84`), the mode switch
+(`1000:676e` to `67c9`), the view switch (`1000:7ef2`), `1000:28bd`, `547a`, and every
+writer of `DS:0x568c` and `DS:0x1450` (a byte search of the unpacked image).
+
+Both routines mark the main view every pass (so it is drawn every pass, like a
+console's views) and share `DS:0x1450` with the number 1. Each pass, in the draw pass
+before the pass's ticks:
+
+- **M** (`5590`): with `DS:0x1450` at 0 it starts a map frame (`1fe6:6c05`) and
+  returns; with 1 to 0x7f (running) it returns. With bit 7 (done) it reads the game
+  clock `DS:0x374` less `DS:0x568c`, unsigned; under **4** (`cmp bx, 4` at `1000:55b4`,
+  read by `xeno_formats::sitroom` as `map_frame_gap`) it returns, and the finished
+  frame waits in the buffer while the screen keeps the last copy and no new frame
+  starts. At 4 or more it stores the clock in `DS:0x568c`, then, if the frame is
+  number 1, draws the zoom label into the buffer (`1fe6:6cb9`), copies it through the
+  region (slot `0x5a4`), counts `DS:0x62d6`, reads the probe into `DS:0x594a`, calls
+  `1000:686a` and sets `DS:0x1450` to 0. (Another number would leave the byte stuck at
+  that number with the clock stored; no path leaves one, since a switch zeroes it.)
+- **R** (`55d6`): with no selected unit (+0x3c 0) the region is cleared to 0 (slot
+  `0x5b4`) and `DS:0x1450` set to 0, every pass. Otherwise as M but with **no clock
+  test** and no store: 0 starts a frame (`1fe6:6b84`), a done frame number 1 gets its
+  heading or at-base text (`1000:5630`) and the same copy.
+
+So, with every frame done in the pass it starts: R starts a frame on one pass and
+copies it on the next, a new picture every 2 passes (35 a second at 70 Hz). M starts
+a frame the pass after a copy and copies it once 4 counts have gone by since the last
+copy: the clock counts 60 a second, so a new map every 4 counts, 15 a second (every 4
+or 5 passes), each frame showing the world as it stood when it started, up to 4 passes
+before its copy. `DS:0x568c` is 0 in the image and its other writer (`1000:547a`, the
+clock less 4) is called by nothing, so the first copy comes once the clock reaches 4
+and later ones 4 counts after the last, even across other modes and views (nothing
+else resets it). The mode switch (`1000:676e`) ends in `1000:28bd`, which zeroes
+`DS:0x1450`, as does every view switch (above). Mode C (`56a7`) draws on the screen and
+does not mark itself.
+
+**In the port** (`xeno-app`'s `turns::Sitroom`, `Mission::tick`): the handler runs once
+a pass, before the sim's ticks, with the clock as they leave it (`World::game_clock`);
+the frame on screen is the one started on the pass of the last copy's start, drawn
+from the world as it then stands and kept, with its probe and camera, until the next
+copy. A mode or view switch drops both frames. Shortcuts: as T-209's (every frame done
+in the pass it starts; a pass is one retrace); before the first copy after a switch
+the running frame is shown at once, where the original's screen keeps what was there;
+the gap is taken from the tables when the view is first drawn, so passes before that
+copy at once. Not measured in DOSBox (T-228).
 
 ## The camera
 

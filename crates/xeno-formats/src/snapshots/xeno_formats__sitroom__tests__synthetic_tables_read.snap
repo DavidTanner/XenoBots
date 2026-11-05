@@ -20,6 +20,7 @@ SitRoom {
             80,
         ],
     ],
+    map_frame_gap: 6,
     zoom_prefix: [
         90,
     ],

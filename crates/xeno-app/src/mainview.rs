@@ -866,11 +866,13 @@ pub(crate) mod tests {
     use xeno_formats::view3d::Float;
     use xeno_sim::{Components, EntityId, Fixed, Movement};
 
-    /// Made-up tables: dots 0x30, 0x31, 0x32; small sprites from 0x10, large from 0x40.
+    /// Made-up tables: dots 0x30, 0x31, 0x32; small sprites from 0x10, large from 0x40;
+    /// the map's frames copied every 3 counts.
     pub(crate) fn room() -> SitRoom {
         SitRoom {
             robot_dots: [0x30, 0x31, 0x32],
             robot_sprites: [[0x10, 0x20, 0x30], [0x40, 0x50, 0x60]],
+            map_frame_gap: 3,
             zoom_prefix: b"Z".to_vec(),
             zoom_names: vec![b"0".to_vec(); 7],
             log_heading: b"LOG".to_vec(),

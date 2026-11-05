@@ -893,6 +893,14 @@ impl Default for Run {
     }
 }
 
+/// A situation room frame: its pass, the object under the pointer and its camera.
+type SitroomFrame = (
+    u32,
+    Framebuffer,
+    Option<u16>,
+    Option<xeno_render::view3d::Camera>,
+);
+
 /// A mission in progress: its file, its sim, and the views' state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mission {
@@ -960,6 +968,10 @@ pub struct Mission {
     /// was drawn on, kept until their next ([`turns`]).
     main_frame: RefCell<Option<(u32, Framebuffer)>>,
     second_frame: RefCell<Option<(u32, Framebuffer)>>,
+    /// The situation room's main view's frames in modes M and R ([`turns::Sitroom`]),
+    /// and those kept: the one on screen and the one running.
+    sitroom_turn: Cell<turns::Sitroom>,
+    sitroom_frames: RefCell<Vec<SitroomFrame>>,
     /// Alt in the last key word (`DS:0x1bf1` bit 0x20), as the mouse events carry it.
     alt: bool,
     /// Ctrl in the last key word (0x1000), likewise.
@@ -1074,6 +1086,8 @@ impl Mission {
             region: None,
             probed: Cell::default(),
             sitroom_probe: Cell::default(),
+            sitroom_turn: Cell::default(),
+            sitroom_frames: RefCell::default(),
             map_point: Cell::default(),
             radar: std::cell::RefCell::default(),
             passes: 0,
@@ -1256,6 +1270,10 @@ impl Mission {
             frame.take();
         }
         self.radar.take();
+        self.sitroom_frames.take();
+        let mut turn = self.sitroom_turn.get();
+        turn.restart();
+        self.sitroom_turn.set(turn);
     }
 
     /// Views `robot` (the player's), as with Tab or the roster.
@@ -1311,9 +1329,8 @@ impl Mission {
         (self.goal_press, self.region) = (false, None);
         self.probed.set([None; 2]);
         self.map_point.set(None);
-        // The turns start again with the 3D view (`DS:0x62ed` = 1 at the opener).
-        // shortcut: a frame the last view left running is dropped; the original's
-        // new view copies it if its turn's number matches.
+        // The turns start again with the 3D view (`DS:0x62ed` = 1 at the opener); the
+        // switch (`1000:7ef2`) zeroes `DS:0x1450` (`28bd`), so no frame runs on.
         self.passes = 0;
         self.new_frames();
         self.dirty = true;
@@ -1635,6 +1652,17 @@ impl Mission {
         let (mut over, mut taken) = (None, false);
         self.ticked = true;
         self.passes = self.passes.wrapping_add(1);
+        // The main view's handler comes in the draw pass, before the pass's ticks.
+        if self.viewed == Viewed::Base && matches!(self.mode, MAP_MODE | ROBOT_VIEW_MODE) {
+            let mut turn = self.sitroom_turn.get();
+            if self.mode == ROBOT_VIEW_MODE && self.selected.is_none() {
+                // `1000:55f6`: no unit, the view cleared and `DS:0x1450` 0.
+                turn.restart();
+            } else {
+                turn.pass(self.passes, sim.world.game_clock, self.mode == MAP_MODE);
+            }
+            self.sitroom_turn.set(turn);
+        }
         for event in sim.tick(events) {
             log::debug!("mission: retrace {}: {event:?}", sim.retrace());
             match event {
@@ -2126,6 +2154,8 @@ impl Mission {
         // `1000:676e` marks the map controls and the mode buttons.
         self.mark(Mark::Controls);
         self.mode = mode;
+        // It ends in `1000:28bd`, which zeroes `DS:0x1450`: no frame runs on.
+        self.new_frames();
         self.typed = 0;
         self.tint = None;
         self.redraw = true;
@@ -2357,12 +2387,10 @@ impl Mission {
     }
 
     /// The pointer moved to `at`: in the terrain editor, the ground point under it. A
-    /// console and the situation room's map draw again, so their views probe the new
-    /// position (the original draws them continuously).
+    /// console and the situation room's map draw again; their views probe the new
+    /// position on their next frames ([`turns`]).
     pub fn hover(&mut self, at: (u16, u16), assets: &Assets) {
         self.pointer = Some(at);
-        // shortcut: redraws on every move, the original every 4 ticks (its frames
-        // run over several passes; the map's too, T-134).
         self.dirty |= matches!(self.viewed, Viewed::Robot(_))
             || (self.viewed == Viewed::Base && matches!(self.mode, MAP_MODE | ROBOT_VIEW_MODE));
         if let (Some((dialog, _)), Some(tables)) = (&mut self.dialog, &assets.file_dialogs) {
@@ -3429,42 +3457,65 @@ impl Mission {
                 };
                 let world = self.world();
                 let selected = self.selected.and_then(|s| world.get(EntityId(s)));
-                match self.mode {
-                    MAP_MODE => {
-                        let Some(camera) = self.map_camera(assets) else {
-                            return false;
-                        };
-                        let map = self.shown_map();
+                // A frame and the object under the pointer on it, with its camera.
+                let frame = |buffer: &mut Framebuffer| {
+                    if self.mode == MAP_MODE {
+                        let camera = self.map_camera(assets)?;
                         let under = mainview::draw_map(
-                            &mut buffer,
+                            buffer,
                             world,
                             &camera,
-                            &map,
+                            &self.shown_map(),
                             terrain,
                             selected,
                             &inputs,
                             [mainview::MAP_BACKGROUND, mainview::MAP_HILL],
                             probe,
                         );
-                        // `1000:5619`: the release reads it (`main_view_release`).
-                        self.sitroom_probe.set((under, Some(camera)));
-                        true
+                        Some((under, Some(camera)))
+                    } else {
+                        let (slot, e) = (self.selected?, selected?);
+                        let under = robot_view(buffer, slot)?;
+                        mainview::label_robot_view(buffer, e, &inputs);
+                        Some((
+                            under,
+                            scene::camera(world, EntityId(slot), view, &assets.motion),
+                        ))
                     }
-                    ROBOT_VIEW_MODE => match (self.selected, selected) {
-                        (Some(slot), Some(e))
-                            if let Some(under) = robot_view(&mut buffer, slot) =>
-                        {
-                            let camera = scene::camera(world, EntityId(slot), view, &assets.motion);
-                            self.sitroom_probe.set((under, camera));
-                            mainview::label_robot_view(&mut buffer, e, &inputs);
-                            true
+                };
+                match self.mode {
+                    MAP_MODE | ROBOT_VIEW_MODE => {
+                        // The frames take turns ([`turns::Sitroom`]): the one on screen
+                        // until the next copy, the running one drawn as it starts.
+                        let mut turn = self.sitroom_turn.get();
+                        turn.gap = room.map_frame_gap;
+                        self.sitroom_turn.set(turn);
+                        let shown = turn.frame(self.passes);
+                        let mut frames = self.sitroom_frames.borrow_mut();
+                        frames.retain(|f| f.0 == shown || Some(f.0) == turn.running);
+                        for pass in [Some(shown), turn.running].into_iter().flatten() {
+                            if frames.iter().all(|f| f.0 != pass) {
+                                let mut buffer = Framebuffer::new(Size::new(width, height));
+                                if let Some((under, camera)) = frame(&mut buffer) {
+                                    frames.push((pass, buffer, under, camera));
+                                }
+                            }
                         }
-                        // `1000:55f6`: no unit, the view is cleared to 0.
-                        _ => {
-                            recolour(fb, self.main_view(assets), 255, 0);
-                            return true;
-                        }
-                    },
+                        return match frames.iter().find(|f| f.0 == shown) {
+                            Some((_, buffer, under, camera)) => {
+                                // `1000:5619`: the release reads it (`main_view_release`).
+                                self.sitroom_probe.set((*under, *camera));
+                                review::copy_through(fb, buffer, left, top);
+                                true
+                            }
+                            // `1000:55f6`: no unit, the view is cleared to 0.
+                            None if self.mode == ROBOT_VIEW_MODE => {
+                                recolour(fb, self.main_view(assets), 255, 0);
+                                true
+                            }
+                            None => false,
+                        };
+                    }
                     _ => {
                         recolour(fb, self.main_view(assets), 255, mainview::LOG_CLEAR);
                         let world = self.world();
@@ -6793,6 +6844,74 @@ pub mod tests {
                     assert!(background > 1000, "{name}: {background}");
                 }
             }
+        }
+    }
+
+    /// scen00a's map (mode M) on screen changes only at a copy, each copy the user's gap
+    /// of game-clock counts after the last; mode R's every other pass.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_situation_room_frames_wait_between_copies() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let gap = assets.sitroom.as_ref().unwrap().map_frame_gap;
+        assert_eq!(gap, 4);
+        let area = assets
+            .views
+            .situation
+            .find(MAIN_VIEW_TYPE)
+            .and_then(|w| w.area)
+            .unwrap();
+        let (w, h) = (area.right - area.left, area.bottom - area.top);
+        let rect = xeno_render::Rect::new(area.left.into(), area.top.into(), w.into(), h.into());
+        let name = "scen00a.usg";
+        let scenario = &assets.scenarios[name];
+        for mode in [MAP_MODE, ROBOT_VIEW_MODE] {
+            let mut m = Mission::new(name.into(), scenario, Random::seeded(1), &assets.motion);
+            m.set_mode(mode);
+            assert!(m.selected.is_some());
+            let (mut shown, mut copied, mut view) = (None, None, None);
+            let (mut copies, mut changes) = (0, 0);
+            for pass in 0..700 {
+                let clock = m.world().game_clock;
+                m.tick(std::iter::empty());
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                fb.fill_rect(rect, 255);
+                m.draw(&mut fb, &assets);
+                let pixels: Vec<_> = pixels(area).map(|(x, y)| fb.get(x, y)).collect();
+                let turn = m.sitroom_turn.get();
+                if turn.shown != shown {
+                    if mode == MAP_MODE {
+                        if let Some(c) = copied {
+                            assert!(clock.wrapping_sub(c) >= u16::from(gap), "pass {pass}");
+                        }
+                    } else if shown.is_some() {
+                        assert_eq!(turn.shown, shown.map(|s| s + 2), "pass {pass}");
+                    }
+                    changes += usize::from(view.as_ref() != Some(&pixels));
+                    (shown, copied, copies) = (turn.shown, Some(clock), copies + 1);
+                } else if shown.is_some() {
+                    assert_eq!(view.as_ref(), Some(&pixels), "mode {mode} pass {pass}");
+                }
+                view = Some(pixels);
+            }
+            // 700 passes are 600 counts: 600 / 4 map copies (the next frame drawn while
+            // the gap runs), 350 of mode R's.
+            let want = if mode == MAP_MODE {
+                148..=150
+            } else {
+                349..=350
+            };
+            assert!(want.contains(&copies), "mode {mode}: {copies}");
+            // The map's robots move; the first unit is at its base, so R shows its text.
+            assert!(mode != MAP_MODE || changes > 0, "the robots move");
         }
     }
 

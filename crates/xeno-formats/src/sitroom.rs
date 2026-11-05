@@ -28,6 +28,9 @@ pub(crate) const LOG_RULE_AT: usize = 0x56ec;
 pub(crate) const HOURS_AT: usize = 0x16bc0;
 pub(crate) const MINUTES_AT: usize = 0x16bc9;
 pub(crate) const TIME_AT: usize = 0x16bcc;
+/// Mode M's copy (`1000:5590`): `cmp bx, gap`, the game-clock counts (`DS:0x374`) a
+/// finished map frame waits since the last copy (`DS:0x568c`).
+pub(crate) const MAP_GAP_AT: usize = 0x55b4;
 /// Mode R (`1000:5630`): `mov si, text` in the string segment, for a unit at its base.
 pub(crate) const AT_BASE_AT: usize = 0x5699;
 
@@ -126,6 +129,8 @@ pub struct SitRoom {
     /// A robot's first sprite handle on the map by model / 2, below a zoom of 8 and
     /// from it; the eight headings follow, a handle step apart.
     pub robot_sprites: [[u16; 3]; 2],
+    /// The game-clock counts between two copies of the map's frames (mode M).
+    pub map_frame_gap: u8,
     /// The zoom label: a prefix, then the zoom's name.
     pub zoom_prefix: Vec<u8>,
     pub zoom_names: Vec<Vec<u8>>,
@@ -473,6 +478,10 @@ pub fn read_image(image: &[u8], ds: usize, strings: usize) -> Result<SitRoom, Fo
                 .ok_or_else(|| invalid(dots, "past the end"))?,
         ],
         robot_sprites: [sprites(SMALL_AT)?, sprites(LARGE_AT)?],
+        map_frame_gap: match bytes(MAP_GAP_AT, 3)? {
+            [0x83, 0xfb, gap] => *gap,
+            _ => return Err(invalid(MAP_GAP_AT, "not the map's copy test")),
+        },
         zoom_prefix: string(image, at_ds(ZOOM_PREFIX_AT, &[0xbe])?)?,
         zoom_names: (0..ZOOMS)
             .map(|z| string(image, ds + usize::from(word(image, names + 2 * z)?)))
@@ -567,9 +576,9 @@ pub(crate) mod tests {
     pub(crate) const DS: usize = 0x20000;
     pub(crate) const STRINGS: usize = 0x30000;
 
-    /// Made-up tables: dots 1, 2, 3; sprites 0x10.. small and 0x40.. large; zoom
-    /// labels "Z" and "z0".."z6"; heading "LOG", rule (5, 6, 5, 60); the time template
-    /// "[00-00]" with hours at 1 and minutes at 4; "HOME" at base.
+    /// Made-up tables: dots 1, 2, 3; sprites 0x10.. small and 0x40.. large; a map gap
+    /// of 6; zoom labels "Z" and "z0".."z6"; heading "LOG", rule (5, 6, 5, 60); the time
+    /// template "[00-00]" with hours at 1 and minutes at 4; "HOME" at base.
     pub(crate) fn synthetic() -> Vec<u8> {
         let mut image = vec![0u8; STRINGS + 0x100];
         let mut put = |at: usize, bytes: &[u8]| image[at..at + bytes.len()].copy_from_slice(bytes);
@@ -577,6 +586,7 @@ pub(crate) mod tests {
         put(DOTS_AT, &op(&[0x8a, 0xa7], 0x100));
         put(DS + 0x100, &[1, 2, 3]);
         put(SMALL_AT, &op(&[0xbb], 0x110));
+        put(MAP_GAP_AT, &[0x83, 0xfb, 6]);
         put(LARGE_AT, &op(&[0xbb], 0x118));
         for (i, h) in [0x10u16, 0x18, 0x20, 0x40, 0x48, 0x50]
             .into_iter()
@@ -724,6 +734,7 @@ pub(crate) mod tests {
         let room = read_image(&synthetic(), DS, STRINGS).unwrap();
         assert_eq!(room.robot_sprites, [[0x10, 0x18, 0x20], [0x40, 0x48, 0x50]]);
         assert_eq!(room.zoom_names[6], b"z6");
+        assert_eq!(room.map_frame_gap, 6);
         assert_eq!(room.time_of(9, 45), b"[09-45]");
         assert_eq!(room.string(0x45), b"HELLO");
         assert_eq!(room.string(0xffff), b"");
@@ -801,6 +812,7 @@ pub(crate) mod tests {
             DOTS_AT,
             SMALL_AT,
             LARGE_AT,
+            MAP_GAP_AT,
             ZOOM_PREFIX_AT,
             ZOOM_NAMES_AT + 1,
             LOG_HEADING_AT,
@@ -867,6 +879,7 @@ pub(crate) mod tests {
                 .all(|n| n.ends_with(b"M") || n.ends_with(b"K"))
         );
         assert_eq!(room.log_rule, [36, 95, 36, 288]);
+        assert_eq!(room.map_frame_gap, 4);
         assert_eq!(room.time_digits, [2, 5]);
         assert_eq!(room.time_of(14, 7)[2..7], *b"14:07");
         assert!(room.at_base.starts_with(b"UNIT IS AT BASE"));
