@@ -22,7 +22,7 @@ pub mod view3d;
 pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
 pub use framebuffer::{Framebuffer, Rect, RenderError, Size};
-pub use hd::{AssetId, BlitRecord, Name};
+pub use hd::{AssetId, BlitRecord, HdImage, Name, compose};
 pub use model::{LoadedModel, ModelScale, ModelTarget, model_facing};
 pub use present::{Aspect, Layout, Scale, ViewPoint, present};
 pub use sprite::{Anchor, BlitMode, Orientation, SpriteBlit};
