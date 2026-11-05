@@ -14,3 +14,7 @@ publish = false
 # takes half a core and underruns, so optimise it even in debug builds.
 [profile.dev.package.nuked-opl3]
 opt-level = 3
+
+# `--filter xbrz` scales every changed frame; unoptimised it is far over a retrace.
+[profile.dev.package.xbrz-rs]
+opt-level = 3

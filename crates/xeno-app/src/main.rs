@@ -40,7 +40,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use clap::builder::TypedValueParser;
-use xeno_render::{Aspect, Scale};
+use xeno_render::{Aspect, Filter, Scale};
 
 use game_dir::GameDir;
 // The game's input types live in the sim; `crate::input` keeps naming them.
@@ -83,6 +83,17 @@ struct Cli {
             .map(|s| s.parse::<Aspect>().expect("listed values parse")),
     )]
     aspect: Aspect,
+
+    /// Upscaling filter. `nearest`: whole pixels, exactly the original's colours.
+    /// `xbrz`: edges smoothed by xBRZ (at up to 6x, then whole-pixel repeats to the same
+    /// picture size), not blurred. Not in the original.
+    #[arg(
+        long,
+        default_value = "nearest",
+        value_parser = clap::builder::PossibleValuesParser::new(["nearest", "xbrz"])
+            .map(|s| s.parse::<Filter>().expect("listed values parse")),
+    )]
+    filter: Filter,
 
     /// Start in borderless fullscreen on the current monitor (the display mode is not
     /// changed). F11 or Alt+Enter toggles it; ESC leaves it.
@@ -303,6 +314,7 @@ fn main() -> ExitCode {
     match window::run(
         cli.scale,
         cli.aspect,
+        cli.filter,
         cli.fullscreen,
         cli.speed,
         cli.wasd,
@@ -341,6 +353,9 @@ mod tests {
     fn scale_aspect_and_fullscreen_flags_parse() {
         let cli = Cli::try_parse_from(["xeno-app"]).unwrap();
         assert_eq!((cli.scale, cli.aspect), (Scale::Auto, Aspect::Correct));
+        assert_eq!(cli.filter, Filter::Nearest);
+        let xbrz = Cli::try_parse_from(["xeno-app", "--filter", "xbrz"]).unwrap();
+        assert_eq!(xbrz.filter, Filter::Xbrz);
         assert!(!cli.fullscreen && !cli.no_intro);
         assert!(
             Cli::try_parse_from(["xeno-app", "--no-intro"])
@@ -369,7 +384,12 @@ mod tests {
                 .unwrap()
                 .fullscreen
         );
-        for bad in [["--scale", "0"], ["--scale", "big"], ["--aspect", "4:3"]] {
+        for bad in [
+            ["--scale", "0"],
+            ["--scale", "big"],
+            ["--aspect", "4:3"],
+            ["--filter", "hq2x"],
+        ] {
             assert!(Cli::try_parse_from(["xeno-app", bad[0], bad[1]]).is_err());
         }
     }

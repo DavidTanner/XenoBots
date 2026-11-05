@@ -77,6 +77,14 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
    layer information; outlines stay at logical resolution, filled in at output
    resolution.
 
+With `--filter xbrz` (T-071): the filter works on the original pixels and the HD
+images go over it. `Xbrz::present` fills exactly the picture `present` does, with the
+same `Layout`, so `compose`'s owned blocks land on the same output pixels; T-072 runs
+the filter where `compose` runs `present`, then draws the HD images. An HD image
+replaces the smoothed original where it covers it, and everything without one is
+smoothed. The window does not call `compose` yet, so today `--filter xbrz` smooths
+everything.
+
 ## What it costs
 
 Measured on the development machine with a release build, drawing real scorpion
