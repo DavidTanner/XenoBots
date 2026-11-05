@@ -196,7 +196,6 @@ Planned options (see `cargo run -p xeno-app -- --help`):
 
 | Flag | Meaning |
 |---|---|
-| `--filter <nearest\|xbrz>` | Upscaling filter. `nearest` is pixel-exact; `xbrz` smooths edges without blurring. |
 | `--hd-pack <path>` | Optional directory of higher-resolution replacement assets (not provided here). |
 
 ## Developer tool

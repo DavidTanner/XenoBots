@@ -204,8 +204,8 @@ and 9x10 is 7.4% off, so it stays at 8x10, 320 columns narrower. The full table,
 
 Not chosen: nearest neighbour at a fractional vertical factor (rows of uneven height,
 for example 10 and 11 at 4K for an exact 2880x2160). It stays sharp but shows as uneven
-lines in fine patterns such as the test card's checkerboard; the edge-aware scalers of
-T-071 are the place for it.
+lines in fine patterns such as the test card's checkerboard; an edge-aware scaler
+(T-071, xBRZ) was tried and dropped: it softens the original pixels without adding detail.
 
 `--scale N` fixes `sx = N` (1 to 32) and takes `sy = round(N * 1.2)` for 320x200
 (`N` with `--aspect off`, and for 320x240). The window is opened at the picture's size
