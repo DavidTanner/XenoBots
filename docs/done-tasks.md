@@ -488,3 +488,4 @@ the same pull request. Ids are stable; open tasks still refer to these by id.
 | 2026-11-05 | T-070 done: the original's images are named (`xeno_render::AssetId`), a framebuffer can record each named blit's logical rectangle and scale with per-pixel owners, and `xeno_render::compose` draws HD images over their blits' pixels at output resolution (`docs/hd.md`); added T-233, T-234. |
 | 2026-11-05 | T-071 dropped and reverted (xBRZ softens the original pixels but adds no detail), with its follow-up T-235; added the `dropped` status and T-236 (draw the shapes at output resolution). |
 | 2026-11-05 | T-236 done: `--hd-shapes` draws the recorded polygons and sloping lines again at output resolution (`docs/hd.md`); the view buffers' records are carried through `Framebuffer::copy_through` (part of T-234). Added T-237. |
+| 2026-11-05 | Added T-238: an Android app. |
