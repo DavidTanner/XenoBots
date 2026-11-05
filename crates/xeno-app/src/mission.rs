@@ -9292,4 +9292,94 @@ pub mod tests {
             println!("{view}: {}", texts(view));
         }
     }
+
+    /// T-236: with `--hd-shapes`, a console's 3D view and the situation room's map at
+    /// 4K draw the same indexed pixels, and differ from `present` only at the shapes'
+    /// edges (an owned pixel or one beside it), in the shapes' and neighbours' colours.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_hd_shapes_change_only_the_shapes_edges() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_render::{Aspect, Layout, Palette, Scale};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let window = Size::new(3840, 2160);
+        let mut changed = [0; 2];
+        for (name, scenario) in &assets.scenarios {
+            for console in [false, true] {
+                let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+                let shown = match console {
+                    true => match m.robots().first() {
+                        Some(&robot) => m.view_robot(robot).unwrap(),
+                        None => continue,
+                    },
+                    false => {
+                        m.mode = MAP_MODE;
+                        View::SitRoom
+                    }
+                };
+                let file = crate::screens::Screen::Mission(shown).file().unwrap();
+                let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+                let palette = Palette::from_vga6(&picture.dac).unwrap();
+                let draw = |recording: bool| {
+                    let mut fb = Framebuffer::new(Size::MODE_13H);
+                    fb.set_recording(recording);
+                    fb.pixels_mut().copy_from_slice(&picture.pixels);
+                    m.draw(&mut fb, &assets);
+                    fb
+                };
+                // Recorded first: the frames are kept for their pass, and a plain one has
+                // no record.
+                let recorded = draw(true);
+                let plain = draw(false);
+                assert_eq!(recorded.pixels(), plain.pixels(), "{name}");
+                let layout = Layout::new(plain.view(), window, Scale::Auto, Aspect::Correct);
+                let mut before = vec![0; window.width * window.height];
+                xeno_render::present(&plain, &palette, &layout, &mut before, window);
+                let mut after = before.clone();
+                xeno_render::draw_shapes(&plain, &palette, &layout, &mut after, window);
+                assert!(after == before, "{name}: not recording");
+                xeno_render::draw_shapes(&recorded, &palette, &layout, &mut after, window);
+                let r = recorded.recording().unwrap();
+                let shape_at = |x: i64, y: i64| {
+                    (0..320).contains(&x) && (0..200).contains(&y) && {
+                        let i = (y * 320 + x) as usize;
+                        r.owner(i, recorded.pixels()[i]).is_some_and(|k| {
+                            matches!(r.records()[k], xeno_render::hd::Record::Shape(_))
+                        })
+                    }
+                };
+                for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+                    if was == now {
+                        continue;
+                    }
+                    let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                    let (x, y) = (
+                        ((wx - layout.x) / layout.sx as isize) as i64,
+                        ((wy - layout.y) / layout.sy as isize) as i64,
+                    );
+                    let near = (-1..=1).any(|dy| (-1..=1).any(|dx| shape_at(x + dx, y + dy)));
+                    assert!(near, "{name}: output ({wx}, {wy}) far from any shape");
+                    let rgb = |x: i64, y: i64| {
+                        let c = palette[recorded.get(x as usize, y as usize).unwrap_or(0)];
+                        (u32::from(c.r) << 16) | (u32::from(c.g) << 8) | u32::from(c.b)
+                    };
+                    let nearby = (-1..=1).any(|dy| (-1..=1).any(|dx| rgb(x + dx, y + dy) == now));
+                    assert!(
+                        nearby,
+                        "{name}: output ({wx}, {wy}) in a colour not beside it"
+                    );
+                    changed[usize::from(console)] += 1;
+                }
+            }
+        }
+        assert!(changed.iter().all(|&n| n > 0), "{changed:?}");
+    }
 }

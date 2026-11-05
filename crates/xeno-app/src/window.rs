@@ -154,7 +154,8 @@ pub enum FrontEnd {
 /// Opens the window on `viewer`, or plays `intro` and then the drop (`drop`, alone if
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
 /// or closes the window. `music` plays what the cutscenes and screens cue; a mission
-/// in play runs `speed` retraces a real one (T-215); `wasd` starts WASD on (T-216).
+/// in play runs `speed` retraces a real one (T-215); `wasd` starts WASD on (T-216);
+/// `hd_shapes` draws the recorded shapes again at the window's resolution (T-236).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
@@ -162,6 +163,7 @@ pub fn run(
     fullscreen: bool,
     speed: u64,
     wasd: bool,
+    hd_shapes: bool,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -228,6 +230,7 @@ pub fn run(
         music,
         speed,
         legend: false,
+        hd_shapes,
     };
     app.input.wasd = wasd;
     let event_loop = EventLoop::new()?;
@@ -298,6 +301,9 @@ struct App {
     speed: u64,
     /// The key legend (T-217): Ctrl+F12 labels the view's widgets with their keys.
     legend: bool,
+    /// `--hd-shapes` (T-236): record the frame's shapes and draw them again at the
+    /// window's resolution (`docs/hd.md`).
+    hd_shapes: bool,
 }
 
 /// Counts for the once-a-second rate log.
@@ -440,6 +446,9 @@ impl App {
             _ => None,
         };
         xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        if self.hd_shapes {
+            xeno_render::draw_shapes(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        }
         if let Some(under) = under {
             under.restore(&mut self.fb);
         }
@@ -459,6 +468,10 @@ impl App {
     /// restart.
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
+        // A new picture (a mode change, the front end) starts unrecorded.
+        if self.hd_shapes && self.fb.recording().is_none() {
+            self.fb.set_recording(true);
+        }
         // The music keeps real time at the game speed (T-215): only real retraces tick it.
         if !step.extra {
             // The driver's hook runs first in the retrace interrupt, whatever the mode.
@@ -1001,6 +1014,7 @@ mod tests {
             music: Jukebox::default(),
             speed: 1,
             legend: false,
+            hd_shapes: false,
         }
     }
 

@@ -9,6 +9,10 @@ use xeno_formats::Palette;
 
 use crate::{Framebuffer, Layout, Rect, Size, present};
 
+mod shapes;
+
+pub use shapes::draw_shapes;
+
 /// An original file's base name, lower case and NUL-padded (DOS names fit in 8).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Name(pub [u8; 8]);
@@ -54,8 +58,8 @@ pub struct BlitRecord {
     pub flipped: bool,
 }
 
-/// One drawing the record keeps: a named blit, or a shape to draw again at output
-/// resolution (T-236).
+/// One drawing the record keeps: a named blit, or a shape drawn at output resolution
+/// by [`draw_shapes`] (T-236).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Record {
     Blit(BlitRecord),

@@ -1315,6 +1315,64 @@ pub(crate) mod tests {
         assert!(lit(&fb).is_empty());
     }
 
+    /// T-236: a sloping line recorded and drawn again at 8x10 has a smooth edge in
+    /// its own colour, within a pixel of its own, under later text; the pixels are the
+    /// unrecorded line's.
+    #[test]
+    fn a_sloping_line_at_8x10_is_smooth_under_later_text() {
+        use xeno_render::{Layout, Palette, Size};
+        let (background, ink, text) = (0x23, 0x5a, 0xc4);
+        let draw = |recording: bool| {
+            let mut fb = Framebuffer::new(Size::new(27, 15));
+            fb.set_recording(recording);
+            fb.clear(background);
+            draw_line(&mut fb, [2, 1, 12, 23], ink);
+            fb.pixels_mut()[7 * 27 + 12] = text;
+            fb
+        };
+        let (plain, fb) = (draw(false), draw(true));
+        assert_eq!(plain.pixels(), fb.pixels());
+        let palette =
+            Palette::from_rgb8(&(0..=255u8).flat_map(|i| [i, !i, 7]).collect::<Vec<_>>()).unwrap();
+        let rgb = |c: u8| u32::from(c) << 16 | u32::from(!c) << 8 | 7;
+        let layout = Layout {
+            sx: 8,
+            sy: 10,
+            x: 0,
+            y: 0,
+        };
+        let size = Size::new(27 * 8, 15 * 10);
+        let mut before = vec![0; size.width * size.height];
+        xeno_render::present(&fb, &palette, &layout, &mut before, size);
+        let mut after = before.clone();
+        xeno_render::draw_shapes(&plain, &palette, &layout, &mut after, size);
+        assert!(after == before, "nothing without a record");
+        xeno_render::draw_shapes(&fb, &palette, &layout, &mut after, size);
+        let lit = |x: usize, y: usize| fb.get(x, y) == Some(ink);
+        for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+            let (x, y) = (i % size.width / 8, i / size.width / 10);
+            if fb.get(x, y) == Some(text) {
+                assert_eq!(now, was, "the text stays on top");
+            } else if now != was {
+                let near = (x.saturating_sub(1)..=x + 1)
+                    .any(|x| (y.saturating_sub(1)..=y + 1).any(|y| lit(x, y)));
+                assert!(
+                    near && (now == rgb(ink) || now == rgb(background)),
+                    "({x}, {y})"
+                );
+            }
+        }
+        // The line's top in each output column, away from the ends and the text, steps
+        // down at most one output row at a time (a logical step is 10).
+        let top = |wx: usize| (0..size.height).find(|&wy| after[wy * size.width + wx] == rgb(ink));
+        let tops: Vec<usize> = (3 * 8..10 * 8)
+            .chain(14 * 8..21 * 8)
+            .map(|wx| top(wx).unwrap())
+            .collect();
+        assert!(tops.windows(2).all(|w| w[1] >= w[0]), "{tops:?}");
+        assert!((3 * 8..10 * 8 - 1).all(|wx| top(wx + 1).unwrap() - top(wx).unwrap() <= 1));
+    }
+
     #[test]
     fn the_log_lists_messages_to_the_first_empty_slot() {
         let font = xeno_formats::font::parse(&xeno_formats::fixtures::synthetic_font_block())
