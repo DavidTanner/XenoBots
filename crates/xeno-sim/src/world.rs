@@ -791,13 +791,18 @@ impl Pools {
     /// the pool is full.
     fn alloc(&mut self, id: EntityId, kind: ObjectKind) -> Option<Memory> {
         let big = crate::orders::RobotKind::of(kind).is_some() || kind == ObjectKind::Base;
-        let size = if big { 40 } else { 200 };
-        let m = (0..size)
-            .map(|index| Memory { big, index })
-            .find(|m| !self.used.contains(m))?;
+        let m = self.next(big)?;
         self.used.insert(m);
         self.at.insert(id, (m, m.index));
         Some(m)
+    }
+
+    /// The place `f4ee` gives next in the big pool or the small one.
+    fn next(&self, big: bool) -> Option<Memory> {
+        let size = if big { 40 } else { 200 };
+        (0..size)
+            .map(|index| Memory { big, index })
+            .find(|m| !self.used.contains(m))
     }
 
     /// `f5cd`'s part: the place +0x02 names is marked free, which for a loaded object
@@ -1116,6 +1121,18 @@ impl World {
         (0..usg::Object::SLOTS as u16)
             .map(EntityId)
             .find(|&id| self.get(id).is_none() && self.refs(id) == 0)
+    }
+
+    /// Object `id`'s +0x02: the place `f4ee` gave it, or for a loaded object the
+    /// file's index; none for an empty slot.
+    pub fn pool_index(&self, id: EntityId) -> Option<u16> {
+        self.pools.at.get(&id).map(|&(_, index)| index)
+    }
+
+    /// The +0x02 the next object made in the big pool (robots and bases) or the small
+    /// one gets (`f4ee`); none when that pool is full.
+    pub fn next_pool_index(&self, big: bool) -> Option<u16> {
+        self.pools.next(big).map(|m| m.index)
     }
 
     /// The object in slot `id`; for a lock's `id` on freed memory, the bytes the freed
