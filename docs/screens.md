@@ -2829,13 +2829,15 @@ original.
   not shown.
 - **The main view's releases** (`Mission::main_view_release`, T-128, T-212): the M
   and R frames probe at the pointer (`mainview::Probe`, `scene::draw`) and keep the
-  object and the frame's camera in `Mission::sitroom_probe` as `1000:5619` keeps
-  `DS:0x594a`, reset by nothing; a release over the main view with no widget there, in
+  object in `Mission::sitroom_probe` as `1000:5619` keeps `DS:0x594a`, reset by
+  nothing; a release over the main view with no widget there, in
   any mode, acts on it as `docs/sim.md`, "The main view's releases (T-212)": the left
   selects the player's unit or recentres the map (Ctrl in mode M: the editor's place),
-  the right opens the unit's console (`Mission::jump`, the consoles' too). Shortcuts:
-  the recentre's camera is the situation room's last M or R frame's (the map's now
-  before any), not whichever view drew last; the map and R redraw on every pointer move
+  the right opens the unit's console (`Mission::jump`, the consoles' too). The
+  recentre converts by the rectangle and camera the last frame started in any view
+  left, a console's too (`Mission::last_view`, T-219; `docs/sim.md`, "The last view
+  (T-219)"). Shortcuts: before any frame, the main view's rectangle and the map's
+  camera; the map and R redraw on every pointer move
   so the probe follows it; a right release on an alien robot does nothing (T-214). Not
   checked in DOSBox (T-182).
 - **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
