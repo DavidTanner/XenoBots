@@ -309,27 +309,11 @@ impl Sim {
     }
 }
 
-/// `sim_alloc_object_slot` (`1000:f4b1`): the lowest free slot, and the entry in
-/// the object's pool.
+/// `sim_alloc_object_slot` (`1000:f4b1`), as the editor's three makers call it
+/// (`1000:6c36`, `6c80`, `7e9b`): the lowest free slot, and the place `f4ee` gives in
+/// the object's pool, which [`World::insert`] then takes; none when either is full.
 fn alloc(world: &World, big_pool: bool) -> Option<(u16, u16)> {
-    let slot = world.free_slot()?.0;
-    // shortcut: the pool's lowest free entry is taken as the count of the pool's
-    // objects (true while none has been freed); only the save shows it. Upgrade if
-    // the sim keeps the pools.
-    let pool_index = world
-        .iter()
-        .filter(|(_, e)| big(e.kind) == big_pool)
-        .count();
-    Some((slot, pool_index as u16))
-}
-
-/// Whether `kind`'s objects come from the big pool (`DS:0xe7c7` bit 0): the robots
-/// and bases.
-fn big(kind: ObjectKind) -> bool {
-    matches!(
-        kind,
-        ObjectKind::Humanoid | ObjectKind::Scorpion | ObjectKind::Scout | ObjectKind::Base
-    )
+    Some((world.free_slot()?.0, world.next_pool_index(big_pool)?))
 }
 
 #[cfg(test)]
@@ -544,6 +528,27 @@ mod tests {
         );
     }
     #[test]
+    fn a_made_object_takes_the_place_its_pool_gives() {
+        let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
+        let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
+        // The fixture's relay (slot 3) lives in small place 0 but names 3: freed, it
+        // frees 3, so an obstacle takes place 1 (0 is still marked), not the count 0.
+        sim.world.remove(EntityId(3));
+        let Some(Placed::Made(o)) = sim.place(Place::Obstacle, at(9, 9), &editor()) else {
+            panic!()
+        };
+        assert_eq!((o.slot, o.pool_index), (1, 1));
+        assert_eq!(sim.world.pool_index(EntityId(1)), Some(1));
+        // The next takes 2, then 3, the one the relay freed.
+        for index in [2, 3] {
+            let Some(Placed::Made(o)) = sim.place(Place::Obstacle, at(9, 9), &editor()) else {
+                panic!()
+            };
+            assert_eq!(o.pool_index, index);
+        }
+    }
+
+    #[test]
     fn a_relay_lands_on_the_lattice_unless_one_stands_in_the_cell() {
         let scenario = usg::parse(&synthetic_mission_usg()).unwrap();
         let mut sim = Sim::load(&scenario, Random::seeded(1), motion::synthetic_tables());
@@ -567,14 +572,13 @@ mod tests {
         assert_eq!(sim.world.get(EntityId(1)).unwrap().position, at(128, 132));
         // The save holds it as placed.
         let saved = sim.world.save(&scenario, editor().program_table);
-        // (Its pool index is the editor's own pick, `alloc`'s shortcut.)
-        let mut s = saved
+        // Its pool index too: both are the place it took.
+        let s = saved
             .objects
             .unwrap()
             .into_iter()
             .find(|s| s.slot == 1)
             .unwrap();
-        s.pool_index = o.pool_index;
         assert_eq!(s, *o);
         // A relay of either side in the cell refuses the press.
         let before = sim.state_hash();

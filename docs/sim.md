@@ -2567,7 +2567,8 @@ a path and leftover points stay). Robots get their movement, orders, script (pac
 above), panel, guns and kind's parts; every object its +0x16 and +0x17 (T-147); bases
 their tick, counts, kills, losses, depot and damage; relays their damage; shots and
 explosions their fields by kind (`usg.md`, "Kinds made during play"). An object made in
-play starts from zeros and the lowest index free in its pool; every object's reference
+play starts from zeros; every object's +0x02 is the pools' (T-221, "The pools as
+loaded (T-213)"); every object's reference
 count is the slot's live one plus the pack's one for each robot that targets it, and
 loading takes the file's counts less the unpack's one a robot target (T-154, below).
 `Sim::load` reads shots and explosions back (`pack::unpack_made`; a missile's damage is
@@ -2793,6 +2794,31 @@ object's place is freed by its own index) and
 `real_assets_scen06a_frees_the_place_its_indices_name` (the first relay out of order,
 destroyed, and the next small object is made in the place its index names, over the
 object loaded there). No play test, pinned number or state hash changed.
+
+**The editor and the save (T-221).** Every allocation goes through `f4b1`, which calls
+`f4ee` (the loader's `f47d` is its only other caller): the editor's obstacle
+(`1000:6c36`, kind 0x10) and relay (`6c80`, kind 4) and `sim_make_new_robot`
+(`7e9b`), as every maker in play. `f4ee` refuses (carry) when the pool's count is full
+(`cmp word [0xe684], 0xc8` for the small pool) before it looks for a free byte. So an
+object made in the editor or in play has the +2 of the place it took, which a save
+writes. The port: `World::pool_index` gives an object's +2 from `Pools` and
+`World::next_pool_index` the place the next object of a pool takes (none when full).
+The editor's `alloc` takes that (it took the count of the pool's objects, wrong once one
+is freed); `World::save` writes every object's +2 from the pools (it took the lowest
+index no loaded object named), so an object made in a slot a loaded object of its kind
+left gets its own place too. Two objects can save the same +2, as in the original,
+when a loaded index is not its place (the synthetic fixture's relay; scen06a).
+Shortcut: the port's pool is full when every place is marked, not by `DS:0xe684`'s
+count; so a 41st robot placed in the editor is refused, where the original's big pool
+(also refused only at a count of 200) would run past its 40 places.
+Tests: `editor`'s `a_made_object_takes_the_place_its_pool_gives` (a relay that names
+another place freed, the obstacles take 1, 2, then the freed 3), `pack`'s
+`a_saved_world_loads_back_as_the_loader_leaves_it` (every saved +2 is the pools'; it
+asserted the small pool's indices all differed, which the original does not promise),
+`real_assets_stock_missions_save_and_load_back` (the same after five minutes of play)
+and `real_assets_made_objects_save_the_place_they_took` (every stock file saved as
+loaded keeps its indices; in scen06a an obstacle placed after an out-of-order relay is
+destroyed takes, and saves, the place the relay named).
 
 ## The mission clock (T-102)
 

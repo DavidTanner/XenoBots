@@ -217,18 +217,16 @@ fn a_saved_world_loads_back_as_the_loader_leaves_it() {
         (flags(7) & flag::IN_FIELD, flags(2) & flag::IN_FIELD),
         (0, flag::IN_FIELD)
     );
-    // Objects made in play take free indices of their pool, a reference each.
+    // Objects made in play take the place their pool gave them, a reference each.
     let relay = objects.iter().find(|o| o.slot == 1).unwrap();
     assert_eq!((relay.kind, relay.ref_count), (ObjectKind::Relay, 1));
-    let small: BTreeSet<u16> = objects
-        .iter()
-        .filter(|o| o.size == Object::SMALL)
-        .map(|o| o.pool_index)
-        .collect();
-    assert_eq!(
-        small.len(),
-        objects.iter().filter(|o| o.size == Object::SMALL).count()
-    );
+    // Every object's +0x02 is the pools': the file's for the loaded ones, the place
+    // taken for the made ones. They need not differ: the fixture's relay names
+    // place 3 but was loaded into 0, so a made object takes 3 as well (`f4ee`).
+    for o in objects {
+        assert_eq!(Some(o.pool_index), sim.world.pool_index(EntityId(o.slot)));
+    }
+    assert_eq!(relay.pool_index, 1);
 
     // Saved and loaded again, the same world and the same bytes.
     let (bytes_again, _, twice) = round_trip(&again, &back, table);
@@ -299,6 +297,11 @@ fn real_assets_stock_missions_save_and_load_back() {
             .filter(|(_, e)| matches!(e.state, State::Shot(_) | State::Explosion { .. }))
             .count();
         let (_, back, mut again) = round_trip(&sim, &scenario, table);
+        // Each object's +0x02 is the pools' (T-221), made in play or loaded.
+        for o in back.objects.iter().flatten() {
+            let index = sim.world.pool_index(EntityId(o.slot));
+            assert_eq!(Some(o.pool_index), index, "{name} slot {}", o.slot);
+        }
         assert_eq!(again.world, as_loaded(&sim.world, &again.world), "{name}");
         let (_, _, mut twice) = round_trip(&again, &back, table);
         for _ in 0..2000 {
@@ -431,4 +434,71 @@ fn a_removed_object_saved_in_its_last_ticks_loads_back_and_frees_on_time() {
     assert_eq!(again.world.get(slot).map(|e| e.status), Some(1));
     again.tick(&[]);
     assert_eq!((again.world.get(slot), again.world.refs(slot)), (None, 0));
+}
+
+/// Every stock scenario saved as loaded keeps its file's +0x02s (T-221); in scen06a,
+/// with a relay out of order destroyed, an obstacle placed in the editor takes the
+/// place the relay's index named (`f4ee`), and the save writes it so.
+#[test]
+#[ignore = "needs XENOBOTS_GAME_DIR"]
+fn real_assets_made_objects_save_the_place_they_took() {
+    let Some(dir) = std::env::var_os("XENOBOTS_GAME_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(dir);
+    let exe = xeno_formats::lzexe::unpack(&std::fs::read(dir.join("xeno.exe")).unwrap()).unwrap();
+    let tables = xeno_formats::motion::read(&exe).unwrap();
+    let editor = xeno_formats::editor::read(&exe).unwrap();
+    let names = (0..13)
+        .map(|n| format!("scen{n:02}a.usg"))
+        .chain(["ctrain", "htrain", "ntrain", "strain"].map(|n| format!("{n}.usg")));
+    for name in names {
+        let scenario = usg::parse(&std::fs::read(dir.join(&name)).unwrap()).unwrap();
+        let sim = Sim::load(&scenario, Random::seeded(5), tables.clone());
+        let saved = sim.world.save(&scenario, editor.program_table);
+        let index = |s: &Scenario| -> Vec<_> {
+            s.objects
+                .iter()
+                .flatten()
+                .map(|o| (o.slot, o.pool_index))
+                .collect()
+        };
+        assert_eq!(index(&saved), index(&scenario), "{name}");
+    }
+    let scenario = usg::parse(&std::fs::read(dir.join("scen06a.usg")).unwrap()).unwrap();
+    let small: Vec<_> = scenario
+        .objects
+        .iter()
+        .flatten()
+        .filter(|o| o.size == Object::SMALL)
+        .collect();
+    // Loaded in file order, the n-th small object lives in place n.
+    let (relay, named) = small
+        .iter()
+        .enumerate()
+        .find(|(n, o)| o.kind == ObjectKind::Relay && usize::from(o.pool_index) != *n)
+        .map(|(_, o)| (o.slot, o.pool_index))
+        .expect("a relay out of order");
+    let mut sim = Sim::load(&scenario, Random::seeded(5), tables);
+    sim.world.remove(EntityId(relay));
+    let at = Position {
+        x: Fixed::from_int(100),
+        y: Fixed::from_int(100),
+    };
+    let Some(crate::editor::Placed::Made(o)) =
+        sim.place(crate::editor::Place::Obstacle, at, &editor)
+    else {
+        panic!("no obstacle placed")
+    };
+    assert_eq!(o.pool_index, named);
+    let saved = sim.world.save(&scenario, editor.program_table);
+    let s = saved
+        .objects
+        .iter()
+        .flatten()
+        .find(|s| s.slot == o.slot)
+        .unwrap();
+    assert_eq!(s.pool_index, named);
 }

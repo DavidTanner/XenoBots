@@ -300,7 +300,7 @@ bytes, and `Body` the rest by kind (`Robot`, with the kind's `Parts` from +0xfe,
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0x00 | 2 | `kind` | 0 humanoid, 1 scorpion, 2 scout, 3 base, 4 relay, 16 obstacle. These are the editor's numbers and names (it calls them `HUMAN`, `SCORP`, `SCOUT`, `BASE`, `RELAY`, `OBST.`, with -1 for `PATH`). Kinds 5 to 15 are made during play (below, "Kinds made during play"): 5 the scorpion's tail missile, 6 to 8 shots, 9 to 12 mines and buoys, 13 an explosion, 14 the cloak's sparkle. Removing an object can turn it into kind 15 |
-| 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved. Some stock files repeat a number |
+| 0x02 | 2 | `pool_index` | The object's place in its pool when it was saved (`f4ee` writes it when the object is made; the loader reads the file's over it). Some stock files repeat a number. An object made in play or in the editor saves the place it took (`docs/sim.md`, "The pools as loaded (T-213)") |
 | 0x04 | 4 | `x` | Position, 16.16 |
 | 0x08 | 4 | `y` | |
 | 0x0c | 4 | `z` | Height, 16.16. Zero in every stock object, and a robot's is set to 0 on every move (`docs/sim.md`, "Heights"). The line-of-sight code lifts it for a moment by a per-kind height (table `DS:0xe7a5`, 8.8: 10, 10, 6, 20, 6 for kinds 0 to 4, 6 for obstacles) |
@@ -745,7 +745,8 @@ paragraph as the writer's buffer is. `xeno-tool inspect` prints a save's campaig
   obstacle's bytes past +0x18. The kinds made during play (5 to 15) are described
   above but kept as bytes; an EMI decoy's +0x19 and what an ECM buoy does are not
   traced.
-- Whether `pool_index` matters once loaded, given that stock files repeat some.
+- Whether `pool_index` matters once loaded, given that stock files repeat some: it
+  names the place freeing the object frees (`docs/sim.md`, "The pools as loaded (T-213)").
 
 ## Parser
 

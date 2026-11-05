@@ -5,7 +5,7 @@
 //! game clock. [`World::save`] packs; [`unpack_made`] reads back the kinds made during
 //! play that the sim keeps (shots, explosions, sparkles, mines and buoys) when a save is loaded.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use xeno_formats::usg::{self, Body, Object, ObjectKind, Scenario};
 
@@ -65,7 +65,7 @@ impl World {
     /// pointers count from (`xeno_formats::editor::Editor::program_table`).
     ///
     /// Bytes the sim does not keep stay as loaded; an object made during play starts
-    /// from zeros and the lowest pool index free in its pool. Each reference count is
+    /// from zeros. Every object's pool index is its +0x02 ([`World::pool_index`]). Each reference count is
     /// the slot's live one ([`World::refs`]) with one more for each robot that targets
     /// it (the pack's `1000:f6a6`).
     // shortcut: shots, explosions, sparkles and drops made in play keep only what the sim keeps (their
@@ -85,22 +85,21 @@ impl World {
             .collect();
         let template =
             |id: EntityId, e: &Entity| templates.get(&id.0).copied().filter(|o| o.kind == e.kind);
-        let mut pools: BTreeSet<(bool, u16)> = w
-            .iter()
-            .filter_map(|(id, e)| template(id, e).map(|o| (big(e.kind), o.pool_index)))
-            .collect();
         let objects = w
             .iter()
             .map(|(id, e)| {
+                // +0x02 as the pools hold it: the file's for a loaded object, the
+                // place taken for one made since (in a reused slot too).
+                // shortcut: one past a full pool has no place; it keeps its loaded
+                // index, or 0 if made (the port's makers refuse first).
+                let index = w.pool_index(id);
                 let mut r = match template(id, e) {
                     Some(o) => Record(o.to_record()),
-                    None => {
-                        let index = (0..)
-                            .find(|&i| pools.insert((big(e.kind), i)))
-                            .expect("a free pool index");
-                        made(id, e.kind, index)
-                    }
+                    None => made(id, e.kind, index.unwrap_or(0)),
                 };
+                if let Some(i) = index {
+                    r.u16(2, i);
+                }
                 pack(&mut r, w, id, e, program_table);
                 let held = w.iter().filter(|(_, o)| target(o) == Some(id)).count();
                 let refs = w.refs(id).wrapping_add(held as u16);
