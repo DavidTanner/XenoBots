@@ -29,7 +29,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::Rect;
-use xeno_render::{Aspect, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode};
+use xeno_render::{
+    Aspect, Filter, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode, Xbrz,
+};
 
 use crate::clock::{Clock, Rate, SPEEDS, Step};
 use crate::drop;
@@ -159,6 +161,7 @@ pub enum FrontEnd {
 pub fn run(
     scale: Scale,
     aspect: Aspect,
+    filter: Filter,
     fullscreen: bool,
     speed: u64,
     wasd: bool,
@@ -191,7 +194,7 @@ pub fn run(
     // The 320x240 mode has its own retrace rate (`docs/game-loop.md`, "Mode changes").
     let rate = Rate::for_height(fb.view().height);
     log::info!(
-        "scale {scale:?}, aspect {aspect:?}, fullscreen {fullscreen}, view {:?} of a {:?} \
+        "scale {scale:?}, aspect {aspect:?}, filter {filter:?}, fullscreen {fullscreen}, view {:?} of a {:?} \
          surface, {:.3} retraces a second",
         fb.view(),
         fb.surface(),
@@ -220,6 +223,7 @@ pub fn run(
         layout: None,
         scale,
         aspect,
+        xbrz: (filter == Filter::Xbrz).then(Xbrz::default),
         start_fullscreen: fullscreen,
         surface: None,
         size: PhysicalSize::new(0, 0),
@@ -280,6 +284,8 @@ struct App {
     layout: Option<Layout>,
     scale: Scale,
     aspect: Aspect,
+    /// `--filter xbrz` (T-071) and its last scaled view; `None` for `nearest`.
+    xbrz: Option<Xbrz>,
     /// `--fullscreen`.
     start_fullscreen: bool,
     /// Created on the first `resumed`, as winit 0.30 requires.
@@ -439,7 +445,12 @@ impl App {
                 .map(|shape| pointer::draw(&mut self.fb, at, shape)),
             _ => None,
         };
-        xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        match &mut self.xbrz {
+            Some(xbrz) => xbrz.present(&self.fb, &self.palette, &layout, &mut buffer, window_size),
+            None => {
+                xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size)
+            }
+        }
         if let Some(under) = under {
             under.restore(&mut self.fb);
         }
@@ -993,6 +1004,7 @@ mod tests {
             layout: None,
             scale: Scale::Auto,
             aspect: Aspect::Correct,
+            xbrz: None,
             start_fullscreen: false,
             surface: None,
             size: PhysicalSize::new(0, 0),

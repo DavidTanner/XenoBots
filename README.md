@@ -136,6 +136,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--screen <name>` | For development: skip the cutscene and drop and start at a screen: `login`, `map-room`, `training`, `review`, `sit-room`, `humancon`, `scorpcon`, `scoutcon`, `won`, `lost`, `triumph` (the cutscene after a mission, then the map room), or `test-card` for the test card instead of the screens. |
 | `--scale <auto\|n>` | `auto` (default): the largest picture that fits the window. `n` (1 to 32): that horizontal factor, the window sized to fit. |
 | `--aspect <correct\|exact\|off>` | `correct` (default): the 4:3 CRT shape within 5%. `exact`: the closest shape, even if smaller. `off`: square pixels. |
+| `--filter <nearest\|xbrz>` | Not in the original. `nearest` (default): whole pixels, exactly the original's colours. `xbrz`: edges smoothed by xBRZ, not blurred, in the same picture size and shape. |
 | `--fullscreen` | Start in borderless fullscreen on the current monitor (the display mode is not changed). With `--scale n` the picture keeps that scale, centred. |
 | `--view <file>` | Show one file instead of the cutscene and screens (see "Asset viewer" below). A bare name such as `msprite1.b@n` is looked up in the game directory, in any case; anything else is read as a path. With `--check`, the file is decoded but no window opens. |
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
@@ -196,7 +197,6 @@ Planned options (see `cargo run -p xeno-app -- --help`):
 
 | Flag | Meaning |
 |---|---|
-| `--filter <nearest\|xbrz>` | Upscaling filter. `nearest` is pixel-exact; `xbrz` smooths edges without blurring. |
 | `--hd-pack <path>` | Optional directory of higher-resolution replacement assets (not provided here). |
 
 ## Developer tool

@@ -181,7 +181,8 @@ Two layers, always kept separate:
    by default the largest pair within 5% of 4:3 is used: at 3840x2160, 320x200 is
    shown 8x10 (2560x2000, +4.2%) and 320x240 9x9 (2880x2160); at 1920x1080, 4x5 and
    4x4. `--aspect exact` and `--scale N` pick otherwise (see
-   `docs/formats/video-modes.md`, "Presentation"). Later options: xBRZ-style scalers, CRT shader, and an *HD asset pack*
+   `docs/formats/video-modes.md`, "Presentation"). `--filter xbrz` smooths edges with xBRZ in the same
+   picture (`docs/formats/video-modes.md`, "Filters"). Later options: a CRT shader, and an *HD asset pack*
    loaded from a user directory that replaces individual sprites at higher resolution.
 
 "Not lose details" means: never bilinear-blur the original art, keep aspect correct,
@@ -198,6 +199,8 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --no-intro  # straight to the lo
 cargo run -p xeno-app -- --game-dir ./gameFiles --drop    # the intro drop alone, then the log-in screen
 cargo run -p xeno-app -- --game-dir ./gameFiles --screen map-room  # start at a screen (docs/screens.md); --screen test-card for the test card
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
+cargo run -p xeno-app -- --game-dir ./gameFiles --filter xbrz  # edges smoothed by xBRZ at the same picture size (not in the original; docs/formats/video-modes.md, "Filters")
+cargo bench -p xeno-render --bench present  # presenting at 3840x2160, nearest and xbrz
 cargo run -p xeno-app -- --game-dir ./gameFiles --speed 4  # a mission in play at 4x (F12 cycles 1x, 2x, 4x; not in the original; docs/game-loop.md)
 cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word's seed (logged at start-up; the clock's otherwise)
 cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where the file dialogs start (Ctrl+Alt+P's SAVE GAME, the editor's Ctrl+Alt+O), the terrain editor's Alt+Q (BACKUP.MAP) and the map room's N and Q (<NAME>.LOG, loaded at log-in) save; the game dir otherwise

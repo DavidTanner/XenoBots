@@ -10,9 +10,15 @@ publish.workspace = true
 
 [dependencies]
 thiserror = "2"
+xbrz-rs = "0.1"
 xeno-formats = { path = "../xeno-formats" }
 
 [dev-dependencies]
 xeno-formats = { path = "../xeno-formats", features = ["test-fixtures"] }
 insta = "1.49"
 proptest = "1.12"
+criterion = "0.8"
+
+[[bench]]
+name = "present"
+harness = false

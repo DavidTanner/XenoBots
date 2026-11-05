@@ -204,8 +204,8 @@ and 9x10 is 7.4% off, so it stays at 8x10, 320 columns narrower. The full table,
 
 Not chosen: nearest neighbour at a fractional vertical factor (rows of uneven height,
 for example 10 and 11 at 4K for an exact 2880x2160). It stays sharp but shows as uneven
-lines in fine patterns such as the test card's checkerboard; the edge-aware scalers of
-T-071 are the place for it.
+lines in fine patterns such as the test card's checkerboard. The edge-aware filter
+(T-071, below) hides uneven rows, so an exact-4:3 fill for it is T-235.
 
 `--scale N` fixes `sx = N` (1 to 32) and takes `sy = round(N * 1.2)` for 320x200
 (`N` with `--aspect off`, and for 320x240). The window is opened at the picture's size
@@ -223,6 +223,42 @@ instead, so the picture still fits it exactly. Fullscreen (`--fullscreen`, F11 o
 Alt+Enter) is borderless on the current monitor and never changes the display mode:
 the same layout rules apply to the monitor's size (a 3440x1440 monitor gives 6x7), and
 `--scale N` keeps its factor there, centred, cropped if the screen is smaller.
+
+## Filters (T-071)
+
+`--filter` picks how the picture is filled; neither changes the layout above, so the
+picture's size, the bars and the mouse mapping are the same for both.
+
+- **`nearest`** (default): `present`, whole pixels, every output pixel black or a
+  palette colour.
+- **`xbrz`** (not in the original): `xeno_render::Xbrz`. The view's colours are scaled
+  by xBRZ 1.8 (the `xbrz-rs` 0.1 crate, a Rust port of Zenju's C++; GPL-3.0-only,
+  which the project's GPL-3.0-or-later can include, the binary as a whole then being
+  GPL-3.0) at `k = min(sx, sy, 6)`, xBRZ's largest factor, and then repeated, nearest
+  neighbour, to the layout's picture: output pixel `p` along an axis of factor `s`
+  takes xBRZ pixel `p * k / s`. So 8x10 at 4K is xBRZ 6x (1920x1200) stretched to
+  2560x2000, 9x9 is 6x stretched 1.5 times, 4x5 is 4x with every fourth row doubled.
+  Never shrunk, so no xBRZ detail is dropped, and the 4:3 shape is the layout's. With
+  a factor of 1 on either axis (a window smaller than 640 wide), it is `nearest`.
+  Edges of the view are xBRZ's own (pixels outside count as transparent; a flat view
+  stays flat to its edges).
+
+The xBRZ image is kept until the view's indices, the palette (a fade changes it every
+retrace) or `k` change, so a still screen costs only the stretch. Criterion,
+`cargo bench -p xeno-render --bench present`, release, 3840x2160, synthetic frames with
+edges everywhere, on the development machine:
+
+| | 320x200 (8x10) | 320x240 (9x9) |
+|---|---|---|
+| `nearest` | 0.97 ms | 1.06 ms |
+| `xbrz`, a new frame | 7.5 ms | 8.9 ms |
+| `xbrz`, the same frame | 2.6 ms | 3.2 ms |
+| A retrace (the budget) | 14.3 ms | 16.7 ms |
+
+Within a retrace, with 5 to 8 ms left for the rest of the frame at 4K; smaller windows
+cost less. `xbrz-rs` is built optimised in debug builds too (`Cargo.toml`), or a debug
+`cargo run` would be far over. If a slower machine misses retraces, the GPU path
+(T-073) is the place for it.
 
 ## Open questions
 
