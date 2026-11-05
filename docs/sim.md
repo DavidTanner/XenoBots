@@ -1687,8 +1687,9 @@ Ctrl+D):
    plays (event 2, `AX` = 4, heard everywhere).
 5. It is taken out of its side's unit list, the rest moving up in order
    (`sim_remove_unit_from_list`, `1fe6:6e71`), the roster is marked for a redraw and,
-   if it was the roster's selection, another is picked; if it was on view, the view
-   changes (`1000:7ee7`).
+   if it was the roster's selection, another is picked; if it was on view
+   (`DS:0x62f1`, `1000:de6d`), the view changes at once to its side's base
+   (`1000:7ee7`; `docs/screens.md`, "Switching views", T-224).
 6. Its slot is freed (`sim_free_object_slot`, `1000:f5cd`): the object's +0x16 bit 0
    (`GONE`) is set, the slot's pointer cleared, its reference count and its pool's
    count lowered. A slot is reused only once its reference count is 0 (references

@@ -1650,7 +1650,8 @@ impl Mission {
     /// One retrace of the mission's world with that retrace's input, if it runs (a
     /// parked mission waits). What it did goes to the log. [`Request::Over`] once a
     /// destroyed base's end script is over (`docs/sim.md`, "The mission's end"); the
-    /// base's view when the robot on view is taken in (`1000:6460`, `7ee7`).
+    /// base's view when the robot on view is taken in (`1000:6460`, `7ee7`) or
+    /// destroyed (`1000:de6d`).
     pub fn tick<'a>(
         &mut self,
         events: impl IntoIterator<Item = &'a InputEvent>,
@@ -1712,6 +1713,10 @@ impl Mission {
             }
             Self::hear(self.viewed, &mut self.sounds, event);
         }
+        // `sim_destroy_robot` (`1000:de6d`) turns the view of a robot it destroys to its
+        // side's base (`7ee7`) at once, as a take-in does; the robot has then left the
+        // order book (checked here, after the tick, so a hit from outside it counts too).
+        taken |= matches!(self.viewed, Viewed::Robot(slot) if self.book().get(slot).is_none());
         // The views are drawn from the world, which just moved.
         self.dirty = true;
         match over {
@@ -6201,6 +6206,41 @@ pub mod tests {
         assert_eq!(m.view_selected(), Some(Request::Show(View::Humanoid)));
     }
 
+    /// T-224: the robot on view destroyed turns the view to the base at once
+    /// (`1000:de6d`, `7ee7`), whose keys then work; another robot destroyed leaves the
+    /// open console as it is.
+    #[test]
+    fn a_robot_destroyed_on_view_leaves_its_console_for_the_situation_room() {
+        let assets = test_assets();
+        let mut m = mission(&assets);
+        // The fixture's human humanoid (slot 2) and scorpion (slot 5), alien slot 7.
+        let (robot, other, alien) = (2, 5, 7);
+        let word = |keys: &[(u16, u16)], h| keys.iter().find(|&&(_, k)| k == h).unwrap().0;
+        let hit = |m: &mut Mission, slot| {
+            let Run::Running(sim) = &mut m.run else {
+                unreachable!()
+            };
+            assert!(
+                sim.hit(EntityId(slot), 81)
+                    .contains(&xeno_sim::motion::Event::Destroyed(EntityId(slot)))
+            );
+        };
+        assert_eq!(m.view_robot(other), Some(View::Scorpion));
+        hit(&mut m, alien);
+        assert_eq!(m.tick(&[]), None);
+        assert_eq!(m.viewed(), Viewed::Robot(other));
+        assert_eq!(m.view_robot(robot), Some(View::Humanoid));
+        hit(&mut m, robot);
+        assert_eq!(m.tick(&[]), Some(Request::Show(View::SitRoom)));
+        assert_eq!((m.viewed(), m.view()), (Viewed::Base, View::SitRoom));
+        // The roster's view key opens another console, whose ESC comes back.
+        m.select_unit(Some(other));
+        let open = word(&assets.views.situation.keys, handler::VIEW_SELECTED);
+        assert_eq!(m.key(open, &assets), Some(Request::Show(View::Scorpion)));
+        let back = word(&assets.views.scorpion.keys, handler::BASE);
+        assert_eq!(m.key(back, &assets), Some(Request::Show(View::SitRoom)));
+    }
+
     #[test]
     fn the_alert_damages_the_player_s_base_while_running() {
         let assets = test_assets();
@@ -6740,6 +6780,59 @@ pub mod tests {
         let bar: Vec<u8> = (147..200).filter_map(|x| fb.get(x, 32)).collect();
         assert!(bar.contains(&6) && bar.contains(&0), "the title on its bar");
         assert_eq!(fb.get(10, 10), Some(0xff));
+    }
+
+    /// T-224: in a training mission of each robot kind, the robot on view hit as
+    /// `xeno-tool simulate --hit` does is destroyed and the next retrace shows the
+    /// situation room, whose user's keys open another console and come back.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_a_robot_destroyed_on_view_returns_to_the_situation_room() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let word = |keys: &[(u16, u16)], h| keys.iter().find(|&&(_, k)| k == h).unwrap().0;
+        let mut others = 0;
+        for kind in [RobotKind::Humanoid, RobotKind::Scorpion, RobotKind::Scout] {
+            let (file, scenario) = assets.sample(Some(kind)).unwrap();
+            let mut m = Mission::new(file, scenario, Random::seeded(1), &assets.motion);
+            let robots = m.robots();
+            let robot = robots
+                .iter()
+                .copied()
+                .find(|&s| m.book().get(s).unwrap().kind == kind);
+            m.view_robot(robot.unwrap()).unwrap();
+            let Run::Running(sim) = &mut m.run else {
+                unreachable!()
+            };
+            let id = EntityId(robot.unwrap());
+            assert!(
+                sim.hit(id, 81)
+                    .contains(&xeno_sim::motion::Event::Destroyed(id))
+            );
+            assert_eq!(m.tick(&[]), Some(Request::Show(View::SitRoom)), "{kind:?}");
+            assert_eq!(m.viewed(), Viewed::Base);
+            // Another of the player's robots in the field, if the mission has one.
+            let Some(other) = m.robots().into_iter().find(|&s| !m.in_base(s)) else {
+                continue;
+            };
+            m.select_unit(Some(other));
+            let open = word(&assets.views.situation.keys, handler::VIEW_SELECTED);
+            let shown = m.key(open, &assets);
+            let Some(Request::Show(console)) = shown else {
+                panic!("{kind:?}: {shown:?}");
+            };
+            let back = word(&assets.tables(console).keys, handler::BASE);
+            assert_eq!(m.key(back, &assets), Some(Request::Show(View::SitRoom)));
+            others += 1;
+        }
+        assert!(others > 0, "no mission had another robot in the field");
     }
 
     /// T-145: Ctrl+Alt+B on a stock sky's file loads that sky for the mission's views,

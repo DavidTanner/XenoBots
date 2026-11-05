@@ -486,6 +486,23 @@ scroll), and it is saved with the object in a `.usg` file (`usg.md`, `DCBS`).
 - A robot taken into its base while its console is open (`1000:6445`, "The bases'
   phases" in `docs/sim.md`) turns the view to its side's base (`1000:7ee7`), the
   situation room.
+- A robot destroyed while its console is open turns the view the same way (T-224):
+  `sim_destroy_robot` (`1000:de51`), after the explosion is made, the destroyed sound
+  (event 2) played and the robot taken out of its unit list, compares it with the
+  viewed object (`cmp di, [0x62f1]` at `1000:de6d`) and, if it is, calls `7ee7`
+  before freeing its slot. So the view changes at once, in the tick that destroys it
+  (not after the explosion or on a key), to the destroyed robot's side's base, through
+  the same opener as ESC (pointer, picture, palette and the console's leave routine,
+  which silences the display noise). No dialog can be open then: the dialogs' loops
+  do not tick the mission. In the port, `Mission::tick` turns the view to the base
+  when the viewed robot has left the order book after the tick (so a hit from outside
+  the tick, as the tests' `Sim::hit`, counts too). Before T-224 nothing did: the view
+  stayed `Viewed::Robot` on a slot with no order-book entry, `Mission::view` fell back
+  to the situation room's tables, so the console's keys (ESC, Alt+Q, Tab) were never
+  looked up while the situation room's handlers, which need `Viewed::Base`, did
+  nothing, and the screen kept the console's picture. From an alien robot's console
+  (T-222) the port opens the player's situation room, as its other ways back do
+  (T-231).
 
 **Widget sets.** Every view starts with the same first widgets: type `0x0e` (no area),
 its picture (the whole screen), a corner hot spot (`0x158` in the consoles, `0x15a`
@@ -938,8 +955,8 @@ In the port `Mission::jump` takes the unlock word (`Assets::developer_unlocked`)
 the mouse event's Ctrl; the side test is the viewed object's; `Mission::open_robot` is
 the opener without a side test, used by the jump and by Tab and the unit button, whose
 `step_robot` takes the viewed robot's side's list. Shortcut: the way back opens the
-player's situation room, not the alien base's (T-231). A viewed robot destroyed is
-T-224's, as for the player's.
+player's situation room, not the alien base's (T-231); so does a viewed
+alien robot destroyed (T-224).
 
 ### The display's other modes (T-134)
 

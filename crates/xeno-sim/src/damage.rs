@@ -181,8 +181,8 @@ fn wear(parts: &mut Components, part: &Part, random: &mut Random) -> Option<u16>
 /// its side and a kill for the other, an explosion where it stood, and it leaves its
 /// unit list, its orders and the world (its slot freed; other references it holds, as
 /// a scorpion's on its missile, are kept, as the original keeps them).
-// shortcut: its call sign's slot, the roster's redraw and selection and the view's
-// change are the consoles' and situation room's (T-103, T-104).
+// shortcut: its call sign's slot, and the roster's redraw and selection are the
+// consoles' and situation room's (T-103, T-104); `Mission::tick` changes the view (T-224).
 pub fn destroy(world: &mut World, id: EntityId, tables: &Tables, events: &mut Vec<Event>) {
     let Some(e) = world.get(id) else {
         return;
