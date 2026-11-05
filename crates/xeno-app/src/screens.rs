@@ -1003,8 +1003,9 @@ impl Screens {
                         log::info!("training menu: {file} loaded");
                         let campaign = campaign_mut(&mut self.player, &mut self.guest);
                         let motion = &self.mission_assets.motion;
-                        self.mission =
+                        let next =
                             MissionState::new(file, scenario, campaign.take_random(), motion);
+                        self.mission.succeed(next);
                         self.act(Play(true));
                     }
                     None => log::warn!("training menu: {file} could not be loaded"),
@@ -1140,7 +1141,8 @@ impl Screens {
                     let file = save::file_name(&player.name);
                     let (random, motion) =
                         (player.campaign.take_random(), &self.mission_assets.motion);
-                    self.mission = MissionState::new(file, &scenario, random, motion);
+                    self.mission
+                        .succeed(MissionState::new(file, &scenario, random, motion));
                     self.mission.park(&mut player.campaign);
                     self.map.set_selection(selection);
                 }
@@ -1224,8 +1226,8 @@ impl Screens {
                         campaign.table.scenarios[i].state
                     );
                     let motion = &self.mission_assets.motion;
-                    self.mission =
-                        MissionState::new(file, scenario, campaign.take_random(), motion);
+                    let next = MissionState::new(file, scenario, campaign.take_random(), motion);
+                    self.mission.succeed(next);
                     let state = campaign.table.scenarios[i].state;
                     let damage = rules.alert_damage.get(usize::from(state / 2));
                     self.mission.apply_alert(damage.copied().unwrap_or(0));

@@ -2366,15 +2366,69 @@ it, so `DS:0x594c` says whether the pointer was last over the region.
   `ui_map_pointer_to_world` (`1000:3fd3`). That conversion reads the target rectangle
   (`DS:0x145a`), camera position (`DS:0x1462`, `0x1466`) and focal factor
   (`DS:0x4d24`) the last `gfx_set_view_camera` left, so after an R frame it is the
-  unit's eye and 3D focal factor, and in O, S and C whatever view drew last.
+  unit's eye and 3D focal factor, and in O, S and C whatever view drew last (T-219, below).
 
 The port (`Mission::main_view_release`): the release over the main view's rectangle
 with no widget there, in any mode, on `Mission::sitroom_probe` (the M and R frames'
-object and camera, reset by nothing but a new mission); the right through `Mission::jump`, shared with
+object, reset by nothing but a new mission) and the last view's rectangle and camera
+(T-219); the right through `Mission::jump`, shared with
 the consoles' right release (an alien unit's refusal written into the base's log,
 T-214; the Ctrl case refuses too, T-222). The editor's place and
 the select or recentre moved from the press to the release. Not checked in DOSBox
 (T-182).
+
+**The last view (T-219).** A byte search of the unpacked image for every write of
+`DS:0x145a`, `0x1462`, `0x1466` and `0x4d24`, with the routines around them read in
+Ghidra, and of `mapdvr.dvr` for the same words. The rectangle and the camera's
+position are written when a view's frame **starts**, the focal factor by its list's
+first step (`gfx_set_view_camera`, `1000:29a3`, the only writer of `0x4d24`) as the
+frame runs; nothing writes them when a frame is copied, and nothing resets them on a
+mode or view switch, a mission's end or a new mission (all four are 0 in the image).
+The writers:
+
+| View | Start | `0x145a` | `0x1462`, `0x1466` | Focal factor |
+|---|---|---|---|---|
+| A console's 3D view | the kinds' handlers (`1000:9d54`, `8052`, `b511`), then `1000:dba0` | the kind's main view | the robot | the 3D one (`DS:0x4d2a`) |
+| Its second display | the handlers (`9e09`, `8105`, `b5c1`), then `1000:dbe8` | the kind's display | the robot, in every mode (the scorpion's missile camera then the missile, `1000:8190`) | the mode's list; none in the damaged modes (list 0x18 has no camera step) |
+| Its third display, the radar | `1fe6:7bed`, `7d11`, `7e3d` | the kind's display | the robot | the radars' (`DS:0x4d2e`) |
+| The radar damaged | `1fe6:7c4e`, `7d74`, `7e9b` | the kind's display | not written | none (list 0x18) |
+| The situation room's M | `1fe6:6c05` | `DS:0x5680` | the map's centre (+0x4f, +0x53) with bit 15, else the selected unit, or the base with none (or the unit's +0xfd bit 2) | the maps' (`DS:0x4d32`) |
+| Its R | `1fe6:6b84` | `DS:0x5680` | the selected unit | as the unit's second display's mode |
+| The terrain editor | `mapdvr.dvr`'s frame start | its own (`DS:0x124`) | its camera (`DS:0xfa`, `0xfe`) | the maps' |
+| The review | `1fe6:7902` | `DS:0x6238` | not written | the 3D one (list 0x1a starts with `29a3`) |
+
+So `ui_map_pointer_to_world` reads the last frame started: after a console, its last
+view's (the second display's, or the radar's on the radar's passes, T-209), and in O, S
+and C, and R with no unit, that stays until an M or R frame starts. A release off a
+unit in those modes moves the centre by that view's rectangle's middle, its focal
+factor and its camera's position: the console's region, not the main view's. A mission
+that starts in mode O (scen00a, scen05a, scen09a and the training files) starts with
+whatever the last mission's last view, or the review if it was opened since, left;
+before any view in a run, the image's zeros (no rectangle, a focal factor of 0).
+
+**The stale probe after a mission.** `DS:0x594a` is an object's memory (`1000:57aa`
+reads +0x16 through it), not a slot. A new mission's loader resets the pools' place
+bytes, counts and slot table (`scen_read_dcbs` calls `1000:f420`, which calls `f451`)
+but not their memory, then takes the places
+again in file order ("The pools as loaded (T-213)", below). So the probe left
+by the last mission names that place in the new one: the new file's object loaded
+there (robots and bases fill the big pool in file order), or, past the new file's
+objects, the old object's bytes as the old mission left them. A release there acts on
+that object: one of the player's units is selected, an alien one passed over. Within
+a mission too, a probed robot destroyed since keeps its `UNIT` and side bits in its
+freed memory (`f5cd` only adds `GONE`, which `57aa` does not test), so it is selected.
+Not ported (T-229): the port's probe is a slot, reset with a new mission.
+
+The port: `Mission::last_view` (`LastView`), set as each view's frame is drawn (the
+port draws a frame as it starts): the console's 3D view, second display (its noise
+keeps the last focal factor, with the robot's position) and radar (damaged: the
+rectangle only), the situation room's M and R frames and the terrain editor; the
+recentre (`Mission::recentre_view`) reads it. A new mission keeps it
+(`Mission::succeed`, which the screens use for every mission they start). Shortcuts:
+before any frame, the main view's rectangle and the map's camera; the review does not
+set it (T-230). Test `the_recentre_reads_the_last_view_a_console_s_too`;
+`real_assets_the_recentre_after_a_console_reads_its_last_view` on the three training
+missions. Not checked in DOSBox (T-182).
 
 Removal (`1000:f5a4`) sets a kind-15 object's +0x17 to 2 and its tick (`f5c1`) counts
 it down to free the slot.

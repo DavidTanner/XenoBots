@@ -509,6 +509,26 @@ pub const TRAINING_PRESSED_XOR: u8 = 9;
 const VIEW_COLOURS: [u8; 3] = [253, 254, 255];
 /// A view's region in the frame: left, top, width and height (`review::region_of`).
 type Region = (usize, usize, usize, usize);
+/// The whole screen, the terrain editor's view.
+const SCREEN: Rect = Rect {
+    top: 0,
+    left: 0,
+    bottom: 200,
+    right: 320,
+};
+
+/// A view's region as the rectangle a view's start puts in `DS:0x145a`, the bottom and
+/// right edges outside.
+fn rect_of((left, top, width, height): Region) -> Rect {
+    let (x, y) = (left as u16, top as u16);
+    Rect {
+        top: y,
+        left: x,
+        bottom: y + height as u16,
+        right: x + width as u16,
+    }
+}
+
 /// A third display's frame: the pass it was drawn on, its buffer and probe.
 type RadarFrame = (u32, Framebuffer, bool);
 /// The port's own placeholder marks (not the original's).
@@ -893,13 +913,17 @@ impl Default for Run {
     }
 }
 
-/// A situation room frame: its pass, the object under the pointer and its camera.
-type SitroomFrame = (
-    u32,
-    Framebuffer,
-    Option<u16>,
-    Option<xeno_render::view3d::Camera>,
-);
+/// A situation room frame: its pass and the object under the pointer.
+type SitroomFrame = (u32, Framebuffer, Option<u16>);
+
+/// What the last view a frame started in left for `ui_map_pointer_to_world`
+/// (`1000:3fd3`): its target rectangle (`DS:0x145a`) and its camera's position and
+/// focal factor (`DS:0x1462`, `0x1466`, `0x4d24`); none before the first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LastView {
+    rect: Option<Rect>,
+    camera: Option<xeno_render::view3d::Camera>,
+}
 
 /// A mission in progress: its file, its sim, and the views' state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -950,10 +974,12 @@ pub struct Mission {
     /// display (the humanoid's `DS:0x6a78`, `0x6a7a`, read by `1000:41b7`).
     probed: Cell<[Option<u16>; 2]>,
     /// The object under the pointer in the situation room main view's last M or R
-    /// frame (`DS:0x594a`, its only writer `1000:561c`), and that frame's camera (the
-    /// one `ui_map_pointer_to_world` reads). Neither mode change nor view switch resets
-    /// them, so modes O, S and C act on the last M or R frame's.
-    sitroom_probe: Cell<(Option<u16>, Option<xeno_render::view3d::Camera>)>,
+    /// frame (`DS:0x594a`, its only writer `1000:561c`). Neither mode change nor view
+    /// switch resets it, so modes O, S and C act on the last M or R frame's.
+    sitroom_probe: Cell<Option<u16>>,
+    /// The rectangle and camera the last frame started in any view left (a console's
+    /// too), which the main view's recentre reads (T-219); kept across missions.
+    last_view: Cell<LastView>,
     /// The point under the pointer on the second display's last map frame
     /// (`ui_map_pointer_to_world`); none after a camera frame.
     map_point: Cell<Option<xeno_sim::Position>>,
@@ -1086,6 +1112,7 @@ impl Mission {
             region: None,
             probed: Cell::default(),
             sitroom_probe: Cell::default(),
+            last_view: Cell::default(),
             sitroom_turn: Cell::default(),
             sitroom_frames: RefCell::default(),
             map_point: Cell::default(),
@@ -2332,13 +2359,7 @@ impl Mission {
     /// next frame.
     fn terrain_point(&self, at: (u16, u16), assets: &Assets) -> Option<xeno_sim::Position> {
         let camera = self.terrain_camera(assets)?;
-        let screen = Rect {
-            top: 0,
-            left: 0,
-            bottom: 200,
-            right: 320,
-        };
-        Some(mainview::pointer_to_world(&camera, screen, at))
+        Some(mainview::pointer_to_world(&camera, SCREEN, at))
     }
 
     /// A mouse button went down (or up) at `at` in the terrain editor with the key
@@ -2501,7 +2522,7 @@ impl Mission {
             return None;
         }
         match button {
-            MouseButton::Right => self.jump(self.sitroom_probe.get().0?),
+            MouseButton::Right => self.jump(self.sitroom_probe.get()?),
             MouseButton::Left if self.ctrl && self.mode == MAP_MODE => {
                 self.place_at_pointer(Some(at), assets);
                 None
@@ -2541,12 +2562,11 @@ impl Mission {
     /// probed in the last M or R frame, one of the player's is selected and the map's
     /// bit 15 cleared (`1fe6:6f31`) and an alien one is passed over; otherwise it sets
     /// bit 15 and moves the centre (+0x4f, +0x53) to the point under the pointer
-    /// (`ui_map_pointer_to_world`) by that frame's camera: the map's, or in mode R the
-    /// robot's eye, whatever the mode now.
+    /// (`ui_map_pointer_to_world`) by the rectangle and camera the last frame started
+    /// in any view left ([`LastView`]): the map's, in mode R the robot's eye, after a
+    /// console's frames that console's last view's, whatever the mode now.
     fn map_release(&mut self, at: (u16, u16), assets: &Assets) {
-        let view = self.main_view(assets);
-        let (probed, camera) = self.sitroom_probe.get();
-        let unit = probed.and_then(|s| {
+        let unit = self.sitroom_probe.get().and_then(|s| {
             let e = self.world().get(EntityId(s))?;
             (e.flags & usg::flag::UNIT != 0).then_some((s, e.side))
         });
@@ -2556,13 +2576,21 @@ impl Mission {
                 self.map.overlays &= !usg::Base::MAP_FREE;
                 self.select_unit(Some(slot));
             }
-        } else if let Some(camera) = camera.or_else(|| self.map_camera(assets)) {
-            // shortcut: the camera is the situation room's last; the original's is
-            // whatever view drew last (a console's too); upgrade if that is wanted.
+        } else if let Some((view, camera)) = self.recentre_view(assets) {
             self.map.overlays |= usg::Base::MAP_FREE;
             self.map.centre = mainview::pointer_to_world(&camera, view, at);
             self.dirty = true;
         }
+    }
+
+    /// The rectangle and camera the recentre reads: the last view's. shortcut: before
+    /// any frame, the main view's and the map's, where the original reads the image's
+    /// zeros (no rectangle, a focal factor of 0); a mission in mode M or R draws one at
+    /// once.
+    fn recentre_view(&self, assets: &Assets) -> Option<(Rect, xeno_render::view3d::Camera)> {
+        let last = self.last_view.get();
+        let rect = last.rect.unwrap_or_else(|| self.main_view(assets));
+        Some((rect, last.camera.or_else(|| self.map_camera(assets))?))
     }
 
     /// The situation room map's camera, as the last frame drew it.
@@ -2721,7 +2749,24 @@ impl Mission {
     /// field, which the original keeps for the whole run.
     pub fn replace_with(&mut self, mut next: Mission) {
         next.dialog_name = self.dialog_name.take();
+        self.succeed(next);
+    }
+
+    /// `next` takes this mission's place, keeping the last view's rectangle and camera
+    /// (`DS:0x145a`, `0x1462`, `0x1466`, `0x4d24`), which no new mission resets.
+    pub fn succeed(&mut self, next: Mission) {
+        next.last_view.set(self.last_view.get());
         *self = next;
+    }
+
+    /// A frame starts in a view: its rectangle, and its camera unless it has none
+    /// (noise, list 0x18: no camera step), which keeps the last one's.
+    fn left_view(&self, rect: Rect, camera: Option<xeno_render::view3d::Camera>) {
+        let last = self.last_view.get();
+        self.last_view.set(LastView {
+            rect: Some(rect),
+            camera: camera.or(last.camera),
+        });
     }
 
     /// Draws the open file dialog alone, over another screen (the map room's or the
@@ -3394,6 +3439,9 @@ impl Mission {
         let selected = self.selected.and_then(|s| world.get(EntityId(s)));
         let map = self.shown_map();
         editor.draw(fb, &camera, world, &map, selected, &inputs);
+        // `mapdvr.dvr`'s frame start: its rectangle (`DS:0x124`, taken as the whole
+        // screen) and camera.
+        self.left_view(SCREEN, Some(camera));
         true
     }
 
@@ -3439,6 +3487,9 @@ impl Mission {
                     .is_none_or(|(p, b)| *p != pass || b.surface() != buffer.surface())
                 {
                     let drawn = robot_view(&mut buffer, slot);
+                    // `1000:dba0`, the target `DS:0x145a` set by the kind's handler.
+                    let camera = scene::camera(self.world(), EntityId(slot), view, &assets.motion);
+                    self.left_view(rect_of(region), camera);
                     let [_, second] = self.probed.get();
                     self.probed.set([drawn.flatten(), second]);
                     *kept = drawn.is_some().then_some((pass, buffer));
@@ -3497,14 +3548,16 @@ impl Mission {
                             if frames.iter().all(|f| f.0 != pass) {
                                 let mut buffer = Framebuffer::new(Size::new(width, height));
                                 if let Some((under, camera)) = frame(&mut buffer) {
-                                    frames.push((pass, buffer, under, camera));
+                                    // `1fe6:6c05`, `6b84`: as the frame starts.
+                                    self.left_view(self.main_view(assets), camera);
+                                    frames.push((pass, buffer, under));
                                 }
                             }
                         }
                         return match frames.iter().find(|f| f.0 == shown) {
-                            Some((_, buffer, under, camera)) => {
+                            Some((_, buffer, under)) => {
                                 // `1000:5619`: the release reads it (`main_view_release`).
-                                self.sitroom_probe.set((*under, *camera));
+                                self.sitroom_probe.set(*under);
                                 review::copy_through(fb, buffer, left, top);
                                 true
                             }
@@ -3619,7 +3672,8 @@ impl Mission {
         let mut buffer = Framebuffer::new(Size::new(width, height));
         let probe = self.probe_at(left, top);
         let view_mode = tables.view_modes.get(usize::from(mode)).copied();
-        let (under, point) = match view_mode {
+        // The frame's object under the pointer, ground point and camera.
+        let (under, point, camera) = match view_mode {
             Some(CAMERA_VIEW | THERMAL_VIEW | MISSILE_VIEW) => {
                 let id = EntityId(slot);
                 let camera = if view_mode == Some(MISSILE_VIEW) {
@@ -3650,14 +3704,14 @@ impl Mission {
                         if view_mode != Some(CAMERA_VIEW) {
                             remap(buffer.pixels_mut(), &assets.thermal);
                         }
-                        (under, None)
+                        (under, None, Some(camera))
                     }
                     // shortcut: until the next 16-tick step breaks the picture up, a
                     // missile camera whose missile is gone shows the noise; the
                     // original's camera reads slot 0xffff then (T-190).
                     None if view_mode == Some(MISSILE_VIEW) => {
                         self.draw_noise(&mut buffer);
-                        (None, None)
+                        (None, None, None)
                     }
                     None => return false,
                 }
@@ -3688,25 +3742,29 @@ impl Mission {
                     colours,
                     probe,
                 );
-                // The display's rectangle, the bottom and right edges outside.
-                let (x, y) = (left as u16, top as u16);
-                let rect = Rect {
-                    top: y,
-                    left: x,
-                    bottom: y + height as u16,
-                    right: x + width as u16,
-                };
+                let rect = rect_of(region);
                 let point = self
                     .pointer
                     .map(|at| mainview::pointer_to_world(&camera, rect, at));
-                (under, point)
+                (under, point, Some(camera))
             }
-            // View mode 0x18, a damaged device: `1000:3c20`'s noise.
+            // View mode 0x18, a damaged device: `1000:3c20`'s noise. Its start still
+            // writes the robot's position (`1000:dc1e`), but list 0x18 has no camera
+            // step, so the focal factor is the last view's.
             _ => {
                 self.draw_noise(&mut buffer);
-                (None, None)
+                let at = world.get(EntityId(slot)).map(|e| e.position);
+                let camera = (self.last_view.get().camera.zip(at)).map(|(c, p)| {
+                    xeno_render::view3d::Camera {
+                        x: p.x.0,
+                        y: p.y.0,
+                        ..c
+                    }
+                });
+                (None, None, camera)
             }
         };
+        self.left_view(rect_of(region), camera);
         self.draw_overlays(&mut buffer, assets, slot, robot.kind, mode);
         let [main, _] = self.probed.get();
         self.probed.set([main, under]);
@@ -3834,8 +3892,14 @@ impl Mission {
             if systems & radar.device != 0 {
                 let word = self.noise.borrow_mut().word();
                 noise(buffer.pixels_mut(), word, radar.noise);
+                // `1fe6:7c4e`, `7d74`, `7e9b`: the rectangle alone (list 0x18 has no
+                // camera step).
+                self.left_view(rect_of(region), None);
             } else {
                 let camera = mainview::radar_camera(e, radar, view, &assets.motion);
+                // `1fe6:7bed`, `7d11`, `7e3d`: the rectangle and the robot's position;
+                // the camera step the radars' focal factor (`DS:0x4d2e`).
+                self.left_view(rect_of(region), Some(camera));
                 let terrain = self
                     .scenario
                     .as_ref()
@@ -5139,7 +5203,7 @@ pub mod tests {
         assert_eq!((m.map.centre.x, m.map.centre.y), (unit(5), unit(3)));
         // One of the player's robots: selected, the centre let go.
         let robot = m.robots()[0];
-        m.sitroom_probe.set((Some(robot), None));
+        m.sitroom_probe.set(Some(robot));
         press(&mut m, (100, 50));
         assert_eq!(m.selected, Some(robot));
         assert_eq!(m.map.overlays & usg::Base::MAP_FREE, 0);
@@ -5150,7 +5214,7 @@ pub mod tests {
             .iter()
             .find(|(_, e)| e.kind == usg::ObjectKind::Base)
             .map(|(id, _)| id.0);
-        m.sitroom_probe.set((base, None));
+        m.sitroom_probe.set(base);
         press(&mut m, (165, 67));
         assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
         assert_eq!(m.selected, Some(robot));
@@ -5162,7 +5226,7 @@ pub mod tests {
             .map(|(id, _)| id.0)
             .expect("the test mission has an alien robot");
         let before = m.map;
-        m.sitroom_probe.set((Some(alien), None));
+        m.sitroom_probe.set(Some(alien));
         press(&mut m, (100, 50));
         assert_eq!((m.map, m.selected), (before, Some(robot)));
         // Off the main view, nothing; the right release on an alien robot opens
@@ -5184,7 +5248,7 @@ pub mod tests {
         // Mode C acts on the probe as M or R left it (nothing resets it): nothing
         // probed recentres.
         m.mode = LOG_MODE;
-        m.sitroom_probe.set((None, None));
+        m.sitroom_probe.set(None);
         m.map.overlays &= !usg::Base::MAP_FREE;
         press(&mut m, (130, 50));
         assert_ne!(m.map.overlays & usg::Base::MAP_FREE, 0);
@@ -5216,6 +5280,58 @@ pub mod tests {
         assert_eq!(m.selected, Some(other));
         assert!(click(&mut m, &assets, at, MouseButton::Right).is_some());
         assert_eq!(m.viewed, Viewed::Robot(other));
+    }
+
+    /// T-219: the recentre (`ui_map_pointer_to_world`) reads the rectangle and camera
+    /// the last frame started in any view left (`DS:0x145a`, `0x1462`, `0x1466`,
+    /// `0x4d24`): after a console's 3D view, a left release off a unit in mode O
+    /// converts by that view's region and eye, and the next mission keeps them.
+    #[test]
+    fn the_recentre_reads_the_last_view_a_console_s_too() {
+        let mut assets = test_assets();
+        assets.view3d = Some(mainview::tests::view());
+        assets.sitroom = Some(mainview::tests::room());
+        let mut main_view = assets.views.humanoid.widgets.last().copied().unwrap();
+        main_view.kind = MAIN_VIEW_TYPE;
+        main_view.area = Some(Rect {
+            top: 40,
+            left: 100,
+            bottom: 100,
+            right: 220,
+        });
+        assets.views.situation.widgets.push(main_view);
+        let release = |m: &mut Mission, at| {
+            m.sitroom_probe.set(None);
+            m.mouse_down(MouseButton::Left, Some(at), &assets);
+            m.mouse_up(MouseButton::Left, Some(at), &assets);
+            m.map.centre
+        };
+        let mut m = mission(&assets);
+        m.mode = ORDERS_MODE;
+        let at = (170, 75);
+        // No frame yet: the main view's rectangle and the map's camera.
+        let map = m.map_camera(&assets).unwrap();
+        let before = mainview::pointer_to_world(&map, m.main_view(&assets), at);
+        assert_eq!(release(&mut m, at), before);
+        // A console's 3D view in a region of its own, then back in mode O.
+        let robot = m.robots()[0];
+        m.view_robot(robot).unwrap();
+        let region = (30, 20, 90, 50);
+        let mut fb = Framebuffer::new(Size::MODE_13H);
+        fb.fill_rect(xeno_render::Rect::new(30, 20, 90, 50), 255);
+        assert!(m.draw_view(&mut fb, &assets, region));
+        let view = assets.view3d.as_ref().unwrap();
+        let eye = scene::camera(m.world(), EntityId(robot), view, &assets.motion).unwrap();
+        m.base();
+        assert_eq!(m.mode, ORDERS_MODE);
+        let expected = mainview::pointer_to_world(&eye, rect_of(region), at);
+        assert_ne!(expected, before);
+        assert_eq!(release(&mut m, at), expected);
+        // A new mission keeps the last view (nothing resets it).
+        let mut next = mission(&assets);
+        next.mode = ORDERS_MODE;
+        m.succeed(next);
+        assert_eq!(release(&mut m, at), expected);
     }
 
     /// With unlock word 9, a Ctrl+left press on the map in mode M places the picked
@@ -7287,6 +7403,53 @@ pub mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// T-219: each training mission starts in mode O; after its robot's console has
+    /// drawn its 3D view on the stock picture, a left release in the situation room's
+    /// main view moves the map's centre by that view's region and eye.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_recentre_after_a_console_reads_its_last_view() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let view = assets.view3d.as_ref().unwrap();
+        for name in ["htrain.usg", "ctrain.usg", "strain.usg"] {
+            let mut m = Mission::new(
+                name.into(),
+                &assets.scenarios[name],
+                Random::seeded(1),
+                &assets.motion,
+            );
+            assert_eq!(m.mode, ORDERS_MODE, "{name}");
+            let robot = m.robots()[0];
+            let shown = m.view_robot(robot).unwrap();
+            let file = crate::screens::Screen::Mission(shown).file().unwrap();
+            let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            fb.pixels_mut().copy_from_slice(&picture.pixels);
+            let region = review::region_of(&fb, 255).unwrap();
+            assert!(m.draw_view(&mut fb, &assets, region), "{name}");
+            let eye = scene::camera(m.world(), EntityId(robot), view, &assets.motion).unwrap();
+            m.base();
+            let r = m.main_view(&assets);
+            let at = ((r.left + r.right) / 2 + 9, (r.top + r.bottom) / 2 + 5);
+            let map = m.map_camera(&assets).unwrap();
+            let stale = mainview::pointer_to_world(&map, r, at);
+            m.mouse_down(MouseButton::Left, Some(at), &assets);
+            m.mouse_up(MouseButton::Left, Some(at), &assets);
+            let expected = mainview::pointer_to_world(&eye, rect_of(region), at);
+            assert_ne!(expected, stale, "{name}");
+            assert_eq!(m.map.centre, expected, "{name}");
         }
     }
 
