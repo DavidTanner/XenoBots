@@ -3496,6 +3496,7 @@ impl Mission {
             )
         };
         let mut buffer = Framebuffer::new(Size::new(width, height));
+        buffer.set_recording(fb.recording().is_some());
         let drawn = match (self.viewed, self.mode, &assets.sitroom) {
             (Viewed::Robot(slot), _, _) => {
                 let pass = turns::frame_pass(self.passes, self.chances(assets, slot), Turn::Main);
@@ -3565,6 +3566,7 @@ impl Mission {
                         for pass in [Some(shown), turn.running].into_iter().flatten() {
                             if frames.iter().all(|f| f.0 != pass) {
                                 let mut buffer = Framebuffer::new(Size::new(width, height));
+                                buffer.set_recording(fb.recording().is_some());
                                 if let Some((under, camera)) = frame(&mut buffer) {
                                     // `1fe6:6c05`, `6b84`: as the frame starts.
                                     self.left_view(self.main_view(assets), camera);
@@ -3688,6 +3690,7 @@ impl Mission {
             .and_then(|s| s.terrain.as_ref())
             .map_or(&[][..], |t| &t.features);
         let mut buffer = Framebuffer::new(Size::new(width, height));
+        buffer.set_recording(fb.recording().is_some());
         let probe = self.probe_at(left, top);
         let view_mode = tables.view_modes.get(usize::from(mode)).copied();
         // The frame's object under the pointer, ground point and camera.
@@ -3902,6 +3905,7 @@ impl Mission {
             .is_none_or(|(k, b, _)| *k != key || b.surface() != Size::new(width, height))
         {
             let mut buffer = Framebuffer::new(Size::new(width, height));
+            buffer.set_recording(fb.recording().is_some());
             let mut probed = false;
             let systems = match e.damage {
                 xeno_sim::Damage::Robot(c) => c.systems,

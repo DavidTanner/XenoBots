@@ -955,6 +955,7 @@ impl Screens {
             MapRoom => self.map.redraw(),
             _ => {
                 if let Some((_, p)) = self.pictures.iter().find(|(n, _)| *n == "trainmen.m@l") {
+                    fb.restart_recording();
                     fb.pixels_mut()[..p.pixels.len()].copy_from_slice(&p.pixels);
                 }
                 self.training_press = None;
@@ -1065,6 +1066,7 @@ impl Screens {
     /// Draws the review: its picture, then the page.
     fn draw_review(&mut self, fb: &mut Framebuffer) {
         if let Some((_, picture)) = self.pictures.iter().find(|(n, _)| *n == "review.m@l") {
+            fb.restart_recording();
             fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
         }
         let assets = &self.map_assets;
@@ -1115,6 +1117,7 @@ impl Screens {
     fn draw_mission(&mut self, fb: &mut Framebuffer) {
         let file = self.screen.file();
         if let Some((_, picture)) = file.and_then(|f| self.pictures.iter().find(|(n, _)| *n == f)) {
+            fb.restart_recording();
             fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
         }
         self.mission.draw(fb, &self.mission_assets);
@@ -1370,6 +1373,7 @@ impl Screens {
             .and_then(|f| self.pictures.iter().find(|(name, _)| *name == f));
         let dac = match picture {
             Some((_, picture)) => {
+                fb.restart_recording();
                 fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
                 picture.dac
             }
@@ -1418,6 +1422,7 @@ impl Screens {
     /// Draws the map room: its picture, then the boxes, panels and buttons.
     fn draw_map(&mut self, fb: &mut Framebuffer) {
         if let Some((_, picture)) = self.pictures.iter().find(|(n, _)| *n == "maproom.m@l") {
+            fb.restart_recording();
             fb.pixels_mut()[..picture.pixels.len()].copy_from_slice(&picture.pixels);
         }
         let name = self.player.as_ref().map_or("", |p| p.name.as_str());

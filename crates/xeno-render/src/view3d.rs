@@ -388,8 +388,9 @@ impl Framebuffer {
     /// The ground step (`1000:2bc3`): colour 0x3f from the middle byte to the end.
     pub fn fill_ground(&mut self) {
         let pixels = self.pixels_mut();
-        let half = pixels.len() / 2;
+        let (half, end) = (pixels.len() / 2, pixels.len());
         pixels[half..].fill(GROUND);
+        self.mark_background(half..end);
     }
 
     /// `gfx_draw_sky` at detail 1 (`docs/formats/b@n.md`, "Sky strip"): the strip's
@@ -404,7 +405,7 @@ impl Framebuffer {
             let (upper, lower) = pixels.split_at_mut(width * (height / 2));
             upper.fill(FLAT_SKY);
             lower.fill(GROUND);
-            return;
+            return self.mark_background(0..width * height);
         };
         let rows = height.div_ceil(2).min(Sky::HEIGHT);
         let first = (i64::from(heading / 64) - (width / 2) as i64).rem_euclid(Sky::WIDTH as i64);
@@ -414,6 +415,7 @@ impl Framebuffer {
                 *p = from[(first as usize + x) % Sky::WIDTH];
             }
         }
+        self.mark_background(0..width * rows);
     }
 
     /// The main view's steps after the camera and the build: the ground, the sky,

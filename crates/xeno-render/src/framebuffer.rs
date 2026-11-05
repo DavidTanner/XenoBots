@@ -2,7 +2,9 @@
 
 use xeno_formats::Palette;
 
-use crate::hd::Recording;
+use std::ops::Range;
+
+use crate::hd::{Geometry, Record, Recording, ShapeRecord};
 
 /// A width and height in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,12 +167,95 @@ impl Framebuffer {
         self.recording = on.then(|| Box::new(Recording::new(self.pixels.len())));
     }
 
+    /// Starts the record afresh if recording, as a screen redraws in whole, so it stays
+    /// bounded.
+    pub fn restart_recording(&mut self) {
+        if self.recording.is_some() {
+            self.set_recording(true);
+        }
+    }
+
     pub fn recording(&self) -> Option<&Recording> {
         self.recording.as_deref()
     }
 
     pub(crate) fn pixels_and_recording(&mut self) -> (&mut [u8], Option<&mut Recording>) {
         (&mut self.pixels, self.recording.as_deref_mut())
+    }
+
+    /// Marks the surface pixels in `range` as a background drawn now, in the colours
+    /// they have, if recording: shapes drawn later may cover them at output resolution.
+    pub(crate) fn mark_background(&mut self, range: Range<usize>) {
+        if let Some(r) = &mut self.recording {
+            let stamp = r.background();
+            for (owner, &colour) in r.owners[range.clone()].iter_mut().zip(&self.pixels[range]) {
+                *owner = stamp | u32::from(colour);
+            }
+        }
+    }
+
+    /// Records `shape` in `colour`, clipped to the surface, as the owner of the surface
+    /// pixels in `runs`, which the caller has just set to `colour` (`docs/hd.md`,
+    /// "Shapes at output resolution"). Nothing when not recording or with no pixels.
+    pub fn record_shape(
+        &mut self,
+        shape: Geometry,
+        colour: u8,
+        runs: impl IntoIterator<Item = Range<usize>>,
+    ) {
+        let clip = Rect::new(0, 0, self.surface.width as u32, self.surface.height as u32);
+        let Some(r) = &mut self.recording else {
+            return;
+        };
+        let mut runs = runs.into_iter().filter(|run| !run.is_empty()).peekable();
+        if runs.peek().is_none() {
+            return;
+        }
+        let record = Record::Shape(ShapeRecord {
+            shape,
+            colour,
+            clip,
+        });
+        if let Some(stamp) = r.push(record) {
+            for run in runs {
+                r.owners[run].fill(stamp | u32::from(colour));
+            }
+        }
+    }
+
+    /// Slot `0x5a4`: `buffer` copied with its top-left at (`left`, `top`) onto this
+    /// surface's pixels of colour `region` only. When recording, the copied pixels keep
+    /// `buffer`'s record (its drawings moved along), or become unknown if it has none.
+    pub fn copy_through(&mut self, buffer: &Framebuffer, (left, top): (usize, usize), region: u8) {
+        let width = buffer.surface.width;
+        let stride = self.surface.width;
+        let mut recording = self.recording.as_deref_mut();
+        let carried = recording.as_mut().and_then(|r| {
+            let from = buffer.recording()?;
+            Some((r.append(from, (left as i32, top as i32))?, from))
+        });
+        for (y, row) in buffer.pixels.chunks(width).enumerate() {
+            let start = (top + y) * stride + left;
+            for (x, (p, &colour)) in self.pixels[start..start + width]
+                .iter_mut()
+                .zip(row)
+                .enumerate()
+            {
+                if *p != region {
+                    continue;
+                }
+                *p = colour;
+                if let Some(r) = recording.as_mut() {
+                    r.owners[start + x] = match carried {
+                        Some((base, from)) => match from.owners[y * width + x] {
+                            0 => 0,
+                            owner => owner + (base << 8),
+                        },
+                        None => 0,
+                    };
+                }
+            }
+        }
     }
 
     /// The colour at surface pixel (`x`, `y`), if it is on the surface.
@@ -182,9 +267,7 @@ impl Framebuffer {
     /// Fills the whole surface with `colour`.
     pub fn clear(&mut self, colour: u8) {
         self.pixels.fill(colour);
-        if let Some(r) = &mut self.recording {
-            r.owners.fill(0);
-        }
+        self.mark_background(0..self.pixels.len());
     }
 
     /// Fills the part of `rect` that lies on the surface with `colour`.
@@ -203,9 +286,7 @@ impl Framebuffer {
         for y in y0..y1 {
             let row = y * self.surface.width;
             self.pixels[row + x0..row + x1].fill(colour);
-            if let Some(r) = &mut self.recording {
-                r.owners[row + x0..row + x1].fill(0);
-            }
+            self.mark_background(row + x0..row + x1);
         }
     }
 

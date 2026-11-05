@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use xeno_formats::mxx::{Animation, Frame, Image, Model, Part, View};
 
-use crate::hd::{AssetId, BlitRecord, Name};
+use crate::hd::{AssetId, BlitRecord, Name, Record};
 use crate::{Framebuffer, Rect};
 
 /// An 8.8 fixed-point scale (256 = 1:1) as a table of 256 repeat counts, one for each
@@ -145,13 +145,13 @@ impl Framebuffer {
             (Some(asset), Some(r)) if image.width > 0 && image.height > 0 => {
                 let (rx, w) = extent(target.anchor.0, x, image.width);
                 let (ry, h) = extent(target.anchor.1, y, image.height);
-                r.push(BlitRecord {
+                r.push(Record::Blit(BlitRecord {
                     asset,
                     rect: Rect::new(rx, ry, w, h),
                     scale: scale.scale(),
                     mirrored,
                     flipped: false,
-                })
+                }))
             }
             _ => None,
         };
@@ -667,7 +667,7 @@ mod tests {
             &[],
             &target(512, (0, 0), Rect::new(0, 0, 3, 2)),
         );
-        let blit = fb.recording().unwrap().blits()[0];
+        let blit = *fb.recording().unwrap().blits().next().unwrap();
         assert_eq!(
             blit.asset,
             AssetId::ModelImage {

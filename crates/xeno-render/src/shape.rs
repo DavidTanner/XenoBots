@@ -4,6 +4,7 @@
 //! of projected points, and fills triangles and quads (`1fe6:4d7d`).
 
 use crate::Framebuffer;
+use crate::hd::Geometry;
 use crate::view3d::{Camera, GameFloat, Trig};
 
 /// A terrain node's shape: the record's sizes (8.8) and its program from +0x16, and
@@ -600,6 +601,7 @@ pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
     }
     let rows = min_y.max(clip.top)..=max_y.min(clip.bottom - 1);
     let w = width as i16;
+    let mut runs = Vec::new();
     for (row, &[left, right]) in table.0.iter().enumerate() {
         // The clipped edges keep both in 0..=width, where the original's unsigned
         // compare is this one.
@@ -610,8 +612,11 @@ pub fn fill_polygon(fb: &mut Framebuffer, corners: &[Point], colour: u8) {
         let (left, right) = (left.clamp(0, w) as usize, right.clamp(0, w) as usize);
         if rows.contains(&(row as i16)) && right > left {
             fb.pixels_mut()[row * width + left..row * width + right].fill(colour);
+            runs.push(row * width + left..row * width + right);
         }
     }
+    let corners = corners.iter().map(|&(x, y)| (x.into(), y.into())).collect();
+    fb.record_shape(Geometry::Polygon(corners), colour, runs);
 }
 
 /// The facing test, in 32 bits; when a corner difference overflows 16 bits, of the

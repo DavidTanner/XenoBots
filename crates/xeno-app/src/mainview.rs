@@ -10,6 +10,7 @@ use xeno_formats::sitroom::SitRoom;
 use xeno_formats::usg::{Base, Message, ObjectKind, Scenario, Side, TerrainFeature, flag};
 use xeno_formats::view3d::View3d;
 use xeno_formats::views::Widget;
+use xeno_render::hd::Geometry;
 use xeno_render::shape::fill_polygon;
 use xeno_render::view3d::{Camera, GameFloat, PROBE, focal_shifted, focal_zoomed};
 use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
@@ -768,11 +769,14 @@ fn robot_label(e: &Entity, room: &SitRoom) -> ((i32, i32), Vec<u8>) {
 pub fn draw_line(fb: &mut Framebuffer, [y0, x0, y1, x1]: [u16; 4], colour: u8) {
     let [y0, x0, y1, x1] = [y0, x0, y1, x1].map(i32::from);
     let width = fb.surface().width as i32;
+    let mut drawn = Vec::new();
     let mut set = |x: i32, y: i32| {
+        let i = (y * width + x) as usize;
         if (0..width).contains(&x)
-            && let Some(p) = fb.pixels_mut().get_mut((y * width + x) as usize)
+            && let Some(p) = fb.pixels_mut().get_mut(i)
         {
             *p = colour;
+            drawn.push(i..i + 1);
         }
     };
     if y0 == y1 {
@@ -805,6 +809,9 @@ pub fn draw_line(fb: &mut Framebuffer, [y0, x0, y1, x1]: [u16; 4], colour: u8) {
             x += i32::from(side);
         }
     }
+    // A sloping line is drawn again at output resolution (T-236); a level or upright
+    // one would look the same.
+    fb.record_shape(Geometry::Line([(x0, y0), (x1, y1)]), colour, drawn);
 }
 
 /// Mode C (`1000:56a7`) on the screen, whose main view is already cleared: the

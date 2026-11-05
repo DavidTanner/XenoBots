@@ -354,6 +354,7 @@ impl ReviewState {
             return;
         };
         let mut buffer = Framebuffer::new(Size::new(width, height));
+        buffer.set_recording(fb.recording().is_some());
         if let Some(Some(model)) = model {
             let target = ModelTarget {
                 clip: xeno_render::Rect::new(0, 0, width as u32, height as u32),
@@ -376,24 +377,15 @@ pub fn copy_through(fb: &mut Framebuffer, buffer: &Framebuffer, left: usize, top
     copy_through_colour(fb, buffer, (left, top), 255);
 }
 
-/// [`copy_through`] for the pixels of `colour`.
+/// [`copy_through`] for the pixels of `colour` (`Framebuffer::copy_through`, which
+/// carries a recorded buffer's drawings along).
 pub fn copy_through_colour(
     fb: &mut Framebuffer,
     buffer: &Framebuffer,
-    (left, top): (usize, usize),
+    at: (usize, usize),
     region: u8,
 ) {
-    let width = buffer.surface().width;
-    let stride = fb.surface().width;
-    let pixels = fb.pixels_mut();
-    for (y, row) in buffer.pixels().chunks(width).enumerate() {
-        let start = (top + y) * stride + left;
-        for (p, &colour) in pixels[start..start + width].iter_mut().zip(row) {
-            if *p == region {
-                *p = colour;
-            }
-        }
-    }
+    fb.copy_through(buffer, at, region);
 }
 
 /// The bounding box of `fb`'s colour-255 pixels as slot `0x59c` measures it (left,
