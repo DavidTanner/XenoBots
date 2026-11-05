@@ -241,7 +241,7 @@ pub fn load_models(files: &GameFiles) -> Vec<Option<LoadedModel>> {
     let load = |name: &str| -> Result<LoadedModel, String> {
         let m00 = read(name, "m00")?;
         let m08 = read(name, "m08")?;
-        Ok(match name {
+        let mut model = match name {
             "explode" | "plasma" | "basedome" | "cloak" | "obst" => {
                 LoadedModel::single_view(&m00, &m08)
             }
@@ -250,7 +250,9 @@ pub fn load_models(files: &GameFiles) -> Vec<Option<LoadedModel>> {
             }
             "laser" => LoadedModel::new(&m00, &[m08, read(name, "m16")?, read(name, "m32")?]),
             _ => LoadedModel::new(&m00, &[m08, read(name, "m16")?]),
-        })
+        };
+        model.name = xeno_render::Name::new(name);
+        Ok(model)
     };
     MODEL_FILES
         .iter()

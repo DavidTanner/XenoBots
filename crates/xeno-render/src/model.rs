@@ -2,8 +2,11 @@
 //! clip rectangle from slot `0x574`, the anchor from `0x578` and the scale from
 //! `0x584`; see `docs/formats/mxx.md`, "Drawing").
 
+use std::ops::Range;
+
 use xeno_formats::mxx::{Animation, Frame, Image, Model, Part, View};
 
+use crate::hd::{AssetId, BlitRecord, Name};
 use crate::{Framebuffer, Rect};
 
 /// An 8.8 fixed-point scale (256 = 1:1) as a table of 256 repeat counts, one for each
@@ -99,6 +102,19 @@ impl Framebuffer {
         mirrored: bool,
         target: &ModelTarget,
     ) {
+        self.blit_model_image_as(image, None, x, y, mirrored, target);
+    }
+
+    /// [`Framebuffer::blit_model_image`], recorded as `asset` when recording.
+    pub(crate) fn blit_model_image_as(
+        &mut self,
+        image: &Image,
+        asset: Option<AssetId>,
+        x: i32,
+        y: i32,
+        mirrored: bool,
+        target: &ModelTarget,
+    ) {
         let surface = self.surface();
         let clip = |from: i32, length: u32, size: usize| {
             let to = i64::from(from) + i64::from(length);
@@ -116,22 +132,40 @@ impl Framebuffer {
             let from = from.clamp(low, high);
             (from as usize, to.clamp(from, high) as usize)
         };
-        let width = usize::from(image.width);
         let stride = surface.width;
-        let pixels = self.pixels_mut();
-        for (row, span) in image.rows.iter().enumerate() {
-            let (y0, y1) = cover(target.anchor.1, y + row as i32, top, bottom);
-            if y0 >= y1 {
-                continue;
+        let (pixels, mut recording) = self.pixels_and_recording();
+        // The screen pixels units `from..from + length` cover, from the anchor.
+        let extent = |anchor: i32, from: i32, length: u8| {
+            let last = from + i32::from(length) - 1;
+            let start = scale.start(from);
+            let end = scale.start(last) + scale.count(last) as i32;
+            (anchor + start, (end - start).max(0) as u32)
+        };
+        let tag = match (asset, &mut recording) {
+            (Some(asset), Some(r)) if image.width > 0 && image.height > 0 => {
+                let (rx, w) = extent(target.anchor.0, x, image.width);
+                let (ry, h) = extent(target.anchor.1, y, image.height);
+                r.push(BlitRecord {
+                    asset,
+                    rect: Rect::new(rx, ry, w, h),
+                    scale: scale.scale(),
+                    mirrored,
+                    flipped: false,
+                })
             }
-            let columns = (usize::from(span.skip)..width).zip(&span.pixels);
-            for (column, &colour) in columns.filter(|&(_, &colour)| colour != 0) {
-                let column = if mirrored { width - 1 - column } else { column };
-                let (x0, x1) = cover(target.anchor.0, x + column as i32, left, right);
-                for dy in y0..y1 {
-                    pixels[dy * stride + x0..dy * stride + x1].fill(colour);
-                }
-            }
+            _ => None,
+        };
+        let rows = |unit| cover(target.anchor.1, unit, top, bottom);
+        let columns = |unit| cover(target.anchor.0, unit, left, right);
+        let place = (x, y, mirrored, stride);
+        match tag.zip(recording) {
+            None => runs(image, place, rows, columns, |run, colour| {
+                pixels[run].fill(colour)
+            }),
+            Some((tag, r)) => runs(image, place, rows, columns, |run, colour| {
+                pixels[run.clone()].fill(colour);
+                r.owners[run].fill(tag | u32::from(colour));
+            }),
         }
     }
 
@@ -146,12 +180,22 @@ impl Framebuffer {
         image: impl Fn(&Part) -> Option<&'a Image>,
         target: &ModelTarget,
     ) {
+        self.draw_frames(frames, |part| Some((image(part)?, None)), target);
+    }
+
+    /// [`Framebuffer::draw_model_frames`], each image recorded as the asset given.
+    fn draw_frames<'a>(
+        &mut self,
+        frames: &[&Frame],
+        image: impl Fn(&Part) -> Option<(&'a Image, Option<AssetId>)>,
+        target: &ModelTarget,
+    ) {
         let mut sorted = frames.to_vec();
         sorted.sort_by_key(|frame| frame.depth);
         for part in sorted.iter().flat_map(|frame| &frame.parts) {
-            if let Some(found) = image(part) {
+            if let Some((found, asset)) = image(part) {
                 let (x, y) = (part.x.into(), part.y.into());
-                self.blit_model_image(found, x, y, part.is_flipped(), target);
+                self.blit_model_image_as(found, asset, x, y, part.is_flipped(), target);
             }
         }
     }
@@ -167,7 +211,7 @@ impl Framebuffer {
         frames: &[u8],
         target: &ModelTarget,
     ) {
-        let Some((view, animations)) = model.facing(facing) else {
+        let Some((v, view, animations)) = model.facing_view(facing) else {
             return;
         };
         let frames: Vec<&Frame> = animations
@@ -175,15 +219,50 @@ impl Framebuffer {
             .enumerate()
             .filter_map(|(k, a)| a.get(usize::from(frames.get(k).copied().unwrap_or(0))))
             .collect();
+        let named = self.recording().is_some();
         let image = |part: &Part| {
-            let from = if part.is_direction_free() {
-                &model.direction_free
+            let (from, view) = if part.is_direction_free() {
+                (&model.direction_free, None)
             } else {
-                &view.images
+                (&view.images, Some(v as u16))
             };
-            from.get(part.image_index())
+            let index = part.image_index();
+            let asset = named.then_some(AssetId::ModelImage {
+                model: model.name,
+                view,
+                image: index as u16,
+            });
+            Some((from.get(index)?, asset))
         };
-        self.draw_model_frames(&frames, image, target);
+        self.draw_frames(&frames, image, target);
+    }
+}
+
+/// Calls `fill` with each run of surface pixels `image` covers at unit offset (`x`,
+/// `y`) (`place` is also `mirrored` and the surface's stride), and its colour; `rows`
+/// and `columns` give the clipped screen pixels a unit covers. Generic, so the
+/// unrecorded blit compiles to the plain fill.
+fn runs(
+    image: &Image,
+    (x, y, mirrored, stride): (i32, i32, bool, usize),
+    rows: impl Fn(i32) -> (usize, usize),
+    columns: impl Fn(i32) -> (usize, usize),
+    mut fill: impl FnMut(Range<usize>, u8),
+) {
+    let width = usize::from(image.width);
+    for (row, span) in image.rows.iter().enumerate() {
+        let (y0, y1) = rows(y + row as i32);
+        if y0 >= y1 {
+            continue;
+        }
+        let pixels = (usize::from(span.skip)..width).zip(&span.pixels);
+        for (column, &colour) in pixels.filter(|&(_, &colour)| colour != 0) {
+            let column = if mirrored { width - 1 - column } else { column };
+            let (x0, x1) = columns(x + column as i32);
+            for dy in y0..y1 {
+                fill(dy * stride + x0..dy * stride + x1, colour);
+            }
+        }
     }
 }
 
@@ -200,6 +279,8 @@ pub fn model_facing(relative: u16) -> u8 {
 /// drawn and whether it is that view's mirror facing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedModel {
+    /// The file's base name, naming its images for the HD compositor (`docs/hd.md`).
+    pub name: Name,
     views: Vec<View>,
     direction_free: Vec<Image>,
     facings: [Option<(usize, bool)>; 32],
@@ -249,6 +330,7 @@ impl LoadedModel {
             }
         }
         LoadedModel {
+            name: Name::default(),
             views,
             direction_free,
             facings,
@@ -280,13 +362,18 @@ impl LoadedModel {
 
     /// The view drawn at `facing` (an even 64th of a turn) and its animations there.
     pub fn facing(&self, facing: u8) -> Option<(&View, &[Animation])> {
+        self.facing_view(facing).map(|(_, view, a)| (view, a))
+    }
+
+    /// [`LoadedModel::facing`] with the view's place in the chain.
+    fn facing_view(&self, facing: u8) -> Option<(usize, &View, &[Animation])> {
         let (v, mirror) = (*self.facings.get(usize::from(facing / 2) % 32)?)?;
         let view = &self.views[v];
         let animations = match (&view.mirror_animations, mirror) {
             (Some(mirrored), true) => mirrored,
             _ => &view.animations,
         };
-        Some((view, animations))
+        Some((v, view, animations))
     }
 }
 
@@ -564,6 +651,34 @@ mod tests {
         assert_eq!(shown(&relay, 20), (4, 0));
         assert_eq!(shown(&relay, 46), (12, 0));
         assert_eq!(shown(&relay, 60), (12, 0));
+    }
+
+    #[test]
+    fn recorded_model_images_are_named_by_model_view_and_image() {
+        let m00 = Model { views: Vec::new() };
+        let mut loaded = LoadedModel::new(&m00, &[model(&[0, 8, 16, 24, 32])]);
+        loaded.name = Name::new("TestBot");
+        let mut fb = Framebuffer::new(Size::new(3, 2));
+        fb.set_recording(true);
+        // Facing 40 is view 3 (24) mirrored: its frame draws at column 1, scaled 2x.
+        fb.draw_model(
+            &loaded,
+            40,
+            &[],
+            &target(512, (0, 0), Rect::new(0, 0, 3, 2)),
+        );
+        let blit = fb.recording().unwrap().blits()[0];
+        assert_eq!(
+            blit.asset,
+            AssetId::ModelImage {
+                model: Name(*b"testbot\0"),
+                view: Some(3),
+                image: 0,
+            }
+        );
+        assert_eq!((blit.rect, blit.scale), (Rect::new(2, 0, 2, 2), 512));
+        // Colour 25 (facing 24 + 1), clipped at the surface's edge.
+        assert_eq!(ascii(&fb), "..#\n..#\n");
     }
 
     #[test]

@@ -54,7 +54,9 @@ pub fn load_models(files: &GameFiles, tables: &Review) -> Vec<Option<LoadedModel
             .get(usize::from(model / 2))
             .ok_or(format!("no model {model}"))?;
         let passes = [read(&format!("{name}.m08"))?, read(&format!("{name}.m16"))?];
-        Ok(LoadedModel::new(&read(&format!("{name}.m00"))?, &passes))
+        let mut loaded = LoadedModel::new(&read(&format!("{name}.m00"))?, &passes);
+        loaded.name = xeno_render::Name::new(name);
+        Ok(loaded)
     };
     let pages = tables.pages.iter().map(|page| load(page.model));
     pages

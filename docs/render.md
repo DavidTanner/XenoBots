@@ -692,3 +692,9 @@ through the `add ax, cs:[bx + table]` of each routine (`Walk::humanoid_bob`,
 `scout_bob`; `docs/sim.md`, "Heights", T-119). The humanoid's arms swing by the same
 step (`xeno_sim::weapons::arms`). The scout's four legs walk and crouch, and the
 scorpion's six (`Walk::scorpion_legs`) walk and settle (T-120).
+
+**HD art (T-070).** Every model image the view draws is named (`xeno_render::AssetId`)
+and, when the framebuffer is recording, its blit's logical rectangle and scale are
+kept beside the pixels, so higher-resolution art can replace it at output resolution
+without changing a framebuffer pixel: see `docs/hd.md`. The view's own buffer is copied
+into the console's picture, which does not carry the record over yet (T-234).
