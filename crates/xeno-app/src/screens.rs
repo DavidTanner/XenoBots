@@ -3098,6 +3098,34 @@ pub(crate) mod tests {
         assert_eq!(screens.mission().viewed(), mission::Viewed::Robot(friend.0));
     }
 
+    /// In the humanoid training's console with unlock word 8 (set here, as `XENO.KEY`
+    /// would): a right click on an alien robot is refused, and with Ctrl held opens
+    /// its console (`1000:7ec2`, T-222).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_ctrl_and_word_8_open_an_alien_robot_s_console() {
+        use xeno_formats::usg::Side;
+        use xeno_sim::input::MouseButton::Right;
+        let fb = &mut Framebuffer::new(Size::MODE_13H);
+        let Some((mut screens, id)) = humanoid_console(fb) else {
+            return;
+        };
+        screens.mission_assets.developer_unlocked = true;
+        let alien = screens.mission().world().units(Side::Alien)[0];
+        point_at(&mut screens, fb, id, alien, 255);
+        let click = |screens: &mut Screens, fb: &mut Framebuffer| {
+            screens.retrace(&[InputEvent::MouseDown { button: Right }], fb);
+            screens.retrace(&[InputEvent::MouseUp { button: Right }], fb);
+            (0..5).for_each(|_| screens.retrace([], fb));
+        };
+        click(&mut screens, fb);
+        assert_eq!(screens.mission().viewed(), mission::Viewed::Robot(id.0));
+        screens.retrace(&[down(0x1d)], fb);
+        click(&mut screens, fb);
+        screens.retrace(&[up(0x1d)], fb);
+        assert_eq!(screens.mission().viewed(), mission::Viewed::Robot(alien.0));
+    }
+
     /// In the humanoid training's console with the second display on the map (M): an
     /// alien robot 3 units from the unit is not drawn until the sim's scan marks it
     /// spotted (+0x17 bit 2, T-147), and then it is.

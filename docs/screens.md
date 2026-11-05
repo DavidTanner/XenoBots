@@ -475,7 +475,8 @@ scroll), and it is saved with the object in a `.usg` file (`usg.md`, `DCBS`).
   slots (`DS:0x62f5` human, `DS:0x6341` alien), wrapping and skipping empty slots and
   units in the base (object +0xfd bit 2).
 - A right click on a robot in a console's scanner (`1000:7eac`) opens that robot's
-  console, if it is the player's (otherwise it refuses with a message).
+  console, if it is the viewed robot's side's (otherwise it refuses with a message;
+  with unlock word 8 and Ctrl, any side's: "An alien robot's console (T-222)").
 - In the situation room, Space, J and the third button below the roster
   (`1000:6852`) open the console of the robot selected in the roster; a right release
   on a roster row does the same (`ui_sitroom_roster_on_mouse`, `1000:582d`). Both do
@@ -907,7 +908,38 @@ retrace takes it back. The consoles' map now marks a goal object (sprite 0x1a0 o
 object, `1000:f914`) as well as a destination. Shortcuts: the press acts on the last
 frame drawn, not the next one; a right release on an alien robot posts the refusal
 (T-214), but the Ctrl case with unlock word 8 refuses too, since the port's consoles
-serve only the player's robots (T-222).
+served only the player's robots; T-222 opens it.
+
+**An alien robot's console (T-222).** From a Ghidra pass over `7eac`, the opener
+`7ef2`, Tab and the unit button (`7db2`, `7dd9`, `7e02`), the way back (`7ee7`,
+`6845`), the sounds' test (`1000:eec6`) and the map's robots (`1000:f976`):
+
+- With unlock word 8 and Ctrl, `7eac` passes any unit of either list to `7ef2`. The
+  opener writes only the viewed object (`DS:0x62f1`), the sounds' object (`DS:0x7e16`)
+  and the kind's opener index (`DS:0x62ef`), then runs the kind's opener (`DS:0x6411`):
+  the console is the kind's, nothing side-specific. Neither base's selection (+0x3c)
+  changes.
+- The side test without Ctrl compares the viewed object's side: from an alien robot's
+  console another alien robot opens and a player's robot is refused, on the alien
+  robot's panel.
+- Tab, Alt+Tab and the unit button: `7e02` picks the list by the viewed robot's +0x16
+  bit 3 (`DS:0x62f5`, or `DS:0x6341` for the alien side), so they step through the
+  alien robots, skipping those in their base.
+- ESC, Alt+Q, the corner and a robot taken into its base (`7ee7`): `6845` picks the
+  base by the same bit (`DS:0x568e`, or `DS:0x5690`), so they open the **alien base's**
+  situation room.
+- The sounds heard only for the viewed robot (`eec6`: the object against `DS:0x7e16`)
+  are the alien robot's. The maps draw sides absolutely (`f976`: an alien robot is
+  drawn only spotted, +0x17 bit 2, or with the reveal `DS:0x6ffa`), so from an alien
+  console the player's robots all show and the other alien robots only when spotted;
+  the viewed robot gets colour 0xff whatever its side.
+
+In the port `Mission::jump` takes the unlock word (`Assets::developer_unlocked`) and
+the mouse event's Ctrl; the side test is the viewed object's; `Mission::open_robot` is
+the opener without a side test, used by the jump and by Tab and the unit button, whose
+`step_robot` takes the viewed robot's side's list. Shortcut: the way back opens the
+player's situation room, not the alien base's (T-231). A viewed robot destroyed is
+T-224's, as for the player's.
 
 ### The display's other modes (T-134)
 
@@ -2838,7 +2870,7 @@ original.
   left, a console's too (`Mission::last_view`, T-219; `docs/sim.md`, "The last view
   (T-219)"). Shortcuts: before any frame, the main view's rectangle and the map's
   camera; the map and R redraw on every pointer move
-  so the probe follows it; a right release on an alien robot does nothing (T-214). Not
+  so the probe follows it; a right release on an alien robot posts the refusal (T-214), or with unlock word 8 and Ctrl opens its console (T-222). Not
   checked in DOSBox (T-182).
 - **Panels** (`crates/xeno-app/src/panels.rs`, T-127): the status counts, the reserve
   bar, the power rows' bars and the clock as "The situation room's panels (T-127)"

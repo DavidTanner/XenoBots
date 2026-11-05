@@ -1303,13 +1303,19 @@ impl Mission {
         self.sitroom_turn.set(turn);
     }
 
-    /// Views `robot` (the player's), as with Tab or the roster.
+    /// Views `robot` (the player's), as with the roster.
     pub fn view_robot(&mut self, slot: u16) -> Option<View> {
-        let robot = *self.book().get(slot)?;
-        if robot.side != Side::Human {
+        if self.book().get(slot)?.side != Side::Human {
             log::debug!("mission: cannot view the enemy's unit {slot}");
             return None;
         }
+        self.open_robot(slot)
+    }
+
+    /// `ui_open_view_of_object` (`1000:7ef2`) on robot `slot` of either side: no side
+    /// or base check; its callers (Tab, the jump) choose.
+    fn open_robot(&mut self, slot: u16) -> Option<View> {
+        let robot = *self.book().get(slot)?;
         self.leave_console();
         self.viewed = Viewed::Robot(slot);
         if let Run::Running(sim) = &mut self.run {
@@ -1364,6 +1370,9 @@ impl Mission {
     }
 
     fn base(&mut self) -> Request {
+        // shortcut: `1000:7ee7` opens the viewed robot's side's base (`6845`), so from an
+        // alien robot's console (T-222) the alien base's situation room; the port has
+        // only the player's, so it opens that; upgrade with T-231.
         self.leave_console();
         self.viewed = Viewed::Base;
         // Drawing the situation room's picture starts the orders again (`1000:54fc`).
@@ -1386,11 +1395,15 @@ impl Mission {
         e.is_some_and(|e| xeno_sim::base::in_base(&e.damage))
     }
 
-    /// The next (`step` 1) or previous robot after `from`, wrapping; with `in_field`,
-    /// skipping the others in the base, as the consoles do (`1000:7db2`, `7dd9`; the
-    /// situation room's roster steps through them all, `1000:67e8`, `680c`).
+    /// The next (`step` 1) or previous robot after `from` in `from`'s side's list (the
+    /// player's with none: `1000:7e02` picks the list by +0x16 bit 3), wrapping; with
+    /// `in_field`, skipping the others in the base, as the consoles do (`1000:7db2`,
+    /// `7dd9`; the situation room's roster steps through them all, `1000:67e8`, `680c`).
     fn step_robot(&self, from: Option<u16>, step: isize, in_field: bool) -> Option<u16> {
-        let mut robots = self.robots();
+        let side = from
+            .and_then(|s| self.book().get(s))
+            .map_or(Side::Human, |r| r.side);
+        let mut robots: Vec<u16> = self.book().side(side).map(|(s, _)| s).collect();
         robots.retain(|&r| !in_field || Some(r) == from || !self.in_base(r));
         let i = from.and_then(|s| robots.iter().position(|&r| r == s));
         let n = robots.len() as isize;
@@ -2113,7 +2126,7 @@ impl Mission {
             (Viewed::Robot(slot), handler::NEXT_UNIT | handler::PREVIOUS_UNIT) => {
                 let step = if handler == handler::NEXT_UNIT { 1 } else { -1 };
                 let next = self.step_robot(Some(slot), step, true)?;
-                self.view_robot(next).map(Request::Show)
+                self.open_robot(next).map(Request::Show)
             }
             (Viewed::Base, handler::END) => (word == ALT_Q).then_some(Request::End),
             (Viewed::Base, handler::SAVE) => {
@@ -2522,7 +2535,7 @@ impl Mission {
             return None;
         }
         match button {
-            MouseButton::Right => self.jump(self.sitroom_probe.get()?),
+            MouseButton::Right => self.jump(self.sitroom_probe.get()?, assets.developer_unlocked),
             MouseButton::Left if self.ctrl && self.mode == MAP_MODE => {
                 self.place_at_pointer(Some(at), assets);
                 None
@@ -2535,21 +2548,21 @@ impl Mission {
         }
     }
 
-    /// `1000:7eac`: a unit of either side's list; one of the viewed object's side has its
-    /// console opened, another side's gets the refusal (`Messages::other_side`) through
-    /// `1000:d53f`: on the viewed robot's panel, or from the situation room into the
-    /// base's log.
-    fn jump(&mut self, object: u16) -> Option<Request> {
-        if self.book().get(object)?.side == Side::Human {
-            return self.view_robot(object).map(Request::Show);
-        }
-        // shortcut: with unlock word 8 and Ctrl the original opens the alien robot's
-        // console (`7ec2`); the port's consoles serve only the player's robots, so it
-        // refuses as without; upgrade with T-222.
+    /// `1000:7eac`: a unit of either side's list. With unlock word 8 and Ctrl (`7ec2`)
+    /// its console opens whatever its side; otherwise one of the viewed object's side
+    /// (`1000:d6d8`) has its console opened, another side's gets the refusal
+    /// (`Messages::other_side`) through `1000:d53f`: on the viewed robot's panel, or
+    /// from the situation room into the base's log.
+    fn jump(&mut self, object: u16, developer: bool) -> Option<Request> {
+        let side = self.book().get(object)?.side;
         let viewer = match self.viewed {
             Viewed::Robot(slot) => slot,
             Viewed::Base => self.world().base(Side::Human)?.0,
         };
+        let viewer_side = self.world().get(EntityId(viewer))?.side;
+        if (developer && self.ctrl) || side == viewer_side {
+            return self.open_robot(object).map(Request::Show);
+        }
         let Run::Running(sim) = &self.run else {
             return None;
         };
@@ -3234,7 +3247,7 @@ impl Mission {
                     return None;
                 };
                 let next = self.step_robot(Some(slot), if right { -1 } else { 1 }, true)?;
-                self.view_robot(next).map(Request::Show)
+                self.open_robot(next).map(Request::Show)
             }
             Target::Corner => match self.viewed {
                 Viewed::Robot(_) => Some(self.base()),
@@ -3264,7 +3277,7 @@ impl Mission {
                 }
                 let object = self.probed.get()[i]?;
                 if right {
-                    return self.jump(object);
+                    return self.jump(object, assets.developer_unlocked);
                 }
                 self.pilot(slot, Pilot::Lock(Some(EntityId(object))));
                 None
@@ -5730,6 +5743,47 @@ pub mod tests {
         let opened = click(&mut m, &assets, (100, 50), right);
         assert_eq!(opened, Some(Request::Show(View::Scorpion)));
         assert_eq!(m.viewed(), Viewed::Robot(friend));
+    }
+
+    /// With unlock word 8 and Ctrl a right release opens an alien robot's console
+    /// (`1000:7ec2`, T-222); there Tab steps through the alien list (`7e02`), and the
+    /// side test is the viewed robot's, so a player's robot is refused.
+    #[test]
+    fn ctrl_and_unlock_word_8_open_an_alien_robot_s_console() {
+        let mut assets = test_assets();
+        let mut m = mission(&assets);
+        let (robot, friend, enemy) = (2, 5, 7);
+        m.view_robot(robot).unwrap();
+        let right = MouseButton::Right;
+        m.pointer_shape(&assets, (100, 50), 255, false);
+        m.probed.set([Some(enemy), None]);
+        // Ctrl alone, without the unlock word: refused as before.
+        m.set_ctrl(true);
+        assert_eq!(click(&mut m, &assets, (100, 50), right), None);
+        assert_eq!(m.viewed(), Viewed::Robot(robot));
+        assets.developer_unlocked = true;
+        m.set_ctrl(false);
+        assert_eq!(click(&mut m, &assets, (100, 50), right), None, "no Ctrl");
+        m.set_ctrl(true);
+        let kind = m.book().get(enemy).unwrap().kind;
+        let opened = click(&mut m, &assets, (100, 50), right);
+        assert_eq!(opened, Some(Request::Show(view_of(kind))));
+        assert_eq!(m.viewed(), Viewed::Robot(enemy));
+        // Tab stays on the alien side's list.
+        let next = m.step_robot(Some(enemy), 1, true).unwrap();
+        assert_eq!(m.book().get(next).unwrap().side, Side::Alien);
+        // Without Ctrl a player's robot is now the other side's: the refusal, on the
+        // alien robot's panel.
+        m.set_ctrl(false);
+        m.pointer_shape(&assets, (100, 50), 255, false);
+        m.probed.set([Some(friend), None]);
+        robot_state_mut(&mut m, enemy).panel.queue = [0; 5];
+        assert_eq!(click(&mut m, &assets, (100, 50), right), None);
+        assert_eq!(m.viewed(), Viewed::Robot(enemy));
+        assert_eq!(
+            robot_state(&m, enemy).panel.queue[0],
+            assets.motion.sensing.messages.other_side
+        );
     }
 
     /// A release over the third display with a dot under the pointer in the last frame
