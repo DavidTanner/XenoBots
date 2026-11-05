@@ -45,6 +45,54 @@ pub fn frame_pass(pass: u32, chances: u8, view: Turn) -> u32 {
         .unwrap_or(first)
 }
 
+/// The situation room's main view in modes M and R (`1000:5590`, `55d6`;
+/// `docs/render.md`, "The situation room's frames (T-218)"): on each pass its handler
+/// starts a frame when none is running (`DS:0x1450` 0) or copies the finished one (bit
+/// 7), the map's only once `gap` counts of the game clock (`DS:0x374`) have gone by
+/// since its last copy (`DS:0x568c`). Every frame is done in the pass it starts (the
+/// fast machine), and the next starts the pass after a copy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sitroom {
+    /// The pass the running frame started on.
+    pub running: Option<u32>,
+    /// The pass the frame on screen started on.
+    pub shown: Option<u32>,
+    /// The game clock at the map's last copy (`DS:0x568c`).
+    copied: u16,
+    /// The map's gap (`xeno_formats::sitroom::SitRoom::map_frame_gap`), set with the
+    /// tables when the view is drawn; 0, copying at once, before.
+    pub gap: u8,
+}
+
+impl Sitroom {
+    /// One pass of the handler, with the game clock as the pass begins, for the map
+    /// (`map`) or mode R, which copies at once and keeps no clock.
+    pub fn pass(&mut self, pass: u32, clock: u16, map: bool) {
+        let Some(start) = self.running else {
+            self.running = Some(pass);
+            return;
+        };
+        if map {
+            if clock.wrapping_sub(self.copied) < u16::from(self.gap) {
+                return;
+            }
+            self.copied = clock;
+        }
+        (self.shown, self.running) = (Some(start), None);
+    }
+
+    /// The pass whose frame is on screen at `pass`: before the first copy, the running
+    /// frame's (drawn early), or else this pass's.
+    pub fn frame(&self, pass: u32) -> u32 {
+        self.shown.or(self.running).unwrap_or(pass)
+    }
+
+    /// No frame running or shown, as after a view switch; the last copy's clock kept.
+    pub fn restart(&mut self) {
+        (self.running, self.shown) = (None, None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +131,41 @@ mod tests {
         assert_eq!(frame_pass(6, 3, Turn::Main), 4);
         assert_eq!(frame_pass(9, 3, Turn::Second), 8);
         assert_eq!(frame_pass(1000, 0, Turn::Main), 999);
+    }
+
+    #[test]
+    fn the_map_s_frames_wait_for_the_clock() {
+        // The clock at each pass's start: 60 counts to 70 passes, from 3.
+        let clock = |p: u32| (3 + p * 6 / 7) as u16;
+        let shown = |map| {
+            let mut s = Sitroom {
+                gap: 3,
+                ..Sitroom::default()
+            };
+            (0..12)
+                .map(|p| {
+                    s.pass(p, clock(p), map);
+                    s.frame(p)
+                })
+                .collect::<Vec<_>>()
+        };
+        // A gap of 3: copies at passes 1, 4 (3 counts after 1), 7 and 11, each of the
+        // frame started the pass after the copy before.
+        assert_eq!(shown(true), [0, 0, 0, 0, 2, 2, 2, 5, 5, 5, 5, 8]);
+        // Mode R: a copy every other pass.
+        assert_eq!(shown(false), [0, 0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10]);
+        // Across the clock's wrap: 2 counts wait, 3 copy.
+        let mut s = Sitroom {
+            gap: 3,
+            ..Sitroom::default()
+        };
+        for (p, c) in [(0, 0xfffe), (1, 0xffff), (2, 0), (3, 1)] {
+            s.pass(p, c, true);
+        }
+        assert_eq!((s.shown, s.running), (Some(0), Some(2)));
+        s.pass(4, 2, true);
+        assert_eq!((s.shown, s.running), (Some(2), None));
+        s.restart();
+        assert_eq!(s.frame(7), 7);
     }
 }
