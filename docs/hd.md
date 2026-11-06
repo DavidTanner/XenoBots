@@ -26,8 +26,12 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
 
 1. **Names** (`xeno_render::hd::AssetId`). Every image the original draws gets a name
    that does not depend on where or how big it is drawn:
-   - `Sprite { bank, index }`: sprite `index` of `msprite{bank}.b@n`, numbered through
-     the banks' one directory (`docs/formats/b@n.md`).
+   - `Sprite { bank, index }`: record `index` of `msprite{bank}.b@n` (from 0, as
+     `--view` pages them). The game draws a sprite by its directory handle, and the
+     banks sit at fixed places in that one directory (`docs/formats/b@n.md`, "Sprite
+     numbers"), so `AssetId::sprite(handle)` names it: every `blit_sprite` in
+     `xeno-app` sets `SpriteBlit::asset` from the handle it looked the sprite up by
+     (T-233), and the viewer from the bank's file name and the page.
    - `ModelImage { model, view, image }`: image `image` of view `view` of a model,
      views numbered along the loaded chain (`.m08` first, then `.m16`, `.m32`, as
      `LoadedModel` keeps them), or of its `.m00` when `view` is `None`. `model` is the
@@ -214,12 +218,12 @@ the blits they name. Nothing of a pack is ever in the repository.
   transparent in the original's blit, so those pixels are never the blit's and the
   pack cannot draw there either: an image only repaints its original's silhouette.
 - **Checks.** Only images the user's game files have can be replaced: the loader takes
-  each original's size (`LoadedModel::image_sizes` today, for every model) and skips,
+  each original's size (`hd_pack::originals`: `LoadedModel::image_sizes` for every
+  model, and every sprite of `msprite0` to `msprite5`) and skips,
   with a warning in the log, a file whose path names nothing, an image the game does
   not have (`model/scorpion/0_99.png`), a PNG that does not decode and one whose size
   is not a whole multiple. Those images stay the original's. A directory that cannot
-  be read is an error before the window opens. Sprites and whole files are named but
-  not yet drawn by name, so their sizes join the loader with T-233.
+  be read is an error before the window opens.
 - **Drawing.** With a pack, `window.rs` records every frame (as for `--hd-shapes`) and
   calls `compose` in place of `present`, then `draw_shapes` and `draw_glyphs` if those
   are on, so smoothed shapes and text stay over the pack's images as they are over the
@@ -227,12 +231,20 @@ the blits they name. Nothing of a pack is ever in the repository.
 - **Checked.** A synthetic pack (`an_hd_pack_replaces_one_model_image_and_leaves_the_rest`)
   and one solid-colour image over the first model image seen in a training mission's
   console (`real_assets_an_hd_pack_replaces_only_its_model_image`: the netrelay's `.m00`
-  image in NTRAIN): only that image's owned pixels change. The console's 3D view
+  image in NTRAIN), and likewise one sprite (`real_assets_an_hd_pack_replaces_only_its_sprite`:
+  `sprite/3/65.png`, a piece of the Scorpion console, T-233): only that image's owned
+  pixels change. The console's 3D view
   reaches the screen's record through `copy_through` (T-236).
 - **Cost** (release, 3840x2160, the most model pixels of any stock robot's first
   console frame, SCEN06A, 401 blits): `present` 1.0 ms, `compose` with one image
   replaced 1.39 ms, with all 781 model images replaced 1.41 ms; loading 781 4x PNGs
-  68 ms.
+  68 ms. With the sprites named too (T-233; every stock mission's situation room and
+  first console, all 1,171 model images and sprites replaced in memory): `present`
+  0.9 ms, `compose` 1.65 to 1.69 ms on a situation room and 2.2 to 2.8 ms on a console
+  (the Scout's, SCEN08A, the slowest), against the 14.3 ms frame. A frame records at
+  most 599 drawings (SCEN07A's console; 46 to 78 of them sprites), and each full
+  redraw of a mission view or the map room starts the record afresh, so the 65,536
+  cap in `window.rs` is never near.
 
 ## What it costs
 
@@ -254,7 +266,7 @@ until a pack is loaded.
 ## For the pack (T-072) and UI text (T-074)
 
 - T-072 loads the pack (above, "The HD pack").
-- Still to name at their call sites: sprites (`blit_sprite`), the screens and pictures
-  copied in whole, skies and glyphs (T-233). The 3D view's copy into the console now
+- Still to name at their call sites: the screens and pictures copied in whole and
+  skies (T-233, part 2) and glyphs (T-239). Sprites are named (T-233). The 3D view's copy into the console now
   carries the records (T-236, above); `window.rs`'s labels still draw over a clone.
 - T-074's text uses the same records (above, "Text at output resolution").

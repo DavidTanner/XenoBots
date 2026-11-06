@@ -309,17 +309,13 @@ fn main() -> ExitCode {
         }
     };
     let hd_pack = match &cli.hd_pack {
-        Some(dir) => {
-            let models = scene::load_models(&files).into_iter().flatten();
-            let originals = models.flat_map(|m| m.image_sizes()).collect();
-            match hd_pack::load(dir, &originals) {
-                Ok(pack) => pack,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
+        Some(dir) => match hd_pack::load(dir, &hd_pack::originals(&files)) {
+            Ok(pack) => pack,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
             }
-        }
+        },
         None => Default::default(),
     };
     if cli.check {

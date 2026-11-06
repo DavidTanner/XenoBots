@@ -47,7 +47,26 @@ pub enum AssetId {
     File(Name),
 }
 
+/// Each sprite bank's first directory entry (handle / 8) in entry order, and the
+/// directory's size (`docs/formats/b@n.md`, "Sprite numbers").
+const BANKS: [(u8, u16); 6] = [(0, 0), (5, 64), (1, 84), (2, 150), (3, 207), (4, 310)];
+const DIRECTORY: u16 = 390;
+
 impl AssetId {
+    /// The sprite at directory handle `handle` (8 handles a sprite, the banks at the
+    /// game's fixed places), or `None` past the directory or between sprites.
+    pub fn sprite(handle: u16) -> Option<AssetId> {
+        let entry = handle / 8;
+        if !handle.is_multiple_of(8) || entry >= DIRECTORY {
+            return None;
+        }
+        let (bank, first) = BANKS.into_iter().rfind(|&(_, first)| first <= entry)?;
+        Some(AssetId::Sprite {
+            bank,
+            index: entry - first,
+        })
+    }
+
     /// The PNG's path in an HD pack, `/`-separated (`docs/hd.md`, "The HD pack"):
     /// `model/<name>/<view>_<image>.png` (view `m00` for the `.m00`'s images),
     /// `sprite/<bank>/<index>.png` or `file/<name>.png`.
@@ -665,6 +684,20 @@ mod tests {
         ] {
             assert_eq!(AssetId::from_pack_path(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn sprite_handles_name_their_bank_and_index() {
+        let sprite = |bank, index| Some(AssetId::Sprite { bank, index });
+        assert_eq!(AssetId::sprite(0), sprite(0, 0));
+        assert_eq!(AssetId::sprite(0x1f8), sprite(0, 63));
+        assert_eq!(AssetId::sprite(0x200), sprite(5, 0));
+        assert_eq!(AssetId::sprite(0x2a8), sprite(1, 1));
+        assert_eq!(AssetId::sprite(0x4b0), sprite(2, 0));
+        assert_eq!(AssetId::sprite(0x678 + 8 * 102), sprite(3, 102));
+        assert_eq!(AssetId::sprite(0x9b0 + 8 * 79), sprite(4, 79));
+        assert_eq!(AssetId::sprite(0x9b0 + 8 * 80), None);
+        assert_eq!(AssetId::sprite(0x2a4), None);
     }
 
     #[test]

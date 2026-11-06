@@ -4,7 +4,36 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use xeno_formats::ban;
 use xeno_render::{AssetId, HdImage};
+
+use crate::game_dir::GameFiles;
+
+/// The size of every image a pack may replace, from the user's files: each model's
+/// images and each bank's sprites (a bank that does not load has none).
+pub fn originals(files: &GameFiles) -> HashMap<AssetId, (usize, usize)> {
+    let models = crate::scene::load_models(files).into_iter().flatten();
+    let mut sizes: HashMap<_, _> = models.flat_map(|m| m.image_sizes()).collect();
+    for bank in 0..6u8 {
+        let name = format!("msprite{bank}.b@n");
+        let Some(sprites) = files
+            .read(&name)
+            .ok()
+            .and_then(|b| ban::parse_sprites(&b).ok())
+        else {
+            log::warn!("HD pack: {name} does not load; its sprites stay the original's");
+            continue;
+        };
+        for (index, s) in sprites.sprites.iter().enumerate() {
+            let asset = AssetId::Sprite {
+                bank,
+                index: index as u16,
+            };
+            sizes.insert(asset, (s.width(), s.height()));
+        }
+    }
+    sizes
+}
 
 /// Every PNG under `dir` that names an image in `originals` (its size in pixels) and is
 /// a whole multiple of that size on each axis. Anything else is warned about and left

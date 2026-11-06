@@ -6,7 +6,7 @@
 use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
 use xeno_formats::maproom::Rect;
-use xeno_render::{BlitMode, Framebuffer, Orientation, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{AssetId, BlitMode, Framebuffer, Orientation, SpriteBlit, TextCursor, TextMode};
 
 use crate::panels::digits;
 
@@ -132,6 +132,7 @@ pub fn sprite(fb: &mut Framebuffer, sprites: Sprites, handle: u16, x: u16, y: u1
     if let Some(s) = sprites(handle) {
         let blit = SpriteBlit {
             mode,
+            asset: AssetId::sprite(handle),
             ..SpriteBlit::default()
         };
         fb.blit_sprite(s, x.into(), y.into(), blit);
@@ -182,6 +183,7 @@ pub fn draw_needle(
         let blit = SpriteBlit {
             mode: BlitMode::Keyed,
             orientation,
+            asset: AssetId::sprite(handle),
             ..SpriteBlit::default()
         };
         fb.blit_sprite(s, x.into(), y.into(), blit);
