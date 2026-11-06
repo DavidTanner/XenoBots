@@ -268,6 +268,24 @@ impl Framebuffer {
         }
     }
 
+    /// Sets surface pixel `i` to `colour` as a drawing the record does not name: when
+    /// recording, it is no picture's pixel any more, even in the picture's colour.
+    pub fn put_unnamed(&mut self, i: usize, colour: u8) {
+        self.pixels[i] = colour;
+        if let Some(r) = &mut self.recording {
+            r.owners[i] = 0;
+        }
+    }
+
+    /// Copies surface pixel `from` to `to`, and its owner when recording: a picture kept
+    /// twice on the surface (the intro drop's clean copy) owns what it restores.
+    pub fn copy_pixel(&mut self, from: usize, to: usize) {
+        self.pixels[to] = self.pixels[from];
+        if let Some(r) = &mut self.recording {
+            r.owners[to] = r.owners[from];
+        }
+    }
+
     /// Slot `0x5a4`: `buffer` copied with its top-left at (`left`, `top`) onto this
     /// surface's pixels of colour `region` only. When recording, the copied pixels keep
     /// `buffer`'s record (its drawings moved along), or become unknown if it has none.

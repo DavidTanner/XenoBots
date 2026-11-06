@@ -930,6 +930,49 @@ mod tests {
         }
     }
 
+    /// T-242: a split view (the intro drop's credits) maps both ways: above the split
+    /// from the origin, below it from the surface's top row.
+    #[test]
+    fn a_split_view_composes_each_part_from_its_own_rows() {
+        let (top, low) = (AssetId::file("credits"), AssetId::file("xenodrop.pcx"));
+        // A 4x5 surface: rows 0..2 one picture, rows 2..4 another; the 2x3 view from
+        // (1, 2) split after row 1 shows surface row 2 from x = 1, then rows 0 and 1
+        // from x = 0 (the split restarts at the surface's first pixel).
+        let mut fb = Framebuffer::with_surface(Size::new(2, 3), Size::new(4, 5)).unwrap();
+        fb.set_recording(true);
+        fb.pixels_mut()
+            .copy_from_slice(&(1..=20).collect::<Vec<u8>>());
+        fb.record_picture(top, Rect::new(0, 0, 4, 2));
+        fb.record_picture(low, Rect::new(0, 2, 4, 2));
+        fb.set_origin(1, 2).unwrap();
+        fb.set_split(Some(1));
+        // 1:1 texels naming their picture and surface pixel.
+        let texels = |tag: u32| (0..8u32).map(move |i| 0xff00_0000 | tag << 16 | i);
+        let hd = HashMap::from([
+            (top, HdImage::new(4, 2, texels(1).collect()).unwrap()),
+            (low, HdImage::new(4, 2, texels(2).collect()).unwrap()),
+        ]);
+        let layout = Layout {
+            sx: 1,
+            sy: 1,
+            x: 0,
+            y: 0,
+        };
+        let now = output(&fb, &layout, Some(&hd), Size::new(2, 3));
+        let want = |tag: u32, x: u32, y: u32| tag << 16 | (y * 4 + x);
+        assert_eq!(
+            now,
+            [
+                want(2, 1, 0),
+                want(2, 2, 0),
+                want(1, 0, 0),
+                want(1, 1, 0),
+                want(1, 0, 1),
+                want(1, 1, 1)
+            ]
+        );
+    }
+
     /// T-241: a 2x1 picture of colours 5 and 6 under one 2x1 HD image painted against
     /// `reference` (texels 0x806040 and 0x102030), composed 1:1 with `current`.
     fn followed(reference: &Palette, current: &Palette, cycling: &[bool; 256]) -> Vec<u32> {

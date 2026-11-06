@@ -57,6 +57,25 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
        and wrapped exactly as the original; the rows above the shown ones simply
        fall off the buffer. The records ride through the 3D view's copy into the
        console like the models'.
+     - **The intro drop's backdrops** (`drop.rs`, `draw_backdrop`, T-242):
+       `xenodrop.pcx` and `cavedrop.pcx` are each recorded once, when the part loads,
+       as one 768-wide picture at its place in the drop's video memory (row 72). The
+       driver keeps a clean copy 128 rows lower to restore from; it is not a record
+       of its own but the same record's pixels: the copy's pixels take the owners of
+       the backdrop pixels they were copied from (`Framebuffer::copy_pixel`). The
+       known gap: `xenodrop`'s rows 128 and 129 overwrite the copy's first rows, so
+       a floor restoring rows 0 or 1 would show the original's rows 128 and 129
+       there and an HD backdrop its rows 0 and 1 (the floor's edges stay far below
+       row 1 in the stock drop). The silhouettes are drawn with
+       `Framebuffer::put_unnamed`, which takes the pixel from its picture even where
+       the backdrop is itself colour 0, and a restore from the clean copy copies the
+       owner back with the pixel, so an HD backdrop shows exactly where the original's
+       backdrop does, frame after frame, without a record per frame. A drop records
+       its two backdrops and the credits' glyphs (452 records over a stock drop), so
+       it never restarts the record. The view is split after row 128 with the credits
+       area (video memory's first rows, from x = 0) below; `compose` reads each view
+       row through `view_row_start`, so both parts map to their own surface rows
+       (`a_split_view_composes_each_part_from_its_own_rows`).
 
      HD texels are colours, not palette indices; they follow the palette's fades,
      the time-of-day tint and colour animation by the rule in "Following the
@@ -239,7 +258,7 @@ the blits they name. Nothing of a pack is ever in the repository.
   pack cannot draw there either: an image only repaints its original's silhouette.
 - **Checks.** Only images the user's game files have can be replaced: the loader takes
   each original's size (`xeno_render::hd::originals`: `LoadedModel::images` for every
-  model, every sprite of `msprite0` to `msprite5`, and every `.m@l`, `.vcl` and
+  model, every sprite of `msprite0` to `msprite5`, and every `.m@l`, `.vcl`, `.pcx` and
   `sky*.b@n` in the game directory) and skips,
   with a warning in the log, a file whose path names nothing, an image the game does
   not have (`model/scorpion/0_99.png`), a PNG that does not decode and one whose size
@@ -257,15 +276,22 @@ the blits they name. Nothing of a pack is ever in the repository.
   and the 3D view's sky (`real_assets_an_hd_pack_replaces_only_its_screen_and_sky`:
   `file/scorpcon.png`, `file/sky_a.png`): only that image's owned pixels change. A
   synthetic `.vcl`-like picture on a wider surface (`an_hd_picture_pans_with_the_view_over_a_wider_surface`)
-  checks the pan. The console's 3D view
+  checks the pan. The intro drop
+  (`real_assets_the_drop_composes_with_its_template_backdrops`, T-242): with the
+  template's two backdrops every 32nd retrace of a stock drop (99 frames, 76 with
+  credits, both parts, fades and the light change included) composes at 4K exactly as
+  it presents, and with a striped `xenodrop` only pixels `xenodrop` owns change;
+  `compose` with the backdrop replaced takes 4.7 to 8.0 ms (release, 3840x2160; most
+  of the drop's palette differs from the backdrop's own, so texels are scaled), against
+  1.0 ms for `present`. The console's 3D view
   reaches the screen's record through `copy_through` (T-236).
 - **Starting a pack (T-240).** `xeno-tool dump <game dir> --hd-template <dir>` writes
-  every image `originals` lists (1,201 in a stock install: 781 model images, 390
-  sprites, 8 screens, 14 pictures, 8 skies; 6.4 MB, 0.6 s in release) at its path
+  every image `originals` lists (1,203 in a stock install: 781 model images, 390
+  sprites, 8 screens, 14 pictures, 2 drop backdrops, 8 skies) at its path
   under `<dir>`, each pixel a 4x4 block (`hd::Original::upscaled`), so an artist sees
   which view and image number a picture is and paints over it. Colours: a screen and a
   picture its own palette; images with none the palette of the screen the game shows
-  them on (as `--view` picks, T-035): a bank the screen it is loaded with (`msprite0`,
+  them on (as `--view` picks, T-035; a backdrop its own, T-242): a bank the screen it is loaded with (`msprite0`,
   `msprite1`: the situation room; 2, 3, 4: their consoles; 5: the map room), a model
   its own robot kind's console (the Humanoid's for the rest), a sky the Humanoid's
   console (the consoles differ only in colours 253 and 254, `mxx.md`, "Palette").
@@ -288,8 +314,9 @@ the blits they name. Nothing of a pack is ever in the repository.
   (`HdImage::with_reference`). `compose` then shows a texel over a pixel of colour `i`
   as follows, with `ref` the reference's colour `i` and `cur` the palette shown now:
   - a colour an active rotate or frames record cycles (`ColourAnims::cycling`, from
-    the screens' or the viewer's DAC; `window.rs` passes none for the cutscenes and
-    the drop, which run no such record): the original pixel, not the texel. A ratio
+    the screens', the viewer's or the drop's DAC; `window.rs` passes none for the
+    cutscenes, which run no such record, and the drop runs none either: T-242
+    checked every retrace of a stock drop): the original pixel, not the texel. A ratio
     between two unrelated colours of a ring means nothing. Blends (the tint, the
     drop's cross-fades) are not cycling: they show one frame and turn off.
   - `ref == cur` (and no channel of `ref` is 0 while the palette as a whole has
@@ -352,7 +379,7 @@ until a pack is loaded.
 ## For the pack (T-072) and UI text (T-074)
 
 - T-072 loads the pack (above, "The HD pack").
-- Still to name: glyphs (T-239) and the intro drop's `.pcx` backdrops (T-242).
-  Sprites, screens, pictures and skies are named (T-233). The 3D view's copy into the console now
+- Still to name: glyphs (T-239). Sprites, screens, pictures and skies are named
+  (T-233), the intro drop's backdrops too (T-242). The 3D view's copy into the console now
   carries the records (T-236, above); `window.rs`'s labels still draw over a clone.
 - T-074's text uses the same records (above, "Text at output resolution").

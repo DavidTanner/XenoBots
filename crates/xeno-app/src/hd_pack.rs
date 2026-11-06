@@ -11,7 +11,8 @@ use crate::game_dir::GameFiles;
 
 /// Every image a pack may replace, from the user's files, with the palette it is shown
 /// with: each model's images, each bank's sprites, and each `.m@l` screen, `.vcl`
-/// picture and sky strip as a whole file (one that does not load has none).
+/// picture, `.pcx` backdrop and sky strip as a whole file (one that does not load has
+/// none).
 pub fn originals(files: &GameFiles) -> HashMap<AssetId, Original> {
     let models: Vec<_> = crate::scene::load_models(files)
         .into_iter()
