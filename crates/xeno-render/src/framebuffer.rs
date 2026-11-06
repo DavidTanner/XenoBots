@@ -4,7 +4,7 @@ use xeno_formats::Palette;
 
 use std::ops::Range;
 
-use crate::hd::{Geometry, Record, Recording, ShapeRecord};
+use crate::hd::{AssetId, BlitRecord, Geometry, Record, Recording, ShapeRecord};
 
 /// A width and height in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +223,47 @@ impl Framebuffer {
         if let Some(stamp) = r.push(record) {
             for run in runs {
                 r.owners[run].fill(stamp | u32::from(colour));
+            }
+        }
+    }
+
+    /// Copies a whole picture (a `.m@l` screen, a `.vcl` picture) onto the surface from
+    /// its top-left, as `asset`: a record, if on, starts afresh with it.
+    pub fn copy_picture(&mut self, pixels: &[u8], asset: AssetId) {
+        self.restart_recording();
+        self.pixels[..pixels.len()].copy_from_slice(pixels);
+        let width = self.surface.width;
+        let rect = Rect::new(0, 0, width as u32, (pixels.len() / width) as u32);
+        self.record_picture(asset, rect);
+    }
+
+    /// Records `rect` (surface pixels, possibly reaching off the surface) as one blit of
+    /// `asset` at 1:1, owning each surface pixel in it in the colour it has now: for a
+    /// picture drawn without a blitter. Nothing when not recording.
+    pub fn record_picture(&mut self, asset: AssetId, rect: Rect) {
+        let (width, height) = (self.surface.width, self.surface.height);
+        let Some(r) = &mut self.recording else {
+            return;
+        };
+        let record = Record::Blit(BlitRecord {
+            asset,
+            rect,
+            scale: 256,
+            mirrored: false,
+            flipped: false,
+        });
+        let Some(tag) = r.push(record) else {
+            return;
+        };
+        let span = |from: i32, length: u32, size: usize| {
+            let at = |v: i64| v.clamp(0, size as i64) as usize;
+            at(from.into())..at(i64::from(from) + i64::from(length))
+        };
+        let columns = span(rect.x, rect.width, width);
+        for y in span(rect.y, rect.height, height) {
+            let row = y * width;
+            for i in row + columns.start..row + columns.end {
+                r.owners[i] = tag | u32::from(self.pixels[i]);
             }
         }
     }

@@ -67,6 +67,11 @@ impl AssetId {
         })
     }
 
+    /// The whole file `name` (its extension dropped), as a picture.
+    pub fn file(name: &str) -> AssetId {
+        AssetId::File(Name::new(name.split('.').next().unwrap_or(name)))
+    }
+
     /// The PNG's path in an HD pack, `/`-separated (`docs/hd.md`, "The HD pack"):
     /// `model/<name>/<view>_<image>.png` (view `m00` for the `.m00`'s images),
     /// `sprite/<bank>/<index>.png` or `file/<name>.png`.
@@ -341,6 +346,8 @@ pub fn compose(
         let t = (at * size as i64 / (i64::from(length) * factor)).clamp(0, size as i64 - 1);
         (if turned { size as i64 - 1 - t } else { t }) as usize
     };
+    let (mut columns, mut rows) = (Vec::with_capacity(sx as usize), Vec::new());
+    let mut row_key = None;
     for vy in 0..view.height {
         let start = fb.view_row_start(vy);
         for vx in 0..view.width {
@@ -353,33 +360,37 @@ pub fn compose(
             };
             let r = blit.rect;
             let (px, py) = ((i % stride) as i64, (i / stride) as i64);
+            // The block's texel columns, worked out once rather than for every row.
+            columns.clear();
+            columns.extend((0..sx).map(|ox| {
+                let at = (px - i64::from(r.x)) * sx + ox;
+                texel(at, r.width, sx, image.width, blit.mirrored)
+            }));
+            // Its texel rows, the same along a row of the view for the same blit.
+            if row_key != Some((k, py)) {
+                row_key = Some((k, py));
+                rows.clear();
+                rows.extend((0..sy).map(|oy| {
+                    let at = (py - i64::from(r.y)) * sy + oy;
+                    texel(at, r.height, sy, image.height, blit.flipped)
+                }));
+            }
+            // The block's columns that are in the window.
+            let wx0 = x as i64 + vx as i64 * sx;
+            let shown =
+                (-wx0).clamp(0, sx) as usize..(dst_size.width as i64 - wx0).clamp(0, sx) as usize;
             for oy in 0..sy {
                 let wy = y as i64 + vy as i64 * sy + oy;
                 if !(0..dst_size.height as i64).contains(&wy) {
                     continue;
                 }
-                let ty = texel(
-                    (py - i64::from(r.y)) * sy + oy,
-                    r.height,
-                    sy,
-                    image.height,
-                    blit.flipped,
-                );
-                for ox in 0..sx {
-                    let wx = x as i64 + vx as i64 * sx + ox;
-                    if !(0..dst_size.width as i64).contains(&wx) {
-                        continue;
-                    }
-                    let tx = texel(
-                        (px - i64::from(r.x)) * sx + ox,
-                        r.width,
-                        sx,
-                        image.width,
-                        blit.mirrored,
-                    );
-                    let t = image.pixels[ty * image.width + tx];
+                let ty = rows[oy as usize];
+                let texels = &image.pixels[ty * image.width..][..image.width];
+                let out = wy as usize * dst_size.width;
+                for ox in shown.clone() {
+                    let t = texels[columns[ox]];
                     if t >> 24 >= 0x80 {
-                        dst[wy as usize * dst_size.width + wx as usize] = t & 0x00ff_ffff;
+                        dst[out + (wx0 + ox as i64) as usize] = t & 0x00ff_ffff;
                     }
                 }
             }
@@ -754,6 +765,55 @@ mod tests {
         // A's 12 logical pixels less the hole, the text and B's 4: 6 pixels, four
         // output pixels each, less the clear texel.
         assert_eq!(replaced, 6 * 4 - 1);
+    }
+
+    /// T-233: a picture copied in whole draws the same pixels recorded or not, and its
+    /// HD image replaces exactly the pixels it still owns, panned with the view: the
+    /// texel is picked by surface position, not view position.
+    #[test]
+    fn an_hd_picture_pans_with_the_view_over_a_wider_surface() {
+        let asset = AssetId::file("emerge.vcl");
+        assert_eq!(asset, AssetId::File(Name::new("emerge")));
+        // A 6x2 picture on a 6x3 surface; the 3x2 view from (2, 1) shows its row 1
+        // and the surface's row 2, which it does not cover.
+        let picture: Vec<u8> = (1..=12).collect();
+        let draw = |recording| {
+            let mut fb = Framebuffer::with_surface(Size::new(3, 2), Size::new(6, 3)).unwrap();
+            fb.set_recording(recording);
+            fb.clear(0x40);
+            fb.copy_picture(&picture, asset);
+            fb.set_origin(2, 1).unwrap();
+            fb
+        };
+        let (plain, mut fb) = (draw(false), draw(true));
+        assert_eq!(plain.pixels(), fb.pixels());
+        assert_eq!(fb.recording().unwrap().records().len(), 1);
+        // A caption's pixel in another colour takes (3, 1) from it.
+        fb.pixels_mut()[6 + 3] = 0x77;
+        // Twice its size: texel (x, y) is 0xff_00xxyy.
+        let texels = (0..4u32).flat_map(|y| (0..12u32).map(move |x| 0xff00_0000 | x << 8 | y));
+        let hd = HashMap::from([(asset, HdImage::new(12, 4, texels.collect()).unwrap())]);
+        let layout = Layout {
+            sx: 2,
+            sy: 2,
+            x: 0,
+            y: 0,
+        };
+        let size = Size::new(6, 4);
+        let (before, after) = (
+            output(&fb, &layout, None, size),
+            output(&fb, &layout, Some(&hd), size),
+        );
+        for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+            let (ox, oy) = (i % 6, i / 6);
+            let (sx, sy) = (ox / 2 + 2, oy / 2 + 1);
+            if sy == 1 && sx != 3 {
+                let (tx, ty) = (sx * 2 + ox % 2, sy * 2 + oy % 2);
+                assert_eq!(now, (tx << 8 | ty) as u32, "({ox}, {oy})");
+            } else {
+                assert_eq!(now, was, "({ox}, {oy})");
+            }
+        }
     }
 
     #[test]

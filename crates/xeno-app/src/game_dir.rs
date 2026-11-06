@@ -147,6 +147,11 @@ impl GameFiles {
         self.by_name.get(&name.to_lowercase()).map(PathBuf::as_path)
     }
 
+    /// Every file's lowercase name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.by_name.keys().map(String::as_str)
+    }
+
     /// Reads all of `name` (matched case-insensitively).
     pub fn read(&self, name: &str) -> io::Result<Vec<u8>> {
         match self.path(name) {

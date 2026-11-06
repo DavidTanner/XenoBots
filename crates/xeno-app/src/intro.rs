@@ -24,7 +24,9 @@ use xeno_formats::ending::{self, Numbers};
 use xeno_formats::font::Font;
 use xeno_formats::sequence::{self, Effect, Entry};
 use xeno_formats::{lzexe, mgavideo, vcl};
-use xeno_render::{DAC_BYTES, Dac, Fade, Framebuffer, Palette, Size, TextCursor, TextMode};
+use xeno_render::{
+    AssetId, DAC_BYTES, Dac, Fade, Framebuffer, Palette, Size, TextCursor, TextMode,
+};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, ScanCode};
@@ -572,8 +574,8 @@ impl Cutscene {
                 return self.wait(self.retraces - start >= u64::from(n));
             }
             Op::Load(i) => {
-                let pixels = &self.pictures[i].pixels;
-                fb.pixels_mut()[..pixels.len()].copy_from_slice(pixels);
+                let picture = &self.pictures[i];
+                fb.copy_picture(&picture.pixels, AssetId::file(picture.name));
             }
             Op::Origin(x, y) => return self.set_origin(x, y),
             Op::Step(dx, dy) => {

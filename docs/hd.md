@@ -40,7 +40,27 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
      (`docs/formats/mxx.md`), and frames share images, so a pack replaces images, not
      frames: one HD image fixes every frame and facing that uses it.
    - `File(name)`: a whole file drawn as one picture: a `.m@l` screen, a `.vcl`
-     picture, a sky strip.
+     picture, a sky strip (`AssetId::file("maproom.m@l")`, the extension dropped).
+     Pictures are copied in, not blitted, so `Framebuffer::copy_picture` copies one,
+     starts the record afresh and records it, and `record_picture` records any
+     rectangle as one 1:1 blit owning the pixels in it as they are (T-233):
+     - **Screens** (`screens.rs`) and the viewer's pictures cover their rectangle.
+     - **`.vcl` pictures** (`intro.rs`, `Op::Load`) are recorded over the whole
+       640-wide surface. The record is in surface pixels and `compose` picks the
+       texel by surface position, so as the cutscene pans the 320x240 view (the
+       origin) the HD picture pans with it, with no record per frame.
+     - **Skies** (`view3d::draw_sky`, named by the scenario's `BGND` through
+       `Mission::sky`) are recorded as one whole 342x54 strip per wrap: the strip's
+       left edge at `-first`, `342 - first`, ... (`first` the strip column at x = 0)
+       and its top at `rows - 54`, so its last `rows` rows end at the horizon. Each
+       sky pixel is owned by the wrap it came from, so an HD strip is cut, scrolled
+       and wrapped exactly as the original; the rows above the shown ones simply
+       fall off the buffer. The records ride through the 3D view's copy into the
+       console like the models'.
+
+     A known gap: HD texels are colours, not palette indices, so they do not follow
+     the palette's fades (screens fading in, the cutscenes' fades) or colour
+     animation (T-241).
 
    Glyphs could add a `Glyph { font, code }` name the same way (T-239).
 
@@ -219,7 +239,8 @@ the blits they name. Nothing of a pack is ever in the repository.
   pack cannot draw there either: an image only repaints its original's silhouette.
 - **Checks.** Only images the user's game files have can be replaced: the loader takes
   each original's size (`hd_pack::originals`: `LoadedModel::image_sizes` for every
-  model, and every sprite of `msprite0` to `msprite5`) and skips,
+  model, every sprite of `msprite0` to `msprite5`, and every `.m@l`, `.vcl` and
+  `sky*.b@n` in the game directory) and skips,
   with a warning in the log, a file whose path names nothing, an image the game does
   not have (`model/scorpion/0_99.png`), a PNG that does not decode and one whose size
   is not a whole multiple. Those images stay the original's. A directory that cannot
@@ -232,8 +253,11 @@ the blits they name. Nothing of a pack is ever in the repository.
   and one solid-colour image over the first model image seen in a training mission's
   console (`real_assets_an_hd_pack_replaces_only_its_model_image`: the netrelay's `.m00`
   image in NTRAIN), and likewise one sprite (`real_assets_an_hd_pack_replaces_only_its_sprite`:
-  `sprite/3/65.png`, a piece of the Scorpion console, T-233): only that image's owned
-  pixels change. The console's 3D view
+  `sprite/3/65.png`, a piece of the Scorpion console, T-233), the console's screen
+  and the 3D view's sky (`real_assets_an_hd_pack_replaces_only_its_screen_and_sky`:
+  `file/scorpcon.png`, `file/sky_a.png`): only that image's owned pixels change. A
+  synthetic `.vcl`-like picture on a wider surface (`an_hd_picture_pans_with_the_view_over_a_wider_surface`)
+  checks the pan. The console's 3D view
   reaches the screen's record through `copy_through` (T-236).
 - **Cost** (release, 3840x2160, the most model pixels of any stock robot's first
   console frame, SCEN06A, 401 blits): `present` 1.0 ms, `compose` with one image
@@ -241,7 +265,12 @@ the blits they name. Nothing of a pack is ever in the repository.
   68 ms. With the sprites named too (T-233; every stock mission's situation room and
   first console, all 1,171 model images and sprites replaced in memory): `present`
   0.9 ms, `compose` 1.65 to 1.69 ms on a situation room and 2.2 to 2.8 ms on a console
-  (the Scout's, SCEN08A, the slowest), against the 14.3 ms frame. A frame records at
+  (the Scout's, SCEN08A, the slowest), against the 14.3 ms frame. With the screen
+  and sky replaced as well (1,201 images), every window pixel of the frame is an HD
+  texel and `compose` took 9.9 ms; working each block's texel columns out once and its
+  rows once per view row (rather than two divisions per window pixel) brought that
+  to 6.0 to 6.2 ms. What is left is mostly writing the window block by block rather
+  than row by row (T-243). A frame records at
   most 599 drawings (SCEN07A's console; 46 to 78 of them sprites), and each full
   redraw of a mission view or the map room starts the record afresh, so the 65,536
   cap in `window.rs` is never near.
@@ -266,7 +295,7 @@ until a pack is loaded.
 ## For the pack (T-072) and UI text (T-074)
 
 - T-072 loads the pack (above, "The HD pack").
-- Still to name at their call sites: the screens and pictures copied in whole and
-  skies (T-233, part 2) and glyphs (T-239). Sprites are named (T-233). The 3D view's copy into the console now
+- Still to name: glyphs (T-239) and the intro drop's `.pcx` backdrops (T-242).
+  Sprites, screens, pictures and skies are named (T-233). The 3D view's copy into the console now
   carries the records (T-236, above); `window.rs`'s labels still draw over a clone.
 - T-074's text uses the same records (above, "Text at output resolution").

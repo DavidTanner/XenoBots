@@ -573,6 +573,8 @@ impl Viewer {
                     let start = (top + y) * surface.width + left;
                     dst[start..start + width].copy_from_slice(row);
                 }
+                let rect = Rect::new(left as i32, top as i32, *width as u32, *height as u32);
+                fb.record_picture(AssetId::file(&self.name), rect);
                 fb.set_origin(self.origin.0, self.origin.1)
                     .expect("the origin stays on the surface");
             }

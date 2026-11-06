@@ -2673,11 +2673,14 @@ impl Mission {
     }
 
     /// The 3D views' sky: the one Ctrl+Alt+B loaded, else the scenario file's.
-    fn sky<'a>(&'a self, assets: &'a Assets) -> Option<&'a Sky> {
-        match &self.sky {
+    /// The sky in play, named by the scenario's `BGND` for the HD record.
+    fn sky<'a>(&'a self, assets: &'a Assets) -> Option<(&'a Sky, AssetId)> {
+        let sky = match &self.sky {
             Some(sky) => sky.as_ref(),
             None => assets.skies.get(&self.file),
-        }
+        }?;
+        let name = self.scenario.as_ref().map(scene::sky_name);
+        Some((sky, AssetId::file(name.as_deref().unwrap_or("backland"))))
     }
 
     /// Ctrl+Alt+B's file (`1000:6dc3`): its name, upper-cased as DOS gives it, over the
@@ -7872,7 +7875,7 @@ pub mod tests {
                 &assets.motion,
                 terrain.map_or(&[][..], |t| &t.features),
                 &assets.models,
-                assets.skies.get(&m.file),
+                m.sky(&assets),
                 None,
             );
             let second = ((second_left + 1) as u16, (second_top + 1) as u16);
@@ -9401,6 +9404,15 @@ pub mod tests {
         replaces_only_its_image(|a| matches!(a, AssetId::Sprite { .. }));
     }
 
+    /// T-233: likewise the console's screen (`.m@l`) and the 3D view's sky strip.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_an_hd_pack_replaces_only_its_screen_and_sky() {
+        let sky = |a: &AssetId| matches!(a, AssetId::File(n) if n.0.starts_with(b"sky"));
+        replaces_only_its_image(|a| matches!(a, AssetId::File(n) if !n.0.starts_with(b"sky")));
+        replaces_only_its_image(sky);
+    }
+
     /// The first image `pick` takes that owns a pixel of a training console, replaced.
     fn replaces_only_its_image(pick: fn(&AssetId) -> bool) {
         use crate::game_dir::{ENV_VAR, GameDir};
@@ -9418,7 +9430,9 @@ pub mod tests {
         let originals = crate::hd_pack::originals(&files);
         let window = Size::new(3840, 2160);
         let mut tried = Vec::new();
-        for name in ["ntrain.usg", "htrain.usg", "strain.usg", "ctrain.usg"] {
+        let training = ["ntrain.usg", "htrain.usg", "strain.usg", "ctrain.usg"];
+        let rest = assets.scenarios.keys().map(String::as_str);
+        for name in training.into_iter().chain(rest) {
             let scenario = &assets.scenarios[name];
             let mut m = Mission::new(name.into(), scenario, Random::seeded(1), &assets.motion);
             let Some(&robot) = m.robots().first() else {
@@ -9430,7 +9444,7 @@ pub mod tests {
             let palette = Palette::from_vga6(&picture.dac).unwrap();
             let mut fb = Framebuffer::new(Size::MODE_13H);
             fb.set_recording(true);
-            fb.pixels_mut().copy_from_slice(&picture.pixels);
+            fb.copy_picture(&picture.pixels, AssetId::file(file));
             m.draw(&mut fb, &assets);
             let r = fb.recording().unwrap();
             let owner = |i: usize| r.owner(i, fb.pixels()[i]).map(|k| &r.records()[k]);
@@ -9463,8 +9477,8 @@ pub mod tests {
             for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
                 let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
                 let (x, y) = (
-                    (wx - layout.x) / layout.sx as isize,
-                    (wy - layout.y) / layout.sy as isize,
+                    (wx - layout.x).div_euclid(layout.sx as isize),
+                    (wy - layout.y).div_euclid(layout.sy as isize),
                 );
                 let inside = (0..320).contains(&x) && (0..200).contains(&y);
                 let owned = inside
