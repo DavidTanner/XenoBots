@@ -42,6 +42,20 @@ fn check_flag_verifies_the_game_dir_the_intro_the_drop_and_screens_without_a_win
         run(&["--check"]),
         run(&["--check", "--screen", "test-card"]),
     );
+    // A missing pack is an error, named.
+    let no_pack = run(&[
+        "--check",
+        "--screen",
+        "test-card",
+        "--hd-pack",
+        "no-such-pack",
+    ]);
+    let stderr = String::from_utf8_lossy(&no_pack.stderr);
+    assert!(!no_pack.status.success());
+    assert!(
+        stderr.contains("cannot read the HD pack no-such-pack"),
+        "{stderr}"
+    );
     // Synthetic, not the game's: an LZEXE-packed image whose entry point loads DS =
     // 0x2000 (above the code, so the code's real addresses and the tables never meet), with ten made-up entries for `ealogo.vcl` at DS:0xecac, and a flat picture.
     // Also made-up map room tables (`synthetic_map_room`), mission views, a training

@@ -17,6 +17,7 @@
 //! on the current monitor, so the display mode never changes; the scaler fits the
 //! picture to whatever size that gives.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -29,7 +30,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::Rect;
-use xeno_render::{Aspect, Framebuffer, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode};
+use xeno_render::{
+    Aspect, AssetId, Framebuffer, HdImage, Layout, Palette, Rgb, Scale, Size, TextCursor, TextMode,
+};
 
 use crate::clock::{Clock, Rate, SPEEDS, Step};
 use crate::drop;
@@ -156,7 +159,8 @@ pub enum FrontEnd {
 /// or closes the window. `music` plays what the cutscenes and screens cue; a mission
 /// in play runs `speed` retraces a real one (T-215); `wasd` starts WASD on (T-216);
 /// `hd_shapes` draws the recorded shapes again at the window's resolution (T-236), and
-/// `hd_ui` the recorded glyphs (T-074).
+/// `hd_ui` the recorded glyphs (T-074); `hd_pack`'s images replace the blits they name
+/// (T-072).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
@@ -166,6 +170,7 @@ pub fn run(
     wasd: bool,
     hd_shapes: bool,
     hd_ui: bool,
+    hd_pack: HashMap<AssetId, HdImage>,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -232,8 +237,11 @@ pub fn run(
         music,
         speed,
         legend: false,
-        hd_shapes,
-        hd_ui,
+        hd: Hd {
+            shapes: hd_shapes,
+            ui: hd_ui,
+            pack: hd_pack,
+        },
     };
     app.input.wasd = wasd;
     let event_loop = EventLoop::new()?;
@@ -304,12 +312,41 @@ struct App {
     speed: u64,
     /// The key legend (T-217): Ctrl+F12 labels the view's widgets with their keys.
     legend: bool,
-    /// `--hd-shapes` (T-236): record the frame's shapes and draw them again at the
-    /// window's resolution (`docs/hd.md`).
-    hd_shapes: bool,
-    /// `--hd-ui` (T-074): record the frame's glyphs, the labels' too, and draw them
-    /// again at the window's resolution.
-    hd_ui: bool,
+    /// What is drawn again at the window's resolution (`docs/hd.md`).
+    hd: Hd,
+}
+
+/// Drawing at the window's resolution, over the recorded frame (`docs/hd.md`).
+#[derive(Debug, Default)]
+struct Hd {
+    /// `--hd-shapes` (T-236): the frame's shapes.
+    shapes: bool,
+    /// `--hd-ui` (T-074): the frame's glyphs, the labels' too.
+    ui: bool,
+    /// `--hd-pack` (T-072): the pack's images, drawn over the recorded blits they name.
+    pack: HashMap<AssetId, HdImage>,
+}
+
+impl Hd {
+    /// The window's words for `fb`: `present`, or `compose` with a pack, then the shapes
+    /// and the glyphs when those are on, so they stay over the pack's images as over the
+    /// original's.
+    fn draw(
+        &self,
+        fb: &Framebuffer,
+        palette: &Palette,
+        layout: &Layout,
+        buffer: &mut [u32],
+        size: Size,
+    ) {
+        xeno_render::compose(fb, palette, layout, &self.pack, buffer, size);
+        if self.shapes {
+            xeno_render::draw_shapes(fb, palette, layout, buffer, size);
+        }
+        if self.ui {
+            xeno_render::draw_glyphs(fb, palette, layout, buffer, size);
+        }
+    }
 }
 
 /// Counts for the once-a-second rate log.
@@ -451,13 +488,7 @@ impl App {
                 .map(|shape| pointer::draw(&mut self.fb, at, shape)),
             _ => None,
         };
-        xeno_render::present(&self.fb, &self.palette, &layout, &mut buffer, window_size);
-        if self.hd_shapes {
-            xeno_render::draw_shapes(&self.fb, &self.palette, &layout, &mut buffer, window_size);
-        }
-        if self.hd_ui {
-            xeno_render::draw_glyphs(&self.fb, &self.palette, &layout, &mut buffer, window_size);
-        }
+        (self.hd).draw(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         if let Some(under) = under {
             under.restore(&mut self.fb);
         }
@@ -478,7 +509,7 @@ impl App {
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
         // A new picture (a mode change, the front end) starts unrecorded.
-        if self.hd_shapes || self.hd_ui {
+        if self.hd.shapes || self.hd.ui || !self.hd.pack.is_empty() {
             match self.fb.recording().map(|r| r.records().len()) {
                 None => self.fb.set_recording(true),
                 // shortcut: a screen that redraws without copying its picture again grows
@@ -1030,9 +1061,113 @@ mod tests {
             music: Jukebox::default(),
             speed: 1,
             legend: false,
-            hd_shapes: false,
-            hd_ui: false,
+            hd: Hd::default(),
         }
+    }
+
+    /// T-072: a pack with one usable image replaces that model image's pixels with its
+    /// texels and leaves every other output pixel `present`'s; with no pack and no
+    /// flags the frame is `present`'s byte for byte. The pack is written here.
+    #[test]
+    fn an_hd_pack_replaces_one_model_image_and_leaves_the_rest() {
+        use xeno_formats::mxx::{Frame, Image, Model, Part, Span, View, ViewHeader};
+        use xeno_render::{LoadedModel, ModelScale, ModelTarget, Rect};
+        // One view at facing 0 drawing two 2x2 images side by side.
+        let square = |colour| Image {
+            width: 2,
+            height: 2,
+            rows: vec![
+                Span {
+                    skip: 0,
+                    pixels: vec![colour; 2],
+                };
+                2
+            ],
+        };
+        let part = |image, x| Part { image, x, y: 0 };
+        let view = View {
+            header: ViewHeader {
+                size: 0,
+                facing: 0,
+                mirror_facing: 0,
+                index_offset: 0,
+                mirror_index_offset: 0,
+                lists_offset: 0,
+                mirror_lists_offset: 0,
+                data_offset: 0,
+            },
+            animations: vec![vec![Frame {
+                depth: 0,
+                parts: vec![part(0, 0), part(1, 2)],
+            }]],
+            mirror_animations: None,
+            images: vec![square(0x31), square(0x52)],
+        };
+        let mut model =
+            LoadedModel::new(&Model { views: Vec::new() }, &[Model { views: vec![view] }]);
+        model.name = xeno_render::Name::new("synth");
+        use crate::screens::{Screen, tests};
+        let mut app = test_app(FrontEnd::Screens(Box::new(tests::new(Screen::MapRoom))));
+        app.fb = Framebuffer::new(Size::new(8, 6));
+        app.palette = Palette {
+            colors: [Rgb { r: 0, g: 0, b: 9 }; Palette::LEN],
+        };
+        app.fb.set_recording(true);
+        let target = ModelTarget {
+            clip: Rect::new(0, 0, 8, 6),
+            anchor: (1, 1),
+            scale: ModelScale::new(256),
+        };
+        app.fb.draw_model(&model, 0, &[], &target);
+        // A 2x pack: image 0 a red square with a clear corner; a missing image, a
+        // wrong size and a stray file are skipped.
+        let dir = std::env::temp_dir().join(format!("xeno-hd-pack-{}", std::process::id()));
+        let images = dir.join("model/synth");
+        std::fs::create_dir_all(&images).unwrap();
+        let mut red = image::RgbaImage::from_pixel(4, 4, image::Rgba([0xff, 0, 0, 0xff]));
+        red.put_pixel(3, 0, image::Rgba([0, 0xff, 0, 0x7f]));
+        red.save(images.join("0_0.png")).unwrap();
+        red.save(images.join("0_9.png")).unwrap();
+        image::RgbaImage::new(3, 4)
+            .save(images.join("0_1.png"))
+            .unwrap();
+        std::fs::write(dir.join("notes.txt"), "not an image").unwrap();
+        let originals = model.image_sizes().into_iter().collect();
+        let pack = crate::hd_pack::load(&dir, &originals).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(crate::hd_pack::load(&dir, &originals).is_err());
+        assert_eq!(pack.len(), 1);
+        let layout = Layout {
+            sx: 2,
+            sy: 2,
+            x: 0,
+            y: 0,
+        };
+        let size = Size::new(16, 12);
+        let frame = |hd: &Hd| {
+            let mut buffer = vec![0xdead_beef; 16 * 12];
+            hd.draw(&app.fb, &app.palette, &layout, &mut buffer, size);
+            buffer
+        };
+        let mut before = vec![0; 16 * 12];
+        xeno_render::present(&app.fb, &app.palette, &layout, &mut before, size);
+        assert!(frame(&Hd::default()) == before);
+        let after = frame(&Hd {
+            pack,
+            ..Hd::default()
+        });
+        let mut replaced = 0;
+        for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+            let (ox, oy) = (i % 16, i / 16);
+            // Image 0 covers logical (1, 1)..(3, 3): output (2, 2)..(6, 6).
+            if (2..6).contains(&ox) && (2..6).contains(&oy) && (ox, oy) != (5, 2) {
+                assert_eq!(now, 0xff_0000, "({ox}, {oy})");
+                replaced += 1;
+            } else {
+                assert_eq!(now, was, "({ox}, {oy})");
+            }
+        }
+        assert_eq!(replaced, 15);
     }
 
     #[test]

@@ -143,6 +143,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--wasd` | Not in the original: on the robot consoles, W, A, S and D steer as Up, Left, Down and Right, and the arrows do the letters' jobs (Left the next target, Down the status page, Right the scorpion's relay dump, Up the scout's standing stance). Shift+F12 switches it while playing. The keypad's arrows still steer, and Ctrl+Alt+S is still the shots; see `docs/sim.md`, "The cockpit keys (T-105)". |
 | `--hd-shapes` | Not in the original: draw the game's shapes (the 3D view's hills and blocks, the maps' hill octagons, sloping lines) again at the window's resolution in their own palette colours, so their edges are smooth at 4K instead of stair-stepped. Pictures, sprites, models and text stay the original's pixels, and the game is unchanged; see `docs/hd.md`, "Shapes at output resolution (T-236)". |
 | `--hd-ui` | Not in the original: draw the game's text, and the port's own speed label and key legend, again at the window's resolution from the fonts in your `mgavideo.dvr`, its diagonal steps turned into straight edges in its own palette colours, so it is sharp at 4K. Level and upright strokes stay as they are, the art stays the original's pixels and the game is unchanged; see `docs/hd.md`, "Text at output resolution (T-074)". |
+| `--hd-pack <dir>` | Not in the original: a directory of your own PNGs that replace the game's images one by one, drawn at the window's resolution (for example `model/scorpion/3_12.png`, each side a whole multiple of the original's; alpha below half shows the original). Images it does not name stay the original's; unusable files are logged and skipped. Only model images are drawn by name so far. None is provided here; see `docs/hd.md`, "The HD pack". |
 | `--seed <n>` | The seed of the game's random word (the campaign's alert rises and calendar). By default it comes from the clock, as the original's comes from the timer; it is logged at start-up, and passing it again repeats the run. |
 
 | Key | Action |
@@ -193,12 +194,6 @@ ESC, F11 and Alt+Enter work as above.
 
 On a high-DPI (Retina) display the picture is drawn in the display's real pixels, so
 the default window gets a larger scale there, not a blurred one.
-
-Planned options (see `cargo run -p xeno-app -- --help`):
-
-| Flag | Meaning |
-|---|---|
-| `--hd-pack <path>` | Optional directory of higher-resolution replacement assets (not provided here). |
 
 ## Developer tool
 
@@ -260,9 +255,9 @@ The game draws into a logical framebuffer at the original resolution with the or
 256-colour palette, exactly as the DOS version did. A separate presentation step scales
 that framebuffer to your window: integer nearest-neighbour scaling with letterboxing
 and 4:3 aspect correction by default, so a 3840x2160 display shows a crisp 8x10 image
-(each 320x200 pixel 8 wide and 10 tall) rather than a smeared one. Later milestones
-add edge-aware scalers and an optional user-supplied HD asset pack, with the sprite
-pipeline designed so higher-resolution art can replace the originals one asset at a
+(each 320x200 pixel 8 wide and 10 tall) rather than a smeared one. Shapes and text can
+be drawn again at the window's resolution (`--hd-shapes`, `--hd-ui`), and an optional
+user-supplied HD asset pack (`--hd-pack`) replaces the originals' images one asset at a
 time ([docs/hd.md](docs/hd.md)).
 
 ## Project layout

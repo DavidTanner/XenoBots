@@ -2,8 +2,8 @@
 
 How higher-resolution art can replace the original's images one at a time, at output
 resolution, without changing what the game draws. This is the groundwork for the HD
-asset pack (T-072) and sharp UI text (T-074). No HD art exists in the repository; a
-pack is always the user's, loaded at run time.
+asset pack (T-072, "The HD pack" below) and sharp UI text (T-074). No HD art exists in
+the repository; a pack is always the user's, loaded at run time.
 
 ## The rule: the indexed framebuffer stays the truth
 
@@ -188,6 +188,52 @@ the development machine (release, 3840x2160, 8x10) `draw_glyphs` takes about 0.2
 on the situation room's orders view and log, 0.17 ms on the status page and 0.07 ms on
 a console, against the 14.3 ms frame budget.
 
+## The HD pack (T-072)
+
+`--hd-pack <dir>` loads the user's replacement images at start-up and draws them over
+the blits they name. Nothing of a pack is ever in the repository.
+
+- **Names.** One PNG per image, at a path under the directory made from its `AssetId`
+  (`AssetId::pack_path`, `from_pack_path`), lower case (any case is read):
+
+  | `AssetId` | Path | Example |
+  |---|---|---|
+  | `ModelImage { model, view: Some(v), image }` | `model/<model>/<v>_<image>.png` | `model/scorpion/3_12.png` |
+  | `ModelImage { model, view: None, image }` (the `.m00`'s) | `model/<model>/m00_<image>.png` | `model/netrelay/m00_0.png` |
+  | `Sprite { bank, index }` | `sprite/<bank>/<index>.png` | `sprite/1/42.png` |
+  | `File(name)` | `file/<name>.png` | `file/sitroom.png` |
+
+  Numbers are decimal with no leading zeros, so each image has one name; views count
+  along the loaded chain (`.m08`'s first, then `.m16`'s, `.m32`'s). T-239 adds
+  `glyph/<font>/<code>.png` with `AssetId::Glyph`.
+- **Size.** Each side a whole multiple of the original image's (4x4, 8x8 and 8x10 all
+  work). The whole image is stretched evenly (nearest texel) over the rectangle the
+  blit covers, however the original scaled it, so the multiple only sets the detail.
+- **Transparency.** PNG alpha: a texel with alpha below 0x80 shows the original's
+  pixel there, at or above it the texel's colour, opaque (no blending). Colour 0 is
+  transparent in the original's blit, so those pixels are never the blit's and the
+  pack cannot draw there either: an image only repaints its original's silhouette.
+- **Checks.** Only images the user's game files have can be replaced: the loader takes
+  each original's size (`LoadedModel::image_sizes` today, for every model) and skips,
+  with a warning in the log, a file whose path names nothing, an image the game does
+  not have (`model/scorpion/0_99.png`), a PNG that does not decode and one whose size
+  is not a whole multiple. Those images stay the original's. A directory that cannot
+  be read is an error before the window opens. Sprites and whole files are named but
+  not yet drawn by name, so their sizes join the loader with T-233.
+- **Drawing.** With a pack, `window.rs` records every frame (as for `--hd-shapes`) and
+  calls `compose` in place of `present`, then `draw_shapes` and `draw_glyphs` if those
+  are on, so smoothed shapes and text stay over the pack's images as they are over the
+  original's. With no pack and neither flag, the frame is `present`'s byte for byte.
+- **Checked.** A synthetic pack (`an_hd_pack_replaces_one_model_image_and_leaves_the_rest`)
+  and one solid-colour image over the first model image seen in a training mission's
+  console (`real_assets_an_hd_pack_replaces_only_its_model_image`: the netrelay's `.m00`
+  image in NTRAIN): only that image's owned pixels change. The console's 3D view
+  reaches the screen's record through `copy_through` (T-236).
+- **Cost** (release, 3840x2160, the most model pixels of any stock robot's first
+  console frame, SCEN06A, 401 blits): `present` 1.0 ms, `compose` with one image
+  replaced 1.39 ms, with all 781 model images replaced 1.41 ms; loading 781 4x PNGs
+  68 ms.
+
 ## What it costs
 
 Measured on the development machine with a release build, drawing real scorpion
@@ -207,11 +253,7 @@ until a pack is loaded.
 
 ## For the pack (T-072) and UI text (T-074)
 
-- T-072 loads PNGs into `HdImage`s (`0xAARRGGBB`, any size; the stretch maps the
-  whole image onto the blit's rectangle, so a 4x pack and an 8x pack both work), keyed
-  by `AssetId`, turns recording on for frames it shows, starts each frame's record
-  afresh where the screen redraws, and calls `compose` instead of `present`. Missing
-  names fall back to the original per asset with no extra code.
+- T-072 loads the pack (above, "The HD pack").
 - Still to name at their call sites: sprites (`blit_sprite`), the screens and pictures
   copied in whole, skies and glyphs (T-233). The 3D view's copy into the console now
   carries the records (T-236, above); `window.rs`'s labels still draw over a clone.

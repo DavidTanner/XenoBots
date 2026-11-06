@@ -47,6 +47,55 @@ pub enum AssetId {
     File(Name),
 }
 
+impl AssetId {
+    /// The PNG's path in an HD pack, `/`-separated (`docs/hd.md`, "The HD pack"):
+    /// `model/<name>/<view>_<image>.png` (view `m00` for the `.m00`'s images),
+    /// `sprite/<bank>/<index>.png` or `file/<name>.png`.
+    pub fn pack_path(&self) -> String {
+        let name = |n: &Name| {
+            String::from_utf8_lossy(&n.0)
+                .trim_end_matches('\0')
+                .to_string()
+        };
+        match self {
+            AssetId::Sprite { bank, index } => format!("sprite/{bank}/{index}.png"),
+            AssetId::ModelImage { model, view, image } => {
+                let view = view.map_or("m00".to_string(), |v| v.to_string());
+                format!("model/{}/{view}_{image}.png", name(model))
+            }
+            AssetId::File(n) => format!("file/{}.png", name(n)),
+        }
+    }
+
+    /// The asset a pack path names (any case), or `None` if it names none.
+    pub fn from_pack_path(path: &str) -> Option<AssetId> {
+        let path = path.to_ascii_lowercase();
+        let parts: Vec<&str> = path.strip_suffix(".png")?.split('/').collect();
+        let name = |n: &str| (!n.is_empty() && n.len() <= 8).then(|| Name::new(n));
+        let asset = match parts[..] {
+            ["sprite", bank, index] => AssetId::Sprite {
+                bank: bank.parse().ok()?,
+                index: index.parse().ok()?,
+            },
+            ["model", model, file] => {
+                let (view, image) = file.split_once('_')?;
+                AssetId::ModelImage {
+                    model: name(model)?,
+                    view: match view {
+                        "m00" => None,
+                        v => Some(v.parse().ok()?),
+                    },
+                    image: image.parse().ok()?,
+                }
+            }
+            ["file", n] => AssetId::File(name(n)?),
+            _ => return None,
+        };
+        // Only the canonical spelling (no `+1` or `007`), so one image has one name.
+        (asset.pack_path() == path).then_some(asset)
+    }
+}
+
 /// Where one blit drew an image: the logical rectangle the whole image covers, in
 /// surface pixels and before any clipping, and how it was turned. A model image's
 /// rectangle is its unit rectangle scaled from the anchor ([`crate::ModelScale`]);
@@ -577,6 +626,45 @@ mod tests {
             output(&fb, &layout, Some(&hd), size),
             output(&fb, &layout, None, size)
         );
+    }
+
+    #[test]
+    fn pack_paths_name_every_kind_of_asset_one_way() {
+        for (asset, path) in [
+            (model_image("scorpion", 12), "model/scorpion/1_12.png"),
+            (
+                AssetId::ModelImage {
+                    model: Name::new("Explode"),
+                    view: None,
+                    image: 0,
+                },
+                "model/explode/m00_0.png",
+            ),
+            (
+                AssetId::Sprite {
+                    bank: 2,
+                    index: 389,
+                },
+                "sprite/2/389.png",
+            ),
+            (AssetId::File(Name::new("sitroom")), "file/sitroom.png"),
+        ] {
+            assert_eq!(asset.pack_path(), path);
+            assert_eq!(AssetId::from_pack_path(path), Some(asset));
+            assert_eq!(AssetId::from_pack_path(&path.to_uppercase()), Some(asset));
+        }
+        for bad in [
+            "model/scorpion/1_12.bmp",
+            "model/scorpion/01_12.png",
+            "model/scorpion/1-12.png",
+            "model/toolongname/1_2.png",
+            "sprite/256/1.png",
+            "sprite/1.png",
+            "file/a/b.png",
+            "readme.txt",
+        ] {
+            assert_eq!(AssetId::from_pack_path(bad), None, "{bad}");
+        }
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod dialog;
 mod drop;
 mod editor;
 mod game_dir;
+mod hd_pack;
 mod humancon;
 mod intro;
 mod keymap;
@@ -151,6 +152,12 @@ struct Cli {
     /// steps smoothed, in its own colours, so it is sharp at 4K. The game is unchanged.
     #[arg(long)]
     hd_ui: bool,
+
+    /// Not in the original: a directory of PNGs that replace the game's images one by
+    /// one, drawn at the window's resolution (`docs/hd.md`, "The HD pack"). Images it
+    /// does not name, and files it cannot use (logged), stay the original's.
+    #[arg(long, value_name = "DIR")]
+    hd_pack: Option<PathBuf>,
 }
 
 /// `--screen`'s values.
@@ -301,6 +308,20 @@ fn main() -> ExitCode {
             window::FrontEnd::TestCard(keymap)
         }
     };
+    let hd_pack = match &cli.hd_pack {
+        Some(dir) => {
+            let models = scene::load_models(&files).into_iter().flatten();
+            let originals = models.flat_map(|m| m.image_sizes()).collect();
+            match hd_pack::load(dir, &originals) {
+                Ok(pack) => pack,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        None => Default::default(),
+    };
     if cli.check {
         return ExitCode::SUCCESS;
     }
@@ -321,6 +342,7 @@ fn main() -> ExitCode {
         cli.wasd,
         cli.hd_shapes,
         cli.hd_ui,
+        hd_pack,
         viewer,
         intro,
         drop,

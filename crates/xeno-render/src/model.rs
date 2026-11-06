@@ -360,6 +360,25 @@ impl LoadedModel {
         }
     }
 
+    /// Every image's name and size in pixels: what an HD pack may replace.
+    pub fn image_sizes(&self) -> Vec<(AssetId, (usize, usize))> {
+        let views = self.views.iter().enumerate();
+        let views = views.map(|(v, view)| (Some(v as u16), &view.images));
+        std::iter::once((None, &self.direction_free))
+            .chain(views)
+            .flat_map(|(view, images)| {
+                images.iter().enumerate().map(move |(k, i)| {
+                    let asset = AssetId::ModelImage {
+                        model: self.name,
+                        view,
+                        image: k as u16,
+                    };
+                    (asset, (usize::from(i.width), usize::from(i.height)))
+                })
+            })
+            .collect()
+    }
+
     /// The view drawn at `facing` (an even 64th of a turn) and its animations there.
     pub fn facing(&self, facing: u8) -> Option<(&View, &[Animation])> {
         self.facing_view(facing).map(|(_, view, a)| (view, a))
