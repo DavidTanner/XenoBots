@@ -179,6 +179,10 @@ impl Framebuffer {
         self.recording.as_deref()
     }
 
+    pub(crate) fn recording_mut(&mut self) -> Option<&mut Recording> {
+        self.recording.as_deref_mut()
+    }
+
     pub(crate) fn pixels_and_recording(&mut self) -> (&mut [u8], Option<&mut Recording>) {
         (&mut self.pixels, self.recording.as_deref_mut())
     }

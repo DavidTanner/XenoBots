@@ -145,7 +145,7 @@ pub fn draw_shapes(
         .iter()
         .map(|r| match r {
             Record::Shape(s) => Cover::new(&s.shape),
-            Record::Blit(_) => None,
+            _ => None,
         })
         .collect();
     if covers.iter().all(Option::is_none) {
