@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use xeno_formats::ban::Sky;
 use xeno_formats::view3d::{Float, View3d};
 
+use crate::hd::AssetId;
 use crate::shape::{self, Builtins, Shape};
 use crate::{Framebuffer, LoadedModel, ModelScale, ModelTarget, Rect, model_facing};
 
@@ -396,12 +397,14 @@ impl Framebuffer {
     /// `gfx_draw_sky` at detail 1 (`docs/formats/b@n.md`, "Sky strip"): the strip's
     /// last `ceil(h / 2)` rows over the upper rows, wrapping every 342 columns from
     /// `heading / 64 - w / 2`; without a strip, the upper `h / 2` rows 0x3e and the
-    /// rest 0x3f.
-    pub fn draw_sky(&mut self, sky: Option<&Sky>, heading: u16) {
+    /// rest 0x3f. When recording, a strip (named `asset`) is recorded as one whole
+    /// 342x54 strip per wrap, placed so its last rows end at the horizon and its column
+    /// `first` is at x = 0, so an HD strip scrolls and wraps with it (`docs/hd.md`).
+    pub fn draw_sky(&mut self, sky: Option<(&Sky, AssetId)>, heading: u16) {
         let width = self.surface().width;
         let height = self.surface().height;
         let pixels = self.pixels_mut();
-        let Some(sky) = sky else {
+        let Some((sky, asset)) = sky else {
             let (upper, lower) = pixels.split_at_mut(width * (height / 2));
             upper.fill(FLAT_SKY);
             lower.fill(GROUND);
@@ -415,7 +418,14 @@ impl Framebuffer {
                 *p = from[(first as usize + x) % Sky::WIDTH];
             }
         }
-        self.mark_background(0..width * rows);
+        if self.recording().is_none() {
+            return;
+        }
+        let strip = (Sky::WIDTH as u32, Sky::HEIGHT as u32);
+        let top = rows as i32 - Sky::HEIGHT as i32;
+        for left in (-first..width as i64).step_by(Sky::WIDTH) {
+            self.record_picture(asset, Rect::new(left as i32, top, strip.0, strip.1));
+        }
     }
 
     /// The main view's steps after the camera and the build: the ground, the sky,
@@ -436,7 +446,7 @@ impl Framebuffer {
         camera: &Camera,
         nodes: &[RenderNode],
         models: &[Option<LoadedModel>],
-        sky: Option<&Sky>,
+        sky: Option<(&Sky, AssetId)>,
         probe: Option<(usize, usize)>,
     ) -> Option<u16> {
         let size = self.surface();
@@ -806,7 +816,7 @@ mod tests {
     fn the_sky_wraps_over_the_upper_half_and_the_ground_fills_the_rest() {
         let mut fb = Framebuffer::new(Size::new(8, 5));
         fb.fill_ground();
-        fb.draw_sky(Some(&sky()), 64 * 3);
+        fb.draw_sky(Some((&sky(), AssetId::file("sky_a"))), 64 * 3);
         // ceil(5 / 2) = 3 rows from strip row 51, from column 3 - 4 = -1 (341).
         let p = fb.pixels();
         assert_eq!(&p[..8], &[142, 1, 2, 3, 4, 5, 6, 7]);
@@ -818,6 +828,45 @@ mod tests {
             fb.pixels(),
             &[&[FLAT_SKY; 8][..], &[GROUND; 12]].concat()[..]
         );
+    }
+
+    /// T-233: a recorded sky draws the same pixels, and owns them through one whole
+    /// strip per wrap, placed so the HD strip's texel under each pixel is the one drawn.
+    #[test]
+    fn a_recorded_sky_names_each_wrap_of_the_strip() {
+        use crate::hd::BlitRecord;
+        let asset = AssetId::file("sky_b");
+        let draw = |recording: bool| {
+            let mut fb = Framebuffer::new(Size::new(400, 9));
+            fb.set_recording(recording);
+            fb.fill_ground();
+            // From column 10 * 64 / 64 - 200 = -190, that is 152.
+            fb.draw_sky(Some((&sky(), asset)), 64 * 10);
+            fb
+        };
+        let (plain, fb) = (draw(false), draw(true));
+        assert_eq!(plain.pixels(), fb.pixels());
+        let r = fb.recording().unwrap();
+        let rects: Vec<Rect> = r.blits().map(|b: &BlitRecord| b.rect).collect();
+        // 5 rows shown: the strip's top at 5 - 54; wraps at x = -152, 190 and 532.
+        assert_eq!(
+            rects,
+            [Rect::new(-152, -49, 342, 54), Rect::new(190, -49, 342, 54)]
+        );
+        for (i, &p) in fb.pixels().iter().enumerate() {
+            let (x, y) = (i % 400, i / 400);
+            let owner = r.owner(i, p);
+            if y >= 5 {
+                assert_eq!(owner, None, "the ground at ({x}, {y})");
+                continue;
+            }
+            let k = owner.unwrap();
+            let rect = rects[k];
+            assert!((rect.x..rect.x + 342).contains(&(x as i32)));
+            // The strip's own column and row there is what was drawn.
+            let (sx, sy) = ((x as i32 - rect.x) as usize, (y as i32 - rect.y) as usize);
+            assert_eq!(sky().pixels[sy * Sky::WIDTH + sx], p);
+        }
     }
 
     /// A model with one facing (0) whose one frame is a 2x2 image of colour 9 with its

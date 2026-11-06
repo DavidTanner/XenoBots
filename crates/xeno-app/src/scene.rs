@@ -11,7 +11,7 @@ use xeno_render::shape::Shape;
 use xeno_render::view3d::{
     Camera, RenderNode, TERRAIN, Trig, focal, focal_shifted, sort_far_to_near,
 };
-use xeno_render::{Framebuffer, LoadedModel};
+use xeno_render::{AssetId, Framebuffer, LoadedModel};
 use xeno_sim::motion::{Tables, sine};
 use xeno_sim::script::bearing;
 use xeno_sim::terrain::approx_distance;
@@ -202,7 +202,7 @@ pub fn draw(
     tables: &Tables,
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
-    sky: Option<&Sky>,
+    sky: Option<(&Sky, AssetId)>,
     probe: Option<(usize, usize)>,
 ) -> Option<Option<u16>> {
     let camera = camera(world, id, view, tables)?;
@@ -221,7 +221,7 @@ pub fn draw_from(
     tables: &Tables,
     terrain: &[TerrainFeature],
     models: &[Option<LoadedModel>],
-    sky: Option<&Sky>,
+    sky: Option<(&Sky, AssetId)>,
     probe: Option<(usize, usize)>,
 ) -> Option<u16> {
     let nodes = nodes(world, view, camera, tables, terrain);
@@ -260,11 +260,8 @@ pub fn load_models(files: &GameFiles) -> Vec<Option<LoadedModel>> {
         .collect()
 }
 
-/// The sky strip a scenario's `BGND` names (`BACKLAND.BIN` without one), found as
-/// `.bin`, `.b!n` or `.b@n`, or none (the flat sky) when it is not there.
-// shortcut: an empty or long `BGND` name keeps the previous mission's sky in the
-// original; here it gives `BACKLAND`, which no stock install has.
-pub fn load_sky(files: &GameFiles, scenario: &Scenario) -> Option<Sky> {
+/// The base name of the sky strip `scenario`'s `BGND` names, lower case.
+pub fn sky_name(scenario: &Scenario) -> String {
     let name = scenario
         .background_name()
         .unwrap_or_default()
@@ -273,7 +270,15 @@ pub fn load_sky(files: &GameFiles, scenario: &Scenario) -> Option<Sky> {
         .split('.')
         .next()
         .filter(|b| !b.is_empty() && b.len() <= 8);
-    let base = base.unwrap_or("backland");
+    base.unwrap_or("backland").to_string()
+}
+
+/// The sky strip a scenario's `BGND` names (`BACKLAND.BIN` without one), found as
+/// `.bin`, `.b!n` or `.b@n`, or none (the flat sky) when it is not there.
+// shortcut: an empty or long `BGND` name keeps the previous mission's sky in the
+// original; here it gives `BACKLAND`, which no stock install has.
+pub fn load_sky(files: &GameFiles, scenario: &Scenario) -> Option<Sky> {
+    let base = sky_name(scenario);
     let bytes = ["bin", "b!n", "b@n"]
         .iter()
         .find_map(|ext| files.read(&format!("{base}.{ext}")).ok())?;
