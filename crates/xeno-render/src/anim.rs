@@ -117,6 +117,22 @@ impl ColourAnims {
         }
     }
 
+    /// The colours an active rotate or frames record cycles (T-241: an HD texel shows
+    /// the original pixel there). Blends are left out: they show one frame and stop.
+    pub fn cycling(&self) -> [bool; 256] {
+        let mut cycling = [false; 256];
+        for r in self.offsets() {
+            let flags = self.byte(r + 2);
+            if flags & flag::ACTIVE != 0 && matches!(flags & flag::KIND, 1 | 2) {
+                let first = usize::from(self.byte(r + 5));
+                for i in first..first + usize::from(self.byte(r + 6)) {
+                    cycling[i % 256] = true;
+                }
+            }
+        }
+        cycling
+    }
+
     /// `pal_advance_colour_anims` (0xa66): reload and move on every record that fired.
     pub fn advance(&mut self) {
         for r in self.offsets() {
@@ -333,6 +349,23 @@ mod tests {
             dac = [0xff; DAC_BYTES];
         }
         seen
+    }
+
+    #[test]
+    fn the_active_rotates_and_frames_are_the_colours_cycling() {
+        // A rotate over 254..=1 (wrapping), frames of colour 7, a blend over 20..=21.
+        let blend = [0; 12];
+        let mut anims = list(&[
+            (1, 1, 254, 4, &ring(4)),
+            (2, 1, 7, 1, &[0; 6]),
+            (3, 1, 20, 2, &blend),
+        ]);
+        assert_eq!(anims.cycling(), [false; 256], "all off");
+        for r in 0..3 {
+            assert!(anims.start(r, 0x80, &[0; DAC_BYTES]));
+        }
+        let cycling: Vec<usize> = (0..256).filter(|&i| anims.cycling()[i]).collect();
+        assert_eq!(cycling, [0, 1, 7, 254, 255], "not the blend's");
     }
 
     #[test]

@@ -573,6 +573,12 @@ impl Screens {
         self.dac.palette()
     }
 
+    /// The colours the colour-animation records cycle (an HD texel shows the original
+    /// there, T-241).
+    pub fn cycling(&self) -> [bool; 256] {
+        self.dac.anims().cycling()
+    }
+
     /// Whether the screen shown uses ESC: its key table binds it.
     pub fn claims_escape(&self) -> bool {
         // An open file dialog takes ESC as cancel.

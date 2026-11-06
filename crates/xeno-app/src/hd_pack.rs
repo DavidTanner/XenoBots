@@ -4,14 +4,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use xeno_render::hd::Original;
 use xeno_render::{AssetId, HdImage};
 
 use crate::game_dir::GameFiles;
 
-/// The size of every image a pack may replace, from the user's files: each model's
-/// images, each bank's sprites, and each `.m@l` screen, `.vcl` picture and sky strip
-/// as a whole file (one that does not load has none).
-pub fn originals(files: &GameFiles) -> HashMap<AssetId, (usize, usize)> {
+/// Every image a pack may replace, from the user's files, with the palette it is shown
+/// with: each model's images, each bank's sprites, and each `.m@l` screen, `.vcl`
+/// picture and sky strip as a whole file (one that does not load has none).
+pub fn originals(files: &GameFiles) -> HashMap<AssetId, Original> {
     let models: Vec<_> = crate::scene::load_models(files)
         .into_iter()
         .flatten()
@@ -21,16 +22,15 @@ pub fn originals(files: &GameFiles) -> HashMap<AssetId, (usize, usize)> {
     for name in failed {
         log::warn!("HD pack: {name} does not load; its sprites stay the original's");
     }
-    let sizes = images.into_iter().map(|(a, o)| (a, (o.width, o.height)));
-    sizes.collect()
+    images.into_iter().collect()
 }
 
-/// Every PNG under `dir` that names an image in `originals` (its size in pixels) and is
-/// a whole multiple of that size on each axis. Anything else is warned about and left
+/// Every PNG under `dir` that names an image in `originals` and is a whole multiple of
+/// its size on each axis, painted against its palette (T-241). Anything else is warned about and left
 /// out, so that image stays the original's; only a directory that cannot be read fails.
 pub fn load(
     dir: &Path,
-    originals: &HashMap<AssetId, (usize, usize)>,
+    originals: &HashMap<AssetId, Original>,
 ) -> Result<HashMap<AssetId, HdImage>, String> {
     let mut files = Vec::new();
     walk(dir, &mut files).map_err(|e| format!("cannot read the HD pack {}: {e}", dir.display()))?;
@@ -66,12 +66,13 @@ fn walk(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> 
 fn image(
     name: &str,
     file: &Path,
-    originals: &HashMap<AssetId, (usize, usize)>,
+    originals: &HashMap<AssetId, Original>,
 ) -> Result<(AssetId, HdImage), String> {
     let asset = AssetId::from_pack_path(name).ok_or("not an asset's name")?;
-    let &(w, h) = originals
+    let original = originals
         .get(&asset)
         .ok_or("no such image in the game's files")?;
+    let (w, h) = (original.width, original.height);
     let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
     let png = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?
@@ -87,5 +88,6 @@ fn image(
         a << 24 | r << 16 | g << 8 | b
     });
     let image = HdImage::new(width, height, texels.collect()).ok_or("empty")?;
+    let image = image.with_reference(original.palette.clone());
     Ok((asset, image))
 }

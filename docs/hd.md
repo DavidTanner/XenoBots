@@ -58,9 +58,9 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
        fall off the buffer. The records ride through the 3D view's copy into the
        console like the models'.
 
-     A known gap: HD texels are colours, not palette indices, so they do not follow
-     the palette's fades (screens fading in, the cutscenes' fades) or colour
-     animation (T-241).
+     HD texels are colours, not palette indices; they follow the palette's fades,
+     the time-of-day tint and colour animation by the rule in "Following the
+     palette (T-241)" below.
 
    Glyphs could add a `Glyph { font, code }` name the same way (T-239).
 
@@ -251,8 +251,8 @@ the blits they name. Nothing of a pack is ever in the repository.
   original's. With no pack and neither flag, the frame is `present`'s byte for byte.
 - **Checked.** A synthetic pack (`an_hd_pack_replaces_one_model_image_and_leaves_the_rest`)
   and one solid-colour image over the first model image seen in a training mission's
-  console (`real_assets_an_hd_pack_replaces_only_its_model_image`: the netrelay's `.m00`
-  image in NTRAIN), and likewise one sprite (`real_assets_an_hd_pack_replaces_only_its_sprite`:
+  console (`real_assets_an_hd_pack_replaces_only_its_model_image`: since T-241 the
+  first one with a pixel not in a cycled colour, `model/obst/0_0.png` in STRAIN), and likewise one sprite (`real_assets_an_hd_pack_replaces_only_its_sprite`:
   `sprite/3/65.png`, a piece of the Scorpion console, T-233), the console's screen
   and the 3D view's sky (`real_assets_an_hd_pack_replaces_only_its_screen_and_sky`:
   `file/scorpcon.png`, `file/sky_a.png`): only that image's owned pixels change. A
@@ -279,7 +279,41 @@ the blits they name. Nothing of a pack is ever in the repository.
   only far models differ, model images drawn below 1:1 (scales 2 to 23 of 256), which
   the original draws from some of their pixels (the repeat table, `mxx.md`,
   "Drawing") while a pack image is stretched evenly over the blit's rectangle. The
-  palette's tint and colour animation are not applied to pack images (T-241).
+  same holds halfway through a fade (T-241, below): 52 of the 68 frames, unfaded and
+  mid-fade, are `present`'s exactly, and every other pixel is.
+- **Following the palette (T-241).** A pack image is painted against a *reference
+  palette*: the one `originals` gives it and the template is written in (above: a
+  screen's or picture's own, a bank's screen's, a model's console's, the Humanoid
+  console's for a sky). `hd_pack::load` keeps it with the image
+  (`HdImage::with_reference`). `compose` then shows a texel over a pixel of colour `i`
+  as follows, with `ref` the reference's colour `i` and `cur` the palette shown now:
+  - a colour an active rotate or frames record cycles (`ColourAnims::cycling`, from
+    the screens' or the viewer's DAC; `window.rs` passes none for the cutscenes and
+    the drop, which run no such record): the original pixel, not the texel. A ratio
+    between two unrelated colours of a ring means nothing. Blends (the tint, the
+    drop's cross-fades) are not cycling: they show one frame and turn off.
+  - `ref == cur` (and no channel of `ref` is 0 while the palette as a whole has
+    changed): the texel as it is. This is the fast path, so an unfaded frame costs
+    what it did and a pack composes byte for byte as before.
+  - otherwise each channel `v` becomes `v * cur / ref` (16.16, the multiplier rounded
+    up so that `ref` gives exactly `cur`), at most 255. A channel `ref` has at 0 has
+    no ratio: it becomes `cur` plus `v` times the whole palette's ratio in that
+    channel (the sum of `cur` over the sum of `ref`, about the fade's level), so
+    detail painted over black still fades and a texel of the reference's colour
+    still gives exactly `cur`.
+
+  So a fade, which scales every colour alike, darkens a pack image as it darkens the
+  original, and the template (texels of the reference colours) composes exactly as
+  `present` at any palette, mid-fade included (the tolerance is 0). The tint blends
+  colours 49..63 and 128..252 towards night colours of other hues; per channel the
+  texel moves by the same ratio as its colour, which keeps a template exact, but how
+  painted detail looks at night is not yet checked live (T-245). The thermal and
+  missile cameras remap the 3D view's indices in the buffer, which takes those pixels
+  from their blits (the owner colour no longer matches), so the original's remapped
+  pixels show there, as before. Every mission view cycles colours 253 and 254
+  (records 0x10 and 0x11, `docs/formats/palette.md`), so a pack never replaces a pixel
+  in those colours there: the netrelay's `.m00` image, drawn only in them, stays the
+  original's in a console.
 - **Cost** (release, 3840x2160, the most model pixels of any stock robot's first
   console frame, SCEN06A, 401 blits): `present` 1.0 ms, `compose` with one image
   replaced 1.39 ms, with all 781 model images replaced 1.41 ms; loading 781 4x PNGs
@@ -291,7 +325,9 @@ the blits they name. Nothing of a pack is ever in the repository.
   texel and `compose` took 9.9 ms; working each block's texel columns out once and its
   rows once per view row (rather than two divisions per window pixel) brought that
   to 6.0 to 6.2 ms. What is left is mostly writing the window block by block rather
-  than row by row (T-243). A frame records at
+  than row by row (T-243). Following the palette (T-241; the situation room replaced,
+  12x texels): 4.8 ms before, 4.9 to 5.0 ms unfaded, 8.5 ms halfway through a fade
+  (every texel scaled per channel). A frame records at
   most 599 drawings (SCEN07A's console; 46 to 78 of them sprites), and each full
   redraw of a mission view or the map room starts the record afresh, so the 65,536
   cap in `window.rs` is never near.
