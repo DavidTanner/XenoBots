@@ -1132,7 +1132,11 @@ mod tests {
             .save(images.join("0_1.png"))
             .unwrap();
         std::fs::write(dir.join("notes.txt"), "not an image").unwrap();
-        let originals = model.image_sizes().into_iter().collect();
+        let originals = model
+            .images()
+            .into_iter()
+            .map(|(a, i)| (a, (i.width.into(), i.height.into())))
+            .collect();
         let pack = crate::hd_pack::load(&dir, &originals).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(crate::hd_pack::load(&dir, &originals).is_err());

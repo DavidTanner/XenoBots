@@ -238,7 +238,7 @@ the blits they name. Nothing of a pack is ever in the repository.
   transparent in the original's blit, so those pixels are never the blit's and the
   pack cannot draw there either: an image only repaints its original's silhouette.
 - **Checks.** Only images the user's game files have can be replaced: the loader takes
-  each original's size (`hd_pack::originals`: `LoadedModel::image_sizes` for every
+  each original's size (`xeno_render::hd::originals`: `LoadedModel::images` for every
   model, every sprite of `msprite0` to `msprite5`, and every `.m@l`, `.vcl` and
   `sky*.b@n` in the game directory) and skips,
   with a warning in the log, a file whose path names nothing, an image the game does
@@ -259,6 +259,27 @@ the blits they name. Nothing of a pack is ever in the repository.
   synthetic `.vcl`-like picture on a wider surface (`an_hd_picture_pans_with_the_view_over_a_wider_surface`)
   checks the pan. The console's 3D view
   reaches the screen's record through `copy_through` (T-236).
+- **Starting a pack (T-240).** `xeno-tool dump <game dir> --hd-template <dir>` writes
+  every image `originals` lists (1,201 in a stock install: 781 model images, 390
+  sprites, 8 screens, 14 pictures, 8 skies; 6.4 MB, 0.6 s in release) at its path
+  under `<dir>`, each pixel a 4x4 block (`hd::Original::upscaled`), so an artist sees
+  which view and image number a picture is and paints over it. Colours: a screen and a
+  picture its own palette; images with none the palette of the screen the game shows
+  them on (as `--view` picks, T-035): a bank the screen it is loaded with (`msprite0`,
+  `msprite1`: the situation room; 2, 3, 4: their consoles; 5: the map room), a model
+  its own robot kind's console (the Humanoid's for the rest), a sky the Humanoid's
+  console (the consoles differ only in colours 253 and 254, `mxx.md`, "Palette").
+  Colour 0 is alpha 0 in model images and sprites (where it is not drawn, and where an
+  opaque sprite draws it the original's pixel shows, the same colour); whole files are
+  opaque. A PNG already in `<dir>` is kept, so running it again never overwrites an
+  artist's work, and a `<dir>` inside this repository is refused (the template is the
+  game's art). `real_assets_the_hd_template_composes_as_the_original_presents` writes
+  it, loads it with no file skipped and composes every stock mission's situation room
+  and first console at 4K: 25 of 34 frames are `present`'s exactly; in the other nine
+  only far models differ, model images drawn below 1:1 (scales 2 to 23 of 256), which
+  the original draws from some of their pixels (the repeat table, `mxx.md`,
+  "Drawing") while a pack image is stretched evenly over the blit's rectangle. The
+  palette's tint and colour animation are not applied to pack images (T-241).
 - **Cost** (release, 3840x2160, the most model pixels of any stock robot's first
   console frame, SCEN06A, 401 blits): `present` 1.0 ms, `compose` with one image
   replaced 1.39 ms, with all 781 model images replaced 1.41 ms; loading 781 4x PNGs

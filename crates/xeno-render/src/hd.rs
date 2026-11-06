@@ -10,9 +10,11 @@ use xeno_formats::Palette;
 use crate::{Framebuffer, Layout, Rect, Size, present};
 
 mod glyphs;
+mod originals;
 mod shapes;
 
 pub use glyphs::draw_glyphs;
+pub use originals::{Original, originals};
 pub use shapes::draw_shapes;
 
 /// An original file's base name, lower case and NUL-padded (DOS names fit in 8).
@@ -312,6 +314,17 @@ impl HdImage {
             height,
             pixels,
         })
+    }
+
+    /// The width and height in texels.
+    pub fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    /// The texels as RGBA bytes, row by row, as a PNG holds them.
+    pub fn to_rgba8(&self) -> Vec<u8> {
+        let rgba = |p: &u32| p.rotate_left(8).to_be_bytes();
+        self.pixels.iter().flat_map(rgba).collect()
     }
 }
 

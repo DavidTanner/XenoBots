@@ -4,7 +4,6 @@
 //! `xeno_render::view3d`.
 
 use xeno_formats::ban::{self, Sky};
-use xeno_formats::mxx;
 use xeno_formats::usg::{ObjectKind, Scenario, TerrainFeature};
 use xeno_formats::view3d::View3d;
 use xeno_render::shape::Shape;
@@ -18,7 +17,6 @@ use xeno_sim::terrain::approx_distance;
 use xeno_sim::{Entity, EntityId, State, World};
 
 use crate::game_dir::GameFiles;
-use crate::review::MODEL_FILES;
 
 /// The eye height (+0x1c, `docs/render.md`, "The camera"): a robot's, a signed word.
 fn eye_height(e: &Entity) -> i16 {
@@ -231,32 +229,14 @@ pub fn draw_from(
 /// Every model as `gfx_load_all_models` loads it (`docs/formats/mxx.md`, "Loading"),
 /// by model number / 2, or none, with a warning, when its files can't be read.
 pub fn load_models(files: &GameFiles) -> Vec<Option<LoadedModel>> {
-    let read = |name: &str, suffix: &str| -> Result<mxx::Model, String> {
-        let name = format!("{name}.{suffix}");
-        let bytes = files
-            .read(&name)
-            .map_err(|e| format!("cannot read {name}: {e}"))?;
-        mxx::parse(&bytes).map_err(|e| format!("{name}: {e}"))
+    let read = |name: &str| {
+        files
+            .read(name)
+            .map_err(|e| format!("cannot read {name}: {e}"))
     };
-    let load = |name: &str| -> Result<LoadedModel, String> {
-        let m00 = read(name, "m00")?;
-        let m08 = read(name, "m08")?;
-        let mut model = match name {
-            "explode" | "plasma" | "basedome" | "cloak" | "obst" => {
-                LoadedModel::single_view(&m00, &m08)
-            }
-            "netrelay" => {
-                LoadedModel::quarter_turn(&m00, &[m08, read(name, "m16")?, read(name, "m32")?])
-            }
-            "laser" => LoadedModel::new(&m00, &[m08, read(name, "m16")?, read(name, "m32")?]),
-            _ => LoadedModel::new(&m00, &[m08, read(name, "m16")?]),
-        };
-        model.name = xeno_render::Name::new(name);
-        Ok(model)
-    };
-    MODEL_FILES
-        .iter()
-        .map(|name| load(name).map_err(|e| log::warn!("3D view: {e}")).ok())
+    LoadedModel::load_all(read)
+        .into_iter()
+        .map(|model| model.map_err(|e| log::warn!("3D view: {e}")).ok())
         .collect()
 }
 

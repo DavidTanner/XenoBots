@@ -34,12 +34,6 @@ pub enum Request {
     Leave,
 }
 
-/// The models' files by model number / 2 (`docs/formats/mxx.md`, "Loading").
-pub const MODEL_FILES: [&str; 11] = [
-    "humanoid", "scorpion", "scout", "missile", "netrelay", "explode", "plasma", "laser",
-    "basedome", "cloak", "obst",
-];
-
 /// Each page's model as the start-up loads a robot's (`.m00`, then `.m08` and `.m16`),
 /// or none, with a warning, when it can't be read: the page then shows an empty view.
 pub fn load_models(files: &GameFiles, tables: &Review) -> Vec<Option<LoadedModel>> {
@@ -50,7 +44,7 @@ pub fn load_models(files: &GameFiles, tables: &Review) -> Vec<Option<LoadedModel
         mxx::parse(&bytes).map_err(|e| format!("{name}: {e}"))
     };
     let load = |model: u8| -> Result<LoadedModel, String> {
-        let name = MODEL_FILES
+        let name = xeno_render::MODEL_FILES
             .get(usize::from(model / 2))
             .ok_or(format!("no model {model}"))?;
         let passes = [read(&format!("{name}.m08"))?, read(&format!("{name}.m16"))?];
