@@ -23,7 +23,8 @@ pub struct Original {
 
 impl Original {
     /// Each pixel as an `n` by `n` block of its colour, opaque, or clear (so the
-    /// original shows) where colour 0 is not drawn; `None` with no palette or pixels.
+    /// original shows) where colour 0 is not drawn, painted against its palette;
+    /// `None` with no palette or pixels.
     pub fn upscaled(&self, n: usize) -> Option<HdImage> {
         let palette = self.palette.as_ref()?;
         let texel = |colour: u8| {
@@ -41,7 +42,8 @@ impl Original {
                 .flat_map(move |&c| std::iter::repeat_n(texel(c), n))
         };
         let pixels = (0..self.height * n).flat_map(|ty| row(ty / n)).collect();
-        HdImage::new(self.width * n, self.height * n, pixels)
+        let image = HdImage::new(self.width * n, self.height * n, pixels)?;
+        Some(image.with_reference(self.palette.clone()))
     }
 }
 

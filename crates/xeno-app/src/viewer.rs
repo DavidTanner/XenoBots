@@ -381,6 +381,11 @@ impl Viewer {
         self.dac.palette()
     }
 
+    /// The colours the rotation cycles (an HD texel shows the original there, T-241).
+    pub fn cycling(&self) -> [bool; 256] {
+        self.dac.anims().cycling()
+    }
+
     /// The view, or the picture if it is wider or taller.
     pub fn surface(&self) -> Size {
         match &self.content {

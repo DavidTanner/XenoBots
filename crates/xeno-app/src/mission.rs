@@ -9448,15 +9448,15 @@ pub mod tests {
             m.draw(&mut fb, &assets);
             let r = fb.recording().unwrap();
             let owner = |i: usize| r.owner(i, fb.pixels()[i]).map(|k| &r.records()[k]);
-            // The first such image that still owns a pixel.
+            // The first such image that still owns a pixel not cycled (below).
             let Some(asset) = (0..fb.pixels().len()).find_map(|i| match owner(i) {
-                Some(Record::Blit(b)) if pick(&b.asset) => Some(b.asset),
+                Some(Record::Blit(b)) if pick(&b.asset) && fb.pixels()[i] < 253 => Some(b.asset),
                 _ => None,
             }) else {
                 tried.push(name);
                 continue;
             };
-            let (w, h) = originals[&asset];
+            let (w, h) = (originals[&asset].width, originals[&asset].height);
             let unique = asset.pack_path().replace('/', "-");
             let dir = std::env::temp_dir().join(format!("xeno-hd-{}-{unique}", std::process::id()));
             let png = dir.join(asset.pack_path());
@@ -9472,7 +9472,11 @@ pub mod tests {
             let mut before = vec![0; window.width * window.height];
             xeno_render::present(&fb, &palette, &layout, &mut before, window);
             let mut after = vec![0; before.len()];
-            xeno_render::compose(&fb, &palette, &layout, &pack, &mut after, window);
+            // T-241: every console cycles 253 and 254 (records 0x10 and 0x11), the
+            // colours the consoles' palettes differ in; there the original shows.
+            let mut cycling = [false; 256];
+            (cycling[253], cycling[254]) = (true, true);
+            xeno_render::compose(&fb, &palette, &cycling, &layout, &pack, &mut after, window);
             let mut replaced = 0;
             for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
                 let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
@@ -9483,7 +9487,8 @@ pub mod tests {
                 let inside = (0..320).contains(&x) && (0..200).contains(&y);
                 let owned = inside
                     && matches!(owner((y * 320 + x) as usize), Some(Record::Blit(b)) if b.asset == asset);
-                if owned {
+                let cycled = inside && fb.pixels()[(y * 320 + x) as usize] >= 253;
+                if owned && !cycled {
                     assert_eq!(now, 0x12_3456, "{name}: ({wx}, {wy})");
                     replaced += 1;
                 } else {
@@ -9503,7 +9508,7 @@ pub mod tests {
     /// T-240's acceptance: the HD template of the user's files (as `xeno-tool dump
     /// --hd-template` writes it) loads with no image skipped, and every stock mission's
     /// situation room and first console composes at 4K as it presents, but where a
-    /// model image is drawn smaller than 1:1.
+    /// model image is drawn smaller than 1:1; at full brightness and mid-fade (T-241).
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_the_hd_template_composes_as_the_original_presents() {
@@ -9553,47 +9558,60 @@ pub mod tests {
             for (view, m) in views {
                 let file = crate::screens::Screen::Mission(view).file().unwrap();
                 let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
-                let palette = Palette::from_vga6(&picture.dac).unwrap();
                 let mut fb = Framebuffer::new(Size::MODE_13H);
                 fb.set_recording(true);
                 fb.copy_picture(&picture.pixels, AssetId::file(file));
                 m.draw(&mut fb, &assets);
                 let layout = Layout::new(fb.view(), window, Scale::Auto, Aspect::Correct);
-                let mut before = vec![0; window.width * window.height];
-                xeno_render::present(&fb, &palette, &layout, &mut before, window);
-                let mut after = vec![0; before.len()];
-                xeno_render::compose(&fb, &palette, &layout, &pack, &mut after, window);
-                // The original draws a model image smaller than 1:1 from some of its
-                // pixels (the repeat table), a pack image is stretched evenly over the
-                // blit's rectangle: there the picked texels differ, by design.
-                let r = fb.recording().unwrap();
-                let mut differ = 0;
-                for (i, _) in before
-                    .iter()
-                    .zip(&after)
-                    .enumerate()
-                    .filter(|(_, (a, b))| a != b)
-                {
-                    let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
-                    let x = (wx - layout.x).div_euclid(layout.sx as isize);
-                    let y = (wy - layout.y).div_euclid(layout.sy as isize);
-                    let k = (y * 320 + x) as usize;
-                    let owner = r.owner(k, fb.pixels()[k]).map(|o| &r.records()[o]);
-                    let scaled = |b: &xeno_render::BlitRecord| {
-                        matches!(b.asset, AssetId::ModelImage { .. }) && b.scale < 256
-                    };
-                    assert!(
-                        matches!(owner, Some(Record::Blit(b)) if scaled(b)),
-                        "{name} {view:?}: ({wx}, {wy}) differs, owned by {owner:?}"
+                // T-241: and halfway through a fade, as a fade step scales the DAC.
+                let ramp = xeno_render::dac::ramp(0x8000);
+                let faded = picture.dac.map(|v| ramp[usize::from(v)]);
+                for dac in [picture.dac, faded] {
+                    let palette = Palette::from_vga6(&dac).unwrap();
+                    let mut before = vec![0; window.width * window.height];
+                    xeno_render::present(&fb, &palette, &layout, &mut before, window);
+                    let mut after = vec![0; before.len()];
+                    xeno_render::compose(
+                        &fb,
+                        &palette,
+                        &[false; 256],
+                        &layout,
+                        &pack,
+                        &mut after,
+                        window,
                     );
-                    differ += 1;
+                    // The original draws a model image smaller than 1:1 from some of its
+                    // pixels (the repeat table), a pack image is stretched evenly over the
+                    // blit's rectangle: there the picked texels differ, by design.
+                    let r = fb.recording().unwrap();
+                    let mut differ = 0;
+                    for (i, _) in before
+                        .iter()
+                        .zip(&after)
+                        .enumerate()
+                        .filter(|(_, (a, b))| a != b)
+                    {
+                        let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                        let x = (wx - layout.x).div_euclid(layout.sx as isize);
+                        let y = (wy - layout.y).div_euclid(layout.sy as isize);
+                        let k = (y * 320 + x) as usize;
+                        let owner = r.owner(k, fb.pixels()[k]).map(|o| &r.records()[o]);
+                        let scaled = |b: &xeno_render::BlitRecord| {
+                            matches!(b.asset, AssetId::ModelImage { .. }) && b.scale < 256
+                        };
+                        assert!(
+                            matches!(owner, Some(Record::Blit(b)) if scaled(b)),
+                            "{name} {view:?}: ({wx}, {wy}) differs, owned by {owner:?}"
+                        );
+                        differ += 1;
+                    }
+                    exact += usize::from(differ == 0);
+                    frames += 1;
                 }
-                exact += usize::from(differ == 0);
-                frames += 1;
             }
         }
         println!(
-            "{} images; {exact} of {frames} frames composed as presented",
+            "{} images; {exact} of {frames} frames (unfaded and mid-fade) composed as presented",
             pack.len()
         );
         assert!(exact > frames / 2, "{exact} of {frames}");

@@ -335,11 +335,12 @@ impl Hd {
         &self,
         fb: &Framebuffer,
         palette: &Palette,
+        cycling: &[bool; 256],
         layout: &Layout,
         buffer: &mut [u32],
         size: Size,
     ) {
-        xeno_render::compose(fb, palette, layout, &self.pack, buffer, size);
+        xeno_render::compose(fb, palette, cycling, layout, &self.pack, buffer, size);
         if self.shapes {
             xeno_render::draw_shapes(fb, palette, layout, buffer, size);
         }
@@ -488,7 +489,22 @@ impl App {
                 .map(|shape| pointer::draw(&mut self.fb, at, shape)),
             _ => None,
         };
-        (self.hd).draw(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        // The colours the records cycle: the cutscenes and the drop cycle none.
+        let cycling = match (&self.viewer, &self.front) {
+            (Some(viewer), _) => viewer.cycling(),
+            _ if self.cutscene.is_some() || self.drop.is_some() => [false; 256],
+            (None, FrontEnd::Screens(screens)) => screens.cycling(),
+            _ => [false; 256],
+        };
+        let palette = &self.palette;
+        (self.hd).draw(
+            &self.fb,
+            palette,
+            &cycling,
+            &layout,
+            &mut buffer,
+            window_size,
+        );
         if let Some(under) = under {
             under.restore(&mut self.fb);
         }
@@ -1135,7 +1151,18 @@ mod tests {
         let originals = model
             .images()
             .into_iter()
-            .map(|(a, i)| (a, (i.width.into(), i.height.into())))
+            .map(|(a, i)| {
+                let (width, height, pixels) = (i.width.into(), i.height.into(), Vec::new());
+                let (palette, keyed) = (None, true);
+                let o = xeno_render::hd::Original {
+                    width,
+                    height,
+                    pixels,
+                    palette,
+                    keyed,
+                };
+                (a, o)
+            })
             .collect();
         let pack = crate::hd_pack::load(&dir, &originals).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1150,7 +1177,14 @@ mod tests {
         let size = Size::new(16, 12);
         let frame = |hd: &Hd| {
             let mut buffer = vec![0xdead_beef; 16 * 12];
-            hd.draw(&app.fb, &app.palette, &layout, &mut buffer, size);
+            hd.draw(
+                &app.fb,
+                &app.palette,
+                &[false; 256],
+                &layout,
+                &mut buffer,
+                size,
+            );
             buffer
         };
         let mut before = vec![0; 16 * 12];

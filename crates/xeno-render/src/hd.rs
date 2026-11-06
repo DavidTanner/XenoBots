@@ -304,6 +304,9 @@ pub struct HdImage {
     width: usize,
     height: usize,
     pixels: Vec<u32>,
+    /// The palette the image was painted against (T-241): a texel follows the change
+    /// from it to the palette shown. `None`: texels are shown as they are.
+    reference: Option<Palette>,
 }
 
 impl HdImage {
@@ -313,7 +316,14 @@ impl HdImage {
             width,
             height,
             pixels,
+            reference: None,
         })
+    }
+
+    /// The image painted against `reference` (T-241, `docs/hd.md`, "Following the
+    /// palette").
+    pub fn with_reference(self, reference: Option<Palette>) -> HdImage {
+        HdImage { reference, ..self }
     }
 
     /// The width and height in texels.
@@ -328,12 +338,80 @@ impl HdImage {
     }
 }
 
+/// How a texel over a pixel of one colour is shown (T-241).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Follow {
+    /// As it is: the colour is the reference's.
+    Texel,
+    /// Not at all, the original pixel shows: the colour is cycled.
+    Original,
+    /// Each channel `v` as `min(255, (v * mul >> 16) + add)`.
+    Scale([(u32, u32); 3]),
+}
+
+/// For each colour, how a texel painted against `reference` follows `current`: by the
+/// ratio of the two colours, channel by channel, and not at all where `cycling`. A
+/// channel the reference has at 0 has no ratio: it takes the current colour's level
+/// plus the texel's scaled by the whole palette's ratio in that channel (about the
+/// fade's level; the colours not cycled), so detail painted over black still fades.
+fn follow(reference: Option<&Palette>, current: &Palette, cycling: &[bool; 256]) -> [Follow; 256] {
+    let Some(reference) = reference else {
+        return std::array::from_fn(|i| match cycling[i] {
+            true => Follow::Original,
+            false => Follow::Texel,
+        });
+    };
+    // Capped where any texel level but 0 would come out at 255 anyway, so no overflow.
+    let ratio = |c: u32, r: u32| match r {
+        0 => 0,
+        r => (c << 16).div_ceil(r).min(255 << 16),
+    };
+    // Over the colours not cycled: a record's ring says nothing about a fade.
+    let sum = |p: &Palette, k: usize| -> u32 {
+        let shown = p.colors.iter().zip(cycling).filter(|(_, cycled)| !**cycled);
+        shown.map(|(c, _)| u32::from([c.r, c.g, c.b][k])).sum()
+    };
+    let whole = [0, 1, 2].map(|k| ratio(sum(current, k), sum(reference, k)));
+    // `mul` rounded up, so a texel of the reference's own colour comes out as exactly
+    // the current one (`r * ceil(c * 65536 / r) >> 16 == c` for r, c < 256).
+    let channel = |r: u8, c: u8, whole: u32| match r {
+        0 => (whole, u32::from(c)),
+        r => (ratio(c.into(), r.into()), 0),
+    };
+    std::array::from_fn(|i| {
+        let (r, c) = (reference.colors[i], current.colors[i]);
+        let scale = [
+            channel(r.r, c.r, whole[0]),
+            channel(r.g, c.g, whole[1]),
+            channel(r.b, c.b, whole[2]),
+        ];
+        match scale {
+            _ if cycling[i] => Follow::Original,
+            [(0x10000, 0), (0x10000, 0), (0x10000, 0)] => Follow::Texel,
+            scale => Follow::Scale(scale),
+        }
+    })
+}
+
+/// `texel`'s colour scaled by `scale` (see [`Follow::Scale`]).
+fn scaled(texel: u32, scale: &[(u32, u32); 3]) -> u32 {
+    let channel = |shift: u32, (mul, add): (u32, u32)| {
+        ((((texel >> shift & 0xff) * mul) >> 16) + add).min(255) << shift
+    };
+    channel(16, scale[0]) | channel(8, scale[1]) | channel(0, scale[2])
+}
+
 /// [`present`], then each recorded blit with an image in `hd` drawn over the output
 /// pixels of the surface pixels it still owns, stretched (nearest texel) from its
-/// logical rectangle. With no recording or no matching image, this is [`present`].
+/// logical rectangle. A texel follows the palette (T-241): over a pixel of colour `i`
+/// it is scaled by `palette[i]` over the image's reference colour `i`, and over a
+/// colour in `cycling` (one a colour-animation record cycles,
+/// [`crate::ColourAnims::cycling`]) the original pixel shows. With no recording or no
+/// matching image, this is [`present`].
 pub fn compose(
     fb: &Framebuffer,
     palette: &Palette,
+    cycling: &[bool; 256],
     layout: &Layout,
     hd: &HashMap<AssetId, HdImage>,
     dst: &mut [u32],
@@ -343,11 +421,24 @@ pub fn compose(
     let Some(recording) = fb.recording().filter(|_| !hd.is_empty()) else {
         return;
     };
-    let images: Vec<Option<(&HdImage, &BlitRecord)>> = recording
+    // One table for each reference palette in use (a few: the screens' own).
+    let mut tables: Vec<(Option<&Palette>, [Follow; 256])> = Vec::new();
+    let images: Vec<Option<(&HdImage, &BlitRecord, Option<usize>)>> = recording
         .records
         .iter()
         .map(|r| match r {
-            Record::Blit(b) => hd.get(&b.asset).map(|image| (image, b)),
+            Record::Blit(b) => hd.get(&b.asset).map(|image| {
+                let reference = image.reference.as_ref();
+                let table = match tables.iter().position(|(p, _)| *p == reference) {
+                    Some(t) => t,
+                    None => {
+                        tables.push((reference, follow(reference, palette, cycling)));
+                        tables.len() - 1
+                    }
+                };
+                let identity = tables[table].1.iter().all(|f| *f == Follow::Texel);
+                (image, b, (!identity).then_some(table))
+            }),
             _ => None,
         })
         .collect();
@@ -365,11 +456,18 @@ pub fn compose(
         let start = fb.view_row_start(vy);
         for vx in 0..view.width {
             let i = start + vx;
-            let Some(k) = recording.owner(i, fb.pixels()[i]) else {
+            let colour = fb.pixels()[i];
+            let Some(k) = recording.owner(i, colour) else {
                 continue;
             };
-            let Some((image, blit)) = images[k] else {
+            let Some((image, blit, table)) = images[k] else {
                 continue;
+            };
+            // The fast path: with the palette as painted, the texels are shown as they are.
+            let scale = match table.map(|t| &tables[t].1[usize::from(colour)]) {
+                Some(Follow::Original) => continue,
+                Some(Follow::Scale(s)) => Some(s),
+                _ => None,
             };
             let r = blit.rect;
             let (px, py) = ((i % stride) as i64, (i / stride) as i64);
@@ -403,7 +501,10 @@ pub fn compose(
                 for ox in shown.clone() {
                     let t = texels[columns[ox]];
                     if t >> 24 >= 0x80 {
-                        dst[out + (wx0 + ox as i64) as usize] = t & 0x00ff_ffff;
+                        dst[out + (wx0 + ox as i64) as usize] = match scale {
+                            None => t & 0x00ff_ffff,
+                            Some(s) => scaled(t, s),
+                        };
                     }
                 }
             }
@@ -470,7 +571,7 @@ mod tests {
     ) -> Vec<u32> {
         let mut dst = vec![0xdead_beef; size.width * size.height];
         match hd {
-            Some(hd) => compose(fb, &ramp(), layout, hd, &mut dst, size),
+            Some(hd) => compose(fb, &ramp(), &[false; 256], layout, hd, &mut dst, size),
             None => present(fb, &ramp(), layout, &mut dst, size),
         }
         dst
@@ -829,6 +930,115 @@ mod tests {
         }
     }
 
+    /// T-241: a 2x1 picture of colours 5 and 6 under one 2x1 HD image painted against
+    /// `reference` (texels 0x806040 and 0x102030), composed 1:1 with `current`.
+    fn followed(reference: &Palette, current: &Palette, cycling: &[bool; 256]) -> Vec<u32> {
+        let asset = AssetId::file("login.m@l");
+        let mut fb = Framebuffer::new(Size::new(2, 1));
+        fb.set_recording(true);
+        fb.copy_picture(&[5, 6], asset);
+        let texels = vec![0xff80_6040, 0xff10_2030];
+        let image = HdImage::new(2, 1, texels).unwrap();
+        let hd = HashMap::from([(asset, image.with_reference(Some(reference.clone())))]);
+        let layout = Layout {
+            sx: 1,
+            sy: 1,
+            x: 0,
+            y: 0,
+        };
+        let mut dst = vec![0; 2];
+        compose(
+            &fb,
+            current,
+            cycling,
+            &layout,
+            &hd,
+            &mut dst,
+            Size::new(2, 1),
+        );
+        dst
+    }
+
+    #[test]
+    fn hd_texels_follow_the_palette_by_the_ratio_of_their_colours() {
+        let reference = ramp();
+        let none = [false; 256];
+        // The palette as painted: the texels as they are, byte for byte.
+        assert_eq!(
+            followed(&reference, &reference, &none),
+            [0x80_6040, 0x10_2030]
+        );
+        // Colour 5 (5, 250, 7) at half, colour 6 (6, 249, 7) left alone.
+        let mut faded = reference.clone();
+        faded.colors[5] = Rgb { r: 2, g: 125, b: 3 };
+        let half = |v: u32, r: u32, c: u32| (v * (c << 16).div_ceil(r)) >> 16;
+        let want = half(0x80, 5, 2) << 16 | half(0x60, 250, 125) << 8 | half(0x40, 7, 3);
+        assert_eq!(want, 0x33_301b, "51.2, 48 and 27.4, rounded down");
+        assert_eq!(followed(&reference, &faded, &none), [want, 0x10_2030]);
+        // A channel 0 in the reference: the current level plus the texel's by the whole
+        // palette's ratio (here 32,644 / 32,640 in red, so 0x80 stays 0x80); a rise
+        // stops at 255.
+        let (mut black, mut lit) = (reference.clone(), reference.clone());
+        black.colors[5] = Rgb { r: 0, g: 1, b: 7 };
+        lit.colors[5] = Rgb { r: 9, g: 255, b: 7 };
+        assert_eq!(followed(&black, &lit, &none)[0], 0x89_ff40);
+        // Over black, a whole palette at half fades the texel by half, not at all.
+        black.colors[5] = Rgb { r: 0, g: 0, b: 0 };
+        let mut dim = black.clone();
+        for c in &mut dim.colors {
+            *c = Rgb {
+                r: c.r / 2,
+                g: c.g / 2,
+                b: c.b / 2,
+            };
+        }
+        // (Blue is 7 throughout, so 3 halved: 0x40 * 3 / 7.)
+        let [r, g, b] = [0x80 / 2, 0x60 / 2, 0x40 * 3 / 7];
+        let near = |got: u32, want: u32| got.abs_diff(want) <= 1;
+        let got = followed(&black, &dim, &none)[0];
+        assert!(
+            near(got >> 16, r) && near(got >> 8 & 0xff, g) && near(got & 0xff, b),
+            "{got:06x}"
+        );
+        // A colour a record cycles shows the original pixel.
+        let mut cycling = none;
+        cycling[6] = true;
+        let c = faded.colors[6];
+        let original = u32::from(c.r) << 16 | u32::from(c.g) << 8 | u32::from(c.b);
+        assert_eq!(followed(&reference, &faded, &cycling), [want, original]);
+    }
+
+    #[test]
+    fn a_texel_of_the_reference_colour_becomes_the_current_colour() {
+        // So a pack of the original's own colours composes as `present` at any palette.
+        for (r, c) in (0..=255u32).flat_map(|r| (0..=255u32).map(move |c| (r, c))) {
+            let reference = Rgb {
+                r: r as u8,
+                g: 0,
+                b: 0,
+            };
+            let current = Rgb {
+                r: c as u8,
+                g: c as u8,
+                b: 0,
+            };
+            let scale = match follow(
+                Some(&Palette {
+                    colors: [reference; 256],
+                }),
+                &Palette {
+                    colors: [current; 256],
+                },
+                &[false; 256],
+            )[0]
+            {
+                Follow::Scale(s) => s,
+                _ => continue,
+            };
+            assert_eq!(scaled(r << 16, &scale), c << 16 | c << 8, "{r} to {c}");
+        }
+    }
+
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_a_console_with_robots_composes_as_it_presents() {
@@ -886,6 +1096,7 @@ mod tests {
             compose(
                 &recorded,
                 palette,
+                &[false; 256],
                 &layout,
                 &HashMap::new(),
                 &mut after,
@@ -908,7 +1119,15 @@ mod tests {
                         .images;
                     hd.insert(b.asset, upscaled(&images[i], palette, layout.sx, layout.sy));
                 }
-                compose(&recorded, palette, &layout, &hd, &mut after, window);
+                compose(
+                    &recorded,
+                    palette,
+                    &[false; 256],
+                    &layout,
+                    &hd,
+                    &mut after,
+                    window,
+                );
                 assert!(after == before, "every image replaced by itself");
             }
         }
