@@ -9,8 +9,10 @@ use xeno_formats::Palette;
 
 use crate::{Framebuffer, Layout, Rect, Size, present};
 
+mod glyphs;
 mod shapes;
 
+pub use glyphs::draw_glyphs;
 pub use shapes::draw_shapes;
 
 /// An original file's base name, lower case and NUL-padded (DOS names fit in 8).
@@ -58,12 +60,47 @@ pub struct BlitRecord {
     pub flipped: bool,
 }
 
-/// One drawing the record keeps: a named blit, or a shape drawn at output resolution
-/// by [`draw_shapes`] (T-236).
+/// One drawing the record keeps: a named blit, a shape drawn at output resolution by
+/// [`draw_shapes`] (T-236), or a glyph drawn at output resolution by [`draw_glyphs`]
+/// (T-074).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Record {
     Blit(BlitRecord),
     Shape(ShapeRecord),
+    Glyph(GlyphRecord),
+}
+
+/// One glyph as [`Framebuffer::draw_char`] drew it: its cells, copied from the user's
+/// font at the time, at `at` (the cursor, its top-left corner, in surface pixels).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlyphRecord {
+    /// The character code drawn (bit 7 picks the high colours).
+    pub code: u8,
+    pub at: (i32, i32),
+    /// The cells drawn: `width` by `height`, row by row, each 0 (not the glyph's) or
+    /// 1, 2 or 3, drawn as `colour + (value ^ 3)` (a bitmap glyph's set bits are 3).
+    pub width: u8,
+    pub height: u8,
+    pub cells: Vec<u8>,
+    /// The surface's colours before the glyph was drawn, over the cells and one pixel
+    /// round them (`width + 2` by `height + 2`, from `at` less one each way; 0 off the
+    /// surface): a pixel still in that colour, and not taken by a later record, shows
+    /// what the glyph was drawn over.
+    pub under: Vec<u8>,
+    pub colour: u8,
+    /// The colour of the cells of value 0, when the glyph was drawn opaque.
+    pub background: Option<u8>,
+    pub clip: Rect,
+}
+
+impl GlyphRecord {
+    /// The colour cell value `value` is drawn in, if it is drawn.
+    pub fn colour_of(&self, value: u8) -> Option<u8> {
+        match value {
+            0 => self.background,
+            v => Some(self.colour.wrapping_add(v ^ 3)),
+        }
+    }
 }
 
 /// A line or fill primitive's logical geometry, in surface pixels (a corner or an end
@@ -126,7 +163,7 @@ impl Recording {
     pub fn blits(&self) -> impl Iterator<Item = &BlitRecord> {
         self.records.iter().filter_map(|r| match r {
             Record::Blit(b) => Some(b),
-            Record::Shape(_) => None,
+            _ => None,
         })
     }
 
@@ -174,6 +211,11 @@ impl Recording {
                     colour: s.colour,
                     clip: Rect::new(s.clip.x + dx, s.clip.y + dy, s.clip.width, s.clip.height),
                 }),
+                Record::Glyph(g) => Record::Glyph(GlyphRecord {
+                    at: (g.at.0 + dx, g.at.1 + dy),
+                    clip: Rect::new(g.clip.x + dx, g.clip.y + dy, g.clip.width, g.clip.height),
+                    ..g.clone()
+                }),
             }));
             2 * base as u32
         })
@@ -220,7 +262,7 @@ pub fn compose(
         .iter()
         .map(|r| match r {
             Record::Blit(b) => hd.get(&b.asset).map(|image| (image, b)),
-            Record::Shape(_) => None,
+            _ => None,
         })
         .collect();
     let (view, stride) = (fb.view(), fb.surface().width);

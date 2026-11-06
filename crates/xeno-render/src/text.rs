@@ -8,7 +8,8 @@
 
 use xeno_formats::font::{Font, Style};
 
-use crate::Framebuffer;
+use crate::hd::{GlyphRecord, Record};
+use crate::{Framebuffer, Rect};
 
 /// Whether glyphs fill their background (the renderers at slot `0x598`) or leave it
 /// (slot `0x594`). `vga240.mod` has no opaque renderers: in the 320x240 mode slot
@@ -121,16 +122,42 @@ impl Framebuffer {
             // An opaque shaded glyph fills one more column: the gap after it.
             Style::Shaded => usize::from(glyph.width) + usize::from(opaque),
         };
+        let value = |column, row| match (font.pixel(glyph, column, row), style) {
+            (0, _) => 0,
+            (_, Style::Bitmap) => 3,
+            (v, Style::Shaded) => v,
+        };
+        let (at, rows) = ((cursor.x, cursor.y), font.rows());
+        let stamp = self.record_glyph(|fb| GlyphRecord {
+            code,
+            at,
+            width: width as u8,
+            height: rows as u8,
+            cells: (0..rows)
+                .flat_map(|row| (0..width).map(move |column| value(column, row)))
+                .collect(),
+            under: (-1..=rows as i32)
+                .flat_map(|y| (-1..=width as i32).map(move |x| (at.0 + x, at.1 + y)))
+                .map(|(x, y)| fb.get(x as usize, y as usize).filter(|_| x >= 0 && y >= 0))
+                .map(Option::unwrap_or_default)
+                .collect(),
+            colour,
+            background: opaque.then_some(background),
+            clip: Rect::new(0, 0, 0, 0),
+        });
         for row in 0..font.rows() {
             for column in 0..width {
-                let value = font.pixel(glyph, column, row);
-                let pixel = match (value, style) {
-                    (0, _) if !opaque => continue,
-                    (0, _) => background,
-                    (_, Style::Bitmap) => colour,
-                    (v, Style::Shaded) => colour.wrapping_add(v ^ 3),
+                let pixel = match value(column, row) {
+                    0 if !opaque => continue,
+                    0 => background,
+                    v => colour.wrapping_add(v ^ 3),
                 };
-                self.put(cursor.x + column as i32, cursor.y + row as i32, pixel);
+                self.put(
+                    cursor.x + column as i32,
+                    cursor.y + row as i32,
+                    pixel,
+                    stamp,
+                );
             }
         }
         let advance = match style {
@@ -153,14 +180,37 @@ impl Framebuffer {
         }
     }
 
-    /// Writes surface pixel (`x`, `y`) if it is on the surface.
-    fn put(&mut self, x: i32, y: i32, colour: u8) {
+    /// Records the glyph `record` makes, clipped to the surface, if recording and it has
+    /// a cell drawn in a colour (`docs/hd.md`, "Text at output resolution"); returns
+    /// the stamp its pixels get.
+    fn record_glyph(&mut self, record: impl FnOnce(&Self) -> GlyphRecord) -> Option<u32> {
+        self.recording()?;
+        let surface = self.surface();
+        let record = GlyphRecord {
+            clip: Rect::new(0, 0, surface.width as u32, surface.height as u32),
+            ..record(self)
+        };
+        let r = self.recording_mut()?;
+        if record.cells.iter().all(|&v| v == 0) {
+            return None;
+        }
+        r.push(Record::Glyph(record))
+    }
+
+    /// Writes surface pixel (`x`, `y`) if it is on the surface, owned by `stamp`'s record
+    /// if recording.
+    fn put(&mut self, x: i32, y: i32, colour: u8, stamp: Option<u32>) {
         let surface = self.surface();
         if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
             && x < surface.width
             && y < surface.height
         {
-            self.pixels_mut()[y * surface.width + x] = colour;
+            let i = y * surface.width + x;
+            let (pixels, recording) = self.pixels_and_recording();
+            pixels[i] = colour;
+            if let (Some(r), Some(stamp)) = (recording, stamp) {
+                r.owners[i] = stamp | u32::from(colour);
+            }
         }
     }
 }
