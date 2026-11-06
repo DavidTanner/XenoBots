@@ -223,6 +223,16 @@ cargo run -p xeno-tool -- dump ./gameFiles/xenodrop.pcx --out /tmp/xeno-out
 `dump ./gameFiles/mgavideo.dvr` writes one sheet per font (codes 0 to 127, rows of 16).
 
 ```bash
+cargo run -p xeno-tool -- dump ./gameFiles --hd-template ~/xeno-pack
+```
+
+`--hd-template` starts an HD pack (`docs/hd.md`, "Starting a pack"): every image
+`--hd-pack` can replace (model images, sprites, screens, `.vcl` pictures, skies; 1,201
+in a stock install) is written at its pack path, 4x larger, in the palette the game
+shows it with, colour 0 clear where it is not drawn. PNGs already there are kept. It
+refuses a directory inside this repository.
+
+```bash
 cargo run -p xeno-tool -- palette ./gameFiles/ealogo.vcl
 ```
 

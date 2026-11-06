@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use xeno_formats::{ban, mal, vcl};
 use xeno_render::{AssetId, HdImage};
 
 use crate::game_dir::GameFiles;
@@ -13,45 +12,17 @@ use crate::game_dir::GameFiles;
 /// images, each bank's sprites, and each `.m@l` screen, `.vcl` picture and sky strip
 /// as a whole file (one that does not load has none).
 pub fn originals(files: &GameFiles) -> HashMap<AssetId, (usize, usize)> {
-    let models = crate::scene::load_models(files).into_iter().flatten();
-    let mut sizes: HashMap<_, _> = models.flat_map(|m| m.image_sizes()).collect();
-    for bank in 0..6u8 {
-        let name = format!("msprite{bank}.b@n");
-        let Some(sprites) = files
-            .read(&name)
-            .ok()
-            .and_then(|b| ban::parse_sprites(&b).ok())
-        else {
-            log::warn!("HD pack: {name} does not load; its sprites stay the original's");
-            continue;
-        };
-        for (index, s) in sprites.sprites.iter().enumerate() {
-            let asset = AssetId::Sprite {
-                bank,
-                index: index as u16,
-            };
-            sizes.insert(asset, (s.width(), s.height()));
-        }
+    let models: Vec<_> = crate::scene::load_models(files)
+        .into_iter()
+        .flatten()
+        .collect();
+    let read = |name: &str| files.read(name).ok();
+    let (images, failed) = xeno_render::hd::originals(read, files.names(), &models);
+    for name in failed {
+        log::warn!("HD pack: {name} does not load; its sprites stay the original's");
     }
-    for name in files.names() {
-        let Ok(bytes) = files.read(name) else {
-            continue;
-        };
-        let size = match name.rsplit_once('.').map_or("", |(_, ext)| ext) {
-            "m@l" => mal::parse(&bytes).ok().map(|s| (320, s.pixels.len() / 320)),
-            "vcl" => vcl::parse(&bytes)
-                .ok()
-                .map(|p| (vcl::Picture::WIDTH, p.pixels.len() / vcl::Picture::WIDTH)),
-            "b@n" if name.starts_with("sky") => ban::parse_sky(&bytes)
-                .ok()
-                .map(|_| (ban::Sky::WIDTH, ban::Sky::HEIGHT)),
-            _ => None,
-        };
-        if let Some(size) = size {
-            sizes.insert(AssetId::file(name), size);
-        }
-    }
-    sizes
+    let sizes = images.into_iter().map(|(a, o)| (a, (o.width, o.height)));
+    sizes.collect()
 }
 
 /// Every PNG under `dir` that names an image in `originals` (its size in pixels) and is

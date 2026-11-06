@@ -9500,6 +9500,105 @@ pub mod tests {
         panic!("no console showed one: {tried:?}");
     }
 
+    /// T-240's acceptance: the HD template of the user's files (as `xeno-tool dump
+    /// --hd-template` writes it) loads with no image skipped, and every stock mission's
+    /// situation room and first console composes at 4K as it presents, but where a
+    /// model image is drawn smaller than 1:1.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_hd_template_composes_as_the_original_presents() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_render::hd::Record;
+        use xeno_render::{Aspect, Layout, Palette, Scale};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("xeno-hd-template-{}", std::process::id()));
+        let models: Vec<_> = crate::scene::load_models(&files)
+            .into_iter()
+            .flatten()
+            .collect();
+        let read = |name: &str| files.read(name).ok();
+        let (images, failed) = xeno_render::hd::originals(read, files.names(), &models);
+        assert!(failed.is_empty(), "{failed:?}");
+        for (asset, original) in &images {
+            let image = original.upscaled(4).unwrap();
+            let png = dir.join(asset.pack_path());
+            std::fs::create_dir_all(png.parent().unwrap()).unwrap();
+            let (w, h) = image.size();
+            image::RgbaImage::from_raw(w as u32, h as u32, image.to_rgba8())
+                .unwrap()
+                .save(&png)
+                .unwrap();
+        }
+        let pack = crate::hd_pack::load(&dir, &crate::hd_pack::originals(&files)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        // One file an image, so none skipped.
+        assert_eq!(pack.len(), images.len());
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let window = Size::new(3840, 2160);
+        let (mut frames, mut exact) = (0, 0);
+        for (name, scenario) in &assets.scenarios {
+            let m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+            let mut views = vec![(View::SitRoom, m.clone())];
+            if let Some(&robot) = m.robots().first() {
+                let mut m = m.clone();
+                views.push((m.view_robot(robot).unwrap(), m));
+            }
+            for (view, m) in views {
+                let file = crate::screens::Screen::Mission(view).file().unwrap();
+                let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+                let palette = Palette::from_vga6(&picture.dac).unwrap();
+                let mut fb = Framebuffer::new(Size::MODE_13H);
+                fb.set_recording(true);
+                fb.copy_picture(&picture.pixels, AssetId::file(file));
+                m.draw(&mut fb, &assets);
+                let layout = Layout::new(fb.view(), window, Scale::Auto, Aspect::Correct);
+                let mut before = vec![0; window.width * window.height];
+                xeno_render::present(&fb, &palette, &layout, &mut before, window);
+                let mut after = vec![0; before.len()];
+                xeno_render::compose(&fb, &palette, &layout, &pack, &mut after, window);
+                // The original draws a model image smaller than 1:1 from some of its
+                // pixels (the repeat table), a pack image is stretched evenly over the
+                // blit's rectangle: there the picked texels differ, by design.
+                let r = fb.recording().unwrap();
+                let mut differ = 0;
+                for (i, _) in before
+                    .iter()
+                    .zip(&after)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                {
+                    let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                    let x = (wx - layout.x).div_euclid(layout.sx as isize);
+                    let y = (wy - layout.y).div_euclid(layout.sy as isize);
+                    let k = (y * 320 + x) as usize;
+                    let owner = r.owner(k, fb.pixels()[k]).map(|o| &r.records()[o]);
+                    let scaled = |b: &xeno_render::BlitRecord| {
+                        matches!(b.asset, AssetId::ModelImage { .. }) && b.scale < 256
+                    };
+                    assert!(
+                        matches!(owner, Some(Record::Blit(b)) if scaled(b)),
+                        "{name} {view:?}: ({wx}, {wy}) differs, owned by {owner:?}"
+                    );
+                    differ += 1;
+                }
+                exact += usize::from(differ == 0);
+                frames += 1;
+            }
+        }
+        println!(
+            "{} images; {exact} of {frames} frames composed as presented",
+            pack.len()
+        );
+        assert!(exact > frames / 2, "{exact} of {frames}");
+    }
+
     /// T-074: with `--hd-ui`, every stock scenario's situation room (orders, log and
     /// status) and a console at 4K draw the same indexed pixels, and differ from
     /// `present` only inside the recorded glyphs' cells, in a colour found in that cell

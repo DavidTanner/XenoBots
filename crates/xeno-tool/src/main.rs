@@ -7,6 +7,7 @@ mod inspect;
 mod palette;
 mod simulate;
 mod summary;
+mod template;
 mod wav;
 
 use std::path::PathBuf;
@@ -45,8 +46,13 @@ enum Command {
     /// m00, m08, m16 and m32 models (one PNG per frame; a model's .m00 is read from beside
     /// it when its parts need one). dsounds.bin gives one WAV per sound, and mgavideo.dvr
     /// one sheet per font.
+    ///
+    /// With `--hd-template <dir>`, the file is the game directory: every image an HD
+    /// pack may replace is written into `<dir>` at its pack path, 4x larger, in the
+    /// palette the game shows it with, colour 0 clear where it is not drawn
+    /// (`docs/hd.md`, "Starting a pack"). Files already there are kept.
     Dump {
-        /// The file to decode.
+        /// The file to decode (the game directory with `--hd-template`).
         file: PathBuf,
         /// Directory to write into; created if missing. Never point it into the repo
         /// outside the gitignored `out/`.
@@ -56,6 +62,9 @@ enum Command {
         /// of their own, such as b@n and models. Without it they come out in grey.
         #[arg(long)]
         palette: Option<PathBuf>,
+        /// Write an HD pack template here; it must be outside this repository.
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["out", "palette"])]
+        hd_template: Option<PathBuf>,
     },
     /// Run a scenario in the sim with no window and print where its robots are
     /// (`docs/sim.md`, "Movement"). The movement tables come from the `xeno.exe` beside
@@ -111,7 +120,24 @@ fn main() -> anyhow::Result<ExitCode> {
                 std::fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
             print!("{}", inspect::report(&path, &bytes));
         }
-        Command::Dump { file, out, palette } => {
+        Command::Dump {
+            file,
+            hd_template: Some(dir),
+            ..
+        } => {
+            let done = template::write(&file, &dir)?;
+            println!(
+                "wrote {} images ({} bytes) into {}; kept {} already there; left out {}",
+                done.written,
+                done.bytes,
+                dir.display(),
+                done.kept,
+                done.left_out
+            );
+        }
+        Command::Dump {
+            file, out, palette, ..
+        } => {
             let bytes =
                 std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
             let palette = palette

@@ -23,7 +23,7 @@ pub use anim::ColourAnims;
 pub use dac::{DAC_BYTES, Dac, Fade};
 pub use framebuffer::{Framebuffer, Rect, RenderError, Size};
 pub use hd::{AssetId, BlitRecord, HdImage, Name, compose, draw_glyphs, draw_shapes};
-pub use model::{LoadedModel, ModelScale, ModelTarget, model_facing};
+pub use model::{LoadedModel, MODEL_FILES, ModelScale, ModelTarget, model_facing};
 pub use present::{Aspect, Layout, Scale, ViewPoint, present};
 pub use sprite::{Anchor, BlitMode, Orientation, SpriteBlit};
 pub use text::{TextCursor, TextMode};

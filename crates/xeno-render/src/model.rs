@@ -274,6 +274,12 @@ pub fn model_facing(relative: u16) -> u8 {
     ((((relative >> 10) + 1) & 0x3e) ^ 0x20) as u8
 }
 
+/// The models' files by model number / 2 (`docs/formats/mxx.md`, "Loading").
+pub const MODEL_FILES: [&str; 11] = [
+    "humanoid", "scorpion", "scout", "missile", "netrelay", "explode", "plasma", "laser",
+    "basedome", "cloak", "obst",
+];
+
 /// A directional model as `gfx_load_model` keeps it (`docs/formats/mxx.md`,
 /// "Loading"): its views, the `.m00`'s images, and for each even facing the view
 /// drawn and whether it is that view's mirror facing.
@@ -360,8 +366,8 @@ impl LoadedModel {
         }
     }
 
-    /// Every image's name and size in pixels: what an HD pack may replace.
-    pub fn image_sizes(&self) -> Vec<(AssetId, (usize, usize))> {
+    /// Every image and its name: what an HD pack may replace.
+    pub fn images(&self) -> Vec<(AssetId, &Image)> {
         let views = self.views.iter().enumerate();
         let views = views.map(|(v, view)| (Some(v as u16), &view.images));
         std::iter::once((None, &self.direction_free))
@@ -373,10 +379,39 @@ impl LoadedModel {
                         view,
                         image: k as u16,
                     };
-                    (asset, (usize::from(i.width), usize::from(i.height)))
+                    (asset, i)
                 })
             })
             .collect()
+    }
+
+    /// Every model as `gfx_load_all_models` loads it (`docs/formats/mxx.md`,
+    /// "Loading"), by model number / 2, from the files `read` returns by name, or why
+    /// it can't be loaded.
+    pub fn load_all(
+        read: impl Fn(&str) -> Result<Vec<u8>, String>,
+    ) -> Vec<Result<LoadedModel, String>> {
+        let read = |name: &str, suffix: &str| -> Result<Model, String> {
+            let name = format!("{name}.{suffix}");
+            xeno_formats::mxx::parse(&read(&name)?).map_err(|e| format!("{name}: {e}"))
+        };
+        let load = |name: &str| -> Result<LoadedModel, String> {
+            let m00 = read(name, "m00")?;
+            let m08 = read(name, "m08")?;
+            let mut model = match name {
+                "explode" | "plasma" | "basedome" | "cloak" | "obst" => {
+                    LoadedModel::single_view(&m00, &m08)
+                }
+                "netrelay" => {
+                    LoadedModel::quarter_turn(&m00, &[m08, read(name, "m16")?, read(name, "m32")?])
+                }
+                "laser" => LoadedModel::new(&m00, &[m08, read(name, "m16")?, read(name, "m32")?]),
+                _ => LoadedModel::new(&m00, &[m08, read(name, "m16")?]),
+            };
+            model.name = Name::new(name);
+            Ok(model)
+        };
+        MODEL_FILES.iter().map(|name| load(name)).collect()
     }
 
     /// The view drawn at `facing` (an even 64th of a turn) and its animations there.
