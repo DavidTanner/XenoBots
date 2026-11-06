@@ -145,6 +145,12 @@ struct Cli {
     /// stay the original's pixels. The game itself is unchanged.
     #[arg(long)]
     hd_shapes: bool,
+
+    /// Not in the original: draw the game's text (and the port's own labels) again at
+    /// the window's resolution from the fonts in the user's mgavideo.dvr, its diagonal
+    /// steps smoothed, in its own colours, so it is sharp at 4K. The game is unchanged.
+    #[arg(long)]
+    hd_ui: bool,
 }
 
 /// `--screen`'s values.
@@ -314,6 +320,7 @@ fn main() -> ExitCode {
         cli.speed,
         cli.wasd,
         cli.hd_shapes,
+        cli.hd_ui,
         viewer,
         intro,
         drop,
@@ -431,5 +438,9 @@ mod tests {
         };
         assert!(!hd(&[]).unwrap());
         assert!(hd(&["--hd-shapes"]).unwrap());
+        let ui =
+            |args: &[&str]| Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.hd_ui);
+        assert!(!ui(&[]).unwrap());
+        assert!(ui(&["--hd-ui"]).unwrap());
     }
 }

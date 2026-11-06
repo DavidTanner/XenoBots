@@ -155,7 +155,8 @@ pub enum FrontEnd {
 /// there is no intro), then runs `front`, until a screen quits or the user presses ESC
 /// or closes the window. `music` plays what the cutscenes and screens cue; a mission
 /// in play runs `speed` retraces a real one (T-215); `wasd` starts WASD on (T-216);
-/// `hd_shapes` draws the recorded shapes again at the window's resolution (T-236).
+/// `hd_shapes` draws the recorded shapes again at the window's resolution (T-236), and
+/// `hd_ui` the recorded glyphs (T-074).
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     scale: Scale,
@@ -164,6 +165,7 @@ pub fn run(
     speed: u64,
     wasd: bool,
     hd_shapes: bool,
+    hd_ui: bool,
     viewer: Option<Viewer>,
     intro: Option<Cutscene>,
     mut drop: Option<drop::Assets>,
@@ -231,6 +233,7 @@ pub fn run(
         speed,
         legend: false,
         hd_shapes,
+        hd_ui,
     };
     app.input.wasd = wasd;
     let event_loop = EventLoop::new()?;
@@ -304,6 +307,9 @@ struct App {
     /// `--hd-shapes` (T-236): record the frame's shapes and draw them again at the
     /// window's resolution (`docs/hd.md`).
     hd_shapes: bool,
+    /// `--hd-ui` (T-074): record the frame's glyphs, the labels' too, and draw them
+    /// again at the window's resolution.
+    hd_ui: bool,
 }
 
 /// Counts for the once-a-second rate log.
@@ -449,6 +455,9 @@ impl App {
         if self.hd_shapes {
             xeno_render::draw_shapes(&self.fb, &self.palette, &layout, &mut buffer, window_size);
         }
+        if self.hd_ui {
+            xeno_render::draw_glyphs(&self.fb, &self.palette, &layout, &mut buffer, window_size);
+        }
         if let Some(under) = under {
             under.restore(&mut self.fb);
         }
@@ -469,8 +478,15 @@ impl App {
     fn tick(&mut self, step: Step) -> bool {
         let retrace = self.log_base + step.retrace;
         // A new picture (a mode change, the front end) starts unrecorded.
-        if self.hd_shapes && self.fb.recording().is_none() {
-            self.fb.set_recording(true);
+        if self.hd_shapes || self.hd_ui {
+            match self.fb.recording().map(|r| r.records().len()) {
+                None => self.fb.set_recording(true),
+                // shortcut: a screen that redraws without copying its picture again grows
+                // the record; start it afresh before the frame's drawing past this many
+                // (what was drawn becomes background, smoothed again once redrawn).
+                Some(n) if n > 1 << 16 => self.fb.restart_recording(),
+                _ => {}
+            }
         }
         // The music keeps real time at the game speed (T-215): only real retraces tick it.
         if !step.extra {
@@ -1015,6 +1031,7 @@ mod tests {
             speed: 1,
             legend: false,
             hd_shapes: false,
+            hd_ui: false,
         }
     }
 

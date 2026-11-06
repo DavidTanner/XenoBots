@@ -150,6 +150,11 @@ writes a sheet of each font's 128 codes. `xeno-app` draws the log-in name
 (`crates/xeno-app/src/login.rs`), the intro drop's credits (`drop.rs`) and the
 cutscene captions (`intro.rs`, T-045) with them.
 
+With `--hd-ui` (T-074) each glyph drawn is also recorded with its cells and drawn again
+at the window's resolution, its 45-degree steps cut and filled into straight edges in
+the font's own colours and shades (`docs/hd.md`, "Text at output resolution"). The
+framebuffer's pixels are the same either way.
+
 ## Open questions
 
 - What calls `1fe6:48f1` (extra spacing), and what fonts 2 and 4 are used for.
