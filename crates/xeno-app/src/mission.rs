@@ -9383,6 +9383,99 @@ pub mod tests {
         assert!(changed.iter().all(|&n| n > 0), "{changed:?}");
     }
 
+    /// T-072: a pack replacing one model image seen in a training mission's console
+    /// (a synthetic solid colour, written here) changes exactly the output pixels that
+    /// image's blits still own, to that colour; every other pixel stays `present`'s.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_an_hd_pack_replaces_only_its_model_image() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_render::hd::Record;
+        use xeno_render::{Aspect, Layout, Palette, Scale};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let originals: std::collections::HashMap<_, _> = assets
+            .models
+            .iter()
+            .flatten()
+            .flat_map(|m| m.image_sizes())
+            .collect();
+        let window = Size::new(3840, 2160);
+        let mut tried = Vec::new();
+        for name in ["ntrain.usg", "htrain.usg", "strain.usg", "ctrain.usg"] {
+            let scenario = &assets.scenarios[name];
+            let mut m = Mission::new(name.into(), scenario, Random::seeded(1), &assets.motion);
+            let Some(&robot) = m.robots().first() else {
+                continue;
+            };
+            let view = m.view_robot(robot).unwrap();
+            let file = crate::screens::Screen::Mission(view).file().unwrap();
+            let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+            let palette = Palette::from_vga6(&picture.dac).unwrap();
+            let mut fb = Framebuffer::new(Size::MODE_13H);
+            fb.set_recording(true);
+            fb.pixels_mut().copy_from_slice(&picture.pixels);
+            m.draw(&mut fb, &assets);
+            let r = fb.recording().unwrap();
+            let owner = |i: usize| r.owner(i, fb.pixels()[i]).map(|k| &r.records()[k]);
+            // The first model image that still owns a pixel.
+            let Some(asset) = (0..fb.pixels().len()).find_map(|i| match owner(i) {
+                Some(Record::Blit(b)) => Some(b.asset),
+                _ => None,
+            }) else {
+                tried.push(name);
+                continue;
+            };
+            let (w, h) = originals[&asset];
+            let dir = std::env::temp_dir().join(format!("xeno-hd-real-{}", std::process::id()));
+            let png = dir.join(asset.pack_path());
+            std::fs::create_dir_all(png.parent().unwrap()).unwrap();
+            let solid = image::Rgba([0x12, 0x34, 0x56, 0xff]);
+            image::RgbaImage::from_pixel(4 * w as u32, 4 * h as u32, solid)
+                .save(&png)
+                .unwrap();
+            let pack = crate::hd_pack::load(&dir, &originals).unwrap();
+            std::fs::remove_dir_all(&dir).unwrap();
+            assert_eq!(pack.len(), 1);
+            let layout = Layout::new(fb.view(), window, Scale::Auto, Aspect::Correct);
+            let mut before = vec![0; window.width * window.height];
+            xeno_render::present(&fb, &palette, &layout, &mut before, window);
+            let mut after = vec![0; before.len()];
+            xeno_render::compose(&fb, &palette, &layout, &pack, &mut after, window);
+            let mut replaced = 0;
+            for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+                let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                let (x, y) = (
+                    (wx - layout.x) / layout.sx as isize,
+                    (wy - layout.y) / layout.sy as isize,
+                );
+                let inside = (0..320).contains(&x) && (0..200).contains(&y);
+                let owned = inside
+                    && matches!(owner((y * 320 + x) as usize), Some(Record::Blit(b)) if b.asset == asset);
+                if owned {
+                    assert_eq!(now, 0x12_3456, "{name}: ({wx}, {wy})");
+                    replaced += 1;
+                } else {
+                    assert_eq!(now, was, "{name}: ({wx}, {wy})");
+                }
+            }
+            assert!(replaced > 0);
+            println!(
+                "{name}: {} replaced {replaced} output pixels",
+                asset.pack_path()
+            );
+            return;
+        }
+        panic!("no console showed a model: {tried:?}");
+    }
+
     /// T-074: with `--hd-ui`, every stock scenario's situation room (orders, log and
     /// status) and a console at 4K draw the same indexed pixels, and differ from
     /// `present` only inside the recorded glyphs' cells, in a colour found in that cell

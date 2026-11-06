@@ -91,7 +91,7 @@ dedicated PR and note it in `NEXT_STEPS.md`.
 | Framebuffer to screen (phase 2) | `pixels` (wgpu 29) | 0.17 | Swap in when shaders (a CRT filter) are wanted. |
 | Audio | `rodio` | 0.23 | |
 | Binary parsing | `binrw` | 0.15 | Declarative struct parsing for asset formats. |
-| Images (PNG export in tools only) | `image` | 0.25 | `image` has no PCX decoder; we write our own. |
+| Images (PNG export in tools; `xeno-app` decodes `--hd-pack` PNGs) | `image` | 0.25 | `default-features = false, features = ["png"]`. `image` has no PCX decoder; we write our own. |
 | CLI | `clap` (derive) | 4.6 | |
 | Errors | `anyhow` (bins), `thiserror` (libs) | 1 / 2 | |
 | Logging | `log` + `env_logger` | 0.4 / 0.11 | |
@@ -201,6 +201,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless
 cargo run -p xeno-app -- --game-dir ./gameFiles --speed 4  # a mission in play at 4x (F12 cycles 1x, 2x, 4x; not in the original; docs/game-loop.md)
 cargo run -p xeno-app -- --game-dir ./gameFiles --hd-shapes  # hills, terrain and sloping lines drawn again at the window's resolution (not in the original; docs/hd.md)
 cargo run -p xeno-app -- --game-dir ./gameFiles --hd-ui  # text and the port's labels drawn again at the window's resolution, diagonal steps smoothed (not in the original; docs/hd.md)
+cargo run -p xeno-app -- --game-dir ./gameFiles --hd-pack ~/my-pack  # the user's PNGs replace the images they name, at the window's resolution (not in the original; docs/hd.md, "The HD pack")
 cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word's seed (logged at start-up; the clock's otherwise)
 cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where the file dialogs start (Ctrl+Alt+P's SAVE GAME, the editor's Ctrl+Alt+O), the terrain editor's Alt+Q (BACKUP.MAP) and the map room's N and Q (<NAME>.LOG, loaded at log-in) save; the game dir otherwise
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
