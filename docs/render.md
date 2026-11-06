@@ -698,4 +698,12 @@ and, when the framebuffer is recording, its blit's logical rectangle and scale a
 kept beside the pixels, so higher-resolution art can replace it at output resolution
 without changing a framebuffer pixel: see `docs/hd.md`. The view's own buffer is copied
 into the console's picture through `Framebuffer::copy_through`, which carries the
-record along (T-236; `docs/hd.md`, "Shapes at output resolution (T-236)").
+record along (T-236).
+
+**Shapes at output resolution (T-236).** With `--hd-shapes`, `shape::fill_polygon`
+(the terrain's hills and blocks, and the maps' hill octagons) and the sloping lines
+of slot `0x558` (`mainview::draw_line`) record their corners or ends and colour
+beside their pixels, and `xeno_render::draw_shapes` draws them again at the window's
+resolution after `present`: a polygon as its corners' pixel squares' convex hull, a
+line one pixel thick across its longer axis. The fill above still decides every
+framebuffer pixel; see `docs/hd.md`, "Shapes at output resolution (T-236)".

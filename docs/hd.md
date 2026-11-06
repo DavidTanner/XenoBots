@@ -80,8 +80,8 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
 ## Shapes at output resolution (T-236)
 
 Bitmaps can only be replaced by other bitmaps, but the 3D view's hills and blocks, the
-maps' hill octagons and the sloping lines are geometry, so they can be drawn again
-at the window's resolution. Nothing else changes: the fill and line routines
+maps' hill octagons and the sloping lines are geometry, so `--hd-shapes` draws them
+again at the window's resolution. Nothing else changes: the fill and line routines
 still set every framebuffer pixel as the original does.
 
 - **The record.** `Recording` keeps one list of `Record`s, blits and shapes
@@ -100,8 +100,35 @@ still set every framebuffer pixel as the original does.
   and gives each copied pixel its owner. A screen's record starts afresh
   (`restart_recording`) wherever `screens.rs` copies a whole picture, so it holds one
   frame's drawings. This is the part of T-234 the shapes need; blits ride along too.
-The drawing at output resolution (`draw_shapes`, `--hd-shapes`) is T-236's second
-part.
+- **The outline.** In surface pixels with a pixel's centre at its whole number, a
+  polygon covers its convex outline grown by half a pixel each way (the Minkowski sum
+  with the pixel square: each edge moved out by `(|nx| + |ny|) / 2` along its normal
+  `n`, and the corners' bounding box grown by a half), which matches the fill's
+  inclusive left, right, top and bottom; a line covers the band one pixel thick across
+  its longer axis, half a pixel past each end, as a line stepping one pixel along that
+  axis does. Non-convex and zero-area polygons are left as the original's pixels (a
+  `shortcut:` comment; the shape ops' triangles and quads are convex).
+- **The edge rule.** `draw_shapes` runs after `present` (or `compose`), shapes in
+  record order. For each shape it takes its *edge* pixels (owned, with a neighbour it
+  does not own) and the neighbours of those that it may cover: in its clip, and drawn
+  *before* it (a background or an earlier record; never a later record or an unseen
+  write, so text, sprites, models in front and the pointer stay on top). In those
+  pixels' output blocks, an output pixel whose centre is in the outline takes the
+  shape's palette colour; one in the shape's own pixel that is not takes the colour of
+  the neighbour on that side (across first if it is farther across than down, then
+  down, then diagonally) if that neighbour was drawn before the shape, else keeps the
+  shape's. Pixels whose eight neighbours are all the shape's keep `present`'s colour.
+  So a shape moves by less than one logical pixel, only into what was behind it, and in
+  the original palette's exact colours: no blending, no anti-aliasing.
+- **Not covered.** The map's grid and objects, the radars and every marker are single
+  dots or sprites, the same at any resolution; axis-aligned rules and frames likewise.
+  A split view (the intro drop) is left as presented.
+
+With the option off, nothing records and `window.rs` calls `present` alone, so the
+output is `present`'s byte for byte. On the development machine (release, 3840x2160,
+8x10), `present` takes 1.0 ms and `draw_shapes` on the stock missions' first frames
+up to 0.8 ms for a situation room map and 1.1 ms for a console with hills in view
+(scen06a); nothing to do costs under a microsecond.
 
 ## What it costs
 

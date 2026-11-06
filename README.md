@@ -141,6 +141,7 @@ quit, and press F11 or Alt+Enter to switch between a window and fullscreen.
 | `--palette <file>` | With `--view`: take the colours from this `.m@l`, `.vcl` or `.pcx`, found the same way. |
 | `--speed <1\|2\|4>` | Not in the original: run a mission in play 2 or 4 times as fast (default 1). F12 changes it while playing. The music, the cutscenes and the other screens keep the original's pace; see `docs/game-loop.md`, "Game speed (T-215)". |
 | `--wasd` | Not in the original: on the robot consoles, W, A, S and D steer as Up, Left, Down and Right, and the arrows do the letters' jobs (Left the next target, Down the status page, Right the scorpion's relay dump, Up the scout's standing stance). Shift+F12 switches it while playing. The keypad's arrows still steer, and Ctrl+Alt+S is still the shots; see `docs/sim.md`, "The cockpit keys (T-105)". |
+| `--hd-shapes` | Not in the original: draw the game's shapes (the 3D view's hills and blocks, the maps' hill octagons, sloping lines) again at the window's resolution in their own palette colours, so their edges are smooth at 4K instead of stair-stepped. Pictures, sprites, models and text stay the original's pixels, and the game is unchanged; see `docs/hd.md`, "Shapes at output resolution (T-236)". |
 | `--seed <n>` | The seed of the game's random word (the campaign's alert rises and calendar). By default it comes from the clock, as the original's comes from the timer; it is logged at start-up, and passing it again repeats the run. |
 
 | Key | Action |

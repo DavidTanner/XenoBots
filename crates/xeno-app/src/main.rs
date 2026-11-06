@@ -138,6 +138,13 @@ struct Cli {
     /// and Right, and the arrows as W, A, S and D. Shift+F12 switches it in play.
     #[arg(long)]
     wasd: bool,
+
+    /// Not in the original: draw the game's shapes (the 3D view's hills and terrain,
+    /// the maps' hills, sloping lines) again at the window's resolution, in their own
+    /// colours, so their edges are smooth at 4K. Pictures, sprites, models and text
+    /// stay the original's pixels. The game itself is unchanged.
+    #[arg(long)]
+    hd_shapes: bool,
 }
 
 /// `--screen`'s values.
@@ -306,6 +313,7 @@ fn main() -> ExitCode {
         cli.fullscreen,
         cli.speed,
         cli.wasd,
+        cli.hd_shapes,
         viewer,
         intro,
         drop,
@@ -418,5 +426,10 @@ mod tests {
             |args: &[&str]| Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.wasd);
         assert!(!wasd(&[]).unwrap());
         assert!(wasd(&["--wasd"]).unwrap());
+        let hd = |args: &[&str]| {
+            Cli::try_parse_from([&["xeno-app"], args].concat()).map(|c| c.hd_shapes)
+        };
+        assert!(!hd(&[]).unwrap());
+        assert!(hd(&["--hd-shapes"]).unwrap());
     }
 }
