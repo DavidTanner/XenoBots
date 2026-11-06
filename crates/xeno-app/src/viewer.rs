@@ -19,8 +19,8 @@ use xeno_formats::ban::{self, Sprite};
 use xeno_formats::{FormatError, Palette, mal, mxx, pcx, vcl};
 use xeno_render::anim::{self, flag};
 use xeno_render::{
-    Anchor, BlitMode, DAC_BYTES, Dac, Fade, Framebuffer, ModelScale, ModelTarget, Rect, Size,
-    SpriteBlit,
+    Anchor, AssetId, BlitMode, DAC_BYTES, Dac, Fade, Framebuffer, ModelScale, ModelTarget, Rect,
+    Size, SpriteBlit,
 };
 
 use crate::game_dir::GameFiles;
@@ -89,6 +89,12 @@ pub enum PaletteChoice<'a> {
 /// strips get the Humanoid cockpit's, which holds the 3D view they are drawn in. Models
 /// get the cockpit of their own robot kind, the rest the Humanoid's (`mxx.md`,
 /// "Palette": the cockpits differ only in colours 253 and 254).
+/// The bank number in `msprite<n>.b@n`.
+fn bank_digit(name: &str) -> Option<u8> {
+    let lower = name.to_lowercase();
+    lower.strip_prefix("msprite")?.get(..1)?.parse().ok()
+}
+
 pub fn palette_choice<'a>(kind: Kind, name: &str, given: Option<&'a Path>) -> PaletteChoice<'a> {
     if let Some(path) = given {
         return PaletteChoice::Given(path);
@@ -543,6 +549,10 @@ impl Viewer {
                         BlitMode::Opaque
                     },
                     anchor: Anchor::SurfaceCentre,
+                    asset: bank_digit(&self.name).map(|bank| AssetId::Sprite {
+                        bank,
+                        index: self.index as u16,
+                    }),
                     ..SpriteBlit::default()
                 };
                 if !fb.blit_sprite(sprite, 0, 0, blit) {

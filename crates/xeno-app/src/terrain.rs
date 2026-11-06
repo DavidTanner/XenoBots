@@ -267,7 +267,7 @@ impl TerrainEditor {
             mainview::octagon(buffer, camera, centre, r, SELECTED_COLOUR);
         }
         let origin = mainview::pixel(camera, buffer, map::ORIGIN.x, map::ORIGIN.y);
-        mainview::mark(buffer, origin, inputs.sprite(ORIGIN_SPRITE), 0);
+        mainview::mark(buffer, origin, inputs, Some(ORIGIN_SPRITE), 0);
         let inputs = Inputs {
             font: None,
             ..*inputs

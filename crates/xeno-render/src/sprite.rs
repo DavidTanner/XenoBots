@@ -3,6 +3,7 @@
 
 use xeno_formats::ban::Sprite;
 
+use crate::hd::{AssetId, BlitRecord, Record};
 use crate::{Framebuffer, Rect};
 
 /// Which pixels a blit writes.
@@ -44,13 +45,16 @@ pub enum Anchor {
     SurfaceCentre,
 }
 
-/// The options of [`Framebuffer::blit_sprite`]. The default is opaque, upright and
-/// placed by its top-left corner.
+/// The options of [`Framebuffer::blit_sprite`]. The default is opaque, upright,
+/// placed by its top-left corner and unnamed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SpriteBlit {
     pub mode: BlitMode,
     pub orientation: Orientation,
     pub anchor: Anchor,
+    /// The sprite's name, recorded with its rectangle when recording (`docs/hd.md`):
+    /// [`AssetId::sprite`] of its handle.
+    pub asset: Option<AssetId>,
 }
 
 impl Framebuffer {
@@ -89,7 +93,18 @@ impl Framebuffer {
             Orientation::Rotate180 => (true, true),
         };
         let stride = self.surface().width;
-        let pixels = self.pixels_mut();
+        let (pixels, mut recording) = self.pixels_and_recording();
+        let tag = match (blit.asset, &mut recording) {
+            (Some(asset), Some(r)) => r.push(Record::Blit(BlitRecord {
+                asset,
+                rect: Rect::new(left as i32, top as i32, width as u32, height as u32),
+                scale: 256,
+                mirrored: mirror,
+                flipped: flip,
+            })),
+            _ => None,
+        };
+        let mut owners = tag.zip(recording);
         for sy in 0..height {
             let dy = top + if flip { height - 1 - sy } else { sy };
             for sx in (0..width).filter(|&sx| sprite.covers(sx, sy)) {
@@ -97,8 +112,11 @@ impl Framebuffer {
                 if blit.mode == BlitMode::Keyed && colour == 0 {
                     continue;
                 }
-                let dx = left + if mirror { width - 1 - sx } else { sx };
-                pixels[dy * stride + dx] = colour;
+                let i = dy * stride + left + if mirror { width - 1 - sx } else { sx };
+                pixels[i] = colour;
+                if let Some((tag, r)) = &mut owners {
+                    r.owners[i] = *tag | u32::from(colour);
+                }
             }
         }
         true
@@ -223,6 +241,7 @@ mod tests {
         mode: BlitMode::Keyed,
         orientation: Orientation::Normal,
         anchor: Anchor::TopLeft,
+        asset: None,
     };
 
     #[test]
@@ -361,6 +380,7 @@ mod tests {
             mode: BlitMode::Keyed,
             orientation: Orientation::Rotate180,
             anchor: Anchor::Centre,
+            asset: None,
         };
         fb.blit_sprite(&flag, 12, 4, blit);
         // The robot's legs, keyed over the corner box through a window.
@@ -408,6 +428,7 @@ mod tests {
                         mode,
                         orientation,
                         anchor,
+                        asset: None,
                     });
                 }
             }
@@ -456,6 +477,43 @@ mod tests {
             };
             prop_assert_eq!(covered, expected);
         }
+    }
+
+    /// T-233: a named blit records its rectangle and turn and owns the pixels it wrote,
+    /// and draws the same pixels as with recording off.
+    #[test]
+    fn a_named_sprite_records_its_rectangle_and_draws_the_same_pixels() {
+        let sprite = spans(3, &[(0, &[1, 2]), (1, &[0, 4])]);
+        let asset = AssetId::Sprite { bank: 1, index: 7 };
+        let blit = SpriteBlit {
+            orientation: Orientation::Mirror,
+            asset: Some(asset),
+            ..SpriteBlit::default()
+        };
+        let plain = drawn(&sprite, Size::new(5, 3), 1, 1, blit);
+        let mut fb = Framebuffer::new(Size::new(5, 3));
+        fb.clear(0xe);
+        fb.set_recording(true);
+        assert!(fb.blit_sprite(&sprite, 1, 1, blit));
+        assert_eq!(ascii(&fb), plain);
+        let r = fb.recording().unwrap();
+        let record = BlitRecord {
+            asset,
+            rect: Rect::new(1, 1, 3, 2),
+            scale: 256,
+            mirrored: true,
+            flipped: false,
+        };
+        assert_eq!(r.blits().collect::<Vec<_>>(), [&record]);
+        // Mirrored from x = 1: row 1's 2 and 1 at x = 2 and 3, row 2's 4 and 0 (opaque,
+        // so owned) at x = 1 and 2.
+        let owned: Vec<usize> = (0..15)
+            .filter(|&i| r.owner(i, fb.pixels()[i]).is_some())
+            .collect();
+        assert_eq!(owned, [7, 8, 11, 12]);
+        // Unnamed, nothing is recorded.
+        fb.blit_sprite(&sprite, 1, 1, SpriteBlit::default());
+        assert_eq!(fb.recording().unwrap().blits().count(), 1);
     }
 
     #[test]

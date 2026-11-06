@@ -22,7 +22,7 @@ use xeno_formats::review::{self, Review};
 use xeno_formats::scendef::{MapBox, ScenarioTable};
 use xeno_formats::setup;
 use xeno_formats::{lzexe, mgavideo};
-use xeno_render::{BlitMode, Framebuffer, Rect, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{AssetId, BlitMode, Framebuffer, Rect, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::Random;
 
 use crate::campaign::Open;
@@ -131,6 +131,7 @@ impl Assets {
     fn blit(&self, fb: &mut Framebuffer, handle: u16, (x, y): (u16, u16), mode: BlitMode) {
         let blit = SpriteBlit {
             mode,
+            asset: AssetId::sprite(handle),
             ..SpriteBlit::default()
         };
         match self.sprite(handle) {

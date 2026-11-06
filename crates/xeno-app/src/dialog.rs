@@ -16,7 +16,7 @@ use xeno_formats::ban::Sprite;
 use xeno_formats::filedialog::{Dialog, FileDialogs, List, Op, Part};
 use xeno_formats::font::Font;
 use xeno_formats::maproom::Rect;
-use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{AssetId, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::input::MouseButton;
 
 use crate::mission::{fill, frame, xor_fill};
@@ -583,6 +583,7 @@ impl FileDialog {
             if let Some(s) = sprites.get(usize::from(handle / 8)) {
                 let blit = SpriteBlit {
                     mode: BlitMode::Opaque,
+                    asset: AssetId::sprite(handle),
                     ..SpriteBlit::default()
                 };
                 fb.blit_sprite(s, x, y, blit);

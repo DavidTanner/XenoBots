@@ -13,7 +13,7 @@ use xeno_formats::views::Widget;
 use xeno_render::hd::Geometry;
 use xeno_render::shape::fill_polygon;
 use xeno_render::view3d::{Camera, GameFloat, PROBE, focal_shifted, focal_zoomed};
-use xeno_render::{Anchor, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{Anchor, AssetId, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::motion::Tables;
 use xeno_sim::{Damage, Entity, EntityId, Fixed, Position, State, World};
 
@@ -109,9 +109,14 @@ pub fn toggle_bit(kind: u16) -> Option<u16> {
     TOGGLES.iter().find(|t| t.0 == kind).map(|t| t.1)
 }
 
-fn opaque(fb: &mut Framebuffer, sprite: Option<&Sprite>, x: i32, y: i32) {
-    if let Some(sprite) = sprite {
-        fb.blit_sprite(sprite, x, y, SpriteBlit::default());
+/// `sprite`, sprite `handle`, opaque, with its corner at (`x`, `y`).
+fn opaque(fb: &mut Framebuffer, sprite: Option<&Sprite>, handle: u16, x: i32, y: i32) {
+    if let Some(s) = sprite {
+        let blit = SpriteBlit {
+            asset: AssetId::sprite(handle),
+            ..SpriteBlit::default()
+        };
+        fb.blit_sprite(s, x, y, blit);
     }
 }
 
@@ -153,16 +158,17 @@ pub fn draw_controls<'a>(
                     opaque(
                         fb,
                         sprite(label + current),
+                        label + current,
                         x + MODE_LABEL_AT.0,
                         y + MODE_LABEL_AT.1,
                     );
                 }
-                opaque(fb, sprite(MODE_FRAME + look), x, y);
+                opaque(fb, sprite(MODE_FRAME + look), MODE_FRAME + look, x, y);
                 continue;
             }
             _ => continue,
         };
-        opaque(fb, sprite(handle), x + 1, y + 1);
+        opaque(fb, sprite(handle), handle, x + 1, y + 1);
     }
 }
 
@@ -226,7 +232,8 @@ pub fn draw_roster<'a>(
         fb.draw_text(font, &mut cursor, text, TextMode::Opaque);
         for (handle, x) in icons.into_iter().zip([status_x, kind_x]) {
             if let Some(s) = sprite(handle) {
-                fb.blit_sprite(s, x, icon_y, keyed);
+                let asset = AssetId::sprite(handle);
+                fb.blit_sprite(s, x, icon_y, SpriteBlit { asset, ..keyed });
             }
         }
     }
@@ -370,11 +377,11 @@ pub fn draw_radar(
     buffer: &mut Framebuffer,
     camera: &Camera,
     points: impl IntoIterator<Item = (i32, i32)>,
-    background: Option<&Sprite>,
+    (background, handle): (Option<&Sprite>, u16),
     colour: u8,
     under: Option<(i32, i32)>,
 ) -> bool {
-    opaque(buffer, background, 0, 0);
+    opaque(buffer, background, handle, 0, 0);
     let mut probed = false;
     for (x, y) in points {
         let at = pixel(camera, buffer, x, y);
@@ -489,11 +496,18 @@ fn dot(buffer: &mut Framebuffer, (x, y): (i32, i32), colour: u8) {
 
 /// Node type 0xa (`1000:3912`): the sprite centred on the point, keyed, if it fits;
 /// then a dot of `colour` unless it is 0.
-pub fn mark(buffer: &mut Framebuffer, at: (i32, i32), sprite: Option<&Sprite>, colour: u8) {
-    if let Some(sprite) = sprite {
+pub fn mark(
+    buffer: &mut Framebuffer,
+    at: (i32, i32),
+    inputs: &Inputs,
+    handle: Option<u16>,
+    colour: u8,
+) {
+    if let Some((sprite, handle)) = handle.and_then(|h| Some((inputs.sprite(h)?, h))) {
         let blit = SpriteBlit {
             mode: BlitMode::Keyed,
             anchor: Anchor::Centre,
+            asset: AssetId::sprite(handle),
             ..SpriteBlit::default()
         };
         buffer.blit_sprite(sprite, at.0, at.1, blit);
@@ -569,9 +583,9 @@ impl Probe {
 }
 
 /// A map node of [`draw_objects`]: a dot (type 0xc) or a sprite with its dot (0xa).
-enum Node<'a> {
+enum Node {
     Dot(u8),
-    Mark(Option<&'a Sprite>, u8),
+    Mark(Option<u16>, u8),
 }
 
 /// What the main view needs to draw.
@@ -646,7 +660,7 @@ pub fn draw_objects(
     };
     if let Some((point, sprite)) = goal {
         let at = pixel(camera, buffer, point.x.0, point.y.0);
-        mark(buffer, at, inputs.sprite(sprite), 0);
+        mark(buffer, at, inputs, Some(sprite), 0);
         probe.sprite(buffer, None);
     }
     let sprites = map.overlays & Base::MAP_SPRITES != 0;
@@ -675,8 +689,10 @@ pub fn draw_objects(
                     let size = usize::from(map.factor() >= LARGE_ZOOM);
                     let first = inputs.room.robot_sprites[size].get(model).copied();
                     let octant = (e.heading.wrapping_add(0x1000) >> 13) * HANDLE_STEP;
-                    let sprite = first.and_then(|h| inputs.sprite(h + octant));
-                    Node::Mark(sprite, if side == 1 { ALIEN_DOT } else { 0 })
+                    Node::Mark(
+                        first.map(|h| h + octant),
+                        if side == 1 { ALIEN_DOT } else { 0 },
+                    )
                 }
             }
             // `1000:f9e5`.
@@ -686,7 +702,7 @@ pub fn draw_objects(
                 } else {
                     BASE_SPRITE
                 };
-                Node::Mark(inputs.sprite(handle), 0)
+                Node::Mark(Some(handle), 0)
             }
             // `1000:fa04`.
             4 if map.overlays & Base::MAP_RELAYS != 0 => {
@@ -694,8 +710,8 @@ pub fn draw_objects(
                 match (sprites, linked) {
                     (false, false) => Node::Dot(RELAY_UNLINKED_DOT),
                     (false, true) => Node::Dot(RELAY_DOTS[side]),
-                    (true, false) => Node::Mark(inputs.sprite(RELAY_SPRITE), 0),
-                    (true, true) => Node::Mark(inputs.sprite(RELAY_SPRITES[side]), 0),
+                    (true, false) => Node::Mark(Some(RELAY_SPRITE), 0),
+                    (true, true) => Node::Mark(Some(RELAY_SPRITES[side]), 0),
                 }
             }
             // `1000:fa6a`, `fa5c`.
@@ -717,8 +733,8 @@ pub fn draw_objects(
                 dot(buffer, at, colour);
                 probe.dot(at, id.0, camera.viewer);
             }
-            Node::Mark(sprite, colour) => {
-                mark(buffer, at, sprite, colour);
+            Node::Mark(handle, colour) => {
+                mark(buffer, at, inputs, handle, colour);
                 probe.sprite(buffer, Some(id.0));
             }
         }
@@ -1589,7 +1605,14 @@ pub(crate) mod tests {
             let unit = |x: i32, y: i32| (x << 16, y << 16);
             // Three right and two up of it, and one far out of the buffer.
             let points = [unit(18, 15), unit(15 + 40, 13)];
-            let probed = draw_radar(&mut b, &camera, points, Some(&background), 0x44, under);
+            let probed = draw_radar(
+                &mut b,
+                &camera,
+                points,
+                (Some(&background), 0x20),
+                0x44,
+                under,
+            );
             (b, probed)
         };
         let (b, probed) = frame(0, 0, None);

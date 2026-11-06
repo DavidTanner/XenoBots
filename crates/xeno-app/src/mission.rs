@@ -43,7 +43,7 @@ use xeno_formats::{
     editor, filedialog, humancon, lzexe, map, mapdvr, mgavideo, motion, scorpcon, scoutcon, sitroom,
 };
 use xeno_render::{
-    Anchor, BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode,
+    Anchor, AssetId, BlitMode, Framebuffer, LoadedModel, Size, SpriteBlit, TextCursor, TextMode,
 };
 use xeno_sim::orders::{Change, OrderBook, Programs, RobotKind};
 use xeno_sim::{EntityId, Parked, Pilot, Random, Sim, State, World};
@@ -3846,6 +3846,7 @@ impl Mission {
             let blit = SpriteBlit {
                 mode: BlitMode::Keyed,
                 anchor: Anchor::SurfaceCentre,
+                asset: AssetId::sprite(tables.missile_sight),
                 ..SpriteBlit::default()
             };
             buffer.blit_sprite(sight, 0, 0, blit);
@@ -3946,7 +3947,7 @@ impl Mission {
                     &mut buffer,
                     &camera,
                     points,
-                    background,
+                    (background, radar.background),
                     radar.dot,
                     under,
                 );
@@ -3999,6 +4000,7 @@ impl Mission {
                 Some(sprite) => {
                     let blit = SpriteBlit {
                         mode: BlitMode::Opaque,
+                        asset: AssetId::sprite(handle),
                         ..SpriteBlit::default()
                     };
                     fb.blit_sprite(
@@ -9389,6 +9391,18 @@ pub mod tests {
     #[test]
     #[ignore = "needs XENOBOTS_GAME_DIR"]
     fn real_assets_an_hd_pack_replaces_only_its_model_image() {
+        replaces_only_its_image(|a| matches!(a, AssetId::ModelImage { .. }));
+    }
+
+    /// T-233, T-072's acceptance: likewise one sprite (a console's button or gauge).
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_an_hd_pack_replaces_only_its_sprite() {
+        replaces_only_its_image(|a| matches!(a, AssetId::Sprite { .. }));
+    }
+
+    /// The first image `pick` takes that owns a pixel of a training console, replaced.
+    fn replaces_only_its_image(pick: fn(&AssetId) -> bool) {
         use crate::game_dir::{ENV_VAR, GameDir};
         use xeno_render::hd::Record;
         use xeno_render::{Aspect, Layout, Palette, Scale};
@@ -9401,12 +9415,7 @@ pub mod tests {
             .unwrap();
         let assets = load(&files, 13).unwrap();
         let pictures = crate::screens::load(&files).unwrap();
-        let originals: std::collections::HashMap<_, _> = assets
-            .models
-            .iter()
-            .flatten()
-            .flat_map(|m| m.image_sizes())
-            .collect();
+        let originals = crate::hd_pack::originals(&files);
         let window = Size::new(3840, 2160);
         let mut tried = Vec::new();
         for name in ["ntrain.usg", "htrain.usg", "strain.usg", "ctrain.usg"] {
@@ -9425,16 +9434,17 @@ pub mod tests {
             m.draw(&mut fb, &assets);
             let r = fb.recording().unwrap();
             let owner = |i: usize| r.owner(i, fb.pixels()[i]).map(|k| &r.records()[k]);
-            // The first model image that still owns a pixel.
+            // The first such image that still owns a pixel.
             let Some(asset) = (0..fb.pixels().len()).find_map(|i| match owner(i) {
-                Some(Record::Blit(b)) => Some(b.asset),
+                Some(Record::Blit(b)) if pick(&b.asset) => Some(b.asset),
                 _ => None,
             }) else {
                 tried.push(name);
                 continue;
             };
             let (w, h) = originals[&asset];
-            let dir = std::env::temp_dir().join(format!("xeno-hd-real-{}", std::process::id()));
+            let unique = asset.pack_path().replace('/', "-");
+            let dir = std::env::temp_dir().join(format!("xeno-hd-{}-{unique}", std::process::id()));
             let png = dir.join(asset.pack_path());
             std::fs::create_dir_all(png.parent().unwrap()).unwrap();
             let solid = image::Rgba([0x12, 0x34, 0x56, 0xff]);
@@ -9473,7 +9483,7 @@ pub mod tests {
             );
             return;
         }
-        panic!("no console showed a model: {tried:?}");
+        panic!("no console showed one: {tried:?}");
     }
 
     /// T-074: with `--hd-ui`, every stock scenario's situation room (orders, log and

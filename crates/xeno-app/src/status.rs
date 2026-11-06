@@ -8,7 +8,7 @@
 use xeno_formats::ban::Sprite;
 use xeno_formats::font::Font;
 use xeno_formats::sitroom::{Caption, KINDS, SitRoom};
-use xeno_render::{BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
+use xeno_render::{AssetId, BlitMode, Framebuffer, SpriteBlit, TextCursor, TextMode};
 use xeno_sim::Components;
 
 /// Font 4, colour 0x1d on 0 (0x17 on 0 for codes with bit 7).
@@ -54,6 +54,7 @@ pub fn draw<'a>(
         Some(picture) => {
             let keyed = SpriteBlit {
                 mode: BlitMode::Keyed,
+                asset: AssetId::sprite(status.pictures[kind]),
                 ..SpriteBlit::default()
             };
             fb.blit_sprite(picture, place.left.into(), place.top.into(), keyed);
