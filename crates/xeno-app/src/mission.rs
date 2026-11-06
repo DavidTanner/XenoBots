@@ -9382,4 +9382,100 @@ pub mod tests {
         }
         assert!(changed.iter().all(|&n| n > 0), "{changed:?}");
     }
+
+    /// T-074: with `--hd-ui`, every stock scenario's situation room (orders, log and
+    /// status) and a console at 4K draw the same indexed pixels, and differ from
+    /// `present` only inside the recorded glyphs' cells, in a colour found in that cell
+    /// or beside it.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_hd_ui_changes_only_the_glyphs_cells() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_render::hd::Record;
+        use xeno_render::{Aspect, Layout, Palette, Scale};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let assets = load(&files, 13).unwrap();
+        let pictures = crate::screens::load(&files).unwrap();
+        let window = Size::new(3840, 2160);
+        let mut changed = 0;
+        for (name, scenario) in &assets.scenarios {
+            let mut m = Mission::new(name.clone(), scenario, Random::seeded(1), &assets.motion);
+            let mut views = Vec::new();
+            for mode in [ORDERS_MODE, LOG_MODE, STATUS_MODE] {
+                m.mode = mode;
+                (0..2000).for_each(|_| m.retrace());
+                views.push((View::SitRoom, m.clone()));
+            }
+            if let Some(&robot) = m.robots().first() {
+                let view = m.view_robot(robot).unwrap();
+                views.push((view, m.clone()));
+            }
+            for (view, m) in views {
+                let file = crate::screens::Screen::Mission(view).file().unwrap();
+                let picture = &pictures.iter().find(|(n, _)| *n == file).unwrap().1;
+                let palette = Palette::from_vga6(&picture.dac).unwrap();
+                let draw = |recording: bool| {
+                    let mut fb = Framebuffer::new(Size::MODE_13H);
+                    fb.set_recording(recording);
+                    fb.pixels_mut().copy_from_slice(&picture.pixels);
+                    m.draw(&mut fb, &assets);
+                    fb
+                };
+                let recorded = draw(true);
+                let plain = draw(false);
+                assert_eq!(recorded.pixels(), plain.pixels(), "{name}");
+                let layout = Layout::new(plain.view(), window, Scale::Auto, Aspect::Correct);
+                let mut before = vec![0; window.width * window.height];
+                xeno_render::present(&plain, &palette, &layout, &mut before, window);
+                let mut after = before.clone();
+                xeno_render::draw_glyphs(&plain, &palette, &layout, &mut after, window);
+                assert!(after == before, "{name}: not recording");
+                xeno_render::draw_glyphs(&recorded, &palette, &layout, &mut after, window);
+                let cells: Vec<_> = recorded
+                    .recording()
+                    .unwrap()
+                    .records()
+                    .iter()
+                    .filter_map(|r| match r {
+                        Record::Glyph(g) => Some((g.at, i32::from(g.width), i32::from(g.height))),
+                        _ => None,
+                    })
+                    .collect();
+                let rgb = |x: i32, y: i32| {
+                    let c = palette[recorded.get(x as usize, y as usize).unwrap_or(0)];
+                    (u32::from(c.r) << 16) | (u32::from(c.g) << 8) | u32::from(c.b)
+                };
+                for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+                    if was == now {
+                        continue;
+                    }
+                    let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                    let (x, y) = (
+                        ((wx - layout.x) / layout.sx as isize) as i32,
+                        ((wy - layout.y) / layout.sy as isize) as i32,
+                    );
+                    let inside = cells.iter().any(|&((cx, cy), w, h)| {
+                        (cx..cx + w).contains(&x) && (cy..cy + h).contains(&y)
+                    });
+                    assert!(
+                        inside,
+                        "{name} {view:?}: output ({wx}, {wy}) outside every glyph"
+                    );
+                    let nearby = (-1..=1).any(|dy| (-1..=1).any(|dx| rgb(x + dx, y + dy) == now));
+                    assert!(
+                        nearby,
+                        "{name} {view:?}: output ({wx}, {wy}) in a colour not near"
+                    );
+                    changed += 1;
+                }
+            }
+        }
+        assert!(changed > 0);
+    }
 }

@@ -38,7 +38,7 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
    - `File(name)`: a whole file drawn as one picture: a `.m@l` screen, a `.vcl`
      picture, a sky strip.
 
-   Glyphs for T-074 would add a `Glyph { font, code }` name the same way.
+   Glyphs could add a `Glyph { font, code }` name the same way (T-239).
 
 2. **The record** (`Framebuffer::set_recording`, `hd::Recording`). Off by default.
    When on, each named blit pushes a `BlitRecord`: its name, the **logical rectangle
@@ -89,7 +89,7 @@ still set every framebuffer pixel as the original does.
   in surface pixels, its colour, and the rectangle it was clipped to). The owner word is
   now a *stamp* and a colour: stamp `2k + 2` is record `k`, an odd stamp `2n + 1` a
   background drawn after `n` records (`clear`, `fill_rect`, the 3D view's ground and
-  sky), and 0 a write the record did not see (text, sprites, pictures, dots). So the
+  sky), and 0 a write the record did not see (sprites, pictures, dots; text before T-074). So the
   stamps order everything recorded. `shape::fill_polygon` records every polygon it
   fills; `mainview::draw_line` records its sloping lines (a level or upright line would
   look the same, so it is not recorded).
@@ -130,6 +130,64 @@ output is `present`'s byte for byte. On the development machine (release, 3840x2
 up to 0.8 ms for a situation room map and 1.1 ms for a console with hills in view
 (scen06a); nothing to do costs under a microsecond.
 
+## Text at output resolution (T-074)
+
+`--hd-ui` does for text what `--hd-shapes` does for shapes. Every glyph still goes
+into the framebuffer through `Framebuffer::draw_char`, pixel for pixel as before, and the
+glyph shapes come only from the user's `mgavideo.dvr` at run time: nothing about the
+fonts is in the repository.
+
+- **The record.** When recording, `draw_char` pushes a `Record::Glyph` (`GlyphRecord`):
+  the code, the cursor (the cell's top-left corner), the cells it drew (`width` by
+  `height`, each 0 or the value 1 to 3 drawn as `colour + (value ^ 3)`; a bitmap
+  font's set bits are 3), the colour, the background if opaque, the clip (the
+  surface, moved along by `copy_through` like a shape's) and the colours the surface
+  had under the cell and one pixel round it (`under`). Its pixels get its stamp, so
+  text is ordered with the shapes and blits around it. A glyph with no drawn cell (a
+  space) is not recorded. The record copies the cells instead of naming the font, so
+  drawing needs no font table; naming glyphs for a pack is T-239.
+- **What it may draw on.** Only the glyph's cell changes, and in it only a pixel the
+  glyph still owns or one that still shows what the glyph was drawn over: the colour
+  in `under`, and no later record's stamp. That takes text over pictures copied in
+  whole and over pixels the record never saw (`recolour`, `set`), which have stamp 0,
+  while a later write in another colour (the pointer, a sprite, a later glyph) stays
+  on top. The same-colour gap of the owners applies.
+- **The corner rule.** Each cell's four corners are looked at, beyond the line through
+  its edges' midpoints (`|fx| + |fy| > 1/2` from the cell's centre). With `P` the cell,
+  `H` and `V` the cells beside and above or below that corner and `D` the one
+  diagonally across: if `H` and `V` hold the same higher value and `D` does not, the
+  two touch diagonally across `P`'s corner and it is filled in their colour; if `H`,
+  `V` and `D` hold the same lower value and `P` is one end of a diagonal step (the
+  cell diagonally across its other side holds `P`'s value and the cell between does
+  not), the corner is cut to the colour of the pixel beside it. So a 45-degree stroke
+  gets straight edges, while level and upright strokes, their ends and the insides of
+  corners keep the original's square pixels. The shaded fonts go through the same
+  rule on their values, so each shade band keeps its own palette colour: no blending.
+  Steps other than 45 degrees are left as they are.
+- **Approaches tried** (4K PNGs of the orders view, the log, the status page, the map,
+  a console and the intro's first caption): this rule ("diagonals"), and marching
+  squares ("corners": every convex corner cut and every concave one filled, saddles
+  joined). Corners also smooths the diagonals, but it turns every stroke end into a
+  point and chamfers every corner, so font 2 (the log's, 4 by 6 and nearly all level
+  and upright strokes) and the captions' `I`, `T` and `E` no longer look like the
+  original's type. Diagonals changes only where the original has a stair step, so it
+  keeps the typeface and is the one kept. Bilinear interpolation thresholded at a half
+  was ruled out on paper: it never joins two cells that touch only at a corner.
+- **The window's labels.** The speed label and the key legend are drawn with
+  `draw_text` over the frame's clone, so with recording on they are recorded and drawn
+  like the game's text; `--hd-ui` covers them with no extra code.
+- **Turning it on.** `window.rs` records when `--hd-shapes` or `--hd-ui` is on and calls
+  `draw_glyphs` after `present` and `draw_shapes`. A screen that redraws text without
+  copying its picture again grows the record, so past 65,536 records it starts afresh
+  before the frame's drawing (a `shortcut:` comment): text drawn before then is not
+  smoothed until it is drawn again. A split view (the intro drop's credits) is mapped
+  both ways, above and below the split.
+
+With the option off, nothing records and the output is `present`'s byte for byte. On
+the development machine (release, 3840x2160, 8x10) `draw_glyphs` takes about 0.2 ms
+on the situation room's orders view and log, 0.17 ms on the status page and 0.07 ms on
+a console, against the 14.3 ms frame budget.
+
 ## What it costs
 
 Measured on the development machine with a release build, drawing real scorpion
@@ -157,6 +215,4 @@ until a pack is loaded.
 - Still to name at their call sites: sprites (`blit_sprite`), the screens and pictures
   copied in whole, skies and glyphs (T-233). The 3D view's copy into the console now
   carries the records (T-236, above); `window.rs`'s labels still draw over a clone.
-- T-074's text can use the same records: a glyph blit is a rectangle and a name, and a
-  sharp glyph is an `HdImage` drawn by `compose`, or rasterised at output size from
-  the same rectangle.
+- T-074's text uses the same records (above, "Text at output resolution").

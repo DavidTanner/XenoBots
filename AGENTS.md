@@ -200,6 +200,7 @@ cargo run -p xeno-app -- --game-dir ./gameFiles --screen map-room  # start at a 
 cargo run -p xeno-app -- --game-dir ./gameFiles --fullscreen  # start borderless fullscreen
 cargo run -p xeno-app -- --game-dir ./gameFiles --speed 4  # a mission in play at 4x (F12 cycles 1x, 2x, 4x; not in the original; docs/game-loop.md)
 cargo run -p xeno-app -- --game-dir ./gameFiles --hd-shapes  # hills, terrain and sloping lines drawn again at the window's resolution (not in the original; docs/hd.md)
+cargo run -p xeno-app -- --game-dir ./gameFiles --hd-ui  # text and the port's labels drawn again at the window's resolution, diagonal steps smoothed (not in the original; docs/hd.md)
 cargo run -p xeno-app -- --game-dir ./gameFiles --seed 1  # fix the random word's seed (logged at start-up; the clock's otherwise)
 cargo run -p xeno-app -- --game-dir ./gameFiles --save-dir /tmp/saves  # where the file dialogs start (Ctrl+Alt+P's SAVE GAME, the editor's Ctrl+Alt+O), the terrain editor's Alt+Q (BACKUP.MAP) and the map room's N and Q (<NAME>.LOG, loaded at log-in) save; the game dir otherwise
 cargo run -p xeno-app -- --game-dir ./gameFiles --check   # check the game files (and decode the intro, drop and screens) only, no window
