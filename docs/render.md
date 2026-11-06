@@ -697,4 +697,5 @@ scorpion's six (`Walk::scorpion_legs`) walk and settle (T-120).
 and, when the framebuffer is recording, its blit's logical rectangle and scale are
 kept beside the pixels, so higher-resolution art can replace it at output resolution
 without changing a framebuffer pixel: see `docs/hd.md`. The view's own buffer is copied
-into the console's picture, which does not carry the record over yet (T-234).
+into the console's picture through `Framebuffer::copy_through`, which carries the
+record along (T-236; `docs/hd.md`, "Shapes at output resolution (T-236)").

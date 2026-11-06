@@ -77,6 +77,32 @@ pixel, so `xeno-app` with or without a pack plays exactly the same game.
    layer information; outlines stay at logical resolution, filled in at output
    resolution.
 
+## Shapes at output resolution (T-236)
+
+Bitmaps can only be replaced by other bitmaps, but the 3D view's hills and blocks, the
+maps' hill octagons and the sloping lines are geometry, so they can be drawn again
+at the window's resolution. Nothing else changes: the fill and line routines
+still set every framebuffer pixel as the original does.
+
+- **The record.** `Recording` keeps one list of `Record`s, blits and shapes
+  (`ShapeRecord`: a `Geometry::Polygon` of corners or a `Geometry::Line` of two ends,
+  in surface pixels, its colour, and the rectangle it was clipped to). The owner word is
+  now a *stamp* and a colour: stamp `2k + 2` is record `k`, an odd stamp `2n + 1` a
+  background drawn after `n` records (`clear`, `fill_rect`, the 3D view's ground and
+  sky), and 0 a write the record did not see (text, sprites, pictures, dots). So the
+  stamps order everything recorded. `shape::fill_polygon` records every polygon it
+  fills; `mainview::draw_line` records its sloping lines (a level or upright line would
+  look the same, so it is not recorded).
+- **The copies.** The 3D view, the maps and the radars draw into their own buffers
+  (the console and situation room `Framebuffer::new` them recording when the screen
+  is), and `Framebuffer::copy_through` (slot `0x5a4`, which `review::copy_through`
+  now calls) appends the buffer's records to the screen's, moved by the copy's offset,
+  and gives each copied pixel its owner. A screen's record starts afresh
+  (`restart_recording`) wherever `screens.rs` copies a whole picture, so it holds one
+  frame's drawings. This is the part of T-234 the shapes need; blits ride along too.
+The drawing at output resolution (`draw_shapes`, `--hd-shapes`) is T-236's second
+part.
+
 ## What it costs
 
 Measured on the development machine with a release build, drawing real scorpion
@@ -102,10 +128,8 @@ until a pack is loaded.
   afresh where the screen redraws, and calls `compose` instead of `present`. Missing
   names fall back to the original per asset with no extra code.
 - Still to name at their call sites: sprites (`blit_sprite`), the screens and pictures
-  copied in whole, skies and glyphs. Still to carry over: the 3D view draws into its
-  own buffer, which the console copies through its picture's colour-255 region
-  (`docs/render.md`, "In the port"), so that copy must move the view buffer's records
-  and owners into the screen's with the offset (T-233, T-234).
+  copied in whole, skies and glyphs (T-233). The 3D view's copy into the console now
+  carries the records (T-236, above); `window.rs`'s labels still draw over a clone.
 - T-074's text can use the same records: a glyph blit is a rectangle and a name, and a
   sharp glyph is an `HdImage` drawn by `compose`, or rasterised at output size from
   the same rectangle.

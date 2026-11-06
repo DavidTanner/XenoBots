@@ -54,42 +54,125 @@ pub struct BlitRecord {
     pub flipped: bool,
 }
 
-/// The blits since recording started, and for each surface pixel the blit that last
-/// wrote it and the colour it wrote: `(k + 1) << 8 | colour`, or 0 for none.
+/// One drawing the record keeps: a named blit, or a shape to draw again at output
+/// resolution (T-236).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Record {
+    Blit(BlitRecord),
+    Shape(ShapeRecord),
+}
+
+/// A line or fill primitive's logical geometry, in surface pixels (a corner or an end
+/// is the pixel the original lights there), its colour, and the rectangle of surface
+/// pixels it was clipped to (its buffer, moved along by [`Framebuffer::copy_through`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeRecord {
+    pub shape: Geometry,
+    pub colour: u8,
+    pub clip: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Geometry {
+    /// `shape::fill_polygon`'s corners.
+    Polygon(Vec<(i32, i32)>),
+    /// A sloping line of slot `0x558`, both ends drawn.
+    Line([(i32, i32); 2]),
+}
+
+impl Geometry {
+    fn moved(&self, (dx, dy): (i32, i32)) -> Geometry {
+        let at = |(x, y): (i32, i32)| (x + dx, y + dy);
+        match self {
+            Geometry::Polygon(corners) => {
+                Geometry::Polygon(corners.iter().copied().map(at).collect())
+            }
+            Geometry::Line(ends) => Geometry::Line(ends.map(at)),
+        }
+    }
+}
+
+/// The most records one recording keeps; drawings past it are not recorded.
+const MAX_RECORDS: usize = (1 << 22) - 1;
+
+/// The drawings since recording started, and for each surface pixel what last wrote
+/// it and the colour it wrote: `stamp << 8 | colour`. Stamp 0 is unknown (a write the
+/// record does not see), `2k + 2` record `k`, and `2n + 1` a background (a clear, a
+/// fill, the 3D view's ground and sky) drawn after `n` records, so stamps order
+/// everything the record saw.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Recording {
-    blits: Vec<BlitRecord>,
+    records: Vec<Record>,
     pub(crate) owners: Vec<u32>,
 }
 
 impl Recording {
     pub(crate) fn new(pixels: usize) -> Recording {
         Recording {
-            blits: Vec::new(),
+            records: Vec::new(),
             owners: vec![0; pixels],
         }
     }
 
-    pub fn blits(&self) -> &[BlitRecord] {
-        &self.blits
+    pub fn records(&self) -> &[Record] {
+        &self.records
     }
 
-    /// Adds a blit and returns its tag (to be or-ed with a colour), or `None` when the
-    /// tags have run out.
-    pub(crate) fn push(&mut self, blit: BlitRecord) -> Option<u32> {
-        let tag = u32::try_from(self.blits.len() + 1)
-            .ok()
-            .filter(|&k| k < 1 << 24)?;
-        self.blits.push(blit);
-        Some(tag << 8)
+    /// The blits among the records.
+    pub fn blits(&self) -> impl Iterator<Item = &BlitRecord> {
+        self.records.iter().filter_map(|r| match r {
+            Record::Blit(b) => Some(b),
+            Record::Shape(_) => None,
+        })
     }
 
-    /// The blit whose pixel surface pixel `i` still shows, given its colour now. A
-    /// later write of another colour (text, a polygon, a copied picture) disowns it.
+    /// Adds a record and returns its stamp (to be or-ed with a colour), or `None` when
+    /// the stamps have run out.
+    pub(crate) fn push(&mut self, record: Record) -> Option<u32> {
+        let k = self.records.len();
+        (k < MAX_RECORDS).then(|| {
+            self.records.push(record);
+            (2 * k as u32 + 2) << 8
+        })
+    }
+
+    /// The stamp of a background drawn now.
+    pub(crate) fn background(&self) -> u32 {
+        (2 * self.records.len() as u32 + 1) << 8
+    }
+
+    /// Surface pixel `i`'s stamp, given its colour now: 0 when unknown, or when a
+    /// later write of another colour (text, a sprite, a copied picture) took it.
     // shortcut: a later write of the same colour is not seen; tag every write if that shows.
+    pub fn stamp(&self, i: usize, colour: u8) -> u32 {
+        let owner = self.owners.get(i).copied().unwrap_or(0);
+        if owner as u8 == colour { owner >> 8 } else { 0 }
+    }
+
+    /// The record whose pixel surface pixel `i` still shows, given its colour now.
     pub fn owner(&self, i: usize, colour: u8) -> Option<usize> {
-        let owner = *self.owners.get(i)?;
-        (owner != 0 && owner as u8 == colour).then(|| (owner >> 8) as usize - 1)
+        let stamp = self.stamp(i, colour);
+        (stamp != 0 && stamp.is_multiple_of(2)).then(|| stamp as usize / 2 - 1)
+    }
+
+    /// `other`'s records added after these, moved by `offset`; returns what to add to
+    /// a stamp of `other`'s, or `None` (nothing added) when they do not fit.
+    pub(crate) fn append(&mut self, other: &Recording, (dx, dy): (i32, i32)) -> Option<u32> {
+        let base = self.records.len();
+        (base + other.records.len() <= MAX_RECORDS).then(|| {
+            self.records.extend(other.records.iter().map(|r| match r {
+                Record::Blit(b) => Record::Blit(BlitRecord {
+                    rect: Rect::new(b.rect.x + dx, b.rect.y + dy, b.rect.width, b.rect.height),
+                    ..*b
+                }),
+                Record::Shape(s) => Record::Shape(ShapeRecord {
+                    shape: s.shape.moved((dx, dy)),
+                    colour: s.colour,
+                    clip: Rect::new(s.clip.x + dx, s.clip.y + dy, s.clip.width, s.clip.height),
+                }),
+            }));
+            2 * base as u32
+        })
     }
 }
 
@@ -128,7 +211,14 @@ pub fn compose(
     let Some(recording) = fb.recording().filter(|_| !hd.is_empty()) else {
         return;
     };
-    let images: Vec<Option<&HdImage>> = recording.blits.iter().map(|b| hd.get(&b.asset)).collect();
+    let images: Vec<Option<(&HdImage, &BlitRecord)>> = recording
+        .records
+        .iter()
+        .map(|r| match r {
+            Record::Blit(b) => hd.get(&b.asset).map(|image| (image, b)),
+            Record::Shape(_) => None,
+        })
+        .collect();
     let (view, stride) = (fb.view(), fb.surface().width);
     let Layout { sx, sy, x, y } = *layout;
     let (sx, sy) = (sx as i64, sy as i64);
@@ -144,7 +234,7 @@ pub fn compose(
             let Some(k) = recording.owner(i, fb.pixels()[i]) else {
                 continue;
             };
-            let (Some(image), blit) = (images[k], &recording.blits[k]) else {
+            let Some((image, blit)) = images[k] else {
                 continue;
             };
             let r = blit.rect;
@@ -302,7 +392,7 @@ mod tests {
         // At 300/256 unit 0 covers 2 pixels and units -1, 1 and 2 one each, so A's
         // units -1..=1 by 0..=1 cover 4 by 3 from (5 - 1, 3), and B's 0..=1 by 1..=2
         // cover 3 by 2 from (5, 3 + 2).
-        let blits = recorded.recording().unwrap().blits();
+        let blits: Vec<_> = recorded.recording().unwrap().blits().collect();
         let rects: Vec<_> = blits.iter().map(|b| (b.rect, b.mirrored)).collect();
         assert_eq!(
             rects,
@@ -355,6 +445,62 @@ mod tests {
         fb.clear(0x21);
         assert_eq!(fb.recording().unwrap().owner(0, 0x21), None);
         assert_eq!(HdImage::new(2, 2, vec![0; 3]), None);
+    }
+
+    #[test]
+    fn a_copy_carries_the_records_along() {
+        let a = image(2, &[(0, &[0x3c, 0x3c])]);
+        let draw = |fb: &mut Framebuffer| {
+            fb.clear(0x19);
+            fb.blit_model_image_as(
+                &a,
+                Some(model_image("synth", 3)),
+                0,
+                0,
+                false,
+                &target(256, (1, 1)),
+            );
+            crate::shape::fill_polygon(fb, &[(2, 3), (3, 7), (8, 5)], 0x4e);
+        };
+        let mut plain = Framebuffer::new(Size::new(11, 9));
+        draw(&mut plain);
+        let mut buffer = plain.clone();
+        buffer.set_recording(true);
+        draw(&mut buffer);
+        assert_eq!(buffer.pixels(), plain.pixels());
+        let mut fb = Framebuffer::new(Size::new(17, 13));
+        fb.set_recording(true);
+        fb.fill_rect(Rect::new(4, 2, 11, 9), 0xff);
+        fb.pixels_mut()[3 * 17 + 5] = 0x07;
+        fb.copy_through(&buffer, (4, 2), 0xff);
+        let r = fb.recording().unwrap();
+        let moved = [
+            Record::Blit(BlitRecord {
+                asset: model_image("synth", 3),
+                rect: Rect::new(5, 3, 2, 1),
+                scale: 256,
+                mirrored: false,
+                flipped: false,
+            }),
+            Record::Shape(ShapeRecord {
+                shape: Geometry::Polygon(vec![(6, 5), (7, 9), (12, 7)]),
+                colour: 0x4e,
+                clip: Rect::new(4, 2, 11, 9),
+            }),
+        ];
+        assert_eq!(r.records(), moved);
+        // The blit's pixel under the region's hole stays the hole's, unowned.
+        let owner = |x: usize, y: usize| r.owner(y * 17 + x, fb.get(x, y).unwrap());
+        assert_eq!((owner(5, 3), owner(6, 3)), (None, Some(0)));
+        assert_eq!(
+            (owner(6, 5), owner(9, 6), owner(4, 2)),
+            (Some(1), Some(1), None)
+        );
+        // The background under both is older than either: stamp 1 (after no record).
+        assert_eq!(r.stamp(2 * 17 + 4, 0x19), 1);
+        // A buffer with no record copies in unknown pixels.
+        fb.copy_through(&plain, (4, 2), 0x19);
+        assert_eq!(fb.recording().unwrap().stamp(2 * 17 + 4, 0x19), 0);
     }
 
     #[test]
@@ -486,7 +632,7 @@ mod tests {
             recorded.set_recording(true);
             draw(&mut recorded, scale);
             assert_eq!(recorded.pixels(), plain.pixels(), "scale {scale}");
-            let blits = recorded.recording().unwrap().blits();
+            let blits: Vec<_> = recorded.recording().unwrap().blits().collect();
             assert!(blits.len() > 20, "scale {scale}: {}", blits.len());
             let layout = Layout::new(
                 plain.view(),
