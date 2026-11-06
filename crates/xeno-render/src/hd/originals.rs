@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use xeno_formats::{Palette, ban, mal, vcl};
+use xeno_formats::{Palette, ban, mal, pcx, vcl};
 
 use super::{AssetId, HdImage, Name};
 use crate::LoadedModel;
@@ -65,8 +65,8 @@ fn shown_on(asset: &AssetId) -> &'static str {
 }
 
 /// Every image of `models`, of `msprite0` to `msprite5`, and each `.m@l` screen,
-/// `.vcl` picture and sky strip among `names` as a whole file, read with `read`; and
-/// the banks that do not load. A whole file that does not load is left out.
+/// `.vcl` picture, `.pcx` backdrop and sky strip among `names` as a whole file, read
+/// with `read`; and the banks that do not load. A whole file that does not load is left out.
 pub fn originals<'a>(
     read: impl Fn(&str) -> Option<Vec<u8>>,
     names: impl IntoIterator<Item = &'a str>,
@@ -134,6 +134,10 @@ pub fn originals<'a>(
             },
             "vcl" => match vcl::parse(&bytes) {
                 Ok(p) => (vcl::Picture::WIDTH, p.pixels, Some(p.palette)),
+                Err(_) => continue,
+            },
+            "pcx" => match pcx::parse(&bytes) {
+                Ok(p) => (p.width(), p.pixels, Some(p.palette)),
                 Err(_) => continue,
             },
             "b@n" if name.starts_with("sky") => match ban::parse_sky(&bytes) {

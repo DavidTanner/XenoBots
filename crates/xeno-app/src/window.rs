@@ -489,11 +489,12 @@ impl App {
                 .map(|shape| pointer::draw(&mut self.fb, at, shape)),
             _ => None,
         };
-        // The colours the records cycle: the cutscenes and the drop cycle none.
-        let cycling = match (&self.viewer, &self.front) {
-            (Some(viewer), _) => viewer.cycling(),
-            _ if self.cutscene.is_some() || self.drop.is_some() => [false; 256],
-            (None, FrontEnd::Screens(screens)) => screens.cycling(),
+        // The colours the records cycle: the cutscenes cycle none.
+        let cycling = match (&self.viewer, &self.front, &self.drop) {
+            (Some(viewer), ..) => viewer.cycling(),
+            (_, _, Some(drop)) => drop.cycling(),
+            _ if self.cutscene.is_some() => [false; 256],
+            (None, FrontEnd::Screens(screens), _) => screens.cycling(),
             _ => [false; 256],
         };
         let palette = &self.palette;

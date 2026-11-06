@@ -23,7 +23,9 @@ use xeno_formats::font::Font;
 use xeno_formats::mgavideo;
 use xeno_formats::pcx;
 use xeno_formats::vgaintro::{self, CreditOp, IntroDrop, Numbers, PALETTE_BUFFER};
-use xeno_render::{ColourAnims, DAC_BYTES, Dac, Framebuffer, Palette, Size, TextCursor, TextMode};
+use xeno_render::{
+    AssetId, ColourAnims, DAC_BYTES, Dac, Framebuffer, Palette, Rect, Size, TextCursor, TextMode,
+};
 
 use crate::game_dir::GameFiles;
 use crate::input::{InputEvent, ScanCode};
@@ -266,31 +268,45 @@ fn at(row: i32, column: usize) -> Option<usize> {
         .then(|| row as usize * SURFACE.width + column)
 }
 
-fn put(pixels: &mut [u8], row: i32, column: usize, colour: u8) {
+fn put(fb: &mut Framebuffer, row: i32, column: usize, colour: u8) {
     if let Some(i) = at(row, column) {
-        pixels[i] = colour;
+        fb.put_unnamed(i, colour);
     }
 }
 
-/// Copies backdrop row `row` back from the clean copy.
-fn restore(pixels: &mut [u8], row: i32, column: usize) {
-    let from = at(row + CLEAN_COPY, column).map_or(0, |i| pixels[i]);
-    put(pixels, row, column, from);
+/// Copies backdrop row `row` back from the clean copy, with its owner (`docs/hd.md`).
+fn restore(fb: &mut Framebuffer, row: i32, column: usize) {
+    match (at(row + CLEAN_COPY, column), at(row, column)) {
+        (Some(from), Some(to)) => fb.copy_pixel(from, to),
+        _ => put(fb, row, column, 0),
+    }
 }
 
-/// `file_load_pcx_to_video`: each pixel to its row and to the clean copy, in order.
-pub fn draw_backdrop(pixels: &mut [u8], backdrop: &[u8]) {
+/// `file_load_pcx_to_video`: each pixel to its row and to the clean copy, in order, so
+/// rows past 128 overwrite the copy's first rows. When recording, the backdrop is one
+/// picture `asset` owning its rows and, where they still hold it, the clean copy's.
+pub fn draw_backdrop(fb: &mut Framebuffer, backdrop: &[u8], asset: AssetId) {
+    let rows = (backdrop.len() / SURFACE.width) as i32;
     for (i, &colour) in backdrop.iter().enumerate() {
-        let (row, column) = ((i / SURFACE.width) as i32, i % SURFACE.width);
-        put(pixels, row, column, colour);
-        put(pixels, row + CLEAN_COPY, column, colour);
+        put(fb, (i / SURFACE.width) as i32, i % SURFACE.width, colour);
+    }
+    let rect = Rect::new(0, BACKDROP_ROW, SURFACE.width as u32, rows as u32);
+    fb.record_picture(asset, rect);
+    // The copy's rows the backdrop's own do not overwrite, from the backdrop (the same
+    // pixels as writing each pixel twice in order).
+    for row in (rows - CLEAN_COPY).max(0)..rows {
+        for column in 0..SURFACE.width {
+            if let (Some(from), Some(to)) = (at(row, column), at(row + CLEAN_COPY, column)) {
+                fb.copy_pixel(from, to);
+            }
+        }
     }
 }
 
 /// `gfx_draw_floor_changes` for one column, from edge row `old` to `new`: colour 0 on
 /// rows `new..=old` where the floor rose, rows `old..=new` (the new edge included)
 /// copied back where it fell. The count is a signed byte, as in the driver.
-pub fn floor_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
+pub fn floor_column(fb: &mut Framebuffer, column: usize, old: u8, new: u8) {
     let mut count = old.wrapping_sub(new) as i8;
     let mut row = i32::from(new);
     if count == 0 {
@@ -298,13 +314,13 @@ pub fn floor_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
     }
     if count < 0 {
         while count <= 0 {
-            restore(pixels, row, column);
+            restore(fb, row, column);
             row -= 1;
             count = count.wrapping_add(1);
         }
     } else {
         while count >= 0 {
-            put(pixels, row, column, 0);
+            put(fb, row, column, 0);
             row += 1;
             count = count.wrapping_sub(1);
         }
@@ -313,7 +329,7 @@ pub fn floor_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
 
 /// `gfx_draw_ceiling_changes` for one column: colour 0 on rows `old..=new` where the
 /// ceiling came down, rows `new..=old` copied back where it went up.
-pub fn ceiling_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
+pub fn ceiling_column(fb: &mut Framebuffer, column: usize, old: u8, new: u8) {
     let mut count = new.wrapping_sub(old) as i8;
     let mut row = i32::from(old);
     if count == 0 {
@@ -321,13 +337,13 @@ pub fn ceiling_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
     }
     if count < 0 {
         while count <= 0 {
-            restore(pixels, row, column);
+            restore(fb, row, column);
             row -= 1;
             count = count.wrapping_add(1);
         }
     } else {
         while count >= 0 {
-            put(pixels, row, column, 0);
+            put(fb, row, column, 0);
             row += 1;
             count = count.wrapping_sub(1);
         }
@@ -335,11 +351,11 @@ pub fn ceiling_column(pixels: &mut [u8], column: usize, old: u8, new: u8) {
 }
 
 /// `gfx_draw_ceiling_full` for one column: colour 0 from the edge row up to row 0.
-pub fn ceiling_full_column(pixels: &mut [u8], column: usize, edge: u8) {
+pub fn ceiling_full_column(fb: &mut Framebuffer, column: usize, edge: u8) {
     let mut count = edge as i8;
     let mut row = i32::from(edge);
     loop {
-        put(pixels, row, column, 0);
+        put(fb, row, column, 0);
         row -= 1;
         count = count.wrapping_sub(1);
         if count < 0 {
@@ -532,6 +548,11 @@ impl Player {
         self.dac.palette()
     }
 
+    /// The colours a running record cycles, for the HD pack (`docs/hd.md`, T-241).
+    pub fn cycling(&self) -> [bool; 256] {
+        self.dac.anims().cycling()
+    }
+
     /// One retrace with its input. Returns whether the drop is over.
     pub fn retrace<'a>(
         &mut self,
@@ -680,7 +701,7 @@ impl Player {
         let part = &self.assets.parts[p];
         let name = part.name;
         self.layers = Buffers::new(&part.layers);
-        draw_backdrop(fb.pixels_mut(), &part.backdrop);
+        draw_backdrop(fb, &part.backdrop, AssetId::file(name));
         self.buffer = part.palette;
         // `gfx_reset_layers_and_floor`: the floor from an old edge of 127 everywhere.
         self.script.offsets = [n.layer_start; 3];
@@ -690,7 +711,7 @@ impl Player {
         if p == 1 {
             for c in 0..SURFACE.width {
                 let edge = self.layers.row(2, self.script.offsets[2], c);
-                ceiling_full_column(fb.pixels_mut(), c, edge);
+                ceiling_full_column(fb, c, edge);
             }
         }
         self.dac.copy(&self.buffer);
@@ -706,7 +727,7 @@ impl Player {
     fn draw_floor(&mut self, fb: &mut Framebuffer) {
         let new = self.layers.floor(self.script.offsets);
         for (c, (&old, &new)) in self.floor.iter().zip(&new).enumerate() {
-            floor_column(fb.pixels_mut(), c, old, new);
+            floor_column(fb, c, old, new);
         }
         self.floor = new;
     }
@@ -715,7 +736,7 @@ impl Player {
         let (old, new) = (self.ceiling_offset, self.script.offsets[2]);
         for c in 0..SURFACE.width {
             let (a, b) = (self.layers.row(2, old, c), self.layers.row(2, new, c));
-            ceiling_column(fb.pixels_mut(), c, a, b);
+            ceiling_column(fb, c, a, b);
         }
         self.ceiling_offset = new;
     }
@@ -855,6 +876,7 @@ impl Player {
 mod tests {
     use super::*;
     use xeno_formats::fixtures::{synthetic_font_block, synthetic_numbers, synthetic_vgaintro};
+    use xeno_render::HdImage;
 
     fn numbers() -> Numbers {
         synthetic_numbers()
@@ -933,44 +955,96 @@ mod tests {
     }
 
     /// A column of the surface, rows 0..8 of the backdrop.
-    fn column(pixels: &[u8], c: usize) -> Vec<u8> {
-        (0..8).map(|r| pixels[at(r, c).unwrap()]).collect()
+    fn column(fb: &Framebuffer, c: usize) -> Vec<u8> {
+        (0..8).map(|r| fb.pixels()[at(r, c).unwrap()]).collect()
+    }
+
+    fn surface() -> Framebuffer {
+        Framebuffer::with_surface(Size::MODE_13H, SURFACE).unwrap()
     }
 
     #[test]
     fn silhouettes_fill_and_restore_per_column_like_the_driver() {
-        let mut pixels = vec![0; SURFACE.width * SURFACE.height];
+        let mut fb = surface();
         let backdrop: Vec<u8> = (0..768 * 8).map(|i| 10 + (i / 768) as u8).collect();
-        draw_backdrop(&mut pixels, &backdrop);
-        assert_eq!(column(&pixels, 3), [10, 11, 12, 13, 14, 15, 16, 17]);
+        draw_backdrop(&mut fb, &backdrop, AssetId::file("x.pcx"));
+        assert_eq!(column(&fb, 3), [10, 11, 12, 13, 14, 15, 16, 17]);
         // The floor rises from 7 to 4: rows 4..=7 black.
-        floor_column(&mut pixels, 3, 7, 4);
-        assert_eq!(column(&pixels, 3), [10, 11, 12, 13, 0, 0, 0, 0]);
+        floor_column(&mut fb, 3, 7, 4);
+        assert_eq!(column(&fb, 3), [10, 11, 12, 13, 0, 0, 0, 0]);
         // Falls back to 6: rows 4..=6 restored, the new edge row 6 included.
-        floor_column(&mut pixels, 3, 4, 6);
-        assert_eq!(column(&pixels, 3), [10, 11, 12, 13, 14, 15, 16, 0]);
+        floor_column(&mut fb, 3, 4, 6);
+        assert_eq!(column(&fb, 3), [10, 11, 12, 13, 14, 15, 16, 0]);
         // A ceiling to row 2, then down to 3, then up to 1 (rows 1..=3 restored).
-        ceiling_full_column(&mut pixels, 5, 2);
-        assert_eq!(column(&pixels, 5)[..4], [0, 0, 0, 13]);
-        ceiling_column(&mut pixels, 5, 2, 3);
-        assert_eq!(column(&pixels, 5)[..5], [0, 0, 0, 0, 14]);
-        ceiling_column(&mut pixels, 5, 3, 1);
-        assert_eq!(column(&pixels, 5)[..5], [0, 11, 12, 13, 14]);
+        ceiling_full_column(&mut fb, 5, 2);
+        assert_eq!(column(&fb, 5)[..4], [0, 0, 0, 13]);
+        ceiling_column(&mut fb, 5, 2, 3);
+        assert_eq!(column(&fb, 5)[..5], [0, 0, 0, 0, 14]);
+        ceiling_column(&mut fb, 5, 3, 1);
+        assert_eq!(column(&fb, 5)[..5], [0, 11, 12, 13, 14]);
         // The count is a signed byte, as in the driver: from 0 to 200 it is +56, so
         // rows 200..=256 (below the split) turn black and rows 0..=200 are not restored.
-        let mut more = pixels.clone();
+        let mut more = fb.clone();
         floor_column(&mut more, 7, 0, 200);
-        assert_eq!(column(&more, 7), column(&pixels, 7));
+        assert_eq!(column(&more, 7), column(&fb, 7));
     }
 
     #[test]
     fn the_backdrop_bottom_rows_overwrite_the_clean_copy() {
-        let mut pixels = vec![0; SURFACE.width * SURFACE.height];
+        let mut fb = surface();
         let backdrop: Vec<u8> = (0..768 * 130).map(|i| (i / 768) as u8).collect();
-        draw_backdrop(&mut pixels, &backdrop);
+        draw_backdrop(&mut fb, &backdrop, AssetId::file("x.pcx"));
         // Row 0's clean copy holds row 128, so a floor leaving row 0 shows row 128.
-        floor_column(&mut pixels, 0, 0, 1);
-        assert_eq!(column(&pixels, 0)[..2], [128, 129]);
+        floor_column(&mut fb, 0, 0, 1);
+        assert_eq!(column(&fb, 0)[..2], [128, 129]);
+    }
+
+    /// T-242: the backdrop owns its pixels and its clean copy's; a silhouette takes
+    /// them, even over the backdrop's own colour 0, and a restore gives them back.
+    #[test]
+    fn the_backdrop_is_one_picture_and_the_silhouettes_take_its_pixels() {
+        let mut fb = surface();
+        fb.set_recording(true);
+        // Rows of colour 0 and 1 by turns.
+        let backdrop: Vec<u8> = (0..768 * 130).map(|i| (i / 768 % 2) as u8).collect();
+        draw_backdrop(&mut fb, &backdrop, AssetId::file("xenodrop.pcx"));
+        let r = fb.recording().unwrap();
+        assert_eq!(r.records().len(), 1);
+        let blit = r.blits().next().unwrap();
+        assert_eq!(blit.rect, Rect::new(0, 72, 768, 130));
+        let owned = |fb: &Framebuffer, row: i32| {
+            let i = at(row, 4).unwrap();
+            fb.recording().unwrap().owner(i, fb.pixels()[i])
+        };
+        // The backdrop's rows, the clean copy, and rows 200 and 201 as the backdrop's.
+        assert!((0..130).all(|row| owned(&fb, row) == Some(0)));
+        assert!((130..258).all(|row| owned(&fb, row) == Some(0)));
+        floor_column(&mut fb, 4, 9, 4);
+        assert!((4..=9).all(|row| owned(&fb, row).is_none()), "colour 0 too");
+        floor_column(&mut fb, 4, 4, 9);
+        assert!((4..=9).all(|row| owned(&fb, row) == Some(0)));
+    }
+
+    #[test]
+    fn the_drop_draws_the_same_pixels_recording_or_not() {
+        let assets = assets();
+        let mut players = [false, true].map(|recording| {
+            let player = Player::new(assets.clone(), 90);
+            let mut fb = player.framebuffer();
+            fb.set_recording(recording);
+            (player, fb)
+        });
+        for _ in 1..2000 {
+            let done = players.each_mut().map(|(p, fb)| p.retrace([], fb));
+            assert_eq!(players[0].1.pixels(), players[1].1.pixels());
+            if done[0] && done[1] {
+                // Each part's backdrop once, and the credits' glyphs.
+                let blits = players[1].1.recording().unwrap().blits().count();
+                assert_eq!(blits, 2);
+                return;
+            }
+        }
+        panic!("the drop never ends");
     }
 
     /// A retrace's counter, frame and view origin.
@@ -1066,6 +1140,107 @@ mod tests {
         );
         // An unknown list draws nothing and fails nothing.
         player.text(0xfff0, &mut fb);
+    }
+
+    /// T-242: with the HD template's backdrops (as `xeno-tool dump --hd-template`
+    /// writes them) every 32nd retrace of the drop, credits shown or not, composes at
+    /// 4K exactly as it presents; with a synthetic `xenodrop` only its pixels change.
+    #[test]
+    #[ignore = "needs XENOBOTS_GAME_DIR"]
+    fn real_assets_the_drop_composes_with_its_template_backdrops() {
+        use crate::game_dir::{ENV_VAR, GameDir};
+        use xeno_render::{Aspect, Layout, Scale, compose, present};
+        let Some(path) = std::env::var_os(ENV_VAR) else {
+            return;
+        };
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let files = GameDir::resolve(None, Some(root.join(path).into()))
+            .check()
+            .unwrap();
+        let originals = crate::hd_pack::originals(&files);
+        let (xeno, cave) = (AssetId::file("xenodrop.pcx"), AssetId::file("cavedrop.pcx"));
+        let dir = std::env::temp_dir().join(format!("xeno-hd-drop-{}", std::process::id()));
+        let write = |dir: &std::path::Path, asset: AssetId, image: &xeno_render::HdImage| {
+            let png = dir.join(asset.pack_path());
+            std::fs::create_dir_all(png.parent().unwrap()).unwrap();
+            let (w, h) = image.size();
+            image::RgbaImage::from_raw(w as u32, h as u32, image.to_rgba8())
+                .unwrap()
+                .save(&png)
+                .unwrap();
+        };
+        for asset in [xeno, cave] {
+            write(&dir, asset, &originals[&asset].upscaled(4).unwrap());
+        }
+        let template = crate::hd_pack::load(&dir, &originals).unwrap();
+        // A visibly different `xenodrop`: diagonal stripes.
+        let o = &originals[&xeno];
+        let stripes = (0..o.height * 4).flat_map(|y| {
+            (0..o.width * 4).map(move |x| [0xffff_4020, 0xff20_40ff][(x + y) / 8 % 2])
+        });
+        let stripes = HdImage::new(o.width * 4, o.height * 4, stripes.collect()).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        write(&dir, xeno, &stripes);
+        let replaced = crate::hd_pack::load(&dir, &originals).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!((template.len(), replaced.len()), (2, 1));
+
+        let assets = load(&files).unwrap();
+        let start = assets.drop.numbers.start;
+        let mut player = Player::new(assets, start);
+        let mut fb = player.framebuffer();
+        fb.set_recording(true);
+        let window = Size::new(3840, 2160);
+        let layout = Layout::new(fb.view(), window, Scale::Auto, Aspect::Correct);
+        let mut out = [0, 1, 2].map(|_| vec![0; window.width * window.height]);
+        let (mut frames, mut credits, mut cycled, mut changed) = (0, 0, 0, 0);
+        for retrace in 1.. {
+            if player.retrace([], &mut fb) {
+                break;
+            }
+            let cycling = player.cycling();
+            cycled += usize::from(cycling.contains(&true));
+            if retrace % 32 != 0 {
+                continue;
+            }
+            let palette = player.palette();
+            let [plain, same, other] = &mut out;
+            present(&fb, &palette, &layout, plain, window);
+            compose(&fb, &palette, &cycling, &layout, &template, same, window);
+            assert!(plain == same, "retrace {retrace}: the template differs");
+            compose(&fb, &palette, &cycling, &layout, &replaced, other, window);
+            let r = fb.recording().unwrap();
+            for (i, _) in plain
+                .iter()
+                .zip(other.iter())
+                .enumerate()
+                .filter(|(_, (a, b))| a != b)
+            {
+                let (wx, wy) = ((i % window.width) as isize, (i / window.width) as isize);
+                let x = (wx - layout.x).div_euclid(layout.sx as isize) as usize;
+                let y = (wy - layout.y).div_euclid(layout.sy as isize) as usize;
+                let k = fb.view_row_start(y) + x;
+                let owner = r.owner(k, fb.pixels()[k]).map(|o| &r.records()[o]);
+                assert!(
+                    matches!(owner, Some(xeno_render::hd::Record::Blit(b)) if b.asset == xeno),
+                    "retrace {retrace}: ({wx}, {wy}) changed, owned by {owner:?}"
+                );
+                changed += 1;
+            }
+            let split = usize::from(player.assets.drop.numbers.split_row);
+            credits += usize::from((split..200).any(|y| {
+                let row = fb.view_row_start(y);
+                fb.pixels()[row..row + 320].iter().any(|&c| c != 0)
+            }));
+            frames += 1;
+        }
+        println!(
+            "{frames} frames composed as presented ({credits} with credits); \
+             {changed} output pixels of xenodrop replaced; {cycled} retraces cycled colours; \
+             {} records at the end",
+            fb.recording().unwrap().records().len()
+        );
+        assert!(credits > 0 && changed > 0);
     }
 
     #[test]
